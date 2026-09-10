@@ -18,6 +18,57 @@ fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
+/// RFD 27 (deka#755): app source may not name `bridge` — only grant-table
+/// verified packages may. These fixtures exercise the *permission* layer
+/// (allow/deny read targets), so the bridge calls live in this granted
+/// dependency package and the app imports thin wrappers. The manifest field
+/// is deliberately absent: a dependency's `host.kinds` is untrusted and
+/// ignored; the grant table entry (DEKA_HOST_GRANTS) is the only authority.
+const FIXTUREFS_SOURCE: &str = "export async fn read_file(p: string) Promise<Result<bytes, string>> {\n  return await bridge fs.read_file(p)\n}\n\nexport async fn read_dir(p: string) Promise<Result<Array<string>, string>> {\n  return await bridge fs.read_dir(p)\n}\n";
+
+/// Writes the fixture package into the project's ds_modules/, pins its
+/// fsGraph digest in deka.lock (the same shape `deka install` writes), and
+/// returns the DEKA_HOST_GRANTS grant-table JSON keyed by that digest.
+fn add_fixturefs(project: &Path) -> String {
+    let package = project.join("ds_modules").join("@deka").join("fixturefs");
+    fs::create_dir_all(&package).expect("mkdir fixturefs");
+    fs::write(
+        package.join("deka.json"),
+        r#"{"name":"@deka/fixturefs","version":"1.0.0"}"#,
+    )
+    .expect("write fixturefs manifest");
+    fs::write(package.join("index.ds"), FIXTUREFS_SOURCE).expect("write fixturefs source");
+
+    let integrity =
+        deka_host::integrity::compute_package_integrity(&package).expect("fixturefs integrity");
+    let lock_path = project.join("deka.lock");
+    let mut lock: serde_json::Value = fs::read_to_string(&lock_path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| serde_json::json!({ "lockfileVersion": 1, "packages": {} }));
+    lock["packages"]["@deka/fixturefs"] = serde_json::json!([
+        "@deka/fixturefs@1.0.0",
+        "linkhash:@deka/fixturefs",
+        {
+            "moduleGraph": { "algo": "sha256", "hash": integrity.module_graph },
+            "fsGraph": { "algo": "sha256", "hash": integrity.fs_graph }
+        },
+        ""
+    ]);
+    fs::write(&lock_path, serde_json::to_string_pretty(&lock).expect("lock json"))
+        .expect("write deka.lock");
+
+    serde_json::to_string(&serde_json::json!([
+        {
+            "name": "@deka/fixturefs",
+            "version": "1.0.0",
+            "digest": integrity.fs_graph,
+            "kinds": ["fs"]
+        }
+    ]))
+    .expect("grant table json")
+}
+
 /// Scaffolds a fresh web project into `dir` via `deka init`.
 fn init_project(dir: &Path) {
     let output = Command::new(cli_bin())
@@ -33,10 +84,11 @@ fn init_project(dir: &Path) {
     );
 }
 
-fn run_build(dir: &Path) -> (bool, String) {
+fn run_build(dir: &Path, host_grants: &str) -> (bool, String) {
     let output = Command::new(cli_bin())
         .arg("build")
         .current_dir(dir)
+        .env("DEKA_HOST_GRANTS", host_grants)
         .output()
         .expect("run deka build");
     let combined = format!(
@@ -47,10 +99,11 @@ fn run_build(dir: &Path) -> (bool, String) {
     (output.status.success(), combined)
 }
 
-fn run_with_args(dir: &Path, args: &[&str]) -> (bool, String) {
+fn run_with_args(dir: &Path, args: &[&str], host_grants: &str) -> (bool, String) {
     let output = Command::new(cli_bin())
         .args(args)
         .current_dir(dir)
+        .env("DEKA_HOST_GRANTS", host_grants)
         .output()
         .expect("run deka");
     let combined = format!(
@@ -75,22 +128,26 @@ fn manifest_json(project: &Path) -> serde_json::Value {
     .expect("parse build manifest")
 }
 
-/// Writes deka.json with a security section; keeps the scaffold's shape.
+/// Writes deka.json with a security section; keeps the scaffold's shape. The
+/// `@deka/fixturefs` dependency is declared here because dsc validates
+/// imports against deka.json + deka.lock before compiling.
 fn write_security(project: &Path, security: &str) {
     fs::write(
         project.join("deka.json"),
         format!(
-            "{{\n  \"name\": \"phase\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"mode\": \"ds\" }},\n  \"security\": {security}\n}}\n"
+            "{{\n  \"name\": \"phase\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"mode\": \"ds\" }},\n  \"dependencies\": {{ \"@deka/fixturefs\": \"1.0.0\" }},\n  \"security\": {security}\n}}\n"
         ),
     )
     .expect("write deka.json");
 }
 
-/// A [slug] page whose build body reads `path` and propagates failures: the
-/// `build { ... }` expression starts on line 10 of this fixture.
+/// A [slug] page whose build body reads `path` and propagates failures. The
+/// bridge call lives in the granted `@deka/fixturefs` package (RFD 27: app
+/// source cannot name `bridge`); the build block's first statement stays on
+/// line 10, which is the source location the permission diagnostic links.
 fn slug_page_probing(path: &str) -> String {
     format!(
-        "interface PageProps {{ slug: string }}\nstruct PostParam {{ slug: string }}\nasync fn probe(p: string) Promise<Result<Array<PostParam>, string>> {{\n  const res = await bridge fs.read_file(p)\n  return match (res) {{\n    Ok(v) => Ok([PostParam {{ slug: \"hello\" }}]),\n    Err(e) => Err(e)\n  }}\n}}\nexport const staticParams: Array<PostParam> = build {{\n  return await probe(\"{path}\")\n}}\nexport fn Page(props: PageProps) {{\n  return <article><h1>{{props.slug}}</h1></article>;\n}}\n"
+        "import {{ read_file }} from \"@deka/fixturefs\"\ninterface PageProps {{ slug: string }}\nstruct PostParam {{ slug: string }}\nasync fn probe(p: string) Promise<Result<Array<PostParam>, string>> {{\n  const res = await read_file(p)\n  return match (res) {{\n    Ok(v) => Ok([PostParam {{ slug: \"hello\" }}]),\n    Err(e) => Err(e) }}\n}}\nexport const staticParams: Array<PostParam> = build {{\n  return await probe(\"{path}\")\n}}\nexport fn Page(props: PageProps) {{\n  return <article><h1>{{props.slug}}</h1></article>;\n}}\n"
     )
 }
 
@@ -105,9 +162,10 @@ fn denied_fs_read_in_build_fails_with_source_linked_diagnostic() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
     write_security(project.path(), r#"{"prompt": false}"#);
+    let grants = add_fixturefs(project.path());
     write_slug_page(project.path(), &slug_page_probing("data/x.json"));
 
-    let (success, combined) = run_build(project.path());
+    let (success, combined) = run_build(project.path(), &grants);
     assert!(
         !success,
         "deka build must fail when the build body reads a file the policy denies: {combined}"
@@ -138,18 +196,21 @@ fn permitted_fs_reads_are_recorded_in_the_manifest() {
         project.path(),
         r#"{"allow": {"read": ["./data"]}, "prompt": false}"#,
     );
+    let grants = add_fixturefs(project.path());
     let slug_dir = project.path().join("app").join("posts").join("[slug]");
     fs::create_dir_all(&slug_dir).expect("mkdir [slug]");
-    // One successful read, one directory listing, one absent path.
+    // One successful read, one directory listing, one absent path — all via
+    // the granted @deka/fixturefs wrappers (RFD 27: app source cannot name
+    // `bridge` directly).
     fs::write(
         slug_dir.join("page.dsx"),
-        "interface PageProps { slug: string }\nstruct PostParam { slug: string }\nexport const staticParams: Array<PostParam> = build {\n  const present = await bridge fs.read_file(\"data/slugs/a.txt\")\n  const listed = await bridge fs.read_dir(\"data\")\n  const missing = await bridge fs.read_file(\"data/missing.txt\")\n  return Ok([PostParam { slug: \"hello\" }])\n}\nexport fn Page(props: PageProps) {\n  return <article><h1>{props.slug}</h1></article>;\n}\n",
+        "import { read_file, read_dir } from \"@deka/fixturefs\"\ninterface PageProps { slug: string }\nstruct PostParam { slug: string }\nexport const staticParams: Array<PostParam> = build {\n  const present = await read_file(\"data/slugs/a.txt\")\n  const listed = await read_dir(\"data\")\n  const missing = await read_file(\"data/missing.txt\")\n  return Ok([PostParam { slug: \"hello\" }])\n}\nexport fn Page(props: PageProps) {\n  return <article><h1>{props.slug}</h1></article>;\n}\n",
     )
     .expect("write slug page");
     fs::create_dir_all(project.path().join("data").join("slugs")).expect("mkdir data/slugs");
     fs::write(project.path().join("data").join("slugs").join("a.txt"), "a").expect("write data");
 
-    let (success, combined) = run_build(project.path());
+    let (success, combined) = run_build(project.path(), &grants);
     assert!(
         success,
         "deka build should succeed when the policy permits the reads: {combined}"
@@ -188,9 +249,10 @@ fn network_and_db_inputs_record_no_filesystem_observations() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
     write_security(project.path(), r#"{"prompt": false}"#);
+    let grants = add_fixturefs(project.path());
     write_slug_page(project.path(), &slug_page_probing("data/x.json"));
 
-    let (success, combined) = run_build(project.path());
+    let (success, combined) = run_build(project.path(), &grants);
     assert!(
         !success,
         "deka build must fail when the policy denies the build body's read: {combined}"
@@ -215,13 +277,14 @@ fn denied_capability_is_not_granted_to_runtime_code() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
     write_security(project.path(), r#"{"prompt": false}"#);
+    let grants = add_fixturefs(project.path());
     fs::write(
         project.path().join("main.ds"),
-        "async fn go() Promise<string> {\n  const res = await bridge fs.read_file(\"data/x.json\")\n  return match (res) {\n    Ok(v) => \"runtime-read-ok\",\n    Err(e) => \"runtime-read-denied\"\n  }\n}\nasync fn main() Promise<string> {\n  const r = await go()\n  unsafe { console.log(r) }\n  return r\n}\nmain()\n",
+        "import { read_file } from \"@deka/fixturefs\"\nasync fn go() Promise<string> {\n  const res = await read_file(\"data/x.json\")\n  return match (res) {\n    Ok(v) => \"runtime-read-ok\",\n    Err(e) => \"runtime-read-denied\"\n  }\n}\nasync fn main() Promise<string> {\n  const r = await go()\n  unsafe { console.log(r) }\n  return r\n}\nmain()\n",
     )
     .expect("write main.ds");
 
-    let (_, combined) = run_with_args(project.path(), &["run", "main.ds", "--no-prompt"]);
+    let (_, combined) = run_with_args(project.path(), &["run", "main.ds", "--no-prompt"], &grants);
     assert!(
         combined.contains("runtime-read-denied"),
         "runtime fs read must be denied under the default policy: {combined}"
@@ -240,22 +303,23 @@ fn explicit_allow_unlocks_both_phases_equally() {
         project.path(),
         r#"{"allow": {"read": ["./data"]}, "prompt": false}"#,
     );
+    let grants = add_fixturefs(project.path());
     fs::create_dir_all(project.path().join("data")).expect("mkdir data");
     fs::write(project.path().join("data").join("x.json"), "{}").expect("write data");
     fs::write(
         project.path().join("main.ds"),
-        "async fn go() Promise<string> {\n  const res = await bridge fs.read_file(\"data/x.json\")\n  return match (res) {\n    Ok(v) => \"runtime-read-ok\",\n    Err(e) => \"runtime-read-denied\"\n  }\n}\nasync fn main() Promise<string> {\n  const r = await go()\n  unsafe { console.log(r) }\n  return r\n}\nmain()\n",
+        "import { read_file } from \"@deka/fixturefs\"\nasync fn go() Promise<string> {\n  const res = await read_file(\"data/x.json\")\n  return match (res) {\n    Ok(v) => \"runtime-read-ok\",\n    Err(e) => \"runtime-read-denied\"\n  }\n}\nasync fn main() Promise<string> {\n  const r = await go()\n  unsafe { console.log(r) }\n  return r\n}\nmain()\n",
     )
     .expect("write main.ds");
 
-    let (_, combined) = run_with_args(project.path(), &["run", "main.ds", "--no-prompt"]);
+    let (_, combined) = run_with_args(project.path(), &["run", "main.ds", "--no-prompt"], &grants);
     assert!(
         combined.contains("runtime-read-ok"),
         "an explicit read allow must unlock runtime reads just as it unlocks build reads: {combined}"
     );
 
     write_slug_page(project.path(), &slug_page_probing("data/x.json"));
-    let (success, combined) = run_build(project.path());
+    let (success, combined) = run_build(project.path(), &grants);
     assert!(
         success,
         "deka build should succeed under the same explicit allow: {combined}"
@@ -285,9 +349,10 @@ fn free_port() -> u16 {
 /// listing and a file read: `<readdir count>/<picked.txt byte length>`.
 /// Adding/removing files changes the first component; editing the picked
 /// file changes the second. Everything is inlined because dsc plan emission
-/// omits helpers referenced only inside `unsafe` arrows.
+/// omits helpers referenced only inside `unsafe` arrows. The bridge calls
+/// live in the granted `@deka/fixturefs` package (RFD 27).
 fn slug_page_count_over_len() -> &'static str {
-    "interface PageProps { slug: string }\nstruct PostParam { slug: string }\nasync fn slugs() Promise<Result<Array<PostParam>, string>> {\n  const listed = await bridge fs.read_dir(\"data\")\n  const picked = await bridge fs.read_file(\"data/picked.txt\")\n  return match (listed) {\n    Ok(entries) => match (picked) {\n      Ok(bytes) => match (unsafe { String(entries.length) + \"/\" + String(bytes.length) }) {\n        Ok(text) => Ok([PostParam { slug: text }]),\n        Err(e) => Err(\"shape failed\")\n      },\n      Err(e) => Err(e)\n    },\n    Err(e) => Err(e)\n  }\n}\nexport const staticParams: Array<PostParam> = build {\n  return await slugs()\n}\nexport fn Page(props: PageProps) {\n  const marker = match (unsafe { staticParams[0].slug }) {\n    Ok(v) => v,\n    Err(e) => \"?\"\n  }\n  return <article><h1>{marker}</h1></article>;\n}\n"
+    "import { read_file, read_dir } from \"@deka/fixturefs\"\ninterface PageProps { slug: string }\nstruct PostParam { slug: string }\nasync fn slugs() Promise<Result<Array<PostParam>, string>> {\n  const listed = await read_dir(\"data\")\n  const picked = await read_file(\"data/picked.txt\")\n  return match (listed) {\n    Ok(entries) => match (picked) {\n      Ok(bytes) => match (unsafe { String(entries.length) + \"/\" + String(bytes.length) }) {\n        Ok(text) => Ok([PostParam { slug: text }]),\n        Err(e) => Err(\"shape failed\")\n      },\n      Err(e) => Err(e)\n    },\n    Err(e) => Err(e)\n  }\n}\nexport const staticParams: Array<PostParam> = build {\n  return await slugs()\n}\nexport fn Page(props: PageProps) {\n  const marker = match (unsafe { staticParams[0].slug }) {\n    Ok(v) => v,\n    Err(e) => \"?\"\n  }\n  return <article><h1>{marker}</h1></article>;\n}\n"
 }
 
 fn get_status(port: u16, path: &str) -> Option<u16> {
@@ -335,6 +400,7 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
         project.path(),
         r#"{"allow": {"read": ["./data"]}, "prompt": false}"#,
     );
+    let grants = add_fixturefs(project.path());
     write_slug_page(project.path(), slug_page_count_over_len());
     let data = project.path().join("data");
     fs::create_dir_all(&data).expect("mkdir data");
@@ -348,6 +414,7 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
         .args(["dev", "--port", &port.to_string(), "--no-prompt"])
         .current_dir(project.path())
         .env("DEKA_RATE_LIMIT_DISABLED", "1")
+        .env("DEKA_HOST_GRANTS", &grants)
         .stdout(Stdio::from(log.try_clone().expect("clone log")))
         .stderr(Stdio::from(log))
         .spawn()
@@ -451,6 +518,7 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
         project.path(),
         r#"{"allow": {"read": ["./data"]}, "prompt": false}"#,
     );
+    let grants = add_fixturefs(project.path());
     write_slug_page(project.path(), slug_page_count_over_len());
     let data = project.path().join("data");
     fs::create_dir_all(&data).expect("mkdir data");
@@ -464,6 +532,7 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
         .args(["dev", "--port", &port.to_string(), "--no-prompt"])
         .current_dir(project.path())
         .env("DEKA_RATE_LIMIT_DISABLED", "1")
+        .env("DEKA_HOST_GRANTS", &grants)
         .stdout(Stdio::from(log.try_clone().expect("clone log")))
         .stderr(Stdio::from(log))
         .spawn()

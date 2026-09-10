@@ -50,3 +50,6 @@ tempfile = "3.23.0"
 tempfile = "3.23.0"
 flate2 = "1.0"
 base64 = "0.22"
+# deka#755/RFD 27: grant fixtures need the fsGraph digest the lockfile pins,
+# exactly as `deka install` computes it.
+deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
