@@ -5701,6 +5701,7 @@ version = "0.46.0"
 dependencies = [
  "core_affinity",
  "deka-validation",
+ "deka_host",
  "deka_ui",
  "deno_core",
  "deno_error",

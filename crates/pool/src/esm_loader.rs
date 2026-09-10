@@ -80,6 +80,14 @@ impl PhpxEsmLoader {
         entry_path: PathBuf,
         host_grants: Option<GrantTable>,
     ) -> Result<Self, JsErrorBox> {
+        // Canonicalize both paths before any prefix comparison. dsc's graph
+        // dump and `fs::canonicalize` both resolve macOS's /var → /private/var
+        // symlink, while callers (pool module_root, CLI paths) usually hand us
+        // the /var spelling; a project_root that is not a prefix of the module
+        // paths would silently fall out of the workspace-grant rule and every
+        // bridge call would report "not granted any host kinds".
+        let project_root = project_root.canonicalize().unwrap_or(project_root);
+        let entry_path = entry_path.canonicalize().unwrap_or(entry_path);
         let cache_dir = runtime_core::framework::compiler_cache_dir(&project_root);
         std::fs::create_dir_all(&cache_dir).map_err(|err| {
             JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err))
@@ -200,6 +208,12 @@ impl PhpxEsmLoader {
     /// `ds_modules|php_modules` trees are checked before the generic
     /// "under project root" rule.
     fn kinds_for_path(&self, path: &Path) -> Vec<String> {
+        // `self.project_root`/`cache_dir` are canonicalized at construction;
+        // callers may hand us the macOS /var spelling (dsc graph keys are
+        // canonical, pool paths usually are not). Canonicalize for the prefix
+        // comparisons so both spellings classify identically.
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let path: &Path = &canonical;
         // Materialized `ui/*` toolchain modules (crates/deka_ui/js): part of
         // the deka distribution like the prelude, not userland. deka_ui's
         // embedded server calls crypto.random_bytes (defer nonces) and the
@@ -920,6 +934,12 @@ fn read_manifest_name(root: &Path) -> Option<String> {
 /// lockfile-pinned `metadata.fsGraph.hash` digest. Defensive inline JSON
 /// parse: anything missing or malformed yields no digest for that package
 /// (which simply means no table lookup later, i.e. no grants).
+///
+/// Lock entries serialize as a 4-element array
+/// `[descriptor, resolved, metadata, integrity]` (crates/pm/src/lock.rs);
+/// the metadata object — including `fsGraph.hash` — lives at index 2. The
+/// `{"metadata": ...}` object spelling is also accepted so hand-written and
+/// future lock shapes keep working.
 fn read_lock_digests(project_root: &Path) -> HashMap<String, String> {
     let mut digests = HashMap::new();
     let Ok(text) = std::fs::read_to_string(project_root.join("deka.lock")) else {
@@ -932,8 +952,11 @@ fn read_lock_digests(project_root: &Path) -> HashMap<String, String> {
         return digests;
     };
     for (name, entry) in packages {
-        let digest = entry
-            .get("metadata")
+        let metadata = entry
+            .as_array()
+            .and_then(|fields| fields.get(2))
+            .or_else(|| entry.get("metadata"));
+        let digest = metadata
             .and_then(|metadata| metadata.get("fsGraph"))
             .and_then(|fs_graph| fs_graph.get("hash"))
             .and_then(serde_json::Value::as_str);

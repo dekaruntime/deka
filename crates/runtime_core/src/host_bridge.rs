@@ -727,6 +727,25 @@ mod tests {
     }
 
     #[test]
+    fn native_only_kinds_carry_native_only_metadata() {
+        // Every action of the native-only kinds (fs/net/tls/db) is marked
+        // NativeOnly in the catalog — the browser shim must never claim it
+        // can serve them.
+        for name in ["fs", "net", "tls", "db"] {
+            let kind = find_kind(name).expect("kind present");
+            for action in kind.actions {
+                assert_eq!(
+                    action.hosts,
+                    Hosts::NativeOnly,
+                    "{}.{} must be NativeOnly",
+                    kind.name,
+                    action.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn js_catalog_json_roundtrips_and_matches_catalog() {
         let parsed: serde_json::Value =
             serde_json::from_str(&js_catalog_json()).expect("js_catalog_json parses");

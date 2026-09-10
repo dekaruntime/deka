@@ -794,7 +794,15 @@ impl WorkerThread {
                             // grants yet — the catalog gate above is the only
                             // check there.
                             if (Array.isArray(grants) && grants.indexOf(k) < 0) {
-                                return { ok: false, error: { name: 'HostGrantDenied', kind: k, action: a } };
+                                const denial = { ok: false, error: { name: 'HostGrantDenied', kind: k, action: a } };
+                                // Catalog-async emit chains `.then(...)` on the
+                                // result and never catches; hand back a
+                                // resolved Promise so a grant denial of an
+                                // async action is still a Result.Err, never a
+                                // throw (same contract as the permission path
+                                // below).
+                                if (cat[a].async === true) return Promise.resolve(denial);
+                                return denial;
                             }
                             const list = Array.isArray(args) ? args : [];
                             const toByteArray = (v) => {

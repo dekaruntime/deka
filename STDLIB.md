@@ -128,7 +128,24 @@ counts — they are not R2 metadata.
 ### 5. Host catalog vs package tarball
 
 `deka.json` `"host": { "kinds": [...] }` is how the isolate grants
-`bridge` ops. The **CLI** must also catalog those ops.
+`bridge` ops — but **only for official `@deka/*` packages**. The enforcement
+reality is:
+
+- An **application** manifest (any non-`@deka/*` name) that sets `host.kinds`
+  is a **hard load error** (RFD 27): the project refuses to boot with
+  "declares host.kinds, but only @deka/* packages may self-declare bridge
+  kinds". Apps acquire bridge authority only from the grant table.
+- A **dependency** manifest's `host.kinds` is untrusted and ignored — copying
+  the field into a user package buys nothing. Dependency grants come only
+  from the published **grant table** (`{ name, version, digest, kinds }`),
+  looked up by the dependency's lockfile-pinned `fsGraph` digest in
+  `deka.lock`. Until the signed-index plumbing lands, the table is supplied
+  explicitly (`PoolConfig.host_grants` or the `DEKA_HOST_GRANTS` environment
+  variable).
+- The runtime catalog is generated from
+  `runtime_core::host_bridge` (`js_catalog_json()`) — the single source of
+  truth (deka#620), injected into each isolate at bootstrap. The **CLI** must
+  catalog the same ops.
 
 | Package | Host kind | Notes |
 |---|---|---|
@@ -142,9 +159,10 @@ counts — they are not R2 metadata.
 | `http` | none | DS on `@deka/tcp` + `@deka/tls` |
 | `bytes` | none | |
 
-Publishing a package that calls an uncatalogued op does not fail
-`deka add`. It fails at `deka run`. Runtime tags are `PUBLISH.md`, not
-this file.
+Grant mismatches fail at `deka run` (per-call: `Result.Err` with
+`HostGrantDenied` / `PermissionDenied`, never a throw) or at load time
+("package '…' is not granted any host kinds but contains bridge calls").
+Runtime tags are `PUBLISH.md`, not this file.
 
 ## What does **not** publish a package
 
