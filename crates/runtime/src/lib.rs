@@ -6,6 +6,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::OnceLock;
 
+mod artifact_loader;
 mod build_values;
 mod css;
 mod dev;

@@ -1,4 +1,8 @@
 use engine::config::resolve_handler_path;
+use runtime_core::framework::{
+    ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactProducer,
+    ArtifactServer, MODULE_FORMAT, RUNTIME_ABI,
+};
 use std::fs;
 
 fn temp_dir(prefix: &str) -> std::path::PathBuf {
@@ -118,4 +122,76 @@ fn missing_entry_file_returns_error() {
     } else {
         panic!("expected error for missing entry file");
     }
+}
+
+fn write_artifact(root: &std::path::Path) {
+    let dist = root.join("dist");
+    fs::create_dir_all(dist.join("server")).unwrap();
+    fs::create_dir_all(dist.join("client")).unwrap();
+    fs::write(
+        dist.join("server/serve-entry.js"),
+        "export default { fetch() { return new Response('artifact'); } };\n",
+    )
+    .unwrap();
+    fs::write(dist.join("client/index.html"), "<p>artifact</p>").unwrap();
+    let mut manifest = ArtifactManifestV2 {
+        format: ARTIFACT_FORMAT.to_string(),
+        origin: "authored".to_string(),
+        producer: ArtifactProducer {
+            deka: "test".to_string(),
+            dsc: "test".to_string(),
+            plan_version: 2,
+        },
+        compat: ArtifactCompat {
+            runtime_abi: RUNTIME_ABI,
+            module_format: MODULE_FORMAT.to_string(),
+            targets: vec!["native".to_string()],
+            host_imports: Vec::new(),
+        },
+        client: ArtifactClient {
+            root: "client".to_string(),
+            index: Some("client/index.html".to_string()),
+            trailing_slash: false,
+        },
+        server: ArtifactServer {
+            root: "server".to_string(),
+            entries: Vec::new(),
+        },
+        worker: None,
+        routes: Vec::new(),
+        slots: Vec::new(),
+        payloads: Vec::new(),
+        payload_root: String::new(),
+    };
+    manifest.record_payloads(&dist).unwrap();
+    manifest.write_into(&dist).unwrap();
+}
+
+#[test]
+fn authored_artifact_wins_without_consulting_source_config() {
+    let dir = temp_dir("engine_artifact_precedence");
+    write_artifact(&dir);
+    // If source configuration were consulted before dist/, this malformed
+    // source file would only be a distraction. Artifact resolution succeeds.
+    fs::write(dir.join("deka.json"), "this is not JSON").unwrap();
+    let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
+    assert_eq!(
+        resolved.path.canonicalize().unwrap(),
+        dir.join("dist/server/serve-entry.js")
+            .canonicalize()
+            .unwrap()
+    );
+}
+
+#[test]
+fn incomplete_authored_dist_is_terminal_with_both_remedies() {
+    let dir = temp_dir("engine_incomplete_artifact");
+    fs::create_dir_all(dir.join("dist")).unwrap();
+    let err = match resolve_handler_path(dir.to_str().unwrap()) {
+        Ok(_) => panic!("incomplete dist/ must not fall back to source resolution"),
+        Err(err) => err,
+    };
+    assert!(err.contains("incomplete artifact"), "{err}");
+    assert!(err.contains("deka build"), "{err}");
+    assert!(err.contains("deka dev"), "{err}");
 }

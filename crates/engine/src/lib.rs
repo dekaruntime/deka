@@ -23,6 +23,9 @@ pub struct RuntimeState {
     pub handler_entry: Option<String>,
     /// App-router projects expose this directory at the request root.
     pub public_dir: Option<PathBuf>,
+    /// Present only for a verified authored artifact. The HTTP dispatcher uses
+    /// it to authenticate client bytes lazily before returning them.
+    pub artifact_manifest: Option<runtime_core::framework::ArtifactManifestV2>,
     pub handler_key: HandlerKey,
     pub dev_mode: bool,
     pub perf_mode: bool,

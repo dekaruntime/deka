@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 const BUILT_MARKER: &str = "BUILT-MARKER-1";
 const MUTATED_MARKER: &str = "MUTATED-MARKER-2";
+const ARTIFACT_MARKER: &str = "ARTIFACT-MARKER-3";
 const API_MARKER: &str = "API-MARKER-1";
 
 fn cli_bin() -> &'static str {
@@ -127,7 +128,9 @@ fn built_then_sabotaged_project() -> tempfile::TempDir {
     init_project(project.path());
     fs::write(
         project.path().join("app").join("page.dsx"),
-        format!("export fn Page() {{\n  return <div>{BUILT_MARKER}</div>;\n}}\n"),
+        format!(
+            "export const prerender = false\nexport fn Page() {{\n  return <div>{BUILT_MARKER}</div>;\n}}\n"
+        ),
     )
     .expect("write page.dsx");
     fs::create_dir_all(project.path().join("api").join("hello")).expect("mkdir api/hello");
@@ -162,15 +165,16 @@ fn built_then_sabotaged_project() -> tempfile::TempDir {
     assert!(
         entries.iter().any(|e| {
             e.get("id").and_then(|v| v.as_str()) == Some("page:/")
-                && e.get("module")
-                    .and_then(|v| v.as_str())
-                    .map(str::is_empty)
-                    == Some(false)
+                && e.get("module").and_then(|v| v.as_str()).map(str::is_empty) == Some(false)
         }),
         "manifest must describe the / page entry with a module: {manifest}"
     );
     assert!(
-        project.path().join("dist").join("build-manifest.sha256").is_file(),
+        project
+            .path()
+            .join("dist")
+            .join("build-manifest.sha256")
+            .is_file(),
         "manifest sidecar missing next to {manifest_path:?}"
     );
     assert!(
@@ -187,13 +191,57 @@ fn built_then_sabotaged_project() -> tempfile::TempDir {
     // different from the built artifact.
     fs::write(
         project.path().join("app").join("page.dsx"),
-        format!("export fn Page() {{\n  return <div>{MUTATED_MARKER}</div>;\n}}\n"),
+        format!(
+            "export const prerender = false\nexport fn Page() {{\n  return <div>{MUTATED_MARKER}</div>;\n}}\n"
+        ),
     )
     .expect("mutate page.dsx");
     fs::remove_dir_all(project.path().join("app")).expect("delete app/");
     fs::remove_dir_all(project.path().join(".cache")).expect("delete .cache/");
 
     project
+}
+
+/// Change the actual server artifact, then publish a matching descriptor.
+/// This is intentionally different from tampering: a digest mismatch must
+/// refuse to boot. Re-anchoring this controlled edit makes it a new valid
+/// artifact, so the response can prove which bytes the loader executed.
+fn mutate_built_server_artifact(project: &Path) {
+    let dist = project.join("dist");
+    let mut manifest = runtime_core::framework::ArtifactManifestV2::load_verified(&dist)
+        .expect("load original artifact manifest");
+    let server = dist.join("server");
+    let mut js_files = Vec::new();
+    collect_js_files(&server, &mut js_files);
+    let page = js_files
+        .into_iter()
+        .find(|path| {
+            fs::read_to_string(path)
+                .map(|source| source.contains(BUILT_MARKER))
+                .unwrap_or(false)
+        })
+        .expect("built server graph must contain the page marker");
+    let original = fs::read_to_string(&page).expect("read built page module");
+    fs::write(&page, original.replace(BUILT_MARKER, ARTIFACT_MARKER))
+        .expect("mutate built page module");
+
+    manifest
+        .record_payloads(&dist)
+        .expect("rehash changed artifact");
+    manifest
+        .write_into(&dist)
+        .expect("write changed artifact descriptor");
+}
+
+fn collect_js_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).expect("read artifact server tree") {
+        let path = entry.expect("server entry").path();
+        if path.is_dir() {
+            collect_js_files(&path, out);
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("js") {
+            out.push(path);
+        }
+    }
 }
 
 #[test]
@@ -263,5 +311,30 @@ fn serve_dist_directory_form_loads_the_built_entry() {
     assert!(
         body.contains(BUILT_MARKER) && !body.contains(MUTATED_MARKER),
         "`deka serve dist/` must load the built entry, not recompile: {body}"
+    );
+}
+
+#[test]
+fn serve_executes_a_reanchored_mutation_of_the_built_artifact() {
+    let project = built_then_sabotaged_project();
+    mutate_built_server_artifact(project.path());
+    let port = free_port();
+    let (_child, log_path) = start_serve(project.path(), port);
+    wait_ready(port, &log_path);
+
+    let body = client()
+        .get(format!("http://127.0.0.1:{port}/"))
+        .send()
+        .expect("GET /")
+        .text()
+        .expect("response body");
+    assert!(
+        body.contains(ARTIFACT_MARKER),
+        "the response must come from the mutated dist/server module, not a source recompile: {body}\nserve log:\n{}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    assert!(
+        !body.contains(BUILT_MARKER) && !body.contains(MUTATED_MARKER),
+        "served bytes did not come exclusively from the changed artifact: {body}"
     );
 }

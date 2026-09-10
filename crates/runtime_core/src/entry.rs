@@ -44,12 +44,14 @@ pub fn has_run_source_ext(path: &str) -> bool {
 
 /// True when the token is a file path, not a task/script name like `dev`.
 pub fn looks_like_file_arg(path: &str) -> bool {
-    path.contains('/')
-        || path.contains('\\')
-        || Path::new(path).extension().is_some()
+    path.contains('/') || path.contains('\\') || Path::new(path).extension().is_some()
 }
 
 pub fn resolve_entry(project_root: &Path, cli_arg: Option<&str>) -> Result<ResolvedEntry, String> {
+    // An explicit run target is a command subject of its own: test harnesses
+    // and other JS tools can live beside a deployable app without being
+    // redirected to that app's server entry. `deka serve` still resolves the
+    // authored artifact before considering source configuration.
     if let Some(arg) = cli_arg {
         if has_run_source_ext(arg) {
             let path = join_project(project_root, arg);
@@ -68,6 +70,35 @@ pub fn resolve_entry(project_root: &Path, cli_arg: Option<&str>) -> Result<Resol
             }
             return Err(format!("entry file not found: {}", path.display()));
         }
+    }
+
+    // Without an explicit target, an authored artifact is a whole-subject
+    // decision. Do this before source configuration so `deka run` cannot
+    // route around a stale or malformed dist/ and recompile `.ds(x)` behind
+    // the user's back.
+    if let Some(artifact_root) = crate::framework::resolve_authored_artifact_root(project_root)
+        .map_err(run_artifact_remedy)?
+    {
+        let manifest = crate::framework::ArtifactManifestV2::load_verified(&artifact_root)
+            .and_then(|manifest| {
+                manifest.ensure_native_compat()?;
+                Ok(manifest)
+            })
+            .map_err(run_artifact_remedy)?;
+        let entry = artifact_root.join("server/serve-entry.js");
+        if !manifest.payloads.iter().any(|payload| {
+            payload.path == "server/serve-entry.js"
+                && payload.role == crate::framework::PayloadRole::Server
+        }) || !entry.is_file()
+        {
+            return Err(run_artifact_remedy(
+                "incomplete artifact: server/serve-entry.js is missing or undeclared".to_string(),
+            ));
+        }
+        return Ok(ResolvedEntry {
+            path: entry,
+            kind: EntryKind::App,
+        });
     }
 
     let manifest = load_deka_json(project_root);
@@ -129,6 +160,12 @@ pub fn resolve_entry(project_root: &Path, cli_arg: Option<&str>) -> Result<Resol
     }
 
     Err(missing_entry_error(project_root, cli_arg, &manifest))
+}
+
+fn run_artifact_remedy(problem: String) -> String {
+    format!(
+        "{problem}. Repair the deployable artifact with `deka build`, or use `deka dev` for source-first development"
+    )
 }
 
 fn resolve_src_entry(src_dir: &Path) -> Option<PathBuf> {
@@ -561,14 +598,29 @@ mod tests {
     }
 
     #[test]
-    fn prefers_dist_js_when_present() {
+    fn rejects_incomplete_dist_instead_of_preferring_an_unverified_js_file() {
         let tmp = project();
         let root = tmp.path();
         write(root, "src/main.ds", "");
         write(root, "dist/server/src/main.js", "console.log('dist')");
-        let got = resolve(root, None);
-        assert_eq!(got.kind, EntryKind::Src);
-        assert_path(&got.path, root, "dist/server/src/main.js");
+        let err = resolve_entry(root, None).unwrap_err();
+        assert!(err.contains("incomplete artifact"), "{err}");
+        assert!(
+            err.contains("deka build") && err.contains("deka dev"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn explicit_cli_js_entry_is_not_shadowed_by_an_incomplete_dist() {
+        let tmp = project();
+        let root = tmp.path();
+        write(root, "dist/server/serve-entry.js", "export {};");
+        write(root, "hydration-harness.js", "console.log('harness');");
+
+        let got = resolve(root, Some("hydration-harness.js"));
+        assert_eq!(got.kind, EntryKind::CliArg);
+        assert_path(&got.path, root, "hydration-harness.js");
     }
 
     #[test]

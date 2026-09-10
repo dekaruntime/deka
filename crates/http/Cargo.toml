@@ -17,6 +17,7 @@ tokio = { workspace = true, features = ["full"] }
 tracing = "0.1"
 libc = "0.2"
 engine = { path = "../engine" }
+runtime_core = { path = "../runtime_core" }
 pool = { path = "../pool" }
 serde_json = { workspace = true }
 redis = { workspace = true }

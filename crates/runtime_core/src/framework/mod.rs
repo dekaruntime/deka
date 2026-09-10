@@ -36,8 +36,8 @@ mod source;
 pub use build_invalidation::{SlotInvalidation, affected_slots, project_relative_path};
 pub use build_manifest::{
     BuildManifest, BuildPlan, BuildPlanSlot, CompilerProvenance, FsObservation, FsObservationKind,
-    ManifestArtifact, ManifestRoute, ManifestSlot, PlannedSource, RouteMode, SUPPORTED_PLAN_VERSIONS,
-    sha256_hex, validate_plans,
+    ManifestArtifact, ManifestRoute, ManifestSlot, PlannedSource, RouteMode,
+    SUPPORTED_PLAN_VERSIONS, sha256_hex, validate_plans,
 };
 pub use codegen::{
     generate_api_entry_source, generate_app_router_entry_source, generate_defer_entry_source,
@@ -59,10 +59,7 @@ pub fn compiler_cache_dir(project_root: &Path) -> PathBuf {
 
 pub fn compiler_cache_dir_with(project_root: &Path, dev_mode: bool) -> PathBuf {
     if dev_mode {
-        project_root
-            .join(MODULES_DIR)
-            .join(".cache")
-            .join("dev")
+        project_root.join(MODULES_DIR).join(".cache").join("dev")
     } else {
         project_root.join(".cache").join("dekascript")
     }
@@ -71,7 +68,7 @@ pub use artifact_manifest::{
     ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactPayload,
     ArtifactProducer, ArtifactRoute, ArtifactServer, ArtifactSlot, ArtifactWorker, MODULE_FORMAT,
     PayloadRole, RUNTIME_ABI, ServerEntry, ServerEntryKind, artifact_digest, client_output_path,
-    compute_payload_root, server_entries, source_to_server_module,
+    compute_payload_root, resolve_authored_artifact_root, server_entries, source_to_server_module,
 };
 pub use css::{
     CssPlan, RouteStyle, ScopedStyleFile, collect_class_literals, collect_route_styles,
@@ -82,8 +79,8 @@ pub use defer::{
     scan_server_defer,
 };
 pub use document::{
-    CLIENT_IMPORTMAP_PLACEHOLDER_TAG, DEKA_APP_HOLE, DEKA_HEAD_HOLE, DEKA_SCRIPTS_HOLE,
-    DEFAULT_INDEX_HARNESS, FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY, fill_document,
+    CLIENT_IMPORTMAP_PLACEHOLDER_TAG, DEFAULT_INDEX_HARNESS, DEKA_APP_HOLE, DEKA_HEAD_HOLE,
+    DEKA_SCRIPTS_HOLE, FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY, fill_document,
 };
 pub use islands::{ClientIsland, island_script_tags, scan_client_islands};
 pub use manifest::{
