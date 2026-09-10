@@ -20,7 +20,7 @@
 //! ```
 //!
 //! A successful fixture builds THREE times: a same-root rerun (tree, full
-//! normalized stderr, and the build manifest must be byte-identical across
+//! normalized stderr, and the published v2 build manifest must be byte-identical across
 //! runs) and a build from a SECOND temporary root (the RAW dist bytes must
 //! be byte-identical across roots — dsc slot ids are project-relative since
 //! dsc PR #62, so no byte normalization exists anywhere in this harness;
@@ -28,8 +28,8 @@
 //! recomputed against the published bytes, not just its path list.
 //!
 //! Capability gate: committed bytes that embed a build-slot id (the
-//! `deka:dev/<id>` specifier, or the `.build-values/<id>.js` path it is
-//! rewritten to since deka#738 F7) and the cross-root raw comparison are
+//! `deka:dev/<id>` specifier, or the shipped `server/.values/<id>.js` path)
+//! and the cross-root raw comparison are
 //! only valid on relative-id dsc (dsc PR #62).
 //! On older dsc (CI installs released 0.6.0) those checks skip with an
 //! eprintln; everything else — tree, non-slot bytes, digests, same-root
@@ -145,7 +145,7 @@ fn dsc_relative_slot_ids() -> bool {
 
 /// Whether emitted bytes embed a build-slot identifier. Before deka#738 F7
 /// that was the `deka:dev/<id>` import; the fix rewrites the specifier to a
-/// relative `.build-values/<id>.js` path, so either spelling marks
+/// relative `server/.values/<id>.js` path, so either spelling marks
 /// slot-bearing bytes. Such bytes are only machine-portable (and cross-root
 /// stable) on relative-id dsc; released dsc 0.6.0 predates it.
 fn embeds_slot_ids(bytes: &[u8]) -> bool {
@@ -153,8 +153,8 @@ fn embeds_slot_ids(bytes: &[u8]) -> bool {
         .windows(b"deka:dev/".len())
         .any(|window| window == b"deka:dev/")
         || bytes
-            .windows(b".build-values/".len())
-            .any(|window| window == b".build-values/")
+            .windows(b".values/".len())
+            .any(|window| window == b".values/")
 }
 
 struct BuildRun {
@@ -179,10 +179,7 @@ fn run_build(project: &Path) -> BuildRun {
 /// Replace the tempdir path (canonical and pre-canonical spellings) so
 /// expected stderr is machine-independent.
 fn normalize_stderr(project: &Path, project_canonical: &Path, stderr: &str) -> String {
-    let mut out = stderr.replace(
-        project_canonical.to_str().expect("utf8 path"),
-        "<project>",
-    );
+    let mut out = stderr.replace(project_canonical.to_str().expect("utf8 path"), "<project>");
     if project != project_canonical {
         out = out.replace(project.to_str().expect("utf8 path"), "<project>");
     }
@@ -326,23 +323,30 @@ fn unified_diff(expected: &str, actual: &str) -> String {
 }
 
 fn manifest_path(project: &Path) -> PathBuf {
-    project
-        .join(".cache")
-        .join("dekascript")
-        .join("build-manifest.json")
+    project.join("dist").join("build-manifest.json")
 }
 
-/// The manifest is the host-owned record the table derives from: its routes
-/// must match the printed table (glyph + path, in order) and its artifact
-/// list must cover exactly the published dist tree.
-fn manifest_report(project: &Path, stderr: &str, tree: &BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+/// The v2 manifest is the published deployment descriptor. Its routes must
+/// match the printed table (glyph + path, in order), and its payload table
+/// must cover every non-descriptor file in the published dist tree.
+fn manifest_report(
+    project: &Path,
+    stderr: &str,
+    tree: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), String> {
     let raw = fs::read_to_string(manifest_path(project))
-        .map_err(|err| format!("build-manifest.json unreadable: {err}"))?;
-    let manifest: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|err| format!("build-manifest.json unparseable: {err}"))?;
+        .map_err(|err| format!("dist/build-manifest.json unreadable: {err}"))?;
+    let manifest: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|err| format!("dist/build-manifest.json unparseable: {err}"))?;
+    if manifest["format"].as_str() != Some("deka.artifact@2") {
+        return Err(format!(
+            "dist/build-manifest.json has unsupported format {:?}, expected deka.artifact@2",
+            manifest["format"]
+        ));
+    }
     let routes = manifest["routes"]
         .as_array()
-        .ok_or("build-manifest.json has no routes array")?;
+        .ok_or("dist/build-manifest.json has no routes array")?;
     let mut expected_rows = Vec::new();
     for route in routes {
         let glyph = match route["mode"].as_str() {
@@ -364,9 +368,7 @@ fn manifest_report(project: &Path, stderr: &str, tree: &BTreeMap<String, Vec<u8>
             })
             .unwrap_or_default();
         if instances.is_empty() {
-            let path = route["template"]
-                .as_str()
-                .ok_or("route has no template")?;
+            let path = route["template"].as_str().ok_or("route has no template")?;
             expected_rows.push(format!("{glyph} {path}"));
         } else {
             for instance in instances {
@@ -377,53 +379,89 @@ fn manifest_report(project: &Path, stderr: &str, tree: &BTreeMap<String, Vec<u8>
     let printed = route_table_rows(stderr);
     if printed != expected_rows {
         return Err(format!(
-            "route table disagrees with build-manifest.json routes:\n{}",
+            "route table disagrees with dist/build-manifest.json routes:\n{}",
             unified_diff(&expected_rows.join("\n"), &printed.join("\n"))
         ));
     }
-    let artifacts = manifest["artifacts"]
+    let payloads = manifest["payloads"]
         .as_array()
-        .ok_or("build-manifest.json has no artifacts array")?;
-    let artifact_paths: std::collections::BTreeSet<String> = artifacts
+        .ok_or("dist/build-manifest.json has no payloads array")?;
+    let payload_paths: std::collections::BTreeSet<String> = payloads
         .iter()
-        .filter_map(|artifact| artifact["path"].as_str().map(str::to_string))
+        .filter_map(|payload| payload["path"].as_str().map(str::to_string))
         .collect();
     let tree_paths: std::collections::BTreeSet<String> = tree
         .keys()
         .filter(|path| {
-            // Deployment descriptors are excluded from the v1 artifact table
-            // (deka#762); they live in dist/ but are not artifacts.
-            path.as_str() != "build-manifest.json" && path.as_str() != "build-manifest.sha256"
+            // The v2 descriptor and its anchors are deliberately not payloads:
+            // the sidecar hashes the manifest, which hashes everything else.
+            !matches!(
+                path.as_str(),
+                "build-manifest.json" | "build-manifest.sha256" | "build-manifest.sig"
+            )
         })
         .cloned()
         .collect();
-    if artifact_paths != tree_paths {
+    if payload_paths.len() != payloads.len() {
+        return Err("dist/build-manifest.json declares duplicate payload paths".to_string());
+    }
+    if payload_paths != tree_paths {
         return Err(format!(
-            "manifest artifacts disagree with the dist tree:\n  only in manifest: {:?}\n  only in dist: {:?}",
-            artifact_paths.difference(&tree_paths).collect::<Vec<_>>(),
-            tree_paths.difference(&artifact_paths).collect::<Vec<_>>()
+            "manifest payloads disagree with the dist tree:\n  only in manifest: {:?}\n  only in dist: {:?}",
+            payload_paths.difference(&tree_paths).collect::<Vec<_>>(),
+            tree_paths.difference(&payload_paths).collect::<Vec<_>>()
         ));
     }
-    // Digests: every declared artifact must hash to the published bytes.
-    // Path coverage alone would pass a manifest whose digests are all wrong
-    // (deka#728, codex finding 6).
-    for artifact in artifacts {
-        let path = artifact["path"]
+    // Digests and byte counts: every declared payload must describe the
+    // published bytes. Path coverage alone is not an artifact contract.
+    let mut payload_table = Vec::with_capacity(payloads.len());
+    for payload in payloads {
+        let path = payload["path"].as_str().ok_or("payload has no path")?;
+        let digest = payload["digest"]
             .as_str()
-            .ok_or("artifact has no path")?;
-        let digest = artifact["digest"]
-            .as_str()
-            .ok_or_else(|| format!("artifact `{path}` has no digest"))?;
+            .ok_or_else(|| format!("payload `{path}` has no digest"))?;
         let bytes = tree
             .get(path)
-            .ok_or_else(|| format!("artifact `{path}` is not in the dist tree"))?;
-        let actual = sha256_hex(bytes);
+            .ok_or_else(|| format!("payload `{path}` is not in the dist tree"))?;
+        let actual = artifact_digest(bytes);
         if actual != digest {
             return Err(format!(
-                "artifact `{path}` digest mismatch: manifest declares {digest}, published bytes hash to {actual}"
+                "payload `{path}` digest mismatch: manifest declares {digest}, published bytes hash to {actual}"
             ));
         }
+        let declared_bytes = payload["bytes"]
+            .as_u64()
+            .ok_or_else(|| format!("payload `{path}` has no byte count"))?;
+        if declared_bytes != bytes.len() as u64 {
+            return Err(format!(
+                "payload `{path}` byte count mismatch: manifest declares {declared_bytes}, published bytes have {} bytes",
+                bytes.len()
+            ));
+        }
+        payload_table.push((path, digest));
     }
+    if payload_table.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+        return Err("dist/build-manifest.json payloads are not strictly path-sorted".to_string());
+    }
+    let computed_payload_root = payload_root(&payload_table);
+    let declared_payload_root = manifest["payload_root"]
+        .as_str()
+        .ok_or("dist/build-manifest.json has no payload_root")?;
+    if declared_payload_root != computed_payload_root {
+        return Err(format!(
+            "payload_root mismatch: manifest declares {declared_payload_root}, payload table hashes to {computed_payload_root}"
+        ));
+    }
+    let expected_anchor = format!("{}  build-manifest.json\n", sha256_hex(raw.as_bytes()));
+    let anchor = fs::read_to_string(project.join("dist").join("build-manifest.sha256"))
+        .map_err(|err| format!("dist/build-manifest.sha256 unreadable: {err}"))?;
+    if anchor != expected_anchor {
+        return Err(
+            "dist/build-manifest.sha256 does not hash the published manifest bytes".to_string(),
+        );
+    }
+    runtime_core::framework::ArtifactManifestV2::load_verified(&project.join("dist"))
+        .map_err(|err| format!("the production v2 verifier rejects dist/: {err}"))?;
     Ok(())
 }
 
@@ -432,6 +470,24 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = sha2::Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn artifact_digest(bytes: &[u8]) -> String {
+    format!("sha256:{}", sha256_hex(bytes))
+}
+
+fn payload_root(payloads: &[(&str, &str)]) -> String {
+    use sha2::Digest;
+    let mut canonical = Vec::new();
+    for (path, digest) in payloads {
+        canonical.extend_from_slice(path.as_bytes());
+        canonical.push(0);
+        canonical.extend_from_slice(digest.as_bytes());
+        canonical.push(b'\n');
+    }
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(canonical);
+    artifact_digest(&hasher.finalize())
 }
 
 struct Fixture {
@@ -493,11 +549,16 @@ fn bless(
         run.stdout
     );
     assert_eq!(
-        run.success, !expects_failure,
+        run.success,
+        !expects_failure,
         "cannot bless `{}`: build {} but fixture expects {}",
         fixture.name,
         if run.success { "succeeded" } else { "failed" },
-        if expects_failure { "failure" } else { "success" }
+        if expects_failure {
+            "failure"
+        } else {
+            "success"
+        }
     );
     let expected_dir = fixture.expected();
     fs::create_dir_all(&expected_dir).expect("mkdir expected");
@@ -535,7 +596,11 @@ pub fn check_fixture(name: &str) {
     let expects_failure = fixture.expects_failure(plan_version);
     eprintln!(
         "fixture `{name}`: dsc plan v{plan_version}, expecting {}, stderr `{stderr_name}`",
-        if expects_failure { "failure" } else { "success" }
+        if expects_failure {
+            "failure"
+        } else {
+            "success"
+        }
     );
 
     let tmp = tempfile::tempdir().expect("create temp project dir");
@@ -547,7 +612,14 @@ pub fn check_fixture(name: &str) {
     let stderr = normalize_stderr(&project, &project_canonical, &run.stderr);
 
     if std::env::var("DEKA_BLESS").ok().as_deref() == Some("1") {
-        bless(&fixture, &stderr_name, expects_failure, &run, &stderr, &project);
+        bless(
+            &fixture,
+            &stderr_name,
+            expects_failure,
+            &run,
+            &stderr,
+            &project,
+        );
         return;
     }
 
@@ -558,13 +630,19 @@ pub fn check_fixture(name: &str) {
     if run.success != !expects_failure {
         problems.push(format!(
             "[exit] expected {}, build {}\nstderr:\n{}",
-            if expects_failure { "failure" } else { "success" },
+            if expects_failure {
+                "failure"
+            } else {
+                "success"
+            },
             if run.success { "succeeded" } else { "failed" },
             stderr
         ));
     }
-    let expected_stderr = fs::read_to_string(fixture.expected().join(&stderr_name))
-        .unwrap_or_else(|err| panic!("fixture `{name}`: cannot read expected/{stderr_name}: {err}"));
+    let expected_stderr =
+        fs::read_to_string(fixture.expected().join(&stderr_name)).unwrap_or_else(|err| {
+            panic!("fixture `{name}`: cannot read expected/{stderr_name}: {err}")
+        });
     if stderr != expected_stderr {
         problems.push(format!(
             "[stderr] mismatch vs expected/{stderr_name}\n{}",
@@ -608,8 +686,8 @@ fn check_published_output(
         paths
             .iter()
             .map(|path| {
-                if path.starts_with("app/.build-values/") {
-                    "app/.build-values/<slot>.js".to_string()
+                if path.starts_with("server/.values/") {
+                    "server/.values/<slot>.js".to_string()
                 } else {
                     path.clone()
                 }
@@ -635,7 +713,11 @@ fn check_published_output(
         let missing: Vec<String> = expected_cmp.difference(&actual_cmp).cloned().collect();
         let unexpected: Vec<String> = actual_cmp.difference(&expected_cmp).cloned().collect();
         if !missing.is_empty() {
-            let _ = write!(msg, "\nmissing (expected but not built):\n  {}", missing.join("\n  "));
+            let _ = write!(
+                msg,
+                "\nmissing (expected but not built):\n  {}",
+                missing.join("\n  ")
+            );
         }
         if !unexpected.is_empty() {
             let _ = write!(
@@ -649,14 +731,14 @@ fn check_published_output(
 
     // 2. Exact bytes of every declared output, from the expected mirror.
     //    Files embedding a slot id (the historical `deka:dev/<id>` import,
-    //    today the rewritten `.build-values/<id>.js` specifier) are only
+    //    today the rewritten `server/.values/<id>.js` specifier) are only
     //    portable on relative-id dsc (dsc PR #62); released dsc hashes the
     //    absolute path, so the committed id cannot match — skip those
     //    files, loudly, on old dsc. The slot module itself is content-stable
     //    but its blessed mirror path carries the id, so it skips too.
     let mirror = fixture.expected().join("files");
     for rel in &actual_paths {
-        if !relative_ids && rel.starts_with("app/.build-values/") {
+        if !relative_ids && rel.starts_with("server/.values/") {
             eprintln!(
                 "skipping byte comparison of `{rel}`: installed dsc predates relative slot ids (dsc#62)"
             );
@@ -733,7 +815,8 @@ fn check_published_output(
     let manifest_a = fs::read(manifest_path(project)).expect("read manifest (first build)");
     let manifest_b = fs::read(manifest_path(project)).expect("read manifest (rerun)");
     if manifest_a != manifest_b {
-        problems.push("[rerun] build-manifest.json is not byte-identical across builds".to_string());
+        problems
+            .push("[rerun] build-manifest.json is not byte-identical across builds".to_string());
     }
     if project.join(".deka-dist-stage").exists() {
         problems.push("[rerun] staging dir leaked into the project".to_string());
@@ -811,16 +894,19 @@ mod digest_verification {
         let mut manifest: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).expect("read manifest"))
                 .expect("parse manifest");
-        let artifact = &mut manifest["artifacts"][0];
-        let tampered_path = artifact["path"].as_str().expect("artifact path").to_string();
-        let digest = artifact["digest"].as_str().expect("artifact digest");
+        let artifact = &mut manifest["payloads"][0];
+        let tampered_path = artifact["path"].as_str().expect("payload path").to_string();
+        let digest = artifact["digest"].as_str().expect("payload digest");
         let flipped: String = digest
             .chars()
             .map(|c| if c == '0' { '1' } else { '0' })
             .collect();
         artifact["digest"] = serde_json::Value::String(flipped);
-        fs::write(&path, serde_json::to_string(&manifest).expect("serialize manifest"))
-            .expect("write tampered manifest");
+        fs::write(
+            &path,
+            serde_json::to_string(&manifest).expect("serialize manifest"),
+        )
+        .expect("write tampered manifest");
 
         let err = manifest_report(&project, &run.stderr, &tree)
             .expect_err("a tampered digest must fail verification");
