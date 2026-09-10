@@ -849,8 +849,7 @@ impl WorkerThread {
                                 if (k === 'db' && a === 'exec') return { handle: list[0], sql: list[1], params: Array.isArray(list[2]) ? list[2] : [] };
                                 if (k === 'db' && a === 'close') return { handle: list[0] };
                                 if (k === 'db' && a === 'stats') return { handle: list[0] };
-                                if (k === 'concurrency' && a === 'lock_acquire') return { name: list[0], timeout_ms: list[1] };
-                                if (k === 'concurrency' && a === 'lock_release') return { token: list[0] };
+                                // concurrency is PHPX-only (see runtime_core::host_bridge::PHPX_ONLY_ACTIONS).
                                 if (k === 'time' && a === 'sleep_ms') return { milliseconds: list[0] };
                                 if (k === 'net' && a === 'connect') return { host: list[0], port: list[1] };
                                 if (k === 'net' && a === 'listen') return { host: list[0], port: list[1] };

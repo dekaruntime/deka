@@ -433,16 +433,24 @@ pub const HOST_CATALOG: &[HostKind] = &[
         actions: TIME_ACTIONS,
     },
     HostKind {
-        name: "concurrency",
-        grant_owner: "@deka/concurrency",
-        actions: CONCURRENCY_ACTIONS,
-    },
-    HostKind {
         name: "db",
         grant_owner: "@deka/db",
         actions: DB_ACTIONS,
     },
 ];
+
+/// Concurrency (`lock_acquire` / `lock_release`) is deliberately NOT in the
+/// DS-facing catalog: the Rust ops are genuinely async (they park with a
+/// tokio timeout), while the pinned dsc types every action it does not know
+/// as sync. Serving them on the sync emit contract would either block the
+/// isolate thread or mis-tag a Promise as `Ok`. They remain available on the
+/// PHPX compatibility path; exposing them to DekaScript needs a dsc catalog
+/// entry typed async, and is a runtime PR per RFD 27.
+pub const PHPX_ONLY_ACTIONS: &[HostKind] = &[HostKind {
+    name: "concurrency",
+    grant_owner: "@deka/concurrency",
+    actions: CONCURRENCY_ACTIONS,
+}];
 
 /// Look up a kind by name.
 pub fn find_kind(name: &str) -> Option<&'static HostKind> {
