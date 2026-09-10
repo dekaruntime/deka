@@ -12,7 +12,8 @@ use swc_ecma_ast::op;
 use swc_ecma_ast::{
     AssignExpr, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr, Callee, CallExpr,
     CatchClause, Decl, EsVersion, Expr, ExprStmt, Ident, Lit, MemberProp, Module, ModuleItem, Pat, Pass,
-    Program, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, TryStmt, VarDeclKind,
+    Program, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, TryStmt, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_ecma_visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use swc_ecma_codegen::{Emitter, text_writer::JsWriter};
@@ -518,11 +519,95 @@ fn dsc_cannot_throw(expr: &Expr) -> bool {
     }
 }
 
+/// Build the replacement statements for a rewritten match. With `declare`
+/// (statement form, where the original `let R;` was consumed) the binding is
+/// re-declared; without it (assignment form, where dsc already declared the
+/// target earlier in scope) plain assignments are emitted — a `let` there
+/// would shadow and silently drop the value. Cannot-throw expressions emit
+/// an initialized declaration / plain assignment (the Err fallback is
+/// unreachable); otherwise `let R; try { R = EXPR } catch { R = FB }` resp.
+/// `try { R = EXPR } catch { R = FB }`. Declarations are kept explicit: the
+/// chunks are ES modules (strict mode) and a bare assignment to an undeclared
+/// binding throws.
+fn build_result_rewrite(
+    result_binding: Ident,
+    extracted: &Expr,
+    fallback: &Expr,
+    declare: bool,
+) -> Vec<Stmt> {
+    let declare_stmt = |init: Option<Expr>| {
+        Stmt::Decl(Decl::Var(Box::new(VarDecl {
+            span: DUMMY_SP,
+            ctxt: SyntaxContext::empty(),
+            kind: VarDeclKind::Let,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(BindingIdent {
+                    id: result_binding.clone(),
+                    type_ann: None,
+                }),
+                init: init.map(Box::new),
+                definite: false,
+            }],
+        })))
+    };
+    let assign = |rhs: Expr| {
+        Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Assign(AssignExpr {
+                span: DUMMY_SP,
+                op: op!("="),
+                left: AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+                    id: result_binding.clone(),
+                    type_ann: None,
+                })),
+                right: Box::new(rhs),
+            })),
+        })
+    };
+    if dsc_cannot_throw(extracted) {
+        return vec![if declare {
+            declare_stmt(Some(extracted.clone()))
+        } else {
+            assign(extracted.clone())
+        }];
+    }
+    let mut stmts = Vec::with_capacity(2);
+    if declare {
+        stmts.push(declare_stmt(None));
+    }
+    stmts.push(Stmt::Try(Box::new(TryStmt {
+        span: DUMMY_SP,
+        block: BlockStmt {
+            span: DUMMY_SP,
+            ctxt: SyntaxContext::empty(),
+            stmts: vec![assign(extracted.clone())],
+        },
+        // No catch binding: the emitted Err arms all use `Err(_)`, and a
+        // binding here would be textually captured by the minifier's
+        // local renaming (a shadowed `tag` param would receive the error
+        // object in the fallback recursion).
+        handler: Some(CatchClause {
+            span: DUMMY_SP,
+            param: None,
+            body: BlockStmt {
+                span: DUMMY_SP,
+                ctxt: SyntaxContext::empty(),
+                stmts: vec![assign(fallback.clone())],
+            },
+        }),
+        finalizer: None,
+    })));
+    stmts
+}
+
 impl DscSimplify {
-    /// Try to rewrite `stmts[i..i+3]` (the match state machine) into a single
-    /// try/catch statement. Returns the replacement when the exact generated
-    /// shape is present.
-    fn rewrite_match_group(&self, stmts: &[Stmt]) -> Option<Stmt> {
+    /// Try to rewrite `stmts[i..i+3]` (the match state machine) into
+    /// replacement statements. Returns the replacement when the exact
+    /// generated shape is present; the replacement re-declares the result
+    /// binding (the original `let R;` is consumed as part of the group).
+    fn rewrite_match_group(&self, stmts: &[Stmt]) -> Option<Vec<Stmt>> {
         if stmts.len() < 3 {
             return None;
         }
@@ -597,47 +682,82 @@ impl DscSimplify {
             return None;
         }
         let result_binding = result_binding.id.clone();
-        let assign = |rhs: Expr| {
-            Stmt::Expr(ExprStmt {
-                span: DUMMY_SP,
-                expr: Box::new(Expr::Assign(AssignExpr {
-                    span: DUMMY_SP,
-                    op: op!("="),
-                    left: AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
-                        id: result_binding.clone(),
-                        type_ann: None,
-                    })),
-                    right: Box::new(rhs),
-                })),
-            })
-        };
-        // Dead catch: when the extracted expression provably cannot throw,
-        // the Err fallback is unreachable — emit the plain assignment.
-        if dsc_cannot_throw(extracted) {
-            return Some(assign(extracted.clone()));
+        Some(build_result_rewrite(result_binding, extracted, fallback, true))
+    }
+
+    /// Rewrite `TARGET = ((scrut) => { if Ok { const b = scrut.value; return
+    /// b; } if Err { return FB; } throw })((<unsafe scrutinee>))` — the
+    /// expression form dsc emits for `x = match (unsafe { .. }) { .. }` —
+    /// into the same `let TARGET; try/catch` shape as the statement form.
+    fn rewrite_expr_match_assign(&self, stmt: &Stmt) -> Option<Vec<Stmt>> {
+        let Stmt::Expr(expr_stmt) = stmt else { return None };
+        let Expr::Assign(assign) = &*expr_stmt.expr else { return None };
+        if !matches!(assign.op, op!("=")) {
+            return None;
         }
-        Some(Stmt::Try(Box::new(TryStmt {
-            span: DUMMY_SP,
-            block: BlockStmt {
-                span: DUMMY_SP,
-                ctxt: SyntaxContext::empty(),
-                stmts: vec![assign(extracted.clone())],
-            },
-            // No catch binding: the emitted Err arms all use `Err(_)`, and a
-            // binding here would be textually captured by the minifier's
-            // local renaming (a shadowed `tag` param would receive the error
-            // object in the fallback recursion).
-            handler: Some(CatchClause {
-                span: DUMMY_SP,
-                param: None,
-                body: BlockStmt {
-                    span: DUMMY_SP,
-                    ctxt: SyntaxContext::empty(),
-                    stmts: vec![assign((*fallback).clone())],
-                },
-            }),
-            finalizer: None,
-        })))
+        let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left else {
+            return None;
+        };
+        let Expr::Call(call) = strip_parens(&assign.right) else { return None };
+        if call.args.len() != 1 {
+            return None;
+        }
+        let callee = call.callee.as_expr().map(|e| strip_parens(e))?;
+        let Expr::Arrow(arrow) = callee else { return None };
+        if arrow.is_async || arrow.is_generator || arrow.params.len() != 1 {
+            return None;
+        }
+        let Pat::Ident(scrut_param) = &arrow.params[0] else { return None };
+        let scrut_name = scrut_param.id.sym.clone();
+        if !scrut_name.starts_with("__deka_scrutinee") {
+            return None;
+        }
+        let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body else { return None };
+        if body.stmts.len() != 3 {
+            return None;
+        }
+        // if (scrut.__case === "Ok") { const b = scrut.value; return b; }
+        let Stmt::If(ok_if) = &body.stmts[0] else { return None };
+        if ok_if.alt.is_some() || !dsc_case_test(&ok_if.test, &scrut_name, DscResultCase::Ok) {
+            return None;
+        }
+        let ok_block = match &*ok_if.cons {
+            Stmt::Block(block) => block,
+            _ => return None,
+        };
+        if ok_block.stmts.len() != 2 {
+            return None;
+        }
+        let ok_binding = dsc_ok_binding(&ok_block.stmts[0], &scrut_name)?;
+        let Stmt::Return(ok_ret) = &ok_block.stmts[1] else { return None };
+        if dsc_ident(ok_ret.arg.as_deref()?) != Some(ok_binding.clone()) {
+            return None;
+        }
+        // if (scrut.__case === "Err") { return FB; }
+        let Stmt::If(err_if) = &body.stmts[1] else { return None };
+        if err_if.alt.is_some() || !dsc_case_test(&err_if.test, &scrut_name, DscResultCase::Err) {
+            return None;
+        }
+        let err_block = match &*err_if.cons {
+            Stmt::Block(block) => block,
+            _ => return None,
+        };
+        if err_block.stmts.len() != 1 {
+            return None;
+        }
+        let Stmt::Return(err_ret) = &err_block.stmts[0] else { return None };
+        let fallback = err_ret.arg.as_deref()?;
+        // throw new Error("non-exhaustive match");
+        if !dsc_non_exhaustive_throw(&body.stmts[2]) {
+            return None;
+        }
+        let extracted = dsc_unsafe_scrutinee(&call.args[0].expr)?;
+        // The fallback must not observe the scrutinee or the Ok binding.
+        let observed = [scrut_name, ok_binding];
+        if contains_idents(fallback, &observed) || contains_idents(extracted, &observed) {
+            return None;
+        }
+        Some(build_result_rewrite(target.id.clone(), extracted, fallback, false))
     }
 
     /// Rewrite a discarded `<unsafe IIFE>;` expression statement into
@@ -713,7 +833,7 @@ impl DscSimplify {
             }
             if window.len() == 3 {
                 if let Some(rewritten) = self.rewrite_match_group(&window) {
-                    out.push(rewritten);
+                    out.extend(rewritten);
                     continue;
                 }
                 // Not a match group: push the first stmt and put the
@@ -721,14 +841,14 @@ impl DscSimplify {
                 let third = window.pop().expect("three");
                 let second = window.pop().expect("two");
                 let first = window.pop().expect("one");
-                out.push(self.rewrite_one(first));
-                out.push(self.rewrite_one(second));
-                out.push(self.rewrite_one(third));
+                out.extend(self.rewrite_one(first));
+                out.extend(self.rewrite_one(second));
+                out.extend(self.rewrite_one(third));
                 continue;
             }
             // Tail of one or two statements.
             for stmt in window.drain(..) {
-                out.push(self.rewrite_one(stmt));
+                out.extend(self.rewrite_one(stmt));
             }
         }
         *stmts = out;
@@ -736,10 +856,13 @@ impl DscSimplify {
 }
 
 impl DscSimplify {
-    fn rewrite_one(&self, stmt: Stmt) -> Stmt {
+    fn rewrite_one(&self, stmt: Stmt) -> Vec<Stmt> {
+        if let Some(rewritten) = self.rewrite_expr_match_assign(&stmt) {
+            return rewritten;
+        }
         match self.rewrite_discarded_unsafe(&stmt) {
-            Some(rewritten) => rewritten,
-            None => stmt,
+            Some(rewritten) => vec![rewritten],
+            None => vec![stmt],
         }
     }
 }
@@ -778,6 +901,46 @@ return __deka_match_result_10;
         );
         assert!(out.contains("try"), "rewrite must produce try/catch:\n{out}");
         assert!(out.contains("someValue("), "fallback recursion must survive:\n{out}");
+        assert!(
+            out.contains("let ") && out.contains("try"),
+            "rewrite must declare the result binding (strict-mode chunks):\n{out}"
+        );
+    }
+
+    #[test]
+    fn rewrites_expr_position_match_assign() {
+        let source = r##"
+export function jsx(tag, props, children) {
+let nodeProps = props;
+if (children) {
+} else {
+nodeProps = ((__deka_scrutinee) => {
+  if (__deka_scrutinee.__case === "Ok") {
+    const v = __deka_scrutinee.value;
+    return v;
+  }
+  if (__deka_scrutinee.__case === "Err") {
+    return props;
+  }
+  throw new Error("non-exhaustive match");
+})(((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
+props ?? {}
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })()));
+}
+return nodeProps;
+}
+"##;
+        let out = optimize(source);
+        assert!(
+            !out.contains("__deka_scrutinee"),
+            "expression match must go:\n{out}"
+        );
+        assert!(out.contains("??"), "unsafe expression must survive:\n{out}");
+        assert_eq!(
+            out.matches("let ").count(),
+            1,
+            "rewrite must assign, not shadow-declare (the target is declared earlier in scope):\n{out}"
+        );
     }
 
     #[test]
@@ -831,5 +994,4 @@ export function mine(children) {
         }
     }
 }
-
 
