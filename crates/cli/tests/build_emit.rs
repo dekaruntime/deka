@@ -331,3 +331,127 @@ fn build_fails_loudly_when_island_prop_is_absent_at_prerender() {
         "a failed prerender must not publish dist HTML: {combined}"
     );
 }
+
+#[test]
+fn build_fails_loudly_when_live_expression_throws_in_page_render() {
+    // deka#744 F2: the reporter's exact scenario — `signal()` returns a
+    // tuple, and calling it as a function is a runtime TypeError inside the
+    // compiler's live() wrapper during prerender. The silent failure shipped
+    // an empty <p id="sig"></p> next to working static content; it must
+    // instead fail the build with the error and its source location.
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "import { signal } from \"ui/reactive\"\n\nexport fn Page() {\n    const count = signal(7)\n    return <section><p id=\"sig\">{count()}</p><p id=\"static\">ok</p></section>\n}\n",
+    )
+    .expect("write throwing live page");
+    let (success, combined) = run_build(project.path());
+    assert!(
+        !success,
+        "deka build must fail when a live() expression throws at prerender, got success. output: {combined}"
+    );
+    assert!(
+        combined.contains("count is not a function"),
+        "the build error must name the actual failure, not a generic message: {combined}"
+    );
+    assert!(
+        combined.contains("page.dsx"),
+        "the build error must carry the source location: {combined}"
+    );
+    assert!(
+        !project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html")
+            .exists(),
+        "a failed prerender must not publish dist HTML: {combined}"
+    );
+}
+
+/// The installed dsc's version, resolved the way CI runs these tests
+/// (`DEKA_DSC`, then `dsc` on PATH). `deka build` additionally accepts a
+/// sibling of the binary; the tests don't need that fallback.
+fn dsc_version() -> Option<(u64, u64, u64)> {
+    let output = match std::env::var_os("DEKA_DSC") {
+        Some(bin) => Command::new(bin).arg("--version").output(),
+        None => Command::new("dsc").arg("--version").output(),
+    }
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    // dsc --version prints to stderr.
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let digits: Vec<u64> = text
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse().ok())
+        .collect();
+    match digits.as_slice() {
+        [major, minor, patch, ..] => Some((*major, *minor, *patch)),
+        _ => None,
+    }
+}
+
+#[test]
+fn build_accepts_explicit_imports_of_compiler_injected_names() {
+    // deka#744 F3: the transpiler injects `live` (ui/reactive) and
+    // `jsx, jsxs, Fragment` (ui/jsx) for JSX. Importing any of them
+    // explicitly used to duplicate the declaration — a SyntaxError at module
+    // load during prerender. The compiler fix lives in dsc; this pins the
+    // end-to-end contract here.
+    //
+    // The fix is not in a released dsc yet (the pin in scripts/dsc-version
+    // still points at 0.8.2, and bumping it is its own PR), so skip while the
+    // installed compiler predates it. The pin-bump PR re-activates this test.
+    match dsc_version() {
+        Some(version) if version > (0, 8, 2) => {}
+        Some(version) => {
+            eprintln!("SKIP: installed dsc {version:?} predates the deka#744 F3 fix");
+            return;
+        }
+        None => {
+            eprintln!("SKIP: dsc version is not resolvable");
+            return;
+        }
+    }
+
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    // Every injected name is imported AND referenced, so the user's import
+    // survives graph shaking — that is the collision case. `bound` only pins
+    // the `live` binding (a bare live value renders empty server-side, which
+    // is ui/reactive semantics, not what this test exercises).
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "import { signal, live } from \"ui/reactive\"\nimport { jsx, jsxs, Fragment } from \"ui/jsx\"\n\nexport fn Page() {\n    const s = signal(7)\n    const bound = live(fn() { return s[0]() })\n    const b = jsx(\"b\", {}, \"!\")\n    const i = jsxs(\"i\", {}, [\"2\", \"3\"])\n    const f = jsx(Fragment, {}, \"~\")\n    return <section><p id=\"sig\">{s[0]()}</p>{bound}{b}{i}{f}</section>\n}\n",
+    )
+    .expect("write explicit-import page");
+    let (success, combined) = run_build(project.path());
+    assert!(
+        success,
+        "deka build must accept explicit imports of live/jsx/jsxs/Fragment: {combined}"
+    );
+    let index = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
+    )
+    .expect("read prerendered html");
+    assert!(
+        index.contains("id=\"sig\">7</p>"),
+        "the signal value must prerender into the initial HTML: {index}"
+    );
+    assert!(
+        index.contains("<b>!</b>") && index.contains("<i>23</i>"),
+        "explicitly-imported jsx/jsxs/Fragment factories must render: {index}"
+    );
+}
