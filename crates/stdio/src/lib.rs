@@ -270,6 +270,15 @@ pub fn diagnostic(component: &str, message: &str) {
     emit_line(&format!("[warn] [{}] {}", component, message));
 }
 
+/// Advisory note (RFD 55 severity vocabulary: `[error]` / `[warning]` / `[note]`).
+/// Notes are for situations, not failures — a supported path that works
+/// correctly but deserves a nudge (e.g. "not a deka project"). Like every
+/// other line here this goes to stderr; stdout belongs to the program.
+/// Format: `[note] message`
+pub fn note(message: &str) {
+    emit_line(&format!("[note] {}", message));
+}
+
 // ============================================================
 // Debug-level logging (only shown when LOG_LEVEL=debug)
 // ============================================================

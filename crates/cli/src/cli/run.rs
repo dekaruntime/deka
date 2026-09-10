@@ -33,7 +33,13 @@ pub fn cmd(context: &Context) {
         }
     }
     match prepare_run_context(context) {
-        Ok(prepared) => runtime::run(&prepared),
+        Ok(prepared) => {
+            runtime::run(&prepared.context);
+            // RFD 55: situational advisories come last, after the work.
+            if prepared.loose_file {
+                stdio::note(crate::cli::user_cache::NOT_A_PROJECT_NOTE);
+            }
+        }
         Err(err) => {
             stdio::error("run", &err);
             std::process::exit(1);
@@ -45,7 +51,14 @@ fn cli_arg_is_source_file(context: &Context) -> bool {
     requested_script_name(context).is_some_and(runtime_core::entry::has_run_source_ext)
 }
 
-fn prepare_run_context(context: &Context) -> Result<Context, String> {
+struct PreparedRun {
+    context: Context,
+    /// True when the entry was a loose `.ds`/`.dsx` (no deka.json anywhere
+    /// above it) that we compiled into the user-global cache (deka#765).
+    loose_file: bool,
+}
+
+fn prepare_run_context(context: &Context) -> Result<PreparedRun, String> {
     let cwd = std::env::current_dir().map_err(|err| format!("failed to get cwd: {err}"))?;
     let (cli_arg, extra_args) = split_run_positionals(&context.args.positionals);
     let resolved = runtime_core::entry::resolve_entry(&cwd, cli_arg)?;
@@ -55,11 +68,32 @@ fn prepare_run_context(context: &Context) -> Result<Context, String> {
             resolved.path.display()
         ));
     }
+    // Loose file (no project anywhere above it): compile into the
+    // user-global cache and run the materialized artifact — never write
+    // build output into the user's directory (deka#765).
+    if crate::cli::user_cache::is_loose_source_file(&resolved.path) {
+        let materialized = crate::cli::user_cache::materialize_loose(&resolved.path)
+            .map_err(|err| format!("failed to materialize {} into the user cache: {err}", resolved.path.display()))?;
+        let mut prepared = crate::cli::user_cache::rewrite_context_for_artifact(
+            context,
+            &materialized.artifact,
+        )?;
+        let mut positionals = vec![materialized.artifact.to_string_lossy().into_owned()];
+        positionals.extend(extra_args.iter().cloned());
+        prepared.args.positionals = positionals;
+        return Ok(PreparedRun {
+            context: prepared,
+            loose_file: true,
+        });
+    }
     let mut prepared = context.clone();
     let mut positionals = vec![resolved.path.to_string_lossy().into_owned()];
     positionals.extend(extra_args.iter().cloned());
     prepared.args.positionals = positionals;
-    Ok(prepared)
+    Ok(PreparedRun {
+        context: prepared,
+        loose_file: false,
+    })
 }
 
 fn split_run_positionals(positionals: &[String]) -> (Option<&str>, &[String]) {

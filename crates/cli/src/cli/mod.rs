@@ -21,6 +21,8 @@ pub mod build_server_graph;
 #[cfg(feature = "native")]
 pub mod build_slots;
 #[cfg(feature = "native")]
+pub mod cache;
+#[cfg(feature = "native")]
 pub mod check;
 #[cfg(feature = "native")]
 pub mod compile;
@@ -65,6 +67,8 @@ pub mod test;
 #[cfg(feature = "native")]
 pub mod transpile;
 pub mod user;
+#[cfg(feature = "native")]
+pub mod user_cache;
 #[cfg(feature = "native")]
 pub mod verify;
 
