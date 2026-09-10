@@ -12,7 +12,11 @@ use deno_core::ModuleSourceCode;
 /// candidate export (`default`, `app`, `App`, `handler`, or the namespace) to
 /// `globalThis.app`, adapting function/object candidates where a runtime
 /// adapter is present.
-pub(crate) fn entry_wrapper_source(entry_specifier: &str) -> String {
+/// Generate the loader-owned entry wrapper. Build emission also reads this
+/// source to seed the artifact's UI dependency graph: the wrapper is executed
+/// for every entry, so its imports are artifact dependencies just as much as
+/// imports written by an app module are.
+pub fn entry_wrapper_source(entry_specifier: &str) -> String {
     let template = "import * as __jsx from \"ui/jsx\";\n\
 import * as __server from \"ui/server\";\n\
 import * as __reactive from \"ui/reactive\";\n\
