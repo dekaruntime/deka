@@ -379,7 +379,10 @@ fn prune_loose(loose_root: &Path, max_entries: usize, max_bytes: u64) -> Result<
         let size = dir_size(&path);
         entries.push((path, age_key, size));
     }
-    entries.sort_by_key(|(_, age_key, _)| *age_key);
+    // Equal age keys (same-millisecond entries, or mtime-granularity ties on
+    // the fallback path) have no well-defined "oldest": break ties by entry
+    // name so eviction order never depends on filesystem iteration order.
+    entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
 
     let mut total: u64 = entries.iter().map(|(_, _, size)| *size).sum();
     while entries.len() as u64 > max_entries as u64 || total > max_bytes {
@@ -635,7 +638,7 @@ mod tests {
         for index in 0..4u64 {
             let entry = loose.path().join(format!("{index:064x}"));
             fs::create_dir_all(entry.join(OUT_DIR)).expect("entry");
-            fs::write(entry.join(META_FILE), format!("{{\"created_unix_ms\":{index}}}")).expect("meta");
+            write_entry_meta(&entry, index);
             fs::write(entry.join(OUT_DIR).join("app.js"), vec![0u8; 100]).expect("payload");
         }
         prune_loose(loose.path(), 2, u64::MAX).expect("prune");
@@ -650,25 +653,61 @@ mod tests {
     }
 
     #[test]
+    fn prune_equal_age_keys_evict_in_deterministic_order() {
+        let loose = tempfile::tempdir().expect("loose");
+        // Every entry shares one timestamp: there is no oldest, so eviction
+        // order must come from the entry name, never readdir order.
+        for name in ["b_entry", "d_entry", "a_entry", "c_entry"] {
+            let entry = loose.path().join(name);
+            fs::create_dir_all(entry.join(OUT_DIR)).expect("entry");
+            write_entry_meta(&entry, 7);
+            fs::write(entry.join(OUT_DIR).join("app.js"), vec![0u8; 10]).expect("payload");
+        }
+        prune_loose(loose.path(), 2, u64::MAX).expect("prune");
+        let remaining: std::collections::BTreeSet<_> = fs::read_dir(loose.path())
+            .expect("read")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            remaining,
+            ["c_entry", "d_entry"].into_iter().map(str::to_string).collect::<std::collections::BTreeSet<_>>(),
+            "name order breaks timestamp ties deterministically"
+        );
+    }
+
+    /// Full `EntryMeta` JSON, as `materialize_with` records it. A fixture
+    /// with only `created_unix_ms` never parses, and the test silently
+    /// exercises the mtime fallback instead of the metadata path.
+    fn write_entry_meta(entry: &Path, created_unix_ms: u64) {
+        let meta = serde_json::json!({
+            "dsc": "dsc 1.0 / deka x",
+            "deka": env!("CARGO_PKG_VERSION"),
+            "source": "/tmp/app.ds",
+            "created_unix_ms": created_unix_ms,
+        });
+        fs::write(entry.join(META_FILE), meta.to_string()).expect("meta");
+    }
+
+    #[test]
     fn prune_evicts_until_size_budget_holds() {
         let loose = tempfile::tempdir().expect("loose");
         for index in 0..3u64 {
             let entry = loose.path().join(format!("s{index}"));
             fs::create_dir_all(entry.join(OUT_DIR)).expect("entry");
-            fs::write(
-                entry.join(META_FILE),
-                format!("{{\"created_unix_ms\":{index}}}"),
-            )
-            .expect("meta");
+            write_entry_meta(&entry, index);
             fs::write(entry.join(OUT_DIR).join("app.js"), vec![0u8; 60]).expect("payload");
         }
-        // 180 bytes total; 130 budget drops the two oldest (60 each).
-        prune_loose(loose.path(), usize::MAX, 130).expect("prune");
-        let remaining = fs::read_dir(loose.path())
+        // Budget for two entries (payload + metadata); the oldest must go.
+        let entry_size = dir_size(&loose.path().join("s0"));
+        prune_loose(loose.path(), usize::MAX, entry_size * 2).expect("prune");
+        let remaining: Vec<_> = fs::read_dir(loose.path())
             .expect("read")
             .flatten()
-            .count();
-        assert_eq!(remaining, 1);
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.contains(&"s2".to_string()), "newest survives: {remaining:?}");
     }
 
     #[test]
