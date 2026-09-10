@@ -1,5 +1,9 @@
 use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry, SubcommandSpec};
-use std::path::PathBuf;
+
+#[path = "assets.rs"]
+mod assets;
+
+use assets::UiAssets;
 
 const COMMAND: CommandSpec = CommandSpec {
     name: "introspect",
@@ -73,27 +77,20 @@ pub fn register(registry: &mut Registry) {
     });
 }
 
-fn get_ui_path(filename: &str) -> PathBuf {
-    // Get the path to the introspect crate's ui directory
-    // This assumes the crate is in deka/crates/introspect
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest_dir)
-        .join("src")
-        .join("ui")
-        .join(filename)
+fn materialize_ui() -> UiAssets {
+    match UiAssets::materialize() {
+        Ok(assets) => assets,
+        Err(message) => {
+            stdio::error("introspect", &message);
+            std::process::exit(1);
+        }
+    }
 }
 
 // Default command - launch the TUI
 pub fn cmd_default(context: &Context) {
-    let ui_path = get_ui_path("introspect-ui.tsx");
-
-    if !ui_path.exists() {
-        stdio::error(
-            "introspect",
-            &format!("TUI file not found: {}", ui_path.display()),
-        );
-        std::process::exit(1);
-    }
+    let assets = materialize_ui();
+    let ui_path = assets.ui_path();
 
     // Build arguments for the TUI
     let mut args = Vec::new();
@@ -128,15 +125,7 @@ pub fn cmd_default(context: &Context) {
 
 // Top subcommand
 pub fn cmd_top(context: &Context) {
-    let cli_path = get_ui_path("cli.ts");
-
-    if !cli_path.exists() {
-        stdio::error(
-            "introspect",
-            &format!("cli.ts not found: {}", cli_path.display()),
-        );
-        std::process::exit(1);
-    }
+    let assets = materialize_ui();
 
     // Build arguments for introspectTop
     let mut args = vec!["top".to_string()];
@@ -175,20 +164,12 @@ pub fn cmd_top(context: &Context) {
         args.push("--json".to_string());
     }
 
-    execute_introspect_command(&cli_path, args, context);
+    execute_introspect_command(assets.cli_path(), args, context);
 }
 
 // Workers subcommand
 pub fn cmd_workers(context: &Context) {
-    let cli_path = get_ui_path("cli.ts");
-
-    if !cli_path.exists() {
-        stdio::error(
-            "introspect",
-            &format!("cli.ts not found: {}", cli_path.display()),
-        );
-        std::process::exit(1);
-    }
+    let assets = materialize_ui();
 
     let mut args = vec!["workers".to_string()];
 
@@ -206,20 +187,12 @@ pub fn cmd_workers(context: &Context) {
         args.push("--json".to_string());
     }
 
-    execute_introspect_command(&cli_path, args, context);
+    execute_introspect_command(assets.cli_path(), args, context);
 }
 
 // Inspect subcommand
 pub fn cmd_inspect(context: &Context) {
-    let cli_path = get_ui_path("cli.ts");
-
-    if !cli_path.exists() {
-        stdio::error(
-            "introspect",
-            &format!("cli.ts not found: {}", cli_path.display()),
-        );
-        std::process::exit(1);
-    }
+    let assets = materialize_ui();
 
     let handler = context.args.positionals.get(0).cloned().unwrap_or_default();
     if handler.is_empty() {
@@ -243,20 +216,12 @@ pub fn cmd_inspect(context: &Context) {
         args.push("--json".to_string());
     }
 
-    execute_introspect_command(&cli_path, args, context);
+    execute_introspect_command(assets.cli_path(), args, context);
 }
 
 // Kill subcommand
 pub fn cmd_kill(context: &Context) {
-    let cli_path = get_ui_path("cli.ts");
-
-    if !cli_path.exists() {
-        stdio::error(
-            "introspect",
-            &format!("cli.ts not found: {}", cli_path.display()),
-        );
-        std::process::exit(1);
-    }
+    let assets = materialize_ui();
 
     let handler = context.args.positionals.get(0).cloned().unwrap_or_default();
     if handler.is_empty() {
@@ -276,10 +241,14 @@ pub fn cmd_kill(context: &Context) {
         args.push(runtime.clone());
     }
 
-    execute_introspect_command(&cli_path, args, context);
+    execute_introspect_command(assets.cli_path(), args, context);
 }
 
-fn execute_introspect_command(wrapper_path: &PathBuf, args: Vec<String>, context: &Context) {
+fn execute_introspect_command(
+    wrapper_path: &std::path::Path,
+    args: Vec<String>,
+    context: &Context,
+) {
     unsafe {
         let args_json = serde_json::to_string(&args).unwrap_or_else(|_| "[]".to_string());
         std::env::set_var("DEKA_ARGS", args_json);
