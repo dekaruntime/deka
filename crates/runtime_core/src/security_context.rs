@@ -1,15 +1,17 @@
-//! Per-execution security context (deka#725).
+//! Per-execution security context (deka#725; the only policy channel since
+//! deka#801).
 //!
-//! The serve/run paths export the resolved security policy through
-//! `DEKA_SECURITY_POLICY` / `DEKA_SECURITY_NO_PROMPT`, which bridge
-//! enforcement reads per call. Build-slot materialization must execute under
-//! the project's policy WITHOUT mutating that process-wide state: under
-//! `deka dev` the server keeps serving requests on other threads, and those
-//! requests would observe the build-phase policy (Codex review of deka#729).
+//! Bridge enforcement resolves the security policy exclusively from the
+//! [`SecurityContext`] installed on the executing thread — the process
+//! environment is not a configuration transport and a missing context is an
+//! error, never a silent default. Every dispatch path (serve, run, platform,
+//! prerender, build slots) resolves the policy from `deka.json` and hands it
+//! to the pool as `RequestData.security`, which the worker installs for the
+//! duration of the execution. Build-slot materialization executes under the
+//! project's policy this way WITHOUT widening what other threads observe:
+//! under `deka dev` the server keeps serving requests on other threads, and
+//! those requests carry their own context (Codex review of deka#729).
 //!
-//! Instead, an execution that needs a different policy (build slots) or
-//! prompt suppression installs a [`SecurityContext`] on its own thread for
-//! the duration of the execution; enforcement prefers it over the env vars.
 //! Isolate workers run ops on the thread that installs the context, so the
 //! guard in `pool::WorkerThread::process_request` covers every bridge call
 //! of that execution.
@@ -19,8 +21,10 @@ use std::cell::RefCell;
 /// Security policy overrides for one execution.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SecurityContext {
-    /// Resolved policy JSON (the same payload `DEKA_SECURITY_POLICY` carries).
-    /// `None` means "no override" — enforcement falls back to the env var.
+    /// Resolved policy JSON. `None` means no context is installed, which
+    /// enforcement reports as an error naming the dispatch path that failed
+    /// to supply the policy — there is deliberately no env or default
+    /// fallback (deka#801).
     pub policy_json: Option<String>,
     /// Suppress interactive approval prompts for this execution (the build
     /// phase must fail, not block, on a denied capability).
@@ -57,7 +61,8 @@ pub fn current_security_context() -> Option<SecurityContext> {
 }
 
 /// The policy JSON installed for the current thread's execution, if any.
-/// Enforcement readers prefer this over the `DEKA_SECURITY_POLICY` env var.
+/// This is the only channel enforcement reads; `None` means the dispatch
+/// path failed to install a context and enforcement errors out.
 pub fn context_policy_json() -> Option<String> {
     current_security_context().and_then(|context| context.policy_json)
 }

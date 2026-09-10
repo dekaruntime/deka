@@ -201,7 +201,7 @@ fn host_of(url_str: &str) -> Option<String> {
 /// `Ok(())` when allowed, `Err(reason)` otherwise. Privileged code
 /// (platform server / framework) is already exempted by the shared
 /// `enforce_net` helper. The policy is passed in so callers can pin it
-/// instead of racing on the process-global `DEKA_SECURITY_POLICY` env var
+/// instead of re-resolving the per-execution security context per call
 /// (deka#537).
 pub(crate) fn enforce_host_allowed_with(
     policy: &SecurityPolicy,
@@ -282,14 +282,18 @@ impl std::error::Error for RedirectHostDenied {}
 
 /// Public entry — called from `op_deka_http_call` which the pool's
 /// bridge layer routes `bridge('http', action, payload)` through.
-/// Reads `DEKA_SECURITY_POLICY` once per call; use
-/// `http_call_with_policy` to pin the policy instead.
+/// Resolves the policy from the per-execution security context the
+/// dispatch path installed; use `http_call_with_policy` to pin the policy
+/// instead.
 pub fn http_call(action: &str, payload: &Value) -> Value {
-    http_call_with_policy(
-        &crate::modules::php::security_policy_from_env(),
-        action,
-        payload,
-    )
+    match crate::modules::php::security_policy_from_context() {
+        Ok(policy) => http_call_with_policy(&policy, action, payload),
+        Err(err) => json!({
+            "ok": false,
+            "error": "security_policy_missing",
+            "message": err.to_string(),
+        }),
+    }
 }
 
 /// The dispatch itself, with the policy passed in. See `http_call` for

@@ -1,5 +1,5 @@
 use super::bridge_metrics::record_bridge_proto_metric;
-use super::security::{enforce_net_with, security_policy_from_env};
+use super::security::{enforce_net_with, security_policy_from_context};
 use super::*;
 use deno_core::OpState;
 use rustls::{Certificate, PrivateKey, ServerName};
@@ -45,10 +45,11 @@ pub(super) struct NetState {
     handles: HashMap<u64, NetHandle>,
     listeners: HashMap<u64, NetListenerHandle>,
     /// Fixed policy for this isolate's net bridge. `None` (the
-    /// production default) re-reads `DEKA_SECURITY_POLICY` from the
-    /// process env on every dispatch, preserving the historical
-    /// behaviour. Tests seed a policy via `with_policy` so isolates stop
-    /// racing on the process-global env var (deka#537).
+    /// production default) resolves the policy from the per-execution
+    /// security context the dispatch path installed (deka#801); a missing
+    /// context is an error, never an env read or a default policy. Tests
+    /// seed a policy via `with_policy` so isolates stop depending on the
+    /// executing thread's context (deka#537).
     policy: Option<SecurityPolicy>,
 }
 
@@ -1063,12 +1064,13 @@ pub(super) fn net_call_proto_impl(
     state: &mut NetState,
     request: &[u8],
 ) -> Result<Vec<u8>, deno_core::error::CoreError> {
-    // A seeded policy wins; otherwise fall back to the env read the
-    // bridge has always done (production path).
-    let policy = state
-        .policy
-        .clone()
-        .unwrap_or_else(security_policy_from_env);
+    // A seeded policy wins; otherwise resolve the per-execution security
+    // context the dispatch path installed (production path, deka#801). A
+    // missing context is an error — never a silent default policy.
+    let policy = match state.policy.clone() {
+        Some(policy) => policy,
+        None => security_policy_from_context()?,
+    };
     net_call_proto_impl_with(state, &policy, request)
 }
 

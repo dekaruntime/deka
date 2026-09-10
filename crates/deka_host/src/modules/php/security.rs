@@ -4,30 +4,53 @@ use super::security_hint::{
 };
 use super::*;
 
-/// Reads the effective security policy for the current call: a per-execution
-/// [`runtime_core::security_context`] wins over `DEKA_SECURITY_POLICY`, so a
-/// build cannot leak its policy to concurrent requests (deka#729; deka#537).
-pub fn security_policy_from_env() -> SecurityPolicy {
-    if let Some(raw) = runtime_core::security_context::context_policy_json() {
-        return security_policy_from_json_str(&raw);
-    }
-    let raw = match std::env::var("DEKA_SECURITY_POLICY") {
-        Ok(v) => v,
-        Err(_) => return SecurityPolicy::default(),
+/// Reads the effective security policy for the current call: the
+/// per-execution [`runtime_core::security_context`] installed by the
+/// dispatch path (deka#725). Since deka#801 the context is the ONLY
+/// channel: a missing one is an error naming the dispatch path that failed
+/// to supply it — never a silent fall back to the process environment or to
+/// a default policy (a default would be an invisible policy). Malformed
+/// context JSON fails closed the same way.
+pub fn security_policy_from_context() -> Result<SecurityPolicy, deno_core::error::CoreError> {
+    let Some(raw) = runtime_core::security_context::context_policy_json() else {
+        return Err(core_err(
+            "security policy missing: no per-execution security context is installed; \
+             the dispatch path failed to supply the resolved deka.json policy",
+        ));
     };
     security_policy_from_json_str(&raw)
 }
 
-fn security_policy_from_json_str(raw: &str) -> SecurityPolicy {
-    let json = match serde_json::from_str::<serde_json::Value>(raw) {
-        Ok(v) => v,
-        Err(_) => return SecurityPolicy::default(),
-    };
+fn security_policy_from_json_str(raw: &str) -> Result<SecurityPolicy, deno_core::error::CoreError> {
+    let json = serde_json::from_str::<serde_json::Value>(raw).map_err(|err| {
+        core_err(format!(
+            "invalid security policy in the per-execution security context: {err}"
+        ))
+    })?;
     let parsed = parse_deka_security_policy(&json);
     if parsed.has_errors() {
-        SecurityPolicy::default()
+        let errors = parsed
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(
+                    diagnostic.level,
+                    runtime_core::security_policy::PolicyDiagnosticLevel::Error
+                )
+            })
+            .map(|diagnostic| {
+                format!(
+                    "{} at {}: {}",
+                    diagnostic.code, diagnostic.path, diagnostic.message
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        Err(core_err(format!(
+            "invalid security policy in the per-execution security context: {errors}"
+        )))
     } else {
-        parsed.policy
+        Ok(parsed.policy)
     }
 }
 
@@ -103,11 +126,13 @@ fn match_rule_item(capability: &str, rule_item: &str, target: &str) -> bool {
 /// string lowercase and without port — the allowlist match handles
 /// exact hosts, DNS wildcards, and `*`.
 pub fn enforce_net_public(host: &str) -> Result<(), String> {
-    enforce_net_public_with(&security_policy_from_env(), host)
+    let policy = security_policy_from_context().map_err(|err| err.to_string())?;
+    enforce_net_public_with(&policy, host)
 }
 
-/// The gate itself, with the policy passed in. See
-/// `security_policy_from_env` for why this exists.
+/// The gate itself, with the policy passed in. Callers that already hold
+/// the resolved policy (pinned per-isolate net state, tests) use this to
+/// avoid re-resolving it per call.
 pub fn enforce_net_public_with(policy: &SecurityPolicy, host: &str) -> Result<(), String> {
     match enforce_net_with(policy, Some(host)) {
         Ok(()) => Ok(()),
@@ -492,21 +517,23 @@ fn classify_security_origin(capability: &str, target: Option<&str>) -> &'static 
 }
 
 pub(super) fn enforce_read(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
-    let policy = security_policy_from_env();
+    let policy = security_policy_from_context()?;
     enforce_scope("read", &policy.allow.read, &policy.deny.read, target)
 }
 
 pub(super) fn enforce_write(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
-    let policy = security_policy_from_env();
+    let policy = security_policy_from_context()?;
     enforce_scope("write", &policy.allow.write, &policy.deny.write, target)
 }
 
 pub(super) fn enforce_net(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
-    enforce_net_with(&security_policy_from_env(), target)
+    let policy = security_policy_from_context()?;
+    enforce_net_with(&policy, target)
 }
 
-/// The gate itself, with the policy passed in. See
-/// `security_policy_from_env` for why this exists.
+/// The gate itself, with the policy passed in. Callers that already hold
+/// the resolved policy (pinned per-isolate net state, tests) use this to
+/// avoid re-resolving it per call.
 pub(super) fn enforce_net_with(
     policy: &SecurityPolicy,
     target: Option<&str>,
@@ -526,7 +553,15 @@ pub(super) fn enforce_net_with(
 /// grant makes the global absent and even an `unsafe { process.cwd() }` fails.
 #[op2(fast)]
 pub(super) fn op_php_env_capability_granted() -> bool {
-    let policy = security_policy_from_env();
+    let policy = match security_policy_from_context() {
+        Ok(policy) => policy,
+        Err(err) => {
+            // Fail closed: no context means the dispatch path failed to
+            // supply a policy, so no env grant of any shape is honored.
+            eprintln!("[security] env capability denied: {err}");
+            return false;
+        }
+    };
     if matches!(policy.deny.env, RuleList::All) {
         return false;
     }
@@ -534,17 +569,17 @@ pub(super) fn op_php_env_capability_granted() -> bool {
 }
 
 pub(super) fn enforce_env(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
-    let policy = security_policy_from_env();
+    let policy = security_policy_from_context()?;
     enforce_scope("env", &policy.allow.env, &policy.deny.env, target)
 }
 
 pub(super) fn enforce_db(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
-    let policy = security_policy_from_env();
+    let policy = security_policy_from_context()?;
     enforce_scope("db", &policy.allow.db, &policy.deny.db, target)
 }
 
 pub(super) fn enforce_wasm(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
-    let policy = security_policy_from_env();
+    let policy = security_policy_from_context()?;
     enforce_scope("wasm", &policy.allow.wasm, &policy.deny.wasm, target)
 }
 
