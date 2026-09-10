@@ -34,6 +34,7 @@ use deno_error::JsErrorBox;
 
 use runtime_core::host_bridge::{self, GrantTable};
 
+mod catalog_gate;
 mod grants;
 mod graph_hash;
 mod policy;
@@ -234,23 +235,10 @@ impl PhpxEsmLoader {
             // catalog kind can never resolve its helpers — refuse to boot.
             // Official packages were validated at the source boundary before
             // dsc ran (unknown helpers, arity, classification).
-            for path in paths {
-                if loader.catalog_eligible_for_path(path) {
-                    continue;
-                }
-                let js = &modules[path];
-                let referenced = runtime_core::deka_catalog::DEKA_CATALOG
-                    .iter()
-                    .find(|kind| js.contains(&format!("deka.{}.", kind.name)));
-                if let Some(kind) = referenced {
-                    let name = loader.package_name_for_path(path);
-                    return Err(JsErrorBox::generic(format!(
-                        "package '{}' references the closed deka.* catalog (deka.{}) but is not an official @deka/* stdlib package ({})",
-                        name,
-                        kind.name,
-                        path.display()
-                    )));
-                }
+            if let Some(message) =
+                catalog_gate::non_official_catalog_reference(&loader, modules)
+            {
+                return Err(JsErrorBox::generic(message));
             }
         }
 
@@ -340,43 +328,6 @@ impl PhpxEsmLoader {
         }
 
         Vec::new()
-    }
-
-    /// RFD 21 (deka#754): whether a module may bind the closed `deka.*`
-    /// catalog through the per-module preamble. Same classification the
-    /// source scan used before compile: official `@deka/*` dependencies, an
-    /// official project root, the runtime-distribution `ui/*` modules, or a
-    /// linked package whose nearest manifest is official. Application code
-    /// never qualifies.
-    fn catalog_eligible_for_path(&self, path: &Path) -> bool {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let path: &Path = &canonical;
-        // Materialized `ui/*` toolchain modules are part of the deka
-        // distribution like the prelude.
-        if path.starts_with(self.cache_dir.join("ui")) {
-            return true;
-        }
-        if let Some(package_root) = self.dependency_package_root(path) {
-            let name = dependency_package_name(&package_root, &self.project_root);
-            return host_bridge::is_official_package_name(&name);
-        }
-        if path.starts_with(&self.project_root) {
-            return self.root_official;
-        }
-        // Linked packages outside the project root: nearest manifest decides.
-        path.ancestors()
-            .find(|ancestor| ancestor.join("deka.json").is_file())
-            .and_then(|root| {
-                std::fs::read_to_string(root.join("deka.json"))
-                    .ok()
-                    .and_then(|text| {
-                        serde_json::from_str::<serde_json::Value>(&text)
-                            .ok()
-                            .and_then(|value| value.get("name")?.as_str().map(str::to_string))
-                    })
-            })
-            .map(|name| host_bridge::is_official_package_name(&name))
-            .unwrap_or(false)
     }
 
     /// If `path` lives under `<project_root>/{ds_modules,php_modules}/<name>`,

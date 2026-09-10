@@ -31,9 +31,9 @@ pub fn compile_graph(
     // sites to the verbatim call. A tree containing lowered sources compiles
     // against a hardlinked mirror under `.cache` so user files are never
     // modified; dsc diagnostics are mapped back to real source paths.
-    let prepared = crate::deka_catalog_scan::prepare_compile_root(project_root)?;
+    let prepared = crate::deka_catalog_stage::prepare_compile_root(project_root)?;
     let (compile_root, compile_entry) = match &prepared {
-        crate::deka_catalog_scan::PreparedRoot::InPlace => {
+        crate::deka_catalog_stage::PreparedRoot::InPlace => {
             let entry = if entry.is_absolute() {
                 entry.to_path_buf()
             } else {
@@ -41,7 +41,7 @@ pub fn compile_graph(
             };
             (project_root.to_path_buf(), entry)
         }
-        crate::deka_catalog_scan::PreparedRoot::Staged(guard) => {
+        crate::deka_catalog_stage::PreparedRoot::Staged(guard) => {
             let entry = if entry.is_absolute() {
                 entry.to_path_buf()
             } else {
@@ -90,8 +90,8 @@ pub fn compile_graph(
         };
         // A staged compile names mirror paths; report the user's real paths.
         let detail = match &prepared {
-            crate::deka_catalog_scan::PreparedRoot::Staged(guard) => guard.remap_diagnostic(&detail),
-            crate::deka_catalog_scan::PreparedRoot::InPlace => detail,
+            crate::deka_catalog_stage::PreparedRoot::Staged(guard) => guard.remap_diagnostic(&detail),
+            crate::deka_catalog_stage::PreparedRoot::InPlace => detail,
         };
         return Err(format!("{DEKA_VALIDATION_ERROR_MARKER}{detail}"));
     }
@@ -103,7 +103,7 @@ pub fn compile_graph(
     }
     // Map staged canonical paths back to the user's source paths so the
     // loader's lookups (which key on real .ds paths) hit.
-    if let crate::deka_catalog_scan::PreparedRoot::Staged(guard) = &prepared {
+    if let crate::deka_catalog_stage::PreparedRoot::Staged(guard) = &prepared {
         modules = modules
             .into_iter()
             .map(|(key, js)| {
