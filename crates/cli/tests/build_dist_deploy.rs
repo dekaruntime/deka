@@ -245,8 +245,8 @@ fn dist_deploy_serves_build_backed_route_without_cache() {
     }
     assert_eq!(
         status, "200 OK",
-        "the build-backed route must serve 200 with the cache deleted in place\nserve.log:\n{}",
-        serve.log_text()
+        "the build-backed route must serve 200 with the cache deleted in place\nresponse:\n{body}\nserve.log:\n{}",
+        serve.log_text(),
     );
     assert!(
         body.contains("hello from build"),

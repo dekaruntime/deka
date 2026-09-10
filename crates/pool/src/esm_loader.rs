@@ -482,6 +482,14 @@ impl PhpxEsmLoader {
         specifier: &str,
         referrer: &str,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
+        // The isolate starts at this loader-owned synthetic wrapper. It is
+        // intentionally outside dist/server, but never read from disk: the
+        // `load_source` branch below supplies its generated source. Treat
+        // only its exact canonical specifier as an artifact entrypoint; all
+        // application imports remain jailed to explicit relative .js files.
+        if specifier == self.wrapper_specifier.as_str() {
+            return Ok(self.wrapper_specifier.clone());
+        }
         if resolver::is_bare_specifier(specifier) {
             if specifier.starts_with("deka:dev/") {
                 return Err(JsErrorBox::generic(format!(
@@ -745,6 +753,39 @@ mod tests {
                 .expect("sibling materialized");
             assert_eq!(on_disk, source, "{name} mismatch");
         }
+    }
+
+    #[test]
+    fn artifact_loader_accepts_its_synthetic_wrapper_as_the_entrypoint() {
+        let root = tempfile::tempdir().expect("temp project");
+        let server = root.path().join("dist").join("server");
+        fs::create_dir_all(&server).expect("create server root");
+        let entry = server.join("serve-entry.js");
+        fs::write(&entry, "export default {};\n").expect("write server entry");
+
+        // Model the post-verification artifact posture without constructing a
+        // full manifest fixture. The wrapper is loader-owned and therefore
+        // not a server payload, but Deno resolves it as the main module
+        // before the wrapper imports the verified entry.
+        let mut loader =
+            PhpxEsmLoader::new(root.path().to_path_buf(), entry, None).expect("loader");
+        loader.artifact_server_root = Some(server.clone());
+        let wrapper = loader.wrapper_specifier.clone();
+
+        let resolved = loader
+            .resolve_artifact_path(&server, wrapper.as_str(), "file:///main")
+            .expect("synthetic wrapper entrypoint resolves");
+        assert_eq!(resolved, wrapper);
+
+        let outside = deno_core::ModuleSpecifier::from_file_path(root.path().join("other.js"))
+            .expect("outside fixture URL");
+        let err = loader
+            .resolve_artifact_path(&server, outside.as_str(), "file:///main")
+            .expect_err("unrelated file URL remains rejected");
+        assert!(
+            err.to_string().contains("explicit relative .js path"),
+            "{err}"
+        );
     }
 
     #[test]
