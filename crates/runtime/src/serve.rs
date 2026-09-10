@@ -80,15 +80,11 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     // compiled dist/server entry, production serves the artifact — no
     // source-posture asset generation, no cache rewrites, and static files
     // come from the artifact's client root.
-    let artifact_root = built_artifact_root(&resolved.path);
-    // `resolve_handler_path` has already completed the same verification
-    // before the listener is constructed. Keep the parsed descriptor with the
-    // dispatcher so every lazy client read can authenticate its bytes too.
-    let artifact_manifest = artifact_root
-        .as_deref()
-        .map(runtime_core::framework::ArtifactManifestV2::load_verified)
-        .transpose()?;
-    let app_router_root = if artifact_root.is_some() {
+    // This completes verification before any listener can bind. Keep the
+    // descriptor with the dispatcher so every lazy client read can
+    // authenticate its bytes too.
+    let artifact = crate::artifact_loader::load_verified(&resolved.path)?;
+    let app_router_root = if artifact.is_some() {
         None
     } else {
         crate::islands::find_app_router_root(FsPath::new(&context.handler.input))
@@ -198,8 +194,9 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         engine: Arc::clone(&engine),
         handler_code,
         handler_entry,
-        public_dir: artifact_root
-            .map(|root| root.join("client"))
+        public_dir: artifact
+            .as_ref()
+            .map(|artifact| artifact.root.join("client"))
             .filter(|path| path.is_dir())
             .or_else(|| {
                 app_router_root
@@ -207,7 +204,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
                     .map(|root| root.join("public"))
                     .filter(|path| path.is_dir())
             }),
-        artifact_manifest,
+        artifact_manifest: artifact.map(|artifact| artifact.manifest),
         handler_key,
         dev_mode,
         perf_mode,
@@ -217,30 +214,6 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     spawn_archive_task(&state, engine.archive());
 
     serve_listeners(state, &serve_options, perf_mode, pool_workers).await
-}
-
-/// The artifact root when the resolved handler is a compiled
-/// `dist/server/serve-entry.js`: an ancestor directory that carries
-/// `build-manifest.json` and owns the `server/` tree the entry lives in.
-/// Source-posture handlers (`.cache/dekascript/serve-entry.dsx`) never match
-/// — their path is not under any `<root>/server` — so the source posture is
-/// untouched.
-fn built_artifact_root(resolved_path: &FsPath) -> Option<std::path::PathBuf> {
-    let start = if resolved_path.is_dir() {
-        resolved_path.to_path_buf()
-    } else {
-        resolved_path.parent()?.to_path_buf()
-    };
-    let mut probe = Some(start.as_path());
-    while let Some(dir) = probe {
-        if dir.join("build-manifest.json").is_file()
-            && resolved_path.starts_with(dir.join("server"))
-        {
-            return Some(dir.to_path_buf());
-        }
-        probe = dir.parent();
-    }
-    None
 }
 
 fn apply_cli_serve_overrides(
