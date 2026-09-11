@@ -137,21 +137,33 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // Plan the route manifest BEFORE any build entry executes or any route
     // renders: it is the pre-execution validation boundary (plan version,
     // slot shape, route disposition, output collisions). Non-app-router
-    // projects do not use the manifest.
+    // projects do not use the manifest. The app/api scans are kept: the
+    // publication step below builds the deployment descriptor from them —
+    // the same source walks the manifest was planned from, never fresh ones
+    // (deka#719).
     #[cfg(feature = "native")]
-    let mut manifest = if runtime_core::framework::is_source_app_router_project(&project_root) {
-        let app_manifest = runtime_core::framework::scan_app_dir(&app_dir);
-        let api_entries = runtime_core::framework::scan_api_dir(&api_dir);
-        Some(runtime_core::framework::BuildManifest::plan(
-            &project_root,
-            &planned,
-            build_dsc::dsc_identity(),
-            &app_manifest,
-            &api_entries,
-        )?)
-    } else {
-        None
-    };
+    let app_scans =
+        if runtime_core::framework::is_source_app_router_project(&project_root) {
+            Some((
+                runtime_core::framework::scan_app_dir(&app_dir),
+                runtime_core::framework::scan_api_dir(&api_dir),
+            ))
+        } else {
+            None
+        };
+    #[cfg(feature = "native")]
+    let mut manifest = app_scans
+        .as_ref()
+        .map(|(app_manifest, api_entries)| {
+            runtime_core::framework::BuildManifest::plan(
+                &project_root,
+                &planned,
+                build_dsc::dsc_identity(),
+                app_manifest,
+                api_entries,
+            )
+        })
+        .transpose()?;
 
     // The build phase runs under the project's resolved security policy
     // (deka.json + CLI overrides); permitted local reads are recorded per
@@ -462,16 +474,22 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
 
     // The deployment descriptor (manifest v2): routes, server entries, slots,
     // and every payload with its digest, anchored by the sha256 sidecar.
+    // Server-entry provenance is the plan-time scans carried since the
+    // manifest was planned — publication does not re-scan sources (deka#719).
     #[cfg(feature = "native")]
-    let artifact = match manifest.as_ref() {
-        Some(plan) => Some(build_publish::build_artifact_manifest(
-            plan,
-            &project_root,
-            &dist_root,
-            worker_emitted,
-            want_trailing,
-        )?),
-        None => None,
+    let artifact = match (manifest.as_ref(), app_scans.as_ref()) {
+        (Some(plan), Some((app_manifest, api_entries))) => Some(
+            build_publish::build_artifact_manifest(
+                plan,
+                &project_root,
+                &dist_root,
+                worker_emitted,
+                want_trailing,
+                app_manifest,
+                api_entries,
+            )?,
+        ),
+        _ => None,
     };
 
     // The staged tree is complete: hash its artifacts into the manifests,
