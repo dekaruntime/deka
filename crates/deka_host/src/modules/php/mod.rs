@@ -33,12 +33,16 @@ mod db_pg;
 mod fs_bridge;
 mod fs_ops;
 mod net;
+#[cfg(test)]
+mod net_tests;
 mod security;
 mod security_hint;
 #[cfg(test)]
 mod security_context_tests;
 
-pub use security::{enforce_net_public, enforce_net_public_with, security_policy_from_env};
+pub use security::{
+    enforce_net_public, enforce_net_public_with, security_policy_from_context,
+};
 
 fn core_err(msg: impl Into<String>) -> deno_core::error::CoreError {
     deno_core::error::CoreError::from(std::io::Error::other(msg.into()))
@@ -91,10 +95,10 @@ pub fn init() -> deno_core::Extension {
 }
 
 /// Same as [`init`], but the net bridge enforces the given policy instead
-/// of re-reading `DEKA_SECURITY_POLICY` from the process env on every
-/// dispatch. Tests use this to give each isolate its own policy rather
-/// than racing on the process-global env var (deka#537); production keeps
-/// calling [`init`] and reading the env per dispatch.
+/// of resolving the per-execution security context on every dispatch.
+/// Tests use this to give each isolate its own policy rather than
+/// depending on the executing thread's context (deka#537); production
+/// installs the context per request and calls [`init`].
 pub fn init_with_net_policy(policy: SecurityPolicy) -> deno_core::Extension {
     let mut extension = init();
     let base_state_fn = extension.op_state_fn.take();

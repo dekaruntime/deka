@@ -14,14 +14,17 @@ impl HandlerKey {
     }
 }
 
-/// Per-execution security overrides (deka#725). When set, bridge enforcement
-/// on the executing thread resolves the policy from here instead of the
-/// process-wide `DEKA_SECURITY_POLICY` / `DEKA_SECURITY_NO_PROMPT` env vars.
-/// Build-slot execution uses this so a `deka dev` rematerialization cannot
-/// widen (or narrow) the policy observed by concurrently served requests.
-#[derive(Clone, Debug)]
+/// Per-execution security policy (deka#725; the only policy channel since
+/// deka#801). The dispatch path resolves it from `deka.json` and the pool
+/// worker installs it on the executing thread for the duration of the
+/// request, so bridge enforcement never reads process-global state: under
+/// `deka dev` a build-slot rematerialization cannot widen (or narrow) the
+/// policy observed by concurrently served requests.
+#[derive(Clone, Debug, Default)]
 pub struct ExecutionSecurity {
-    /// Resolved policy JSON (the `DEKA_SECURITY_POLICY` payload).
+    /// Resolved policy JSON. Empty means the dispatch path failed to
+    /// supply a policy; enforcement then errors out (fail closed) — there
+    /// is deliberately no env or default fallback.
     pub policy_json: String,
     /// Suppress interactive approval prompts for this execution.
     pub no_prompt: bool,
@@ -38,7 +41,10 @@ pub struct RequestData {
     pub request_value: serde_json::Value,
     pub request_parts: Option<RequestParts>,
     pub mode: ExecutionMode,
-    pub security: Option<ExecutionSecurity>,
+    /// The resolved security policy this execution runs under. Mandatory:
+    /// every dispatch path supplies it, and a missing one is an error at
+    /// enforcement time naming the dispatch path that failed to provide it.
+    pub security: ExecutionSecurity,
 }
 
 #[derive(Clone)]

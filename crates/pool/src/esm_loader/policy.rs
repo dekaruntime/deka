@@ -28,7 +28,7 @@ pub(crate) fn enforce_dynamic_policy(modules: &HashMap<PathBuf, String>) -> Resu
     for path in paths {
         let source = &modules[path];
         let name = path.to_string_lossy();
-        crate::validation::validate_dynamic_code_from_process_env(source, &name)
+        crate::validation::validate_dynamic_code_from_security_context(source, &name)
             .map_err(|err| JsErrorBox::generic(format!("{DEKA_VALIDATION_ERROR_MARKER}{err}")))?;
     }
     Ok(())

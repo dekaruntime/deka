@@ -30,6 +30,11 @@ fn test_state(handler_code: &str) -> Arc<RuntimeState> {
         dev_mode: false,
         perf_mode: false,
         perf_request_value: serde_json::Value::Null,
+        security: pool::ExecutionSecurity {
+            policy_json: r#"{"security":{"allow":{"read":["/"]},"deny":{},"prompt":false}}"#
+                .to_string(),
+            no_prompt: true,
+        },
     })
 }
 

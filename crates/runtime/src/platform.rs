@@ -22,7 +22,7 @@ use engine::{RuntimeEngine, set_engine};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 
 use crate::js_pipeline::build_deka_handler_bundle;
-use crate::security::install_platform_security_for_root;
+use crate::security::resolve_platform_security_for_root;
 
 mod env;
 
@@ -57,6 +57,10 @@ struct PlatformState {
     /// Cache of bundled handler code per tenant.
     /// Keys: `shop_id` for main, `shop_id:{hash}` for preview builds.
     bundle_cache: Mutex<HashMap<String, BundleEntry>>,
+    /// Resolved default-tenant security policy; every dispatched request
+    /// executes under it (deka#801 — the policy travels per execution,
+    /// never through the process environment).
+    security: pool::ExecutionSecurity,
 }
 
 /// How long preview builds stay in cache without being accessed (7 days).
@@ -236,12 +240,15 @@ async fn platform_async(context: &Context) {
     let tenants_dir = root.join("tenants");
     let default_handler = default_dir.join("main.ds");
 
-    if let Err(err) =
-        install_platform_security_for_root(&default_dir, &context.args.flags, &context.args.params)
-    {
-        stdio::error("platform", &err);
-        std::process::exit(1);
-    }
+    let platform_security =
+        match resolve_platform_security_for_root(&default_dir, &context.args.flags, &context.args.params)
+        {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                stdio::error("platform", &err);
+                std::process::exit(1);
+            }
+        };
 
     if !default_handler.exists() {
         stdio::error(
@@ -309,6 +316,12 @@ async fn platform_async(context: &Context) {
         engine,
         root: root.clone(),
         bundle_cache: Mutex::new(HashMap::new()),
+        security: pool::ExecutionSecurity {
+            policy_json: platform_security.policy_json,
+            // The platform path runs headless: prompts are suppressed
+            // process-wide above (DEKA_SECURITY_NO_PROMPT=1).
+            no_prompt: true,
+        },
     });
 
     // Determine port
@@ -629,7 +642,7 @@ async fn handle_platform_request(
         request_value: serde_json::Value::Null,
         request_parts: Some(request_parts),
         mode: ExecutionMode::Request,
-        security: None,
+        security: state.security.clone(),
     };
 
     match state.engine.execute(handler_key, request_data).await {

@@ -167,27 +167,26 @@ pub fn validate_dynamic_code(
     Ok(())
 }
 
-/// Validate source against the resolved process policy used by the native
-/// runtime. Missing or malformed policy data fails closed.
-pub fn validate_dynamic_code_from_process_env(
+/// Validate source against the resolved policy installed as the current
+/// execution's security context. A missing context is an error naming the
+/// dispatch path that failed to provide it — never a silent default.
+pub fn validate_dynamic_code_from_security_context(
     source_code: &str,
     file_path: &str,
 ) -> Result<(), String> {
-    let raw = std::env::var("DEKA_SECURITY_POLICY");
-    let raw = match raw {
-        Ok(value) => Some(value),
-        Err(std::env::VarError::NotPresent) => None,
-        Err(err) => return Err(format!("invalid DEKA_SECURITY_POLICY: {}", err)),
+    let Some(raw) = runtime_core::security_context::context_policy_json() else {
+        return Err(
+            "security context missing: the dispatch path failed to install a resolved security policy; refusing dynamic code"
+                .to_string(),
+        );
     };
-    validate_dynamic_code_with_policy(source_code, file_path, raw.as_deref())
+    validate_dynamic_code_with_policy(source_code, file_path, Some(&raw))
 }
 
-/// The policy decision, separated from reading the environment so it can be
-/// tested without mutating process-global state.
-///
-/// `None` means no policy was supplied, which resolves to *deny*. A missing
-/// variable is the state a misconfigured deploy lands in, so it is the one
-/// case where failing open would be silent.
+/// The policy decision, separated from context resolution so it can be
+/// tested without installing one. `None` means no policy was supplied,
+/// which resolves to *deny*: the one case where failing open would be
+/// silent.
 pub fn validate_dynamic_code_with_policy(
     source_code: &str,
     file_path: &str,
@@ -196,7 +195,7 @@ pub fn validate_dynamic_code_with_policy(
     let allow_dynamic = match policy_json {
         Some(raw) => {
             let document = serde_json::from_str::<serde_json::Value>(&raw)
-                .map_err(|err| format!("invalid DEKA_SECURITY_POLICY: {}", err))?;
+                .map_err(|err| format!("invalid security policy: {}", err))?;
             let parsed = parse_deka_security_policy(&document);
             if parsed.has_errors() {
                 let errors = parsed
@@ -393,7 +392,7 @@ mod dynamic_code_tests {
             Some("{ not json"),
         )
         .unwrap_err();
-        assert!(err.contains("invalid DEKA_SECURITY_POLICY"), "{err}");
+        assert!(err.contains("invalid security policy"), "{err}");
     }
 
     #[test]

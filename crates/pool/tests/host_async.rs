@@ -46,10 +46,10 @@ fn request_with_security(handler_code: &str, policy_json: String) -> RequestData
             body: None,
         }),
         mode: ExecutionMode::Request,
-        security: Some(ExecutionSecurity {
+        security: ExecutionSecurity {
             policy_json,
             no_prompt: true,
-        }),
+        },
     }
 }
 
@@ -396,7 +396,10 @@ globalThis.app = function(req) {
                 request_value: serde_json::Value::Null,
                 request_parts: None,
                 mode: ExecutionMode::Request,
-                security: None,
+                security: ExecutionSecurity {
+                    policy_json: deny_read_policy(),
+                    no_prompt: true,
+                },
             },
         )
         .await

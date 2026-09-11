@@ -150,18 +150,24 @@ pub fn permissions_extension() -> Extension {
                 }
             });
             let parser = Arc::new(parser);
-            let container = permissions_container_from_env(parser);
+            let container = permissions_container_from_context(parser);
             state.put(container);
         })),
         ..Default::default()
     }
 }
 
-fn permissions_container_from_env(
+fn permissions_container_from_context(
     parser: Arc<DekaPermissionDescriptorParser>,
 ) -> PermissionsContainer {
     let prompt = security_prompt_enabled();
-    let opts = permissions_options_from_env_json(std::env::var("DEKA_SECURITY_POLICY").ok().as_deref());
+    // The per-execution security context is the only policy channel
+    // (deka#801). Extension state is built on the worker thread while the
+    // request's context is installed; a missing context fails closed via
+    // `None` -> no grants.
+    let opts = permissions_options_from_json(
+        runtime_core::security_context::context_policy_json().as_deref(),
+    );
     let perms = Permissions::from_options(parser.as_ref(), &opts).unwrap_or_else(|_| {
         if prompt {
             Permissions::none_with_prompt()
@@ -182,10 +188,10 @@ fn security_prompt_enabled() -> bool {
     std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
 }
 
-/// Map `DEKA_SECURITY_POLICY` JSON onto Deno `PermissionsOptions`.
-/// `true` / empty allow list ⇒ grant the whole category. `false` / missing ⇒ deny.
-/// FFI is never granted.
-fn permissions_options_from_env_json(raw: Option<&str>) -> PermissionsOptions {
+/// Map resolved policy JSON (from the per-execution security context) onto
+/// Deno `PermissionsOptions`. `true` / empty allow list ⇒ grant the whole
+/// category. `false` / missing ⇒ deny. FFI is never granted.
+fn permissions_options_from_json(raw: Option<&str>) -> PermissionsOptions {
     let mut opts = PermissionsOptions {
         prompt: false,
         ..PermissionsOptions::default()

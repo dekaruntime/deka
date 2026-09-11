@@ -7,9 +7,10 @@
 //!
 //! The registry is a process-global stack, not a thread-local: fs bridge ops
 //! run on the tokio blocking pool (deka#578), so observations for one slot can
-//! arrive from several threads. `DEKA_SECURITY_POLICY` is already process
-//! global, so this matches the existing host architecture. Outside build
-//! execution the stack is empty and recording is a no-op.
+//! arrive from several threads. (The policy itself is NOT process-global since
+//! deka#801 — it travels per execution via the security context; only this
+//! observation registry is.) Outside build execution the stack is empty and
+//! recording is a no-op.
 //!
 //! Known v1 limitation: in a long-lived `deka dev` process, an fs bridge call
 //! made by concurrently served runtime code while a build slot is active is
@@ -72,8 +73,18 @@ pub fn record_build_observation(path: &str, kind: FsObservationKind) {
 mod tests {
     use super::*;
 
+    /// Serializes the tests in this module: they drive the same
+    /// process-global slot stack, and cargo runs them as parallel threads
+    /// in one process, so an interleaved run makes
+    /// `end_build_slot().is_none()` observe the other test's open slot.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
     #[test]
     fn records_only_while_a_slot_is_active() {
+        let _guard = serial();
         record_build_observation("data/a.json", FsObservationKind::Read);
         assert!(end_build_slot().is_none());
 
@@ -103,6 +114,7 @@ mod tests {
 
     #[test]
     fn duplicate_observations_are_deduped() {
+        let _guard = serial();
         begin_build_slot("slot-2");
         record_build_observation("data/a.json", FsObservationKind::Read);
         record_build_observation("data/a.json", FsObservationKind::Read);

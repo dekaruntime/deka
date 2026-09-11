@@ -20,8 +20,9 @@ pub fn extensions() -> Vec<Extension> {
 }
 
 /// Build the host extensions with the net bridge pinned to an explicit
-/// policy. Test-only counterpart of [`extensions`]: production callers
-/// keep reading `DEKA_SECURITY_POLICY` from the env per dispatch.
+/// policy. Test-only counterpart of [`extensions`]: production dispatch
+/// installs the per-execution security context (`RequestData.security`)
+/// and the net bridge resolves the policy from it per call.
 #[cfg(feature = "runtime")]
 pub fn extensions_with_net_policy(policy: SecurityPolicy) -> Vec<Extension> {
     vec![modules::php::init_with_net_policy(policy)]

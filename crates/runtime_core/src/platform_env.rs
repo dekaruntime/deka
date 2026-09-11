@@ -48,11 +48,12 @@ where
     set.into_iter().collect()
 }
 
-pub fn snapshot_env_from_security_policy_env<F>(env_get: &F) -> Vec<(String, String)>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    let Some(raw) = env_get("DEKA_SECURITY_POLICY") else {
+/// Snapshot env vars for the current execution, resolving the policy from
+/// the installed [`crate::security_context`]. A missing or malformed context
+/// fails closed: no policy means no names are allowed, so the snapshot is
+/// empty (deka#801 — the process env is not a policy transport).
+pub fn snapshot_env_from_process() -> Vec<(String, String)> {
+    let Some(raw) = crate::security_context::context_policy_json() else {
         return Vec::new();
     };
     let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
@@ -62,13 +63,7 @@ where
     if parsed.has_errors() {
         return Vec::new();
     }
-    snapshot_env(&parsed.policy, env_get)
-}
-
-/// Convenience wrapper around [`snapshot_env_from_security_policy_env`]
-/// that reads from the real process environment.
-pub fn snapshot_env_from_process() -> Vec<(String, String)> {
-    snapshot_env_from_security_policy_env(&|name| std::env::var(name).ok())
+    snapshot_env(&parsed.policy, &|name| std::env::var(name).ok())
 }
 
 pub fn platform_env_policy_contract() -> SeamContract {
@@ -211,16 +206,32 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_reads_deka_security_policy_from_env() {
-        let env = getter(HashMap::from([
-            (
-                "DEKA_SECURITY_POLICY",
-                r#"{"security":{"allow":{"env":["PUBLIC"]},"deny":{}}}"#,
-            ),
-            ("PUBLIC", "ok"),
-            ("SECRET", "no"),
-        ]));
-        let snap = snapshot_env_from_security_policy_env(&env);
+    fn snapshot_resolves_policy_from_security_context() {
+        // This test is the only remaining toucher of DEKA_SECURITY_POLICY in
+        // the crate: it poisons the variable to prove the snapshot ignores
+        // it. The save/restore below is guard bookkeeping, not a config read.
+        let previous = std::env::var("DEKA_SECURITY_POLICY").ok();
+        unsafe { std::env::set_var("DEKA_SECURITY_POLICY", r#"{"security":{"allow":{"env":["PUBLIC"]}}}"#) };
+        assert!(
+            snapshot_env_from_process().is_empty(),
+            "without a security context the snapshot must be empty (deka#801)"
+        );
+        match previous {
+            Some(value) => unsafe { std::env::set_var("DEKA_SECURITY_POLICY", value) },
+            None => unsafe { std::env::remove_var("DEKA_SECURITY_POLICY") },
+        }
+
+        let _guard = crate::security_context::set_security_context(
+            crate::security_context::SecurityContext {
+                policy_json: Some(
+                    r#"{"security":{"allow":{"env":["PUBLIC"]},"deny":{}}}"#.to_string(),
+                ),
+                no_prompt: true,
+            },
+        );
+        unsafe { std::env::set_var("PUBLIC", "ok") };
+        let snap = snapshot_env_from_process();
+        unsafe { std::env::remove_var("PUBLIC") };
         assert_eq!(snap, vec![("PUBLIC".to_string(), "ok".to_string())]);
     }
 

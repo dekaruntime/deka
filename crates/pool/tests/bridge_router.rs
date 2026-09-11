@@ -1,4 +1,7 @@
-use pool::{ExecutionMode, HandlerKey, IsolatePool, PoolConfig, RequestData, RequestParts};
+use pool::{
+    ExecutionMode, ExecutionSecurity, HandlerKey, IsolatePool, PoolConfig, RequestData,
+    RequestParts,
+};
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,10 +20,9 @@ fn test_pool() -> IsolatePool {
     IsolatePool::new(config, Arc::new(Vec::new))
 }
 
-/// Pool whose isolates enforce an explicit net policy instead of reading
-/// `DEKA_SECURITY_POLICY` from the process env per dispatch. Tests pass
-/// their own policy so parallel tests stop racing on the process-global
-/// env var (deka#537).
+/// Pool whose isolates enforce an explicit net policy pinned at extension
+/// build time. Tests pass their own policy so parallel tests stop depending
+/// on the executing thread's security context (deka#537).
 fn net_test_pool(policy: runtime_core::security_policy::SecurityPolicy) -> IsolatePool {
     let config = PoolConfig {
         num_workers: 1,
@@ -47,8 +49,8 @@ fn allow_net_policy(target: &str) -> runtime_core::security_policy::SecurityPoli
     runtime_core::security_policy::parse_deka_security_policy(&document).policy
 }
 
-/// Pool backed by the platform-server (php) extensions with default
-/// env-driven policy. For tests that never touch the net bridge.
+/// Pool backed by the platform-server (php) extensions with per-request
+/// security policies. For tests that never touch the net bridge.
 fn php_pool() -> IsolatePool {
     let config = PoolConfig {
         num_workers: 1,
@@ -63,6 +65,16 @@ fn php_pool() -> IsolatePool {
     IsolatePool::new(config, Arc::new(platform_server::extensions_for_php_server))
 }
 
+/// Request security for tests that never touch a policy-gated bridge op:
+/// no grants, prompts off. Since deka#801 the policy travels per request
+/// (`RequestData.security`); there is no env fallback to rely on.
+fn no_grants_security() -> ExecutionSecurity {
+    ExecutionSecurity {
+        policy_json: r#"{"security":{"allow":{},"deny":{},"prompt":false}}"#.to_string(),
+        no_prompt: true,
+    }
+}
+
 fn test_request(handler_code: &str) -> RequestData {
     RequestData {
         handler_code: handler_code.to_string(),
@@ -71,7 +83,7 @@ fn test_request(handler_code: &str) -> RequestData {
         request_value: serde_json::Value::Null,
         request_parts: None,
         mode: ExecutionMode::Request,
-        security: None,
+        security: no_grants_security(),
     }
 }
 
@@ -88,7 +100,7 @@ fn tenant_request(handler_code: &str, shop_id: &str) -> RequestData {
             body: None,
         }),
         mode: ExecutionMode::Request,
-        security: None,
+        security: no_grants_security(),
     }
 }
 
@@ -647,35 +659,6 @@ globalThis.app = function(req) {
     assert_eq!(parsed["macOk"], true, "body={body}");
 }
 
-/// Restores a process env var on drop. Scoped to one test; the policy set
-/// through it only grants read/write under that test's own tempdir, so
-/// concurrent readers of `DEKA_SECURITY_POLICY` see an equivalent net scope
-/// (deka#537 was about net rules racing, which this does not touch).
-struct EnvGuard {
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: String) -> Self {
-        let previous = std::env::var(key).ok();
-        // SAFETY: single-process test binary; the guard restores the
-        // previous value on drop. Same pattern as deka_host's fs symlink
-        // tests.
-        unsafe { std::env::set_var(key, value) };
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(value) => unsafe { std::env::set_var(self.key, value) },
-            None => unsafe { std::env::remove_var(self.key) },
-        }
-    }
-}
-
 /// deka#578: fs bridge ops dispatch through the async op. The caller gets a
 /// Promise back — the old code ran the blocking op inline, stalling the
 /// isolate, and a Promise result read `.ok` as undefined which silently
@@ -696,7 +679,6 @@ async fn deka_host_fs_ops_dispatch_async_and_resolve() {
         }
     })
     .to_string();
-    let _policy_guard = EnvGuard::set("DEKA_SECURITY_POLICY", policy);
 
     let path_js = serde_json::to_string(&target.to_string_lossy()).expect("json path");
     let pool = php_pool();
@@ -720,8 +702,13 @@ globalThis.app = async function(req) {{
 }};
 "#
     );
+    let mut request = test_request(&code);
+    request.security = ExecutionSecurity {
+        policy_json: policy,
+        no_prompt: true,
+    };
     let res = pool
-        .execute(HandlerKey::new("deka_host_fs_async"), test_request(&code))
+        .execute(HandlerKey::new("deka_host_fs_async"), request)
         .await;
     let response = res.expect("pool execution should succeed");
     assert!(response.success, "execution failed: {:?}", response.error);

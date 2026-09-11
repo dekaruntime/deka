@@ -99,7 +99,8 @@ fn no_grant_pool() -> IsolatePool {
 
 /// Serve the on-disk project through the ESM loader (`handler_code` empty,
 /// entry + module root set) in request mode so the handler response body is
-/// observable.
+/// observable. Runs under a policy that grants the fixture root's fs paths;
+/// the tests here exercise the grant table, not the policy layer.
 fn module_request(entry: &Path, root: &Path) -> RequestData {
     RequestData {
         handler_code: String::new(),
@@ -113,7 +114,19 @@ fn module_request(entry: &Path, root: &Path) -> RequestData {
             body: None,
         }),
         mode: ExecutionMode::Request,
-        security: None,
+        security: pool::ExecutionSecurity {
+            policy_json: serde_json::json!({
+                "security": {
+                    "allow": {
+                        "read": [root.to_string_lossy()],
+                        "write": [root.to_string_lossy()]
+                    },
+                    "prompt": false
+                }
+            })
+            .to_string(),
+            no_prompt: true,
+        },
     }
 }
 
@@ -690,7 +703,11 @@ globalThis.app = function(req) {
                 request_value: serde_json::Value::Null,
                 request_parts: None,
                 mode: ExecutionMode::Request,
-                security: None,
+                security: pool::ExecutionSecurity {
+                    policy_json: r#"{"security":{"allow":{},"deny":{},"prompt":false}}"#
+                        .to_string(),
+                    no_prompt: true,
+                },
             },
         )
         .await

@@ -230,10 +230,9 @@ pub fn extensions_for_php_server() -> Vec<Extension> {
 }
 
 /// Same as [`extensions_for_php_server`], but the net bridge enforces the
-/// given policy instead of re-reading `DEKA_SECURITY_POLICY` from the
-/// process env on every dispatch. Lets tests give each isolate pool its
-/// own net policy instead of racing on the process-global env var
-/// (deka#537).
+/// given policy instead of resolving the per-execution security context on
+/// every dispatch. Lets tests give each isolate pool its own net policy
+/// instead of depending on the executing thread's context (deka#537).
 pub fn extensions_for_php_server_with_net_policy(
     policy: deka_host::SecurityPolicy,
 ) -> Vec<Extension> {

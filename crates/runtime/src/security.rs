@@ -188,19 +188,23 @@ pub fn resolve_build_policy_for_root(
     resolve_security_policy_for_root(root, flags, params, ProjectKind::Php, dev)
 }
 
-pub fn install_platform_security_for_root(
+/// Resolve the platform default-tenant security policy from deka.json and
+/// install prompt-suppression state. Returns the resolved policy so the
+/// caller hands it to every dispatched request — since deka#801 the policy
+/// travels per execution (`RequestData.security`), never through the
+/// process environment.
+pub fn resolve_platform_security_for_root(
     root: &Path,
     flags: &std::collections::HashMap<String, bool>,
     params: &std::collections::HashMap<String, String>,
-) -> Result<(), String> {
+) -> Result<ResolvedSecurityPolicy, String> {
     let resolved_security =
         resolve_security_policy_for_root(root, flags, params, ProjectKind::Php, false)?;
-    for warning in resolved_security.warnings {
+    for warning in &resolved_security.warnings {
         stdio::log("security", &format!("warning: {}", warning));
     }
     stdio::log("security", &resolved_security.summary);
     unsafe {
-        std::env::set_var("DEKA_SECURITY_POLICY", &resolved_security.policy_json);
         std::env::set_var(
             "DEKA_SECURITY_NO_PROMPT",
             if resolved_security.prompt_enabled {
@@ -210,7 +214,7 @@ pub fn install_platform_security_for_root(
             },
         );
     }
-    Ok(())
+    Ok(resolved_security)
 }
 
 fn apply_dev_defaults(

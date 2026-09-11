@@ -39,9 +39,6 @@ async fn run_async(context: &Context) -> Result<(), String> {
         eprintln!("[security] warning: {}", warning);
     }
     eprintln!("[security] {}", resolved_security.summary);
-    let _ = platform
-        .env()
-        .set("DEKA_SECURITY_POLICY", &resolved_security.policy_json);
     let _ = platform.env().set(
         "DEKA_SECURITY_NO_PROMPT",
         if resolved_security.prompt_enabled {
@@ -51,6 +48,13 @@ async fn run_async(context: &Context) -> Result<(), String> {
         },
     );
     let _ = platform.env().set("DEKA_SECURITY_ENFORCE", "1");
+    // The resolved policy travels per execution (RequestData.security ->
+    // the worker's security context), never through the process
+    // environment (deka#801).
+    let execution_security = pool::ExecutionSecurity {
+        policy_json: resolved_security.policy_json.clone(),
+        no_prompt: !resolved_security.prompt_enabled,
+    };
     let env_get = |key: &str| platform.env().get(key);
     let mut env_set = |key: &str, value: &str| {
         let _ = platform.env().set(key, value);
@@ -154,7 +158,7 @@ async fn run_async(context: &Context) -> Result<(), String> {
                     body: None,
                 }),
                 mode: execution_mode,
-                security: None,
+                security: execution_security,
             },
         )
         .await
