@@ -37,7 +37,6 @@ crates/
   deka_lsp/             # native LSP
 
 
-  deka-validation/      # error formatting / diagnostics
   deka_host/          # parser + validation (shared PHPX/DS parser)
   php-rs/               # typechecker (`phpx/typeck/check/`)
   runtime/              # native runtime (Deno/V8 isolate execution)
@@ -56,7 +55,7 @@ assets/                 # shared CSS bundle
 | Typechecker | `crates/php-rs/src/phpx/typeck/check/` |
 | JS emission | dsc |
 | Formatter | dsc (`dsc fmt`) |
-| Validation / diagnostics | `crates/deka_host/src/validation/`, `crates/deka-validation/` |
+| Validation / diagnostics | `crates/deka_host/src/validation/`, published validation crate |
 | Native execution | `crates/runtime/src/`, `crates/cli/src/` |
 | WASM compiler | `crates/deka_compiler_wasm/src/` |
 | Module resolution | `crates/runtime_core/src/modules.rs`, `crates/deka_host/src/validation/modules.rs` |
@@ -196,5 +195,5 @@ Both sites use `@dekaruntime/web-ide-kit`. Language format lives in dsc; change 
 
 - `.ds` is the only public source extension. PHPX (`.phpx`) is legacy and being removed.
 - Release builds are canonical; do not rely on `target/debug` binaries.
-- Keep error messages helpful; `deka-validation` owns formatting.
+- Keep error messages helpful; the published validation crate owns formatting.
 - Document language behavior in `docs/dekascript/` when it changes.

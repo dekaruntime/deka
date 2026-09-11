@@ -10,7 +10,7 @@
 - `deka-cli/`: Bun-based CLI (packaged as `deka`).
 - `deka-rs/`: Cargo workspace for Deka services (crates under `deka-rs/crates/`).
 - `deka-stdio/`: Shared logging/stdio formatting crate (used for runtime logging).
-- `deka-validation/`: Validation/error formatting shared by runtime.
+- Published validation crate: Shared error formatting used by runtime.
 - `deka-dashboard/`, `deka-website/`: UI apps.
 
 ## Runtime Entry Points (deka-runtime)
@@ -111,7 +111,7 @@ the owning runtime/stdlib lanes define and validate one.
 
 ## Conventions & Expectations
 - Use `deka-stdio` for runtime logs.
-- Prefer helpful validation errors (see `deka-validation`).
+- Prefer helpful validation errors (see the published validation crate).
 - Keep imports explicit in JS/TS examples.
 - Follow Bun-like ergonomics for runtime APIs where possible (serve/build/run behavior).
 
