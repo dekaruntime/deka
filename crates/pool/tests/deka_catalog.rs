@@ -118,7 +118,18 @@ fn module_request(entry: &Path, root: &Path) -> RequestData {
             body: None,
         }),
         mode: ExecutionMode::Request,
-        security: None,
+        // deka#801: the policy travels with the execution. Catalog helpers
+        // (`deka.bytes/json/time/io`) are pure in-isolate JS — none of them
+        // reaches the host bridge — and catalog authority comes from the
+        // `@deka/*` package identity, not from this policy. So the policy
+        // that matches what these tests do is deny-everything: the module
+        // graph still loads (the loader's file reads are not policy-gated
+        // and the compiled output contains no eval/Function/dynamic import),
+        // but no host operation is allowed.
+        security: pool::ExecutionSecurity {
+            policy_json: r#"{"security":{"allow":{},"deny":{},"prompt":false}}"#.to_string(),
+            no_prompt: true,
+        },
     }
 }
 
