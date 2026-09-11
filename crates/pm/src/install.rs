@@ -482,38 +482,6 @@ struct LockedPackage {
 
 const GITHUB_STDLIB_ORG: &str = "dekaruntime";
 
-#[derive(Debug, Deserialize)]
-struct RegistryPackage {
-    #[serde(default)]
-    versions: Vec<String>,
-}
-
-fn latest_registry_version(versions: &[String]) -> Result<String> {
-    let mut best: Option<(semver::Version, String)> = None;
-    for raw in versions {
-        let trimmed = raw.trim().trim_start_matches('v');
-        if trimmed.is_empty() {
-            continue;
-        }
-        let parsed = semver::Version::parse(trimmed)
-            .with_context(|| format!("registry version `{raw}` is not semver"))?;
-        match &best {
-            Some((current, _)) if parsed <= *current => {}
-            _ => best = Some((parsed, trimmed.to_string())),
-        }
-    }
-    best.map(|(_, version)| version)
-        .ok_or_else(|| anyhow!("registry listed no usable versions"))
-}
-
-fn select_registry_version(registry: &RegistryPackage, requested: &str) -> Result<String> {
-    let requested = requested.trim();
-    if requested != "latest" && requested != "*" && !requested.is_empty() {
-        return Ok(requested.trim_start_matches('v').to_string());
-    }
-    latest_registry_version(&registry.versions)
-}
-
 /// Install a @deka stdlib package from the deka.gg registry + R2 tarball CDN.
 /// Endpoint URLs (incl. test-only env overrides) live in `crate::registry`.
 ///
@@ -526,41 +494,11 @@ fn install_from_registry(
     requested: &str,
     destination: &Path,
 ) -> Result<InstalledSource> {
-    let package_name = name.strip_prefix("@deka/").ok_or_else(|| {
-        anyhow!(
-            "install_from_registry called with non-@deka package: {}",
-            name
-        )
-    })?;
-
-    let registry_url = format!(
-        "{}/api/registry/{}.json",
-        registry::base_url(),
-        package_name
-    );
-    let registry_resp = reqwest::blocking::get(&registry_url)
-        .with_context(|| format!("failed to contact deka.gg registry for {}", name))?;
-    if registry_resp.status() == reqwest::StatusCode::NOT_FOUND {
-        bail!(
-            "package {} not found in deka.gg registry (status {})",
-            name,
-            registry_resp.status()
-        );
-    }
-    if !registry_resp.status().is_success() {
-        bail!(
-            "registry lookup failed for {}: status {}",
-            name,
-            registry_resp.status()
-        );
-    }
-    let registry: RegistryPackage = registry_resp
-        .json()
-        .with_context(|| format!("failed to parse deka.gg registry metadata for {}", name))?;
+    let (package_name, registry) = registry::fetch_package(name)?;
 
     let version = match locked {
         Some(locked) => locked.version.clone(),
-        None => select_registry_version(&registry, requested)
+        None => registry::select_version(&registry, requested)
             .with_context(|| format!("failed to select a version for {}", name))?,
     };
 
@@ -1342,12 +1280,12 @@ fn manifest_dep_key(
 #[cfg(test)]
 mod tests {
     use super::{
-        InstallTransaction, InstalledSource, LockedPackage, MODULES_DIR, RegistryPackage,
+        InstallTransaction, InstalledSource, LockedPackage, MODULES_DIR,
         collect_project_install_specs, copy_github_package_files, enqueue_package_spec,
         locked_package, package_dependencies, pause_for_kill_test, php_modules_path_for,
         record_root_dependencies, recover_install_transaction, rehash_php_packages_in,
         reject_source_less_package, reject_vendored_php_modules, run_php_install_in,
-        select_registry_version, verify_locked_integrity,
+        verify_locked_integrity,
     };
     use crate::{lock, payload::InstallPayload};
     use deka_host::integrity::{PackageIntegrity, compute_package_integrity};
@@ -1374,31 +1312,6 @@ mod tests {
         assert!(dst.path().join("nested").join("real.ds").exists());
         assert!(!dst.path().join("._mod.ds").exists());
         assert!(!dst.path().join("nested").join("._other").exists());
-    }
-
-    #[test]
-    fn unlocked_add_selects_latest_registry_version() {
-        let registry = RegistryPackage {
-            versions: vec!["0.1.0".into(), "0.1.1".into(), "0.2.0".into()],
-        };
-        assert_eq!(
-            select_registry_version(&registry, "latest").expect("latest"),
-            "0.2.0"
-        );
-        assert_eq!(
-            select_registry_version(&registry, "0.1.1").expect("exact"),
-            "0.1.1"
-        );
-        assert_ne!(
-            select_registry_version(
-                &RegistryPackage {
-                    versions: vec!["0.1.1".into()],
-                },
-                "latest"
-            )
-            .expect("catalog latest"),
-            "0.1.0"
-        );
     }
 
     #[test]
