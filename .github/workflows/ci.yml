@@ -107,6 +107,11 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          # rust-toolchain.toml pins 1.96.0 for every cargo invocation in this
+          # directory, overriding the rustup default — so clippy must be added
+          # to the pinned toolchain, not to a separately installed stable.
+          components: clippy
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -129,14 +134,9 @@ jobs:
       - name: Check workspace
         run: cargo check --locked --workspace --all-targets
 
-      # Folded in from the standalone rust-clippy analyze workflow: same
-      # toolchain (stable) and same flags (--all-features). Runs last because
-      # it switches the default toolchain away from the pinned 1.96.0.
-      - name: Setup Rust (stable) for clippy
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
+      # Folded in from the standalone rust-clippy analyze workflow: same flags
+      # (--all-features), same pinned 1.96.0 toolchain as the check above (the
+      # clippy component is installed by the job's Setup Rust step).
       - name: Run clippy
         run: cargo clippy --all-features
 
