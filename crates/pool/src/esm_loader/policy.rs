@@ -117,7 +117,21 @@ mod tests {
                 .output()
                 .expect("run isolated child test");
             assert!(output.status.success(), "child failed: {output:?}");
-            String::from_utf8(output.stdout).expect("utf-8 child output")
+            let stdout = String::from_utf8(output.stdout).expect("utf-8 child output");
+            // Compare only the proof lines the child prints, never cargo's own
+            // harness output -- that carries a wall-clock "finished in 0.01s"
+            // line, so asserting on the raw stdout made this test fail
+            // whenever the two child runs happened to land in different
+            // millisecond buckets (deka#840).
+            let proof: Vec<&str> = stdout
+                .lines()
+                .filter(|line| line.starts_with("ambient-proof:"))
+                .collect();
+            assert!(
+                !proof.is_empty(),
+                "child printed no ambient-proof lines: {stdout}"
+            );
+            proof.join("\n")
         };
 
         let restrictive = run("/not/a/project", "[]");
