@@ -774,7 +774,7 @@ impl WorkerThread {
             let loader = PhpxEsmLoader::new(
                 project_root.clone(),
                 entry_path,
-                Some(project_root),
+                None,
                 self.config.host_grants.clone(),
             )
                 .map_err(|err| err.to_string())?;

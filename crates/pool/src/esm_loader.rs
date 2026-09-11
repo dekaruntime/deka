@@ -125,7 +125,10 @@ impl PhpxEsmLoader {
         // paths would silently fall out of the workspace-grant rule and every
         // bridge call would report "not granted any host kinds".
         let project_root = project_root.canonicalize().unwrap_or(project_root);
-        let module_root = module_root.map(|root| root.canonicalize().unwrap_or(root));
+        let module_root = match module_root {
+            Some(root) => Some(root.canonicalize().unwrap_or(root)),
+            None => configured_module_root(&project_root)?,
+        };
         let entry_path = entry_path.canonicalize().unwrap_or(entry_path);
         let artifact_server_root = artifact_server_root(&entry_path)?;
         let cache_dir = runtime_core::framework::compiler_cache_dir(&project_root);
@@ -660,6 +663,40 @@ impl PhpxEsmLoader {
     }
 }
 
+/// Resolve the optional stdlib root from the project manifest. It is a
+/// declared, reviewable input rather than an ambient process override.
+fn configured_module_root(project_root: &Path) -> Result<Option<PathBuf>, JsErrorBox> {
+    let manifest = project_root.join("deka.json");
+    let text = match std::fs::read_to_string(&manifest) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(JsErrorBox::generic(format!(
+                "failed to read {}: {err}",
+                manifest.display()
+            )));
+        }
+    };
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|err| JsErrorBox::generic(format!("invalid {}: {err}", manifest.display())))?;
+    let Some(root) = value.get("moduleRoot").and_then(serde_json::Value::as_str) else {
+        return Ok(None);
+    };
+    let root = PathBuf::from(root);
+    let root = if root.is_absolute() {
+        root
+    } else {
+        project_root.join(root)
+    };
+    if !root.is_dir() {
+        return Err(JsErrorBox::generic(format!(
+            "deka.json moduleRoot is not a directory: {}",
+            root.display()
+        )));
+    }
+    Ok(Some(root.canonicalize().unwrap_or(root)))
+}
+
 /// Detect the artifact posture from the entry itself, independently of the
 /// source-project root used for grants. `engine::config` has already verified
 /// the descriptor before binding; doing the inexpensive structural check here
@@ -992,18 +1029,23 @@ mod tests {
     #[ignore]
     fn ambient_environment_child() {
         let root = tempfile::tempdir().expect("project");
-        fs::write(root.path().join("deka.json"), r#"{"name":"ambient-proof"}"#)
+        let stdlib = root.path().join("stdlib");
+        fs::create_dir_all(&stdlib).expect("stdlib root");
+        fs::write(
+            root.path().join("deka.json"),
+            r#"{"name":"ambient-proof","moduleRoot":"stdlib"}"#,
+        )
             .expect("manifest");
         let entry = root.path().join("main.js");
         fs::write(&entry, "export default {}\n").expect("entry");
         let loader = PhpxEsmLoader::new(
             root.path().to_path_buf(),
             entry,
-            Some(root.path().to_path_buf()),
+            None,
             None,
         )
         .expect("loader");
-        assert_eq!(loader.project_root, loader.module_root.expect("root"));
+        assert_eq!(loader.module_root.expect("root"), stdlib.canonicalize().expect("canonical root"));
         println!("ambient-proof:loader-created");
     }
 }
