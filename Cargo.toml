@@ -17,7 +17,6 @@ members = [
     "crates/engine",
     "crates/modules_common",
     "crates/deka_host",
-    "crates/stdio",
     "crates/wasm_guest",
     "crates/wasm_guest_macros",
     "crates/wit_deka",

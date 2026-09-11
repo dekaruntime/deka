@@ -16,6 +16,8 @@ native = [
   "dep:deka_host",
   "dep:bundler",
   "dep:rusqlite",
+  "dep:deno_task_shell",
+  "dep:ctrlc",
 ]
 lsp = ["dep:dekascript_lsp"]
 
@@ -25,7 +27,7 @@ pool = { path = "../pool", optional = true }
 runtime_core = { path = "../runtime_core" }
 compile = { path = "../compile", optional = true }
 core = { path ="../core" }
-stdio = { path = "../stdio" }
+stdio = "0.4.0"
 introspect = { path = "../introspect", optional = true }
 wasm_cli = { path = "../wasm_cli" }
 pm = { workspace = true, optional = true }
@@ -39,8 +41,8 @@ dekascript_lsp = { path = "../deka_lsp", optional = true }
 deka_host = { path = "../deka_host", optional = true, default-features = false, features = ["runtime"] }
 rusqlite = { version = "0.32", optional = true }
 sha2 = "0.10"
-ctrlc = "3"
-deno_task_shell = "0.29.0"
+ctrlc = { version = "3", optional = true }
+deno_task_shell = { version = "0.29.0", optional = true }
 glob = "0.3.1"
 serde_yaml = "0.9"
 bundler = { path = "../bundler", optional = true }
