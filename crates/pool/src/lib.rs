@@ -1,5 +1,7 @@
 #![allow(clippy::all)]
 
+pub mod deka_catalog_scan;
+pub mod deka_catalog_stage;
 pub mod dsc_compile;
 pub mod esm_loader;
 pub mod isolate_pool;

@@ -27,13 +27,15 @@ swc_ecma_visit = { workspace = true }
 redis = { workspace = true }
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 deka-validation = { path = "../deka-validation" }
+# Staged catalog compiles verify rewritten dependency packages against the
+# real deka.lock with the same integrity hashes `deka install` pins.
+deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
 
 [dev-dependencies]
 tempfile = "3"
 platform_server = { path = "../platform_server" }
 # RFD 27 grant fixtures: compute the fsGraph digest the lockfile pins, exactly
 # as `deka install` does (crates/pm), so grant-table digests match on disk.
-deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mach2 = "0.6.0"

@@ -117,6 +117,12 @@ match r {
   granted kinds; the internal surface (`Symbol.for('deka.host.internal')`) is
   frozen and hidden from `unsafe`.
 - **`unsafe` cannot name the bridge** — the capability is realm-private.
+- **Plain JS platform operations are not on this surface.** The closed
+  `deka.*` catalog (`safe { deka.kind.method(...) }` /
+  `unsafe { ... }`) is the separate, stdlib-only door for operations Deka
+  owns in plain JS — bytes, JSON, program output, wall-clock reads. It needs
+  no grants because it reaches no native code; the [runtime bridge](runtime-bridge)
+  documents it.
 
 ## Deferred surface
 

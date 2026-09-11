@@ -25,26 +25,46 @@ pub fn compile_graph(
             "{DEKA_VALIDATION_ERROR_MARKER}dsc is required to compile DekaScript in the isolate. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH."
         )
     })?;
-    let out = project_root.join(".cache").join("dsc-modules");
+
+    // RFD 21 (deka#754): validate every DekaScript source in the tree against
+    // the closed deka.* catalog before dsc runs, lowering `safe { deka.* }`
+    // sites to the verbatim call. A tree containing lowered sources compiles
+    // against a hardlinked mirror under `.cache` so user files are never
+    // modified; dsc diagnostics are mapped back to real source paths.
+    let prepared = crate::deka_catalog_stage::prepare_compile_root(project_root)?;
+    let (compile_root, compile_entry) = match &prepared {
+        crate::deka_catalog_stage::PreparedRoot::InPlace => {
+            let entry = if entry.is_absolute() {
+                entry.to_path_buf()
+            } else {
+                project_root.join(entry)
+            };
+            (project_root.to_path_buf(), entry)
+        }
+        crate::deka_catalog_stage::PreparedRoot::Staged(guard) => {
+            let entry = if entry.is_absolute() {
+                entry.to_path_buf()
+            } else {
+                project_root.join(entry)
+            };
+            (guard.root().to_path_buf(), guard.map_path(&entry))
+        }
+    };
+
+    let out = compile_root.join(".cache").join("dsc-modules");
     if out.exists() {
         let _ = fs::remove_dir_all(&out);
     }
     fs::create_dir_all(&out)
         .map_err(|err| format!("failed to create {}: {err}", out.display()))?;
 
-    let entry = if entry.is_absolute() {
-        entry.to_path_buf()
-    } else {
-        project_root.join(entry)
-    };
-
     let output = Command::new(&dsc)
-        .current_dir(project_root)
-        .env("DEKA_MODULE_ROOT", project_root)
+        .current_dir(&compile_root)
+        .env("DEKA_MODULE_ROOT", &compile_root)
         .args([
             "transpile",
             "--self-contained",
-            entry
+            compile_entry
                 .to_str()
                 .ok_or_else(|| "entry path is not UTF-8".to_string())?,
             "--out",
@@ -68,13 +88,30 @@ pub fn compile_graph(
         } else {
             detail.to_string()
         };
+        // A staged compile names mirror paths; report the user's real paths.
+        let detail = match &prepared {
+            crate::deka_catalog_stage::PreparedRoot::Staged(guard) => guard.remap_diagnostic(&detail),
+            crate::deka_catalog_stage::PreparedRoot::InPlace => detail,
+        };
         return Err(format!("{DEKA_VALIDATION_ERROR_MARKER}{detail}"));
     }
 
     let mut modules = HashMap::new();
-    collect_js(&out, project_root, &mut modules)?;
+    collect_js(&out, &compile_root, &mut modules)?;
     if modules.is_empty() {
         return Err("dsc transpile wrote no modules".to_string());
+    }
+    // Map staged canonical paths back to the user's source paths so the
+    // loader's lookups (which key on real .ds paths) hit.
+    if let crate::deka_catalog_stage::PreparedRoot::Staged(guard) = &prepared {
+        modules = modules
+            .into_iter()
+            .map(|(key, js)| {
+                let mapped = guard.unmap_path(&key);
+                let mapped = fs::canonicalize(&mapped).unwrap_or(mapped);
+                (mapped, js)
+            })
+            .collect();
     }
     Ok(modules)
 }
