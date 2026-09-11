@@ -43,10 +43,8 @@ pub(super) fn op_deka_http_call(
 pub(super) fn op_shard_for(
     #[string] _account_id: String,
 ) -> Result<serde_json::Value, deno_core::error::CoreError> {
-    let neo4j_url = std::env::var("DEKA_NEO4J_URI")
-        .unwrap_or_else(|_| "bolt://localhost:7687".to_string());
-    let redis_url = std::env::var("DEKA_REDIS_URL")
-        .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+    let neo4j_url = neo4j::shard_route_neo4j(&serde_json::Value::Null);
+    let redis_url = redis_mod::shard_route_redis(&serde_json::Value::Null);
     Ok(serde_json::json!({
         "ok": true,
         "index": 0,

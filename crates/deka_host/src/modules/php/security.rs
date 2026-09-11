@@ -357,13 +357,9 @@ fn security_enforcement_enabled() -> bool {
 }
 fn prompt_enabled() -> bool {
     // Per-execution suppression (build slots) never grants capabilities.
+    // The per-execution SecurityContext is the only no-prompt channel
+    // (deka#820); the process environment is not consulted (deka#801).
     if runtime_core::security_context::context_no_prompt() {
-        return false;
-    }
-    if std::env::var("DEKA_SECURITY_NO_PROMPT")
-        .map(|v| v == "1")
-        .unwrap_or(false)
-    {
         return false;
     }
     std::io::stdin().is_terminal() && std::io::stderr().is_terminal()

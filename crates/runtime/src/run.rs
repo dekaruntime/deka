@@ -68,6 +68,13 @@ async fn run_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), String
         let _ = platform.env().set(key, value);
     };
     set_handler_path_with(&handler_path, &env_get, &mut env_set);
+    // The host bridge (security hints, `@/` path resolution) reads the
+    // handler location from this explicit install, not the process
+    // environment (deka#801).
+    deka_host::host_config::install_handler_paths(deka_host::host_config::HandlerPaths {
+        handler_path: Some(handler_path.clone()),
+        module_root: None,
+    });
 
     let normalized =
         normalize_handler_path_with(&handler_path, &|| platform.fs().cwd().ok(), &|path| {

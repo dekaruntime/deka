@@ -102,26 +102,10 @@ pub fn validate_wasm_imports(source: &str, file_path: &str) -> Vec<ValidationErr
     errors
 }
 
-/// Reads the build target from the environment.
-///
-/// Split out so the validation below can be exercised without touching
-/// process-global state. `std::env::set_var` is process-wide and cargo runs
-/// tests as threads in one process, so tests that set `DEKA_TARGET` raced each
-/// other -- one clearing the variable while another was mid-validation
-/// (deka#536).
-fn target_from_env() -> String {
-    std::env::var("DEKA_TARGET")
-        .ok()
-        .or_else(|| std::env::var("DEKA_HOST_PROFILE").ok())
-        .unwrap_or_else(|| "server".to_string())
-        .to_ascii_lowercase()
-}
-
-pub fn validate_target_capabilities(source: &str, file_path: &str) -> Vec<ValidationError> {
-    validate_target_capabilities_for(&target_from_env(), source, file_path)
-}
-
-/// The validation itself, with the target passed in.
+/// Validates against an explicit `target` (see
+/// [`validate_target_capabilities_for`]). There is deliberately no ambient
+/// target: the build target must be passed in by the dispatch layer, never
+/// read from the process environment (deka#801).
 pub fn validate_target_capabilities_for(
     target: &str,
     source: &str,
@@ -479,13 +463,14 @@ fn export_name_after_keyword(line: &str, keyword: &str) -> Option<String> {
 }
 
 pub(crate) fn resolve_modules_root(file_path: &str) -> Option<PathBuf> {
-    let env_val = std::env::var("DEKA_MODULE_ROOT").ok();
-    resolve_modules_root_with_env(file_path, env_val.as_deref())
+    resolve_modules_root_with(file_path, None)
 }
 
-fn resolve_modules_root_with_env(
+/// `module_root_override` is an explicit ds_modules project root supplied by
+/// the caller; there is deliberately no environment fallback (deka#801).
+fn resolve_modules_root_with(
     file_path: &str,
-    env_module_root: Option<&str>,
+    module_root_override: Option<&str>,
 ) -> Option<PathBuf> {
     let path = Path::new(file_path);
     let dir = if path.is_dir() {
@@ -499,8 +484,8 @@ fn resolve_modules_root_with_env(
         }
     }
 
-    if let Some(env_root) = env_module_root {
-        let root = PathBuf::from(env_root);
+    if let Some(override_root) = module_root_override {
+        let root = PathBuf::from(override_root);
         if root.join("deka.lock").exists() {
             if let Some(candidate) = existing_modules_dirs(&root).into_iter().next() {
                 return Some(candidate);
@@ -733,12 +718,6 @@ fn resolve_import_target(
         if let Some(project_root) = modules_root.and_then(|root| root.parent()) {
             base_dirs.push(project_root.to_path_buf());
         }
-        if let Ok(root) = std::env::var("DEKA_MODULE_ROOT") {
-            let root = root.trim();
-            if !root.is_empty() {
-                base_dirs.push(PathBuf::from(root));
-            }
-        }
         if let Ok(cwd) = std::env::current_dir() {
             base_dirs.push(cwd);
         }
@@ -758,7 +737,7 @@ fn resolve_import_target(
                 "Missing ds_modules for import '{}' in {} ({lock_status}).",
                 raw, current_file_path
             ),
-            "Create ds_modules/, ensure deka.lock is present, or set DEKA_MODULE_ROOT to a root that contains deka.lock.",
+            "Create ds_modules/ at the project root and ensure deka.lock is present.",
         ));
     }
 
@@ -1001,7 +980,7 @@ fn resolve_wasm_target(
                 "Wasm import requires ds_modules/ (missing for {}, {}).",
                 current_file_path, lock_status
             ),
-            "Create ds_modules/, ensure deka.lock is present, or set DEKA_MODULE_ROOT to a root with deka.lock.",
+            "Create ds_modules/ at the project root and ensure deka.lock is present.",
         )
     })?;
 
@@ -1240,18 +1219,9 @@ fn describe_lock_status(current_file_path: &str) -> String {
     let local = find_project_root(&dir)
         .map(|root| format!("local lock: {}", root.join("deka.lock").display()))
         .unwrap_or_else(|| "local lock: not found".to_string());
-    let global = match std::env::var("DEKA_MODULE_ROOT") {
-        Ok(root) if !root.trim().is_empty() => {
-            let lock = PathBuf::from(root.trim()).join("deka.lock");
-            if lock.exists() {
-                format!("global lock: {}", lock.display())
-            } else {
-                format!("global lock: missing at {}", lock.display())
-            }
-        }
-        _ => "global lock: DEKA_MODULE_ROOT unset".to_string(),
-    };
-    format!("{local}; {global}")
+    // No ambient override: a project root arrives via the file path's own
+    // project layout, never via the process environment (deka#801).
+    format!("{local}; global lock: not configured")
 }
 
 fn validate_package_integrity(
@@ -1585,8 +1555,8 @@ fn wasm_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        MODULES_DIR, resolve_modules_root_with_env, validate_module_resolution,
-        validate_package_integrity, validate_target_capabilities, validate_target_capabilities_for,
+        MODULES_DIR, resolve_modules_root_with, validate_module_resolution,
+        validate_package_integrity, validate_target_capabilities_for,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -1655,7 +1625,7 @@ mod tests {
         fs::create_dir_all(entry.parent().expect("entry parent")).expect("mkdir app");
         fs::write(&entry, "import { foo } from 'a'\n").expect("write entry");
 
-        let resolved = resolve_modules_root_with_env(
+        let resolved = resolve_modules_root_with(
             entry.to_string_lossy().as_ref(),
             Some(global.to_string_lossy().as_ref()),
         )
@@ -1675,7 +1645,7 @@ mod tests {
         fs::create_dir_all(outside.parent().expect("outside parent")).expect("mkdir outside");
         fs::write(&outside, "import { foo } from 'a'\n").expect("write outside entry");
 
-        let resolved = resolve_modules_root_with_env(
+        let resolved = resolve_modules_root_with(
             outside.to_string_lossy().as_ref(),
             Some(global.to_string_lossy().as_ref()),
         )
@@ -1695,7 +1665,7 @@ mod tests {
         fs::create_dir_all(outside.parent().expect("outside parent")).expect("mkdir outside");
         fs::write(&outside, "import { foo } from 'a'\n").expect("write outside entry");
 
-        let resolved = resolve_modules_root_with_env(
+        let resolved = resolve_modules_root_with(
             outside.to_string_lossy().as_ref(),
             Some(global.to_string_lossy().as_ref()),
         );

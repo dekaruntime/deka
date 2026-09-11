@@ -12,11 +12,14 @@ thread_local! {
     static NEXT_HANDLE: RefCell<u64> = const { RefCell::new(1) };
 }
 
-/// Pick a Redis URL from the shard resolver for a connect() call that
-/// omits an explicit URL. See `shard_route_neo4j` for the rationale —
-/// this mirrors that logic exactly.
-fn shard_route_redis(_args: &Value) -> String {
-    std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string())
+/// Pick a Redis URL for a connect() call that omits an explicit URL. See
+/// `shard_route_neo4j` for the rationale — this mirrors that logic exactly.
+/// The URL comes from the endpoints the dispatch layer installed from
+/// deka.json; the process environment is not consulted (deka#801).
+pub fn shard_route_redis(_args: &Value) -> String {
+    crate::host_config::database_endpoints()
+        .and_then(|endpoints| endpoints.redis_url.clone())
+        .unwrap_or_else(|| "redis://localhost:6379".to_string())
 }
 
 /// Main dispatch function — called from the JS bridge router via op_redis_call.
@@ -71,10 +74,10 @@ where
 
 fn redis_connect(args: &Value) -> Value {
     // Config priority: shard resolver (when the cluster is configured and
-    // the explicit URL looks like a dev default) > explicit args > env
-    // vars > default. See `neo4j_connect` for the full reasoning — this
-    // is the same safety net for tenant handlers that hardcode
-    // `redis://localhost:6380`.
+    // the explicit URL looks like a dev default) > explicit args > the
+    // endpoints installed from deka.json > default. See `neo4j_connect`
+    // for the full reasoning — this is the same safety net for tenant
+    // handlers that hardcode `redis://localhost:6380`.
     let explicit = args
         .get("url")
         .or_else(|| args.get("uri"))

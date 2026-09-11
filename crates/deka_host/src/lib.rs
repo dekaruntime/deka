@@ -4,6 +4,7 @@
 use deno_core::Extension;
 
 pub mod build_observations;
+pub mod host_config;
 pub mod integrity;
 #[cfg(feature = "runtime")]
 pub mod modules;

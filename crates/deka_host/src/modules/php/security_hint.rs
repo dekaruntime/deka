@@ -166,20 +166,20 @@ fn suggest_write_rule(target: &str, project_kind: ProjectKind) -> Option<String>
     default_example("write", project_kind)
 }
 
+/// The project root the dispatch layer installed explicitly (deka#801); the
+/// process environment is not consulted. Falls back to the cwd.
 pub(super) fn project_root() -> Option<std::path::PathBuf> {
-    if let Ok(root) = std::env::var("DEKA_MODULE_ROOT") {
-        if !root.trim().is_empty() {
-            return Some(std::path::PathBuf::from(root));
+    if let Some(paths) = crate::host_config::handler_paths() {
+        if let Some(root) = paths.module_root.as_deref() {
+            if !root.trim().is_empty() {
+                return Some(std::path::PathBuf::from(root));
+            }
         }
-    }
-    if let Ok(handler) = std::env::var("HANDLER_PATH") {
-        let path = std::path::PathBuf::from(handler);
-        if path.is_file() {
+        if let Some(handler) = paths.handler_path.as_deref() {
+            let path = std::path::PathBuf::from(handler);
             if let Some(parent) = path.parent() {
                 return Some(parent.to_path_buf());
             }
-        } else if let Some(parent) = path.parent() {
-            return Some(parent.to_path_buf());
         }
     }
     std::env::current_dir().ok()
@@ -193,19 +193,21 @@ pub(super) enum ProjectKind {
 }
 
 pub(super) fn project_kind() -> ProjectKind {
-    if std::env::var("DEKA_MODULE_ROOT").is_ok() {
-        return ProjectKind::Php;
-    }
-    if let Ok(handler) = std::env::var("HANDLER_PATH") {
-        if handler.ends_with(".phpx") || handler.ends_with(".php") {
+    if let Some(paths) = crate::host_config::handler_paths() {
+        if paths.module_root.is_some() {
             return ProjectKind::Php;
         }
-        if handler.ends_with(".ts")
-            || handler.ends_with(".tsx")
-            || handler.ends_with(".js")
-            || handler.ends_with(".jsx")
-        {
-            return ProjectKind::Js;
+        if let Some(handler) = paths.handler_path.as_deref() {
+            if handler.ends_with(".phpx") || handler.ends_with(".php") {
+                return ProjectKind::Php;
+            }
+            if handler.ends_with(".ts")
+                || handler.ends_with(".tsx")
+                || handler.ends_with(".js")
+                || handler.ends_with(".jsx")
+            {
+                return ProjectKind::Js;
+            }
         }
     }
     ProjectKind::Other
