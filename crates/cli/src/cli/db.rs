@@ -1,5 +1,5 @@
 mod commands;
-mod config;
+pub mod config;
 mod migrate;
 mod model;
 

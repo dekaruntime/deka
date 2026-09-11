@@ -89,11 +89,11 @@ pub fn register(registry: &mut Registry) {
     });
     registry.add_param(ParamSpec {
         name: "--registry",
-        description: "registry base URL (fallback: LINKHASH_REGISTRY, TANA_GIT_SERVER, or http://localhost:9418)",
+        description: "registry base URL (default: https://git.tana.gg)",
     });
     registry.add_param(ParamSpec {
         name: "--token",
-        description: "auth token (fallback: LINKHASH_TOKEN, TANA_GIT_TOKEN)",
+        description: "auth token",
     });
 }
 
@@ -404,43 +404,6 @@ fn git_commit_shop_update(project_dir: &std::path::Path, subject: &str) -> Resul
     Ok(())
 }
 
-/// Set LINKHASH_REGISTRY_URL from --registry flag or TANA_GIT_SERVER env,
-/// and LINKHASH_TOKEN from --token flag or TANA_GIT_TOKEN env.
-/// This ensures the pm crate picks up the right values.
-fn apply_registry_env(context: &Context) {
-    if let Some(registry) = context.args.params.get("--registry") {
-        unsafe {
-            std::env::set_var("LINKHASH_REGISTRY_URL", registry);
-        }
-    } else if std::env::var("LINKHASH_REGISTRY_URL").is_err() {
-        if let Ok(val) = std::env::var("LINKHASH_REGISTRY") {
-            unsafe {
-                std::env::set_var("LINKHASH_REGISTRY_URL", val);
-            }
-        } else if let Ok(val) = std::env::var("TANA_GIT_SERVER") {
-            unsafe {
-                std::env::set_var("LINKHASH_REGISTRY_URL", val);
-            }
-        } else {
-            unsafe {
-                std::env::set_var("LINKHASH_REGISTRY_URL", "https://git.tana.gg");
-            }
-        }
-    }
-
-    if let Some(token) = context.args.params.get("--token") {
-        unsafe {
-            std::env::set_var("LINKHASH_TOKEN", token);
-        }
-    } else if std::env::var("LINKHASH_TOKEN").is_err() {
-        if let Ok(val) = std::env::var("TANA_GIT_TOKEN") {
-            unsafe {
-                std::env::set_var("LINKHASH_TOKEN", val);
-            }
-        }
-    }
-}
-
 fn build_payload_for_specs(context: &Context, specs: Vec<String>) -> Result<InstallPayload> {
     let mut payload = InstallPayload {
         specs,
@@ -577,25 +540,18 @@ fn resolve_php_spec(raw: &str) -> Result<String> {
     ))
 }
 
-/// Extract registry URL and token from CLI context / env.
-fn get_registry_config(context: &Context) -> (String, Option<String>) {
+/// Extract registry URL and token from CLI flags (deka#801: config flows
+/// explicitly through flags/deka.json/auth profile, never the environment).
+#[doc(hidden)]
+pub fn get_registry_config(context: &Context) -> (String, Option<String>) {
     let registry = context
         .args
         .params
         .get("--registry")
         .cloned()
-        .or_else(|| std::env::var("LINKHASH_REGISTRY_URL").ok())
-        .or_else(|| std::env::var("LINKHASH_REGISTRY").ok())
-        .or_else(|| std::env::var("TANA_GIT_SERVER").ok())
         .unwrap_or_else(|| "https://git.tana.gg".to_string());
 
-    let token = context
-        .args
-        .params
-        .get("--token")
-        .cloned()
-        .or_else(|| std::env::var("LINKHASH_TOKEN").ok())
-        .or_else(|| std::env::var("TANA_GIT_TOKEN").ok());
+    let token = context.args.params.get("--token").cloned();
 
     (registry, token)
 }

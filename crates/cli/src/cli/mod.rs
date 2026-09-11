@@ -379,16 +379,6 @@ pub fn execute(registry: &Registry) -> i32 {
         }
     };
     let cmd = &context.args;
-    if cmd.flags.contains_key("--debug")
-        || cmd.flags.contains_key("-d")
-        || cmd.flags.contains_key("debug")
-    {
-        #[cfg(not(target_arch = "wasm32"))]
-        unsafe {
-            std::env::set_var("DEKA_DEBUG", "1");
-        }
-    }
-
     // check if there are any command-line arguments provided
     if cmd.commands.is_empty() {
         // returning help if no commands or flags are provided, else check for flags that return content to user

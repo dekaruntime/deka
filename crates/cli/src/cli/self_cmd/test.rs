@@ -132,6 +132,9 @@ fn run_php_suite(context: &Context) -> Result<(), String> {
         return Ok(());
     }
 
+    // PHP_BIN toolchain-location override: same category as the DEKA_DSC
+    // toolchain channel, kept pending a unified toolchain-location mechanism
+    // (deka#801 needs-decision).
     let php_official = std::env::var("PHP_BIN").unwrap_or_else(|_| "php".to_string());
     let deka_bin = resolve_deka_bin()?;
 

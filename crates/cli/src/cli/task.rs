@@ -262,6 +262,9 @@ fn run_task(
     }
 
     let list = parse(&task.command).map_err(|err| err.to_string())?;
+    // Deliberate child-process env inheritance: task subprocesses need the
+    // ambient OS environment (PATH, HOME, etc.) to run user commands.
+    // Scoping the child env is a deka#801 follow-up decision.
     let mut env_vars = HashMap::new();
     for (key, value) in std::env::vars_os() {
         env_vars.insert(key, value);

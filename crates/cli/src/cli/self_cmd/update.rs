@@ -301,31 +301,18 @@ pub fn cmd(context: &Context) {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-fn get_registry_config(context: &Context) -> (String, Option<String>, Option<String>) {
+#[doc(hidden)]
+pub fn get_registry_config(context: &Context) -> (String, Option<String>, Option<String>) {
     let registry = context
         .args
         .params
         .get("--registry-url")
         .cloned()
-        .or_else(|| std::env::var("LINKHASH_REGISTRY_URL").ok())
-        .or_else(|| std::env::var("LINKHASH_REGISTRY").ok())
-        .or_else(|| std::env::var("TANA_GIT_SERVER").ok())
         .unwrap_or_else(|| "http://localhost:9418".to_string());
 
-    let token = context
-        .args
-        .params
-        .get("--token")
-        .cloned()
-        .or_else(|| std::env::var("LINKHASH_TOKEN").ok())
-        .or_else(|| std::env::var("TANA_GIT_TOKEN").ok());
+    let token = context.args.params.get("--token").cloned();
 
-    let registry_index_url = context
-        .args
-        .params
-        .get("--registry-index")
-        .cloned()
-        .or_else(|| std::env::var("LINKHASH_CARGO_INDEX").ok());
+    let registry_index_url = context.args.params.get("--registry-index").cloned();
 
     (registry, token, registry_index_url)
 }
@@ -1094,19 +1081,17 @@ mod tests {
     }
 
     #[test]
-    fn get_registry_config_reads_cargo_index_env() {
+    fn get_registry_config_reads_cargo_index_flag() {
         let dir = std::env::temp_dir().join(format!("deka-reg-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let ctx = dummy_context(dir.clone());
+        let mut ctx = dummy_context(dir.clone());
+        ctx.args.params.insert(
+            "--registry-index".to_string(),
+            "https://index.example.com".to_string(),
+        );
 
-        unsafe {
-            std::env::set_var("LINKHASH_CARGO_INDEX", "https://index.example.com");
-        }
         let (_, _, index) = get_registry_config(&ctx);
         assert_eq!(index, Some("https://index.example.com".to_string()));
-        unsafe {
-            std::env::remove_var("LINKHASH_CARGO_INDEX");
-        }
 
         let _ = std::fs::remove_dir(&dir);
     }

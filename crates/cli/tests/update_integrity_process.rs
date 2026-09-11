@@ -105,8 +105,7 @@ fn assert_update_rejected(case: DigestCase, shop_mode: bool) {
     let cli = std::env::var("CARGO_BIN_EXE_cli").expect("Cargo must provide the cli binary");
     let output = Command::new(cli)
         .current_dir(&worktree)
-        .args(["update", "@tana/store@1.0.0"])
-        .env("LINKHASH_REGISTRY_URL", &server.url)
+        .args(["update", "@tana/store@1.0.0", "--registry-url", server.url.as_str()])
         .output()
         .expect("spawn deka update");
 
