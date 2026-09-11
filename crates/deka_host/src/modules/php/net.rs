@@ -2,7 +2,7 @@ use super::bridge_metrics::record_bridge_proto_metric;
 use super::security::{enforce_net_with, security_policy_from_context};
 use super::*;
 use deno_core::OpState;
-use rustls::{Certificate, PrivateKey, ServerName};
+use rustls::pki_types::{CertificateDer, ServerName};
 use std::cell::RefCell;
 use std::net::TcpListener;
 use std::rc::Rc;
@@ -126,28 +126,23 @@ fn listener_target(state: &NetState, handle: u64) -> Result<String, deno_core::e
 fn client_tls_config(
     ca_cert_pem: Option<&[u8]>,
 ) -> Result<Arc<rustls::ClientConfig>, rustls::Error> {
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-        rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    }));
+    ensure_rustls_crypto_provider();
+    let mut root_store =
+        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
     if let Some(pem) = ca_cert_pem {
         let certs = rustls_pemfile::certs(&mut &pem[..])
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|e| rustls::Error::General(format!("invalid ca_cert PEM: {e}")))?;
         for cert in certs {
             root_store
-                .add(&rustls::Certificate(cert))
+                .add(cert)
                 .map_err(|e| rustls::Error::General(format!("invalid ca_cert: {e}")))?;
         }
     }
 
     Ok(Arc::new(
         rustls::ClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(root_store)
             .with_no_client_auth(),
     ))
@@ -157,38 +152,31 @@ fn server_tls_config(
     cert_pem: &[u8],
     key_pem: &[u8],
 ) -> Result<Arc<rustls::ServerConfig>, rustls::Error> {
-    let cert_chain: Vec<Certificate> = rustls_pemfile::certs(&mut &cert_pem[..])
-        .map_err(|e| rustls::Error::General(format!("invalid certificate PEM: {e}")))?
-        .into_iter()
-        .map(Certificate)
-        .collect();
+    ensure_rustls_crypto_provider();
+    let cert_chain: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut &cert_pem[..])
+        .collect::<Result<_, _>>()
+        .map_err(|e| rustls::Error::General(format!("invalid certificate PEM: {e}")))?;
 
-    let mut keys: Vec<Vec<u8>> = rustls_pemfile::pkcs8_private_keys(&mut &key_pem[..])
-        .map_err(|e| rustls::Error::General(format!("invalid PKCS8 key: {e}")))?
-        .into_iter()
-        .collect();
-    if keys.is_empty() {
-        keys = rustls_pemfile::rsa_private_keys(&mut &key_pem[..])
-            .map_err(|e| rustls::Error::General(format!("invalid RSA key: {e}")))?
-            .into_iter()
-            .collect();
-    }
-    let key = keys
-        .into_iter()
-        .next()
-        .map(PrivateKey)
+    let key = rustls_pemfile::private_key(&mut &key_pem[..])
+        .map_err(|e| rustls::Error::General(format!("invalid private key PEM: {e}")))?
         .ok_or_else(|| rustls::Error::General("no private key found".into()))?;
 
     Ok(Arc::new(
         rustls::ServerConfig::builder()
-            .with_safe_defaults()
             .with_no_client_auth()
             .with_single_cert(cert_chain, key)?,
     ))
 }
 
-fn parse_server_name(name: &str) -> Result<ServerName, deno_core::error::CoreError> {
-    ServerName::try_from(name).map_err(|e| core_err(format!("invalid server_name '{name}': {e}")))
+/// Deno's TLS stack enables AWS-LC while the WebSocket client enables ring.
+/// Rustls 0.23 requires a process default when both providers are linked.
+fn ensure_rustls_crypto_provider() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
+fn parse_server_name(name: &str) -> Result<ServerName<'static>, deno_core::error::CoreError> {
+    ServerName::try_from(name.to_owned())
+        .map_err(|e| core_err(format!("invalid server_name '{name}': {e}")))
 }
 
 pub(super) fn net_call_impl(

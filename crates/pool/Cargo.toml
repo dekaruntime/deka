@@ -25,7 +25,7 @@ swc_ecma_parser = { workspace = true, features = ["typescript"] }
 swc_ecma_visit = { workspace = true }
 
 redis = { workspace = true }
-reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 deka-validation = { path = "../deka-validation" }
 # Staged catalog compiles verify rewritten dependency packages against the
 # real deka.lock with the same integrity hashes `deka install` pins.
