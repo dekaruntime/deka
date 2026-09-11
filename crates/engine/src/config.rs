@@ -125,6 +125,8 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
+        // Genuine OS value (deka#801): relative input resolves against the
+        // process working directory, not an environment lookup.
         let cwd = std::env::current_dir().map_err(|e| format!("Failed to get cwd: {}", e))?;
         cwd.join(path)
     };
@@ -150,6 +152,8 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
 
     let (handler_dir, serve_config) = if is_dir {
         let config = ServeConfig::load(&abs_path);
+        // Return value unused here; the call keeps the interim deka_host
+        // environment publish alive (see load_database_config, deka#801).
         load_database_config(&abs_path);
         (abs_path.clone(), config)
     } else if let Some(parent) = abs_path.parent() {
@@ -366,22 +370,18 @@ impl RuntimeConfig {
     fn find_config_path() -> Option<PathBuf> {
         let mut candidates = Vec::new();
 
-        if let Ok(path) = std::env::var("DEKA_RUNTIME_CONFIG") {
-            let path = PathBuf::from(path);
-            if path.exists() {
-                return Some(path);
-            }
-            tracing::warn!(
-                "DEKA_RUNTIME_CONFIG set but file not found: {}",
-                path.display()
-            );
-            candidates.push(path);
-        }
-
+        // The ambient environment is not a config channel (deka#801): the
+        // explicit DEKA_RUNTIME_CONFIG override was removed with the rest of
+        // the env-based config. Discovery below uses only well-known
+        // locations relative to the working directory and the OS-standard
+        // user/system config directories.
         candidates.push(PathBuf::from("config.toml"));
         candidates.push(PathBuf::from("runtime.toml"));
         candidates.push(PathBuf::from("deka-runtime.toml"));
 
+        // Genuine OS values, not a config channel (deka#801): locating the
+        // user's config directory follows the XDG base-dir spec with $HOME
+        // as its fallback — the same category as `temp_dir`/`current_dir`.
         if let Some(path) = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
@@ -400,6 +400,8 @@ impl RuntimeConfig {
 }
 
 fn default_introspect_db_path() -> Option<PathBuf> {
+    // Genuine OS value (deka#801): the default archive lives under the
+    // user's home directory, like any per-user data file.
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .map(|home| home.join(".deka").join("introspect.db"))
@@ -407,6 +409,8 @@ fn default_introspect_db_path() -> Option<PathBuf> {
 
 fn expand_home_path(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
+        // Genuine OS value (deka#801): `~/` expansion resolves against the
+        // user's home directory, not a deka config channel.
         if let Some(home) = std::env::var_os("HOME") {
             return PathBuf::from(home).join(rest);
         }
@@ -470,8 +474,26 @@ mod tests {
     }
 }
 
-/// Load database configuration from deka.json and set environment variables.
-/// Called during handler initialization so the neo4j/redis modules pick up config.
+/// Database connection settings parsed from a project's `deka.json`
+/// (`{ "neo4j": {...}, "redis": {...} }`). Returned by
+/// [`load_database_config`] so callers thread it explicitly instead of
+/// publishing it through the process environment (deka#801).
+#[derive(Debug, Clone, Default)]
+pub struct DatabaseConfig {
+    pub neo4j: Option<Neo4jConfig>,
+    pub redis_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Neo4jConfig {
+    pub uri: Option<String>,
+    pub user: Option<String>,
+    pub password: Option<String>,
+    pub db: Option<String>,
+}
+
+/// Load database configuration from deka.json and return it. Callers that
+/// serve HTTP thread the returned values into `deka_http::HttpConfig`.
 ///
 /// Example deka.json:
 /// ```json
@@ -480,49 +502,66 @@ mod tests {
 ///   "redis": { "url": "redis://localhost:6379" }
 /// }
 /// ```
-pub fn load_database_config(directory: &std::path::Path) {
+pub fn load_database_config(directory: &std::path::Path) -> DatabaseConfig {
     let deka_json = directory.join("deka.json");
     if !deka_json.exists() {
-        return;
+        return DatabaseConfig::default();
     }
 
     let contents = match std::fs::read_to_string(&deka_json) {
         Ok(c) => c,
-        Err(_) => return,
+        Err(_) => return DatabaseConfig::default(),
     };
 
     let root: serde_json::Value = match serde_json::from_str(&contents) {
         Ok(v) => v,
-        Err(_) => return,
+        Err(_) => return DatabaseConfig::default(),
     };
 
+    let neo4j = root.get("neo4j").map(|neo4j| Neo4jConfig {
+        uri: neo4j.get("uri").and_then(|v| v.as_str()).map(str::to_string),
+        user: neo4j.get("user").and_then(|v| v.as_str()).map(str::to_string),
+        password: neo4j
+            .get("password")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        db: neo4j.get("db").and_then(|v| v.as_str()).map(str::to_string),
+    });
+    let redis_url = root
+        .get("redis")
+        .and_then(|redis| redis.get("url").or_else(|| redis.get("uri")))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    let config = DatabaseConfig { neo4j, redis_url };
+
+    // deka#801: the process-environment publish below is the interim channel
+    // that deka_host modules (neo4j/redis/compat) still read at call time.
+    // http no longer consumes it (it takes `HttpConfig` from its caller), but
+    // deleting the publish regresses deka_host's deka.json-sourced defaults
+    // until that lane defines its own explicit transport. Kept deliberately;
+    // listed under "needs decision" on the deka#801 PR. See deka#801.
+    //
     // SAFETY: called once during single-threaded init before handler threads start.
     unsafe {
-        // Neo4j config
-        if let Some(neo4j) = root.get("neo4j") {
-            if let Some(uri) = neo4j.get("uri").and_then(|v| v.as_str()) {
+        if let Some(neo4j) = &config.neo4j {
+            if let Some(uri) = &neo4j.uri {
                 std::env::set_var("DEKA_NEO4J_URI", uri);
             }
-            if let Some(user) = neo4j.get("user").and_then(|v| v.as_str()) {
+            if let Some(user) = &neo4j.user {
                 std::env::set_var("DEKA_NEO4J_USER", user);
             }
-            if let Some(password) = neo4j.get("password").and_then(|v| v.as_str()) {
+            if let Some(password) = &neo4j.password {
                 std::env::set_var("DEKA_NEO4J_PASSWORD", password);
             }
-            if let Some(db) = neo4j.get("db").and_then(|v| v.as_str()) {
+            if let Some(db) = &neo4j.db {
                 std::env::set_var("DEKA_NEO4J_DB", db);
             }
         }
-
-        // Redis config
-        if let Some(redis) = root.get("redis") {
-            if let Some(url) = redis
-                .get("url")
-                .or_else(|| redis.get("uri"))
-                .and_then(|v| v.as_str())
-            {
-                std::env::set_var("DEKA_REDIS_URL", url);
-            }
+        if let Some(url) = &config.redis_url {
+            std::env::set_var("DEKA_REDIS_URL", url);
         }
     }
+
+    config
 }

@@ -12,10 +12,15 @@ pub struct HttpOptions {
     pub port: u16,
     pub listeners: usize,
     pub perf_mode: bool,
+    /// Caller-supplied HTTP configuration (deka#801) — replaces the
+    /// `DEKA_RATE_LIMIT_*` / `DEKA_HTTP_DEBUG` / `DEKA_REDIS_URL` /
+    /// `DEKA_NEO4J_*` environment reads.
+    pub http: deka_http::HttpConfig,
 }
 
 pub struct UnixOptions {
     pub path: String,
+    pub http: deka_http::HttpConfig,
 }
 
 pub struct WsOptions {
@@ -55,9 +60,18 @@ pub fn notify_hmr_changed(paths: &[String]) {
 pub async fn serve(state: Arc<RuntimeState>, target: ListenConfig) -> Result<(), String> {
     match target {
         ListenConfig::Http(options) => {
-            deka_http::serve_http(state, options.port, options.listeners, options.perf_mode).await
+            deka_http::serve_http(
+                state,
+                options.port,
+                options.listeners,
+                options.perf_mode,
+                options.http,
+            )
+            .await
         }
-        ListenConfig::Unix(options) => deka_http::unix::serve_unix(state, &options.path).await,
+        ListenConfig::Unix(options) => {
+            deka_http::unix::serve_unix(state, &options.path, options.http).await
+        }
         ListenConfig::Ws(options) => ws::serve_ws(state, options).await,
         ListenConfig::Tcp(options) => tcp::serve_tcp(state, options).await,
         ListenConfig::Udp(options) => udp::serve_udp(state, options).await,

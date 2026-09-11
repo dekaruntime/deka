@@ -23,20 +23,17 @@ pub struct RateLimitConfig {
     pub disabled: bool,
 }
 
-impl RateLimitConfig {
-    pub fn from_env() -> Self {
+impl Default for RateLimitConfig {
+    fn default() -> Self {
         Self {
-            requests_per_minute: parse_env_u32(
-                "DEKA_RATE_LIMIT_REQUESTS_PER_MINUTE",
-                DEFAULT_REQUESTS_PER_MINUTE,
-            ),
-            burst: parse_env_u32("DEKA_RATE_LIMIT_BURST", DEFAULT_BURST),
-            disabled: std::env::var("DEKA_RATE_LIMIT_DISABLED")
-                .map(|value| is_truthy(&value))
-                .unwrap_or(false),
+            requests_per_minute: DEFAULT_REQUESTS_PER_MINUTE,
+            burst: DEFAULT_BURST,
+            disabled: false,
         }
     }
+}
 
+impl RateLimitConfig {
     fn refill_per_second(&self) -> f64 {
         f64::from(self.requests_per_minute) / 60.0
     }
@@ -49,10 +46,6 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    pub fn from_env() -> Arc<Self> {
-        Arc::new(Self::new(RateLimitConfig::from_env()))
-    }
-
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             config,
@@ -212,17 +205,6 @@ fn retry_after_secs(tokens: f64, refill_per_second: f64) -> u64 {
     ((1.0 - tokens).max(0.0) / refill_per_second)
         .ceil()
         .max(1.0) as u64
-}
-
-fn parse_env_u32(name: &str, default: u32) -> u32 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
-}
-
-fn is_truthy(value: &str) -> bool {
-    matches!(value, "1" | "true" | "yes" | "on")
 }
 
 #[cfg(test)]

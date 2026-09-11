@@ -12,13 +12,13 @@ use serde_json::json;
 
 use engine::{RuntimeState, execute_request_parts};
 
-use crate::debug::http_debug_enabled;
 use crate::rate_limit::{RateLimitDecision, RateLimiter, source_ip};
 
 pub async fn serve_http_fast(
     listener: tokio::net::TcpListener,
     state: Arc<RuntimeState>,
     rate_limiter: Arc<RateLimiter>,
+    debug: bool,
 ) {
     loop {
         let (stream, peer_addr) = match listener.accept().await {
@@ -37,6 +37,7 @@ pub async fn serve_http_fast(
                     Arc::clone(&state),
                     Arc::clone(&rate_limiter),
                     peer_addr,
+                    debug,
                     req,
                 )
             });
@@ -52,11 +53,12 @@ async fn handle_request_fast(
     state: Arc<RuntimeState>,
     rate_limiter: Arc<RateLimiter>,
     peer_addr: SocketAddr,
+    debug: bool,
     request: hyper::Request<Incoming>,
 ) -> Result<hyper::Response<Full<Bytes>>, hyper::Error> {
     let method = request.method().as_str().to_string();
     let uri = request.uri().to_string();
-    if http_debug_enabled() {
+    if debug {
         tracing::info!("[http-fast] request {} {}", method, uri);
     }
     if let Some(response) = fast_rate_limit_response(&rate_limiter, request.headers(), peer_addr) {
@@ -81,7 +83,7 @@ async fn handle_request_fast(
             return Ok(response.body(body).unwrap());
         }
     };
-    if http_debug_enabled() {
+    if debug {
         tracing::info!("[http-fast] response {} {}", response.status, uri);
     }
 

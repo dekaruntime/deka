@@ -215,8 +215,16 @@ async fn platform_async(context: &Context) {
     let root = PathBuf::from(if input.is_empty() { "." } else { input });
     let root = std::fs::canonicalize(&root).unwrap_or(root);
 
-    // Load database config from platform-level deka.json
-    runtime_config::load_database_config(&root);
+    // Load database config from platform-level deka.json. The parsed values
+    // thread into the pageview tracker explicitly (deka#801); the env publish
+    // inside is the interim deka_host channel (see engine::config, deka#801).
+    let db_config = runtime_config::load_database_config(&root);
+    deka_http::analytics::init(
+        db_config
+            .redis_url
+            .as_deref()
+            .unwrap_or("redis://localhost:6379"),
+    );
 
     // Validate directory structure
     let default_dir = root.join("default");
@@ -354,7 +362,11 @@ async fn platform_async(context: &Context) {
         });
     }
 
-    let rate_limiter = RateLimiter::from_env();
+    // Rate limiting uses the built-in defaults; the `DEKA_RATE_LIMIT_*` env
+    // toggle was removed with the environment-as-config channel (deka#801).
+    let rate_limiter = Arc::new(RateLimiter::new(
+        deka_http::rate_limit::RateLimitConfig::default(),
+    ));
     rate_limiter.spawn_janitor();
 
     let app = Router::new()
