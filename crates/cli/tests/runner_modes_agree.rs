@@ -10,6 +10,8 @@
 //! The corpus lives in a tempdir so the committed fixtures are untouched.
 
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -67,6 +69,36 @@ fn write_corpus(root: &Path, listed: bool) {
     fs::write(root.join("expected-failures.txt"), ratchet).expect("ratchet");
 }
 
+fn write_registry_fixture(root: &Path) {
+    let fixture = root.join("zgate").join("registry");
+    fs::create_dir_all(&fixture).expect("fixture dir");
+    fs::write(
+        fixture.join("registry.pass.ds"),
+        "console.log(\"never runs\")\n",
+    )
+    .expect("source");
+    fs::write(
+        fixture.join("registry.json"),
+        r#"{"title":"registry fault probe","stage":"run","hosts":["native"],"packages":["@deka/time"]}"#,
+    )
+    .expect("metadata");
+    fs::write(root.join("expected-failures.txt"), "").expect("ratchet");
+}
+
+#[cfg(unix)]
+fn unavailable_registry_cli(root: &Path) -> PathBuf {
+    let cli = root.join("unavailable-registry-cli");
+    fs::write(
+        &cli,
+        "#!/bin/sh\necho 'failed to install @deka/time from deka.gg: failed to contact deka.gg registry for @deka/time: connection refused' >&2\nexit 1\n",
+    )
+    .expect("fake cli");
+    let mut permissions = fs::metadata(&cli).expect("fake cli metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&cli, permissions).expect("make fake cli executable");
+    cli
+}
+
 fn run_mode(corpus: &Path, json: bool) -> std::process::ExitStatus {
     let mut cmd = Command::new(bun());
     cmd.arg(runner())
@@ -113,5 +145,42 @@ fn json_mode_enforces_the_same_exit_status_as_text_mode() {
         matches!(text.code(), Some(0)),
         "a fully ratcheted corpus must exit 0, got {:?}",
         text.code()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn registry_fetch_fault_is_blocked_and_visible_not_a_fixture_failure() {
+    let corpus = tempfile::tempdir().expect("corpus");
+    write_registry_fixture(corpus.path());
+    let cli = unavailable_registry_cli(corpus.path());
+
+    let output = Command::new(bun())
+        .arg(runner())
+        .arg("--root")
+        .arg(corpus.path())
+        .arg("--filter")
+        .arg("zgate-registry")
+        .env("DEKA_NATIVE", cli)
+        .output()
+        .expect("spawn run.mjs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "blocked run output: {stdout}"
+    );
+    assert!(
+        stdout.contains("⊘ zgate-registry"),
+        "blocked fixture was not named: {stdout}"
+    );
+    assert!(
+        stdout.contains("0 fail · 1 blocked"),
+        "blocked count missing: {stdout}"
+    );
+    assert!(
+        stdout.contains("failed to contact deka.gg registry"),
+        "install cause missing: {stdout}"
     );
 }

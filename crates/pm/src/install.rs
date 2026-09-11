@@ -540,9 +540,16 @@ fn install_from_registry(
     );
     let registry_resp = reqwest::blocking::get(&registry_url)
         .with_context(|| format!("failed to contact deka.gg registry for {}", name))?;
-    if !registry_resp.status().is_success() {
+    if registry_resp.status() == reqwest::StatusCode::NOT_FOUND {
         bail!(
             "package {} not found in deka.gg registry (status {})",
+            name,
+            registry_resp.status()
+        );
+    }
+    if !registry_resp.status().is_success() {
+        bail!(
+            "registry lookup failed for {}: status {}",
             name,
             registry_resp.status()
         );
