@@ -193,7 +193,6 @@ fn websockets() -> &'static Mutex<HashMap<u64, WsEntry>> {
 // net ops share it; we only extract+normalize the host here.
 // ---------------------------------------------------------------------------
 
-
 // ---------------------------------------------------------------------------
 // Entry point dispatched from the pool bridge.
 // ---------------------------------------------------------------------------
@@ -874,7 +873,7 @@ fn ws_send_text(payload: &Value) -> Value {
     };
     block_on(async move {
         let mut sink = sink.lock().await;
-        match sink.send(Message::Text(text)).await {
+        match sink.send(Message::Text(text.into())).await {
             Ok(()) => json!({ "ok": true }),
             Err(e) => json!({ "ok": false, "error": "ws_send_failed", "message": e.to_string() }),
         }
@@ -905,7 +904,7 @@ fn ws_send_binary(payload: &Value) -> Value {
     };
     block_on(async move {
         let mut sink = sink.lock().await;
-        match sink.send(Message::Binary(bytes)).await {
+        match sink.send(Message::Binary(bytes.into())).await {
             Ok(()) => json!({ "ok": true }),
             Err(e) => json!({ "ok": false, "error": "ws_send_failed", "message": e.to_string() }),
         }
@@ -944,7 +943,7 @@ fn ws_recv(payload: &Value) -> Value {
                 if t.len() > max_frame {
                     return json!({ "ok": false, "error": "frame_too_large" });
                 }
-                json!({ "ok": true, "kind": "text", "text": t })
+                json!({ "ok": true, "kind": "text", "text": t.to_string() })
             }
             Message::Binary(b) => {
                 if b.len() > max_frame {
@@ -999,7 +998,7 @@ fn ws_ping(payload: &Value) -> Value {
     };
     block_on(async move {
         let mut sink = sink.lock().await;
-        match sink.send(Message::Ping(payload_bytes)).await {
+        match sink.send(Message::Ping(payload_bytes.into())).await {
             Ok(()) => json!({ "ok": true }),
             Err(e) => json!({ "ok": false, "error": "ws_send_failed", "message": e.to_string() }),
         }

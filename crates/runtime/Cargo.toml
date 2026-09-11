@@ -11,7 +11,7 @@ platform_server = { path = "../platform_server" }
 engine = { path = "../engine" }
 pool = { path = "../pool" }
 transport = { path = "../transport" }
-reqwest = { version = "0.11", features = ["stream"] }
+reqwest = { version = "0.13", features = ["stream"] }
 bytes = { workspace = true }
 deka_http = { path = "../http" }
 stdio = "0.4.0"

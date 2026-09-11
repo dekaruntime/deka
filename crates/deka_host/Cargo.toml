@@ -40,14 +40,14 @@ serde_json = { workspace = true }
 prost = "0.13"
 sha2 = "0.10"
 postgres = { version = "0.19", features = ["with-chrono-0_4"], optional = true }
-mysql = { version = "26", optional = true }
+mysql = { version = "27", optional = true }
 rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 deka-validation = { path = "../deka-validation", default-features = false }
 runtime_core = { path = "../runtime_core" }
 stdio = { version = "0.4.0", optional = true }
-rustls = { version = "0.21", optional = true }
-rustls-pemfile = { version = "1.0", optional = true }
-webpki-roots = { version = "0.25", optional = true }
+rustls = { version = "0.23", optional = true }
+rustls-pemfile = { version = "2.0", optional = true }
+webpki-roots = { version = "1.0", optional = true }
 getrandom = { version = "0.2", optional = true }
 aes-gcm = { version = "0.10", optional = true }
 bcrypt = { version = "0.15", optional = true }
@@ -61,13 +61,13 @@ tokio = { workspace = true, optional = true }
 # @deka/http — outbound HTTP/1.1, HTTP/2 (ALPN h2), streaming bodies,
 # opt-in cookie jars. rustls keeps the TLS stack pure-Rust (no OpenSSL
 # system dep surprise) and matches what `crates/runtime` already uses.
-reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "stream", "cookies", "gzip", "json"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "stream", "cookies", "gzip", "json"], optional = true }
 # @deka/http WebSocket client. tokio-tungstenite gives us the RFC 6455
 # implementation with TLS via rustls, fragmentation reassembly, and
 # ping/pong keepalive. Chosen over reqwest-websocket because it exposes
 # full frame control (text/binary, close codes, ping payloads) which
 # Stripe-style streaming APIs need.
-tokio-tungstenite = { version = "0.21", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
 tokio-stream = { version = "0.1", optional = true }
 futures-util = { version = "0.3", optional = true }
 url = "2"
