@@ -38,7 +38,10 @@ jobs:
           lockfile=false
           utility_css=false
 
-          if echo "$files" | grep -qE '^(crates/.+\.rs|crates/.+\.js|crates/.+\.ts|crates/.+/build\.rs|assets/.+|scripts/.+|tests/.+|\.github/workflows/(ci|release)\.yml)$'; then
+          # Cargo.toml / Cargo.lock changes MUST run the Rust suite: a
+          # dependency bump compiles different code, and dependabot PRs were
+          # passing as CLEAN with typecheck+tests skipped (deka#860).
+          if echo "$files" | grep -qE '^(crates/.+\.rs|crates/.+\.js|crates/.+\.ts|crates/.+/build\.rs|assets/.+|scripts/.+|tests/.+|Cargo\.(toml|lock)|crates/.+/Cargo\.toml|\.github/workflows/(ci|release)\.yml)$'; then
             rust=true
           fi
 
