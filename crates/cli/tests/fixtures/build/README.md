@@ -34,7 +34,13 @@ The harness (`crates/cli/tests/build_fixture_harness.rs`, driven by
 2. **file tree** — `tree.txt` vs the built `dist/`; a mismatch lists missing
    and unexpected paths.
 3. **bytes** — every path in `tree.txt` is compared against the `files/`
-   mirror; text files get a unified diff, binary files a size note.
+   mirror; text files get a unified diff, binary files a size note. One
+   deliberate exception (deka#849): the `build-manifest.json` mirror stores
+   `producer.deka` normalized to `<workspace-version>` and the
+   `build-manifest.sha256` mirror anchors the normalized bytes, so a
+   workspace version bump does not change the blessed bytes. The field is
+   still verified on every run: the published manifest's `producer.deka`
+   must equal the workspace version, checked separately from the bytes.
 
 For successful fixtures it additionally asserts, from the published v2
 `dist/build-manifest.json`: the manifest parses, its routes match the printed
@@ -67,7 +73,10 @@ must be blessed once per dsc plan generation (the pinned dsc in
 
 The mirror holds **raw** bytes, blessed with a relative-slot-id dsc
 (dsc PR #62): slot ids are project-relative, so raw bytes are stable across
-build roots.
+build roots. The single exception is `build-manifest.json` (and its
+`build-manifest.sha256` sidecar), blessed with `producer.deka` normalized to
+`<workspace-version>` (deka#849) — see "bytes" above. `DEKA_BLESS=1` writes
+that normalized form automatically.
 
 ## dsc capability gate (deka#728)
 

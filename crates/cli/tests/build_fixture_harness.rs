@@ -23,9 +23,16 @@
 //! normalized stderr, and the published v2 build manifest must be byte-identical across
 //! runs) and a build from a SECOND temporary root (the RAW dist bytes must
 //! be byte-identical across roots — dsc slot ids are project-relative since
-//! dsc PR #62, so no byte normalization exists anywhere in this harness;
-//! deka#728 / codex findings 5 and 6). The manifest's artifact digests are
-//! recomputed against the published bytes, not just its path list.
+//! dsc PR #62, so no root-dependent byte normalization exists anywhere in
+//! this harness; deka#728 / codex findings 5 and 6). The manifest's artifact
+//! digests are recomputed against the published bytes, not just its path list.
+//!
+//! One deliberate exception (deka#849): the blessed mirror stores
+//! `build-manifest.json` with `producer.deka` normalized to
+//! `<workspace-version>`, and `build-manifest.sha256` anchors the normalized
+//! bytes — otherwise every workspace version bump changes produced bytes and
+//! breaks the fixtures. The field itself is still verified on every run: the
+//! published manifest's `producer.deka` must equal the workspace version.
 //!
 //! Capability gate: committed bytes that embed a build-slot id (the
 //! `deka:dev/<id>` specifier, or the shipped `server/.values/<id>.js` path)
@@ -45,6 +52,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+
+// Submodules of a `#[path]`-included module resolve relative to the
+// including file's directory (crates/cli/tests/), so the path is spelled
+// out explicitly.
+#[path = "build_fixture_harness/manifest_version.rs"]
+mod manifest_version;
+
+use manifest_version::{
+    check_producer_version, manifest_bytes_match, normalize_manifest_bytes,
+    normalized_manifest_anchor,
+};
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
@@ -188,8 +206,10 @@ fn normalize_stderr(project: &Path, project_canonical: &Path, stderr: &str) -> S
 
 /// Walk `dir` into a forward-slash relative-path -> bytes map.
 /// RAW bytes: with project-relative dsc slot ids (dsc PR #62), build output
-/// is byte-identical across project roots, so no normalization belongs here
-/// (deka#728, codex finding 5).
+/// is byte-identical across project roots, so no root-dependent
+/// normalization belongs here (deka#728, codex finding 5). The ONE version
+/// field normalized in the blessed mirror is handled at comparison time in
+/// `check_published_output`, not here (deka#849).
 fn tree_snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
     let mut out = BTreeMap::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -250,7 +270,7 @@ fn route_table_rows(stderr: &str) -> Vec<String> {
 /// A small line-based unified diff (3 lines of context) for readable
 /// mismatch reports. Build artifacts are at most a few thousand lines, so
 /// the quadratic LCS table is fine; larger inputs fall back to a plain dump.
-fn unified_diff(expected: &str, actual: &str) -> String {
+pub(crate) fn unified_diff(expected: &str, actual: &str) -> String {
     let a: Vec<&str> = expected.lines().collect();
     let b: Vec<&str> = actual.lines().collect();
     let mut out = String::from("--- expected\n+++ actual\n");
@@ -338,6 +358,7 @@ fn manifest_report(
         .map_err(|err| format!("dist/build-manifest.json unreadable: {err}"))?;
     let manifest: serde_json::Value = serde_json::from_str(&raw)
         .map_err(|err| format!("dist/build-manifest.json unparseable: {err}"))?;
+    check_producer_version(&manifest)?;
     if manifest["format"].as_str() != Some("deka.artifact@2") {
         return Err(format!(
             "dist/build-manifest.json has unsupported format {:?}, expected deka.artifact@2",
@@ -465,7 +486,7 @@ fn manifest_report(
     Ok(())
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     hasher.update(bytes);
@@ -578,7 +599,22 @@ fn bless(
         for (rel, bytes) in &tree {
             let dest = mirror.join(rel);
             fs::create_dir_all(dest.parent().expect("parent")).expect("mkdir");
-            fs::write(&dest, bytes).expect("write blessed file");
+            // deka#849: the mirror must not encode the current workspace
+            // version, or the next bump re-breaks every fixture. Bless the
+            // manifest with producer.deka normalized and anchor the sidecar
+            // to the normalized bytes; the field is checked at test time
+            // against the then-current workspace version.
+            let blessed: Vec<u8> = if rel.as_str() == "build-manifest.json" {
+                normalize_manifest_bytes(bytes)
+                    .unwrap_or_else(|err| panic!("cannot bless `{}`: {err}", fixture.name))
+            } else if rel.as_str() == "build-manifest.sha256" {
+                normalized_manifest_anchor(&tree["build-manifest.json"])
+                    .unwrap_or_else(|err| panic!("cannot bless `{}`: {err}", fixture.name))
+                    .into_bytes()
+            } else {
+                bytes.clone()
+            };
+            fs::write(&dest, blessed).expect("write blessed file");
         }
     }
     eprintln!(
@@ -751,6 +787,36 @@ fn check_published_output(
                 continue;
             }
         };
+        // deka#849: the manifest mirror stores producer.deka normalized to
+        // <workspace-version> (and the sha256 sidecar anchors the normalized
+        // bytes), so a version bump alone never re-breaks the fixtures. The
+        // field itself is verified against the workspace version in
+        // manifest_report; here only non-version bytes compare.
+        if rel.as_str() == "build-manifest.json" {
+            if let Err(detail) = manifest_bytes_match(&expected_bytes, &tree[rel]) {
+                problems.push(format!(
+                    "[bytes] `{rel}` differs from expected mirror\n{detail}"
+                ));
+            }
+            continue;
+        }
+        if rel.as_str() == "build-manifest.sha256" {
+            let anchor = match normalized_manifest_anchor(&tree["build-manifest.json"]) {
+                Ok(anchor) => anchor,
+                Err(err) => {
+                    problems.push(format!("[bytes] `{rel}`: {err}"));
+                    continue;
+                }
+            };
+            if expected_bytes != anchor.as_bytes() {
+                problems.push(format!(
+                    "[bytes] `{rel}` differs from expected mirror: mirror anchors the version-normalized manifest; expected {:?}, normalized actual manifest hashes to {:?}",
+                    String::from_utf8_lossy(&expected_bytes),
+                    anchor
+                ));
+            }
+            continue;
+        }
         if !relative_ids && embeds_slot_ids(&expected_bytes) {
             eprintln!(
                 "skipping byte comparison of `{rel}`: installed dsc predates relative slot ids (dsc#62)"
