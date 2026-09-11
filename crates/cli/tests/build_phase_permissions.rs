@@ -141,6 +141,19 @@ fn write_security(project: &Path, security: &str) {
     .expect("write deka.json");
 }
 
+/// Writes deka.json with a phase-aware `permissions` block (deka#757, RFD 53)
+/// instead of the legacy `security` block: `permissions.dev.build` is the only
+/// authority a build slot executes under, independent from request-time dev.
+fn write_permissions(project: &Path, permissions: &str) {
+    fs::write(
+        project.join("deka.json"),
+        format!(
+            "{{\n  \"name\": \"phase\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"mode\": \"ds\" }},\n  \"dependencies\": {{ \"@deka/fixturefs\": \"1.0.0\" }},\n  \"permissions\": {permissions}\n}}\n"
+        ),
+    )
+    .expect("write deka.json");
+}
+
 /// A [slug] page whose build body reads `path` and propagates failures. The
 /// bridge call lives in the granted `@deka/fixturefs` package (RFD 27: app
 /// source cannot name `bridge`); the build block's first statement stays on
@@ -323,6 +336,131 @@ fn explicit_allow_unlocks_both_phases_equally() {
     assert!(
         success,
         "deka build should succeed under the same explicit allow: {combined}"
+    );
+}
+
+#[test]
+fn build_body_cannot_inherit_request_time_dev_grants() {
+    // The property that matters (rfd#48): a build body must not gain
+    // capabilities merely because the host evaluates it. This manifest grants
+    // the read to request-time dev — and nothing to the build phase — so the
+    // build body's fs read must be denied with the typed diagnostic even
+    // though the same project, at request time, may read the file.
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    write_permissions(project.path(), r#"{"dev": {"read": ["./data"]}}"#);
+    let grants = add_fixturefs(project.path());
+    write_slug_page(project.path(), &slug_page_probing("data/x.json"));
+
+    let (success, combined) = run_build(project.path(), &grants);
+    assert!(
+        !success,
+        "deka build must fail when only request-time dev holds the read grant: {combined}"
+    );
+    assert!(
+        combined.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+        "failure must carry the machine-readable permission diagnostic (RFD 27): {combined}"
+    );
+    assert!(
+        combined.contains(r#""capability":"read""#),
+        "diagnostic must name the read capability: {combined}"
+    );
+    assert!(
+        combined.contains("page.dsx:10:"),
+        "diagnostic must link the build block's source location: {combined}"
+    );
+    assert!(
+        !project.path().join("dist").exists(),
+        "a failed build must not publish dist/: {combined}"
+    );
+
+    // An explicit `build: false` is the same policy as omitting the key: the
+    // request-time grant still must not leak into the build phase.
+    write_permissions(
+        project.path(),
+        r#"{"dev": {"read": ["./data"], "build": false}}"#,
+    );
+    let (success, combined) = run_build(project.path(), &grants);
+    assert!(
+        !success,
+        "explicit build:false must deny the build body just like an omitted key: {combined}"
+    );
+    assert!(
+        combined.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+        "explicit build:false denial must stay machine-readable: {combined}"
+    );
+}
+
+#[test]
+fn phase_aware_dev_build_grant_unlocks_build_and_records_inputs() {
+    // Independence in the other direction: the only read grant in this
+    // manifest lives in `permissions.dev.build`. The build body reads
+    // successfully (a present read, a directory listing, an absent path) and
+    // the manifest records all three observations, while ordinary runtime
+    // code under the same manifest stays denied — the build phase widens
+    // nothing for anyone else (rfd#48 parity).
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    write_permissions(
+        project.path(),
+        r#"{"dev": {"build": {"read": ["./data"]}}}"#,
+    );
+    let grants = add_fixturefs(project.path());
+    let slug_dir = project.path().join("app").join("posts").join("[slug]");
+    fs::create_dir_all(&slug_dir).expect("mkdir [slug]");
+    fs::write(
+        slug_dir.join("page.dsx"),
+        "import { read_file, read_dir } from \"@deka/fixturefs\"\ninterface PageProps { slug: string }\nstruct PostParam { slug: string }\nexport const staticParams: Array<PostParam> = build {\n  const present = await read_file(\"data/slugs/a.txt\")\n  const listed = await read_dir(\"data\")\n  const missing = await read_file(\"data/missing.txt\")\n  return Ok([PostParam { slug: \"hello\" }])\n}\nexport fn Page(props: PageProps) {\n  return <article><h1>{props.slug}</h1></article>;\n}\n",
+    )
+    .expect("write slug page");
+    fs::create_dir_all(project.path().join("data").join("slugs")).expect("mkdir data/slugs");
+    fs::write(project.path().join("data").join("slugs").join("a.txt"), "a").expect("write data");
+
+    let (success, combined) = run_build(project.path(), &grants);
+    assert!(
+        success,
+        "deka build should succeed when permissions.dev.build grants the reads: {combined}"
+    );
+
+    let manifest = manifest_json(project.path());
+    let slots = manifest["slots"].as_array().expect("slots array");
+    assert_eq!(slots.len(), 1, "one build slot expected: {manifest}");
+    let observations = slots[0]["observations"].as_array().expect("observations");
+    let rendered: Vec<String> = observations
+        .iter()
+        .map(|observation| {
+            format!(
+                "{} {}",
+                observation["kind"].as_str().expect("kind"),
+                observation["path"].as_str().expect("path")
+            )
+        })
+        .collect();
+    assert_eq!(
+        rendered,
+        vec![
+            "directory_listing data",
+            "absent data/missing.txt",
+            "read data/slugs/a.txt",
+        ],
+        "manifest must record the listing, the absent path, and the read: {manifest}"
+    );
+
+    // Parity: `deka run` selects the prod profile, which this manifest leaves
+    // fully denied — the same read is not available to ordinary runtime code.
+    fs::write(
+        project.path().join("main.ds"),
+        "import { read_file } from \"@deka/fixturefs\"\nasync fn go() Promise<string> {\n  const res = await read_file(\"data/slugs/a.txt\")\n  return match (res) {\n    Ok(v) => \"runtime-read-ok\",\n    Err(e) => \"runtime-read-denied\"\n  }\n}\nasync fn main() Promise<string> {\n  const r = await go()\n  unsafe { console.log(r) }\n  return r\n}\nmain()\n",
+    )
+    .expect("write main.ds");
+    let (_, combined) = run_with_args(project.path(), &["run", "main.ds", "--no-prompt"], &grants);
+    assert!(
+        combined.contains("runtime-read-denied"),
+        "runtime fs read must be denied under the default-deny prod profile: {combined}"
+    );
+    assert!(
+        !combined.contains("runtime-read-ok"),
+        "runtime fs read must not succeed under the default-deny prod profile: {combined}"
     );
 }
 
@@ -617,6 +755,88 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
     assert!(
         !log_text.contains("failed to rematerialize"),
         "no rematerialization in this scenario may fail:\n{log_text}"
+    );
+
+    if let Some(mut serve_child) = child.0.take() {
+        let _ = serve_child.kill();
+        let _ = serve_child.wait();
+    }
+}
+
+/// Targeted `deka dev` invalidation under the phase-aware model (deka#757):
+/// the only read grant in this manifest is `permissions.dev.build`, yet the
+/// dev server still materializes the slot, and editing a recorded input
+/// rematerializes exactly the affected slot — an actual content edit, not a
+/// directory-glob re-run.
+#[test]
+fn dev_watch_invalidates_slots_under_phase_aware_permissions() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    write_permissions(
+        project.path(),
+        r#"{"dev": {"build": {"read": ["./data"]}}}"#,
+    );
+    let grants = add_fixturefs(project.path());
+    write_slug_page(project.path(), slug_page_count_over_len());
+    let data = project.path().join("data");
+    fs::create_dir_all(&data).expect("mkdir data");
+    fs::write(data.join("picked.txt"), "hello").expect("write picked");
+    fs::write(data.join("other.txt"), "other").expect("write other");
+
+    let port = free_port();
+    let log_path = project.path().join("dev.log");
+    let log = fs::File::create(&log_path).expect("dev.log");
+    let child = Command::new(cli_bin())
+        .args(["dev", "--port", &port.to_string(), "--no-prompt"])
+        .current_dir(project.path())
+        .env("DEKA_RATE_LIMIT_DISABLED", "1")
+        .env("DEKA_HOST_GRANTS", &grants)
+        .stdout(Stdio::from(log.try_clone().expect("clone log")))
+        .stderr(Stdio::from(log))
+        .spawn()
+        .expect("spawn deka dev");
+    let mut child = KillOnDrop(Some(child));
+    let dev_log = || fs::read_to_string(&log_path).unwrap_or_default();
+    // Initial marker: 2 entries, 5 bytes -> "2/5".
+    let marker_served = |marker: &str| {
+        get_body(port, "/posts/anything").is_some_and(|body| body.contains(marker))
+    };
+
+    assert!(
+        wait_until(90, || get_status(port, "/").is_some_and(|status| status == 200)),
+        "deka dev did not become ready:\n{}",
+        dev_log()
+    );
+    assert!(
+        wait_until(30, || marker_served(">2/5<")),
+        "initial materialization must render marker 2/5 under permissions.dev.build:\n{}",
+        dev_log()
+    );
+
+    // Edit the read input: the slot reruns and the byte-length component moves.
+    fs::write(data.join("picked.txt"), "hello!").expect("edit picked");
+    assert!(
+        wait_until(60, || marker_served(">2/6<")),
+        "editing data/picked.txt must rematerialize the slot and render 2/6:\n{}",
+        dev_log()
+    );
+
+    // Add a listed file: the directory-listing component moves.
+    fs::write(data.join("gamma.txt"), "gamma").expect("write gamma");
+    assert!(
+        wait_until(60, || marker_served(">3/6<")),
+        "adding data/gamma.txt must rematerialize the slot and render 3/6:\n{}",
+        dev_log()
+    );
+
+    let log_text = dev_log();
+    assert!(
+        log_text.contains("invalidating build slots"),
+        "targeted invalidation must be a deliberate, logged decision:\n{log_text}"
+    );
+    assert!(
+        !log_text.contains("coarse build invalidation"),
+        "exact observation matching must not fall back to a coarse rebuild:\n{log_text}"
     );
 
     if let Some(mut serve_child) = child.0.take() {
