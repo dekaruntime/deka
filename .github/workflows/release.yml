@@ -660,22 +660,34 @@ jobs:
             https://api.github.com/repos/dekaruntime/website/actions/workflows/sync-deka-compiler.yml/dispatches \
             -d '{"ref":"main"}'
 
-      - name: Trigger testsuite deploy
+      - name: Trigger testsuite-site deploy
         if: success()
         env:
-          GH_TOKEN: ${{ secrets.DISPATCH_TESTSUITE_DEPLOY_TOKEN }}
+          GH_TOKEN: ${{ secrets.CASCADE_DISPATCH_TOKEN }}
         run: |
+          set -euo pipefail
           if [ -z "$GH_TOKEN" ]; then
-            echo "DISPATCH_TESTSUITE_DEPLOY_TOKEN not set; skipping cross-repo testsuite deploy trigger."
-            echo "The testsuite will be redeployed on the next push to main or via manual dispatch."
-            exit 0
+            echo "::error::CASCADE_DISPATCH_TOKEN is required to dispatch the testsuite-site deploy."
+            echo "Add dekaruntime/deka to the org secret's repository access list before retrying this release."
+            exit 1
+          fi
+          corpus_ref="$(sed -n '1p' scripts/testsuite-corpus-version)"
+          corpus_sha="$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/dekaruntime/testsuite/commits/${corpus_ref}" \
+            | jq -r '.sha')"
+          if ! [[ "$corpus_sha" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::Could not resolve testsuite corpus pin ${corpus_ref} to a commit SHA."
+            exit 1
           fi
           curl -sSL --fail-with-body -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/dekaruntime/testsuite/actions/workflows/deploy.yml/dispatches \
-            -d '{"ref":"main"}'
+            https://api.github.com/repos/dekaruntime/testsuite-site/dispatches \
+            -d "{\"event_type\":\"corpus-updated\",\"client_payload\":{\"corpus_sha\":\"${corpus_sha}\"}}"
 
       # The release-note pipeline. draftwriter listens for `runtime-published`
       # and opens a post PR on the website. Nothing fired this event, so the
