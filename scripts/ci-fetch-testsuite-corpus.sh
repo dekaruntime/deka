@@ -16,7 +16,9 @@ dest=${1:-"$root/.cache/testsuite-corpus"}
 [[ $# -le 1 ]] || { echo "usage: $0 [--archive <archive.tar.gz>] [destination]" >&2; exit 2; }
 version=$(sed -n '1p' "$pin")
 expected=$(sed -n '2p' "$pin")
-[[ "$version" =~ ^corpus-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid corpus version: $version" >&2; exit 2; }
+# New lockstep corpus tags use vX.Y.Z. Keep corpus-vX.Y.Z valid while main
+# still pins the pre-lockstep corpus; subsequent pin bumps should use vX.Y.Z.
+[[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$version" =~ ^corpus-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid corpus version: $version" >&2; exit 2; }
 [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || { echo "invalid corpus SHA-256 in $pin" >&2; exit 2; }
 
 sha256_file() {
