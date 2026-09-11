@@ -161,11 +161,11 @@ fn Greeting(props: GreetingProps) Component {
   return jsx("h1", { name: props.name }, Some("Hello"))
 }
 
-export const page = jsxs(Fragment, {}, [
+export const page = jsxs(Fragment, {}, Some([
   jsx(Greeting, { name: "Deka" }),
   jsx(Form, { action: "/api/cart", method: "post" }),
   jsx(Suspense, {}),
-])
+]))
 
 export fn checkNode(node: Component) boolean {
   return isComponentNode(node)
