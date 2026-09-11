@@ -207,8 +207,9 @@ mod tests {
 
     #[test]
     fn snapshot_resolves_policy_from_security_context() {
-        // No context installed: fail closed, even though the process env
-        // carries a permissive policy export.
+        // This test is the only remaining toucher of DEKA_SECURITY_POLICY in
+        // the crate: it poisons the variable to prove the snapshot ignores
+        // it. The save/restore below is guard bookkeeping, not a config read.
         let previous = std::env::var("DEKA_SECURITY_POLICY").ok();
         unsafe { std::env::set_var("DEKA_SECURITY_POLICY", r#"{"security":{"allow":{"env":["PUBLIC"]}}}"#) };
         assert!(
@@ -230,7 +231,8 @@ mod tests {
         );
         unsafe { std::env::set_var("PUBLIC", "ok") };
         let snap = snapshot_env_from_process();
-        unsafe { std::env::remove_var("PUBLIC") };        assert_eq!(snap, vec![("PUBLIC".to_string(), "ok".to_string())]);
+        unsafe { std::env::remove_var("PUBLIC") };
+        assert_eq!(snap, vec![("PUBLIC".to_string(), "ok".to_string())]);
     }
 
     #[test]

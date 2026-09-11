@@ -196,7 +196,7 @@ async fn materialize_build_values_async(
 /// already exported), and `deka build` has no concurrent request path. The
 /// security policy and prompt flag are NOT exported here — they travel
 /// per-execution via `RequestData::security` (see deka_host
-/// `security_policy_from_env`). Restores the previous value on drop (cargo
+/// `security_policy_from_context`). Restores the previous value on drop (cargo
 /// runs tests as threads in one process; see deka#537).
 struct BuildModuleRootEnv {
     module_root: Option<String>,
