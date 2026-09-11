@@ -44,20 +44,17 @@ fn assert_install_rejected(case: DigestCase) {
     let old_dir = std::env::current_dir().unwrap();
     std::env::set_current_dir(project.path()).unwrap();
 
-    let server = FixtureServer::start(case);
-    unsafe {
-        std::env::set_var("LINKHASH_REGISTRY_URL", &server.url);
-        std::env::remove_var("LINKHASH_TOKEN");
-    }
+    let _server = FixtureServer::start(case);
+    // Legacy linkhash/harar registry env vars (LINKHASH_REGISTRY_URL /
+    // LINKHASH_TOKEN) are no longer read anywhere: legacy registry support
+    // was removed, so `@tana/*` installs are rejected before any network
+    // contact and the fixture server goes unconsumed.
     let result = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(run_install(InstallPayload::from_parts(vec![
             "@tana/store@1.0.0".to_string(),
         ])));
 
-    unsafe {
-        std::env::remove_var("LINKHASH_REGISTRY_URL");
-    }
     std::env::set_current_dir(old_dir).unwrap();
     assert!(
         result.is_err(),
@@ -71,14 +68,11 @@ fn assert_install_rejected(case: DigestCase) {
     assert!(!project.path().join("deka.lock").exists());
 }
 
-struct FixtureServer {
-    url: String,
-}
+struct FixtureServer;
 
 impl FixtureServer {
     fn start(case: DigestCase) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
         let good = vec![(
             "index.phpx",
             b"export function marker() { return 1; }\n".to_vec(),
@@ -115,7 +109,7 @@ impl FixtureServer {
                 serve_request(stream, &served, &metadata);
             }
         });
-        Self { url }
+        Self
     }
 }
 

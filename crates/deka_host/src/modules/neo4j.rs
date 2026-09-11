@@ -66,8 +66,7 @@ where
     rx.recv().expect("neo4j async task failed")
 }
 
-/// Pick a Neo4j URL from the shard resolver for a connect() call that
-/// omits an explicit URL.
+/// Pick a Neo4j URL for a connect() call that omits an explicit URL.
 ///
 /// Precedence:
 ///   1. If the payload carries an `__account_id`, route to that shop's
@@ -75,17 +74,20 @@ where
 ///   2. Otherwise, if the resolver is configured for a real cluster
 ///      (more than one shard, or a named shard that isn't the
 ///      `local` fallback), use shard 0 (the de-facto router shard).
-///   3. Otherwise, honour `DEKA_NEO4J_URI` — this preserves the
-///      single-machine dev default where docker-compose publishes
-///      Neo4j on a non-standard port (e.g. 7688).
+///   3. Otherwise, honour the neo4j URI the dispatch layer installed from
+///      deka.json — this preserves the single-machine dev default where
+///      docker-compose publishes Neo4j on a non-standard port (e.g. 7688).
+///      The process environment is not consulted (deka#801).
 ///   4. Finally fall back to `bolt://localhost:7687`.
-fn shard_route_neo4j(_args: &Value) -> String {
-    std::env::var("DEKA_NEO4J_URI").unwrap_or_else(|_| "bolt://localhost:7687".to_string())
+pub fn shard_route_neo4j(_args: &Value) -> String {
+    crate::host_config::database_endpoints()
+        .and_then(|endpoints| endpoints.neo4j_uri.clone())
+        .unwrap_or_else(|| "bolt://localhost:7687".to_string())
 }
 
 /// Previously true iff this process was running inside a multi-shard
 /// deployment. The shard subsystem has been archived, so tenant code
-/// always uses explicit URLs or the process env defaults.
+/// always uses explicit URLs or the installed deka.json endpoints.
 pub(crate) fn has_configured_cluster() -> bool {
     false
 }
@@ -181,18 +183,28 @@ fn neo4j_connect(args: &Value) -> Value {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
-            std::env::var("DEKA_NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string())
+            crate::host_config::database_endpoints()
+                .and_then(|endpoints| endpoints.neo4j_user.clone())
+                .unwrap_or_else(|| "neo4j".to_string())
         });
     let password = args
         .get("password")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| std::env::var("DEKA_NEO4J_PASSWORD").unwrap_or_default());
+        .unwrap_or_else(|| {
+            crate::host_config::database_endpoints()
+                .and_then(|endpoints| endpoints.neo4j_password.clone())
+                .unwrap_or_default()
+        });
     let db = args
         .get("db")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| std::env::var("DEKA_NEO4J_DB").unwrap_or_else(|_| "neo4j".to_string()));
+        .unwrap_or_else(|| {
+            crate::host_config::database_endpoints()
+                .and_then(|endpoints| endpoints.neo4j_db.clone())
+                .unwrap_or_else(|| "neo4j".to_string())
+        });
 
     let uri_for_err = uri.clone();
     let result = block_on_async(async move {

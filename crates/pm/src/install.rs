@@ -258,6 +258,7 @@ fn run_php_install_in_transaction(
     if explicit_add {
         record_root_dependencies(cwd, &specs, &installed)?;
     }
+    #[cfg(test)]
     pause_for_kill_test("after-lock");
 
     transaction
@@ -706,6 +707,7 @@ impl InstallTransaction {
             swapped: false,
         });
         self.persist()?;
+        #[cfg(test)]
         pause_for_kill_test("before-swap");
         replace_installed_package(staging, destination)?;
         self.journal
@@ -713,6 +715,7 @@ impl InstallTransaction {
             .last_mut()
             .expect("journal entry was just added")
             .swapped = true;
+        #[cfg(test)]
         pause_for_kill_test("after-swap");
         self.persist()
     }
@@ -770,6 +773,11 @@ impl InstallTransaction {
     }
 }
 
+// Test-only fault injection (deka#801): the kill-recovery tests in this
+// crate's `#[cfg(test)]` module spawn this same test binary as a child with
+// `DEKA_PM_KILL_POINT` set, then kill the child mid-transaction. The env read
+// therefore stays out of product builds via `#[cfg(test)]`.
+#[cfg(test)]
 fn pause_for_kill_test(point: &str) {
     if std::env::var("DEKA_PM_KILL_POINT").ok().as_deref() == Some(point) {
         std::thread::sleep(std::time::Duration::from_secs(30));

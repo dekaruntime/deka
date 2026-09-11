@@ -152,13 +152,9 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
 
     let (handler_dir, serve_config) = if is_dir {
         let config = ServeConfig::load(&abs_path);
-        // Return value unused here; the call keeps the interim deka_host
-        // environment publish alive (see load_database_config, deka#801).
-        load_database_config(&abs_path);
         (abs_path.clone(), config)
     } else if let Some(parent) = abs_path.parent() {
         let config = ServeConfig::load(parent);
-        load_database_config(parent);
         (parent.to_path_buf(), config)
     } else {
         (PathBuf::from("."), ServeConfig::default())
@@ -493,7 +489,9 @@ pub struct Neo4jConfig {
 }
 
 /// Load database configuration from deka.json and return it. Callers that
-/// serve HTTP thread the returned values into `deka_http::HttpConfig`.
+/// serve HTTP thread the returned values into `deka_http::HttpConfig`, and
+/// the dispatch layer installs them into deka_host's explicit
+/// process-wide store (`deka_host::host_config`) for the bridge modules.
 ///
 /// Example deka.json:
 /// ```json
@@ -535,33 +533,12 @@ pub fn load_database_config(directory: &std::path::Path) -> DatabaseConfig {
 
     let config = DatabaseConfig { neo4j, redis_url };
 
-    // deka#801: the process-environment publish below is the interim channel
-    // that deka_host modules (neo4j/redis/compat) still read at call time.
-    // http no longer consumes it (it takes `HttpConfig` from its caller), but
-    // deleting the publish regresses deka_host's deka.json-sourced defaults
-    // until that lane defines its own explicit transport. Kept deliberately;
-    // listed under "needs decision" on the deka#801 PR. See deka#801.
-    //
-    // SAFETY: called once during single-threaded init before handler threads start.
-    unsafe {
-        if let Some(neo4j) = &config.neo4j {
-            if let Some(uri) = &neo4j.uri {
-                std::env::set_var("DEKA_NEO4J_URI", uri);
-            }
-            if let Some(user) = &neo4j.user {
-                std::env::set_var("DEKA_NEO4J_USER", user);
-            }
-            if let Some(password) = &neo4j.password {
-                std::env::set_var("DEKA_NEO4J_PASSWORD", password);
-            }
-            if let Some(db) = &neo4j.db {
-                std::env::set_var("DEKA_NEO4J_DB", db);
-            }
-        }
-        if let Some(url) = &config.redis_url {
-            std::env::set_var("DEKA_REDIS_URL", url);
-        }
-    }
+    // deka#801: values used to be published into the process environment here
+    // as an interim channel for deka_host modules. That channel is gone —
+    // `crates/runtime` installs the returned config into deka_host's explicit
+    // process-wide store (`deka_host::host_config`) instead, and deka_host
+    // modules resolve their defaults from it. Never reintroduce an
+    // environment publish: config flows explicitly or not at all.
 
     config
 }
