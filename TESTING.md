@@ -37,8 +37,11 @@ the browser harness failing to serve a stdlib module (#509).
 
 ### Nothing skips. There is no skip bucket, in any group.
 
-Every fixture in every group **runs**, and its result is `pass` or `fail`.
-No third state, no escape hatch, no reason code.
+Every fixture in every group **runs**, and its result is normally `pass` or
+`fail`. The sole third result is an explicitly reported `blocked`: the runner
+could not obtain a required external registry artifact, so it cannot answer for
+that fixture. `blocked` is counted, named, and exits 2 when it is the only
+non-pass result; it is never a pass or a skip.
 
 "Skipped" used to do two unrelated jobs, and collapsing them is exactly how 125
 fixtures stayed invisible (#503):
@@ -56,8 +59,11 @@ naming the module (#509) — it never degrades into a per-fixture non-result.
 `known` is not a skip. A `known` fixture **runs and fails**; the ratchet only
 decides whether that failure breaks the build. Nothing is exempt from executing.
 
-Within a group, `pass + fail == group total`, asserted per group by the runner,
-non-zero exit otherwise.
+Within a group, `pass + fail + known + blocked == group total`, asserted per
+group by the runner, non-zero exit otherwise. A missing registry package is a
+fixture/configuration failure, not blocked; only fetch/availability failures
+(transport, malformed registry response, 429, or 5xx) are blocked. A package
+that installs but whose contents break the fixture is likewise a failure.
 
 ### Worked example — v0.38.2, commit 08e777b2
 

@@ -6,6 +6,7 @@
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, chmodSync, cpSync, copyFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { registryInstallBlockReason } from "./testsuite-faults.mjs";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
@@ -475,7 +476,6 @@ function installPackages(cliPath, tmpDir, packages, locked, verbose) {
   return { ok: true, stderr };
 }
 
-
 function runNative(cliPath, test, locked, verbose) {
   mkdirSync(scratchRoot, { recursive: true });
   const tmpDir = mkdtempSync(join(scratchRoot, "case-"));
@@ -515,8 +515,10 @@ function runNative(cliPath, test, locked, verbose) {
     if (packages.length > 0) {
       const installed = installPackages(cliPath, tmpDir, packages, locked, verbose);
       if (!installed.ok) {
+        const blocked = registryInstallBlockReason(`${installed.error ?? ""}\n${installed.stderr ?? ""}`);
         return {
           ok: false,
+          blocked,
           stdout: "",
           stderr: installed.stderr,
           error: installed.error,
@@ -597,6 +599,9 @@ function expectedStdoutForNative(test) {
 }
 
 function evaluate(test, result) {
+  if (result.blocked) {
+    return { matched: false, blocked: true, stage: "install", reasons: [result.blocked] };
+  }
   const stage = nativeStage(result);
   const reasons = [];
   const actualStatus = result.ok ? "pass" : "fail";
@@ -760,13 +765,14 @@ async function main() {
   });
 
   const expectedFailures = loadExpectedFailures();
-  // Two groups run here: native-only and shared. Each is self-contained --
-  // `pass + fail == group total` -- and there is no skip bucket anywhere.
+  // Two groups run here: native-only and shared. Each is self-contained.
+  // `blocked` is an observable environment result, never a pass or a skip.
   const groups = {
-    "native-only": { passed: 0, failed: 0, known: 0, total: 0 },
-    shared: { passed: 0, failed: 0, known: 0, total: 0 },
+    "native-only": { passed: 0, failed: 0, known: 0, blocked: 0, total: 0 },
+    shared: { passed: 0, failed: 0, known: 0, blocked: 0, total: 0 },
   };
   let failed = 0;
+  let blocked = 0;
   const unexpectedlyPassing = [];
 
   // Gate computation runs in BOTH output modes. --json used to print and
@@ -778,6 +784,16 @@ async function main() {
   for (const result of results) {
     const g = groups[isNativeOnly(result.test) ? "native-only" : "shared"];
     g.total++;
+    if (result.blocked) {
+      g.blocked++;
+      blocked++;
+      if (!args.json) {
+        console.log(`⊘ ${result.test.slug}`);
+        console.log(`    blocked: ${result.reasons[0]}`);
+        if (result.native?.error) console.log(`    install: ${result.native.error}`);
+      }
+      continue;
+    }
     if (result.matched) {
       // A listed fixture that passes must be removed from the list; leaving it
       // would let a real regression hide behind a stale entry.
@@ -810,10 +826,10 @@ async function main() {
 
   // Every fixture must land in exactly one bucket. If this identity ever fails
   // a fixture has fallen between the cases and is owned by nothing (deka#503).
-  // Each group must account for every fixture in it. Nothing is skipped, so a
-  // shortfall means a fixture fell out of the run entirely (deka#503).
+  // Blocked is deliberately counted: it says the gate could not answer, not
+  // that the fixture passed or was omitted.
   for (const [name, g] of Object.entries(groups)) {
-    const accounted = g.passed + g.failed + g.known;
+    const accounted = g.passed + g.failed + g.known + g.blocked;
     if (accounted !== g.total) {
       console.error(
         `\nreconciliation failed in ${name}: ${accounted} accounted for, ${g.total} fixtures.`
@@ -835,6 +851,8 @@ async function main() {
       expectedStage: r.test.stage,
       group: r.test.hosts.includes("browser") ? "shared" : "native-only",
       matched: r.matched ?? false,
+      blocked: r.blocked ?? false,
+      blockReason: r.blocked ? r.reasons?.[0] : undefined,
       actualStatus: r.native ? (r.native.ok ? "pass" : "fail") : undefined,
       actualStage: r.stage,
       stdout: r.native?.stdout,
@@ -847,7 +865,7 @@ async function main() {
     const line = (name, g) =>
       ` ${name.padEnd(13)} ${String(g.passed).padStart(4)} pass · ${String(
         g.failed
-      ).padStart(3)} fail${g.known ? ` · ${g.known} known` : ""}   (${g.total})`;
+      ).padStart(3)} fail${g.known ? ` · ${g.known} known` : ""}${g.blocked ? ` · ${g.blocked} blocked` : ""}   (${g.total})`;
 
     console.log("\n============================================================");
     console.log(line("native-only", groups["native-only"]));
@@ -860,7 +878,10 @@ async function main() {
     console.log("============================================================\n");
   }
 
-  process.exit(failed === 0 && unexpectedlyPassing.length === 0 ? 0 : 1);
+  // A blocked-only run did not pass; exit 2 lets run.sh attribute it to the
+  // environment. Real fixture failures retain exit 1 even if another fixture
+  // was blocked, so an actual regression cannot be hidden by an outage.
+  process.exit(failed > 0 || unexpectedlyPassing.length > 0 ? 1 : blocked > 0 ? 2 : 0);
 }
 
 // Run only when executed directly, not when imported for its exported
