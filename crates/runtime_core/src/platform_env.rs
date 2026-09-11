@@ -128,6 +128,7 @@ fn record(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security_policy::parse_deka_security_policy;
     use std::collections::HashMap;
 
     fn getter(map: HashMap<&'static str, &'static str>) -> impl Fn(&str) -> Option<String> {
