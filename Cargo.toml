@@ -22,7 +22,6 @@ members = [
     "crates/pm",
     "crates/deka_lsp",
     "crates/deka-router",
-    "crates/deka-validation",
     "crates/deka_ui",
 ]
 
