@@ -557,6 +557,12 @@ jobs:
       - name: Upload versioned release to R2
         run: |
           VERSION="${{ steps.prepare.outputs.version }}"
+          # R2 rate-limits high-concurrency PutObject bursts (the ~1000-file
+          # conformance tree tripped ServiceUnavailable twice on v0.48.1).
+          # Throttle concurrency and let the CLI retry harder.
+          aws configure set default.s3.max_concurrent_requests 4
+          aws configure set default.retry_mode adaptive
+          aws configure set default.max_attempts 10
           aws s3 sync "release/${VERSION}/" "s3://${R2_BUCKET_RELEASES}/${VERSION}/" --endpoint-url="${R2_ENDPOINT}"
 
       - name: Upload versioned WASM to R2
