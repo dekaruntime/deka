@@ -113,7 +113,10 @@ fn verify_sha256(path: &Path, expected: &str) -> Result<(), String> {
 
 /// Extract a GitHub `.tar.gz` archive into `dest`, stripping the single
 /// top-level `<repo>-<ref>/` wrapper directory. Paths are sanitized: any
-/// entry that would escape `dest` is rejected.
+/// entry that would escape `dest` is rejected. Modes are normalized to a
+/// private checkout (see [`normalize_mode`]) — the archive's own
+/// group-writable modes are a GitHub packaging artifact, not a permission
+/// the fetched content asked for.
 fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
     let file =
         fs::File::open(archive).map_err(|err| format!("failed to open archive: {}", err))?;
@@ -152,7 +155,37 @@ fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
         entry
             .unpack(&out)
             .map_err(|err| format!("failed to extract {}: {}", rel.display(), err))?;
+        normalize_mode(&out, entry.header())
+            .map_err(|err| format!("failed to set permissions on {}: {}", rel.display(), err))?;
     }
+    Ok(())
+}
+
+/// Normalize an extracted entry's mode to a private, single-user checkout.
+///
+/// GitHub serves archives whose directories are group-writable (0775) and
+/// whose files are group-writable too (0664); faithfully preserving those
+/// modes makes every content runner that enforces a secure output topology
+/// (all ancestors of its output dirs owned by the effective user and free of
+/// group/other write — see dekaruntime/tour `secureOutputTopologyError`)
+/// refuse the freshly fetched checkout as "environment unfit to run". The
+/// extractor owns the checkout layout, so it lays it out private: directories
+/// 0755, files 0644 plus whatever exec bit the archive carried (the pinned
+/// toolchains carry real executables). The pin is over archive bytes, never
+/// modes — normalizing here cannot weaken the checksum guard.
+#[cfg(unix)]
+fn normalize_mode(out: &Path, header: &tar::Header) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = match header.entry_type() {
+        tar::EntryType::Directory => 0o755,
+        tar::EntryType::Regular => 0o644 | (header.mode()? & 0o111),
+        _ => return Ok(()),
+    };
+    fs::set_permissions(out, fs::Permissions::from_mode(mode))
+}
+
+#[cfg(not(unix))]
+fn normalize_mode(_out: &Path, _header: &tar::Header) -> io::Result<()> {
     Ok(())
 }
 
@@ -226,6 +259,84 @@ mod tests {
         assert!(dest.join("corpus/basics/ok.pass.ds").is_file());
         // The wrapper directory must not survive into the checkout.
         assert!(!dest.join("wrapper-1.0.0").exists());
+    }
+
+    #[test]
+    fn extraction_normalizes_modes_to_a_private_checkout() {
+        // GitHub archives carry group-writable dirs (0775) and files (0664).
+        // A fetched checkout must land private to the effective user or the
+        // content runners' secure-output-topology check refuses it (deka#845).
+        let archive = build_archive_mixed_modes();
+        let dir = tempfile::tempdir().unwrap();
+        let tar_path = dir.path().join("archive.tar.gz");
+        fs::write(&tar_path, &archive).unwrap();
+        let dest = dir.path().join("tour");
+
+        extract_archive(&tar_path, &dest).expect("extract");
+
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(dest.join("tests/tour"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755,
+            "extracted directories must not be group-writable"
+        );
+        assert_eq!(
+            fs::metadata(dest.join("tests/tour/manifest.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644,
+            "extracted files must not be group-writable"
+        );
+        // The exec bit the archive recorded survives normalization (pinned
+        // toolchains carry real executables).
+        assert_eq!(
+            fs::metadata(dest.join("tests/tour/run.mjs"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+    }
+
+    /// A GitHub-style archive with the modes codeload actually serves:
+    /// directories 0775, files 0664, executables 0775.
+    fn build_archive_mixed_modes() -> Vec<u8> {
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        {
+            let mut tar = tar::Builder::new(&mut gz);
+            // Directory entries: size 0, directory type.
+            for rel in ["tests", "tests/tour"] {
+                let path = format!("wrapper-1.0.0/{}", rel);
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_size(0);
+                header.set_mode(0o775);
+                header.set_cksum();
+                tar.append_data(&mut header, &path, std::io::empty())
+                    .expect("append fixture directory");
+            }
+            for (rel, contents, mode) in [
+                ("tests/tour/manifest.json", &b"[]\n"[..], 0o664),
+                ("tests/tour/run.mjs", &b"#!/usr/bin/env bun\n"[..], 0o775),
+            ] {
+                let path = format!("wrapper-1.0.0/{}", rel);
+                let mut header = tar::Header::new_gnu();
+                header.set_size(contents.len() as u64);
+                header.set_mode(mode);
+                header.set_cksum();
+                tar.append_data(&mut header, &path, contents)
+                    .expect("append fixture entry");
+            }
+            tar.finish().expect("finish tar");
+        }
+        gz.finish().expect("finish gzip")
     }
 
     #[test]
