@@ -167,8 +167,18 @@ jobs:
             exit 1
           fi
 
+      - name: Forbid vendored tour
+        run: |
+          if find tests -type d -name tour -print -quit | grep -q .; then
+            echo "::error::tour must not be vendored; it is owned by dekaruntime/tour. Use scripts/ci-fetch-tour.sh"
+            exit 1
+          fi
+
       - name: Fetch pinned testsuite corpus
         run: scripts/ci-fetch-testsuite-corpus.sh "$GITHUB_WORKSPACE/.cache/testsuite-corpus"
+
+      - name: Fetch pinned tour
+        run: scripts/ci-fetch-tour.sh "$GITHUB_WORKSPACE/.cache/tour"
 
       - name: Where am I?
         run: |

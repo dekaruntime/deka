@@ -1,7 +1,0 @@
-fn Ready() Component {
-  return <p>loaded</p>
-}
-
-export fn Page() Component {
-  return <Ready />
-}
