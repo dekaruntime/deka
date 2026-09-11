@@ -129,6 +129,17 @@ jobs:
       - name: Check workspace
         run: cargo check --locked --workspace --all-targets
 
+      # Folded in from the standalone rust-clippy analyze workflow: same
+      # toolchain (stable) and same flags (--all-features). Runs last because
+      # it switches the default toolchain away from the pinned 1.96.0.
+      - name: Setup Rust (stable) for clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Run clippy
+        run: cargo clippy --all-features
+
   file-size-gate:
     name: File-size gate
     needs: [changes]
