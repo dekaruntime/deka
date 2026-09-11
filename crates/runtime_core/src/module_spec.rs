@@ -17,6 +17,37 @@ pub fn is_bare_module_specifier(spec: &str) -> bool {
 /// browser loads them from.
 pub const STDLIB_SPEC_PREFIXES: &[&str] = &["component/", "deka/", "encoding/", "db/"];
 
+/// Closed, toolchain-provided stdlib modules and the exact named exports each
+/// one guarantees. Unlike every other stdlib module, these have no package
+/// under `ds_modules/`: the dsc compiler lowers their imports to local
+/// bindings in the emitted JavaScript, so requiring a package here would
+/// recreate the ambient-global hole they exist to close. Keep in lockstep
+/// with the compiler's stdlib surface (dsc#142: `math` exposes exactly `PI`).
+pub const CLOSED_STDLIB_MODULES: &[(&str, &[&str])] = &[("math", &["PI"])];
+
+/// Canonical graph id (`math`) when `spec` names a closed stdlib module,
+/// accepting both the bare and `@deka/` spellings.
+pub fn closed_stdlib_module_id(spec: &str) -> Option<&'static str> {
+    let bare = spec.trim().strip_prefix("@deka/").unwrap_or(spec.trim());
+    CLOSED_STDLIB_MODULES
+        .iter()
+        .find(|(name, _)| *name == bare)
+        .map(|(name, _)| *name)
+}
+
+/// Whether `spec` names a closed, toolchain-provided stdlib module.
+pub fn is_closed_stdlib_module_spec(spec: &str) -> bool {
+    closed_stdlib_module_id(spec).is_some()
+}
+
+/// Guaranteed named exports of a closed stdlib module, by canonical id.
+pub fn closed_stdlib_module_exports(module_id: &str) -> Option<&'static [&'static str]> {
+    CLOSED_STDLIB_MODULES
+        .iter()
+        .find(|(name, _)| *name == module_id)
+        .map(|(_, exports)| *exports)
+}
+
 pub fn module_spec_aliases(spec: &str) -> Vec<String> {
     let trimmed = spec.trim();
     if trimmed.is_empty() {
@@ -166,7 +197,8 @@ pub fn resolve_ds_source_file(base: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        canonical_php_package_spec, ds_source_candidates, is_valid_package_name,
+        canonical_php_package_spec, closed_stdlib_module_exports, closed_stdlib_module_id,
+        ds_source_candidates, is_closed_stdlib_module_spec, is_valid_package_name,
         module_spec_aliases, STDLIB_SPEC_PREFIXES,
     };
     use std::path::Path;
@@ -241,6 +273,23 @@ mod tests {
     fn ds_candidates_reject_phpx() {
         assert!(ds_source_candidates(Path::new("src/foo.phpx")).is_empty());
         assert!(ds_source_candidates(Path::new("src/foo.php")).is_empty());
+    }
+
+    #[test]
+    fn closed_stdlib_module_accepts_bare_and_scoped_spellings() {
+        assert_eq!(closed_stdlib_module_id("math"), Some("math"));
+        assert_eq!(closed_stdlib_module_id("@deka/math"), Some("math"));
+        assert_eq!(closed_stdlib_module_id("  math  "), Some("math"));
+        assert_eq!(closed_stdlib_module_id("math/extra"), None);
+        assert_eq!(closed_stdlib_module_id("json"), None);
+        assert!(is_closed_stdlib_module_spec("math"));
+        assert!(!is_closed_stdlib_module_spec("io"));
+    }
+
+    #[test]
+    fn closed_stdlib_module_exports_match_the_compiler_contract() {
+        assert_eq!(closed_stdlib_module_exports("math"), Some(&["PI"][..]));
+        assert_eq!(closed_stdlib_module_exports("io"), None);
     }
 
     #[test]

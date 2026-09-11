@@ -71,6 +71,21 @@ unsafe {
 }
 
 #[test]
+#[ignore = "requires the dsc release containing the closed `math` stdlib module (dsc#142); un-ignore in the lockstep dsc-version bump"]
+fn run_executes_math_module_pi_import() {
+    run_dekascript(
+        "math_pi",
+        r#"
+import { PI } from "math"
+unsafe {
+  console.log(PI)
+}
+"#,
+        "3.141592653589793",
+    );
+}
+
+#[test]
 #[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_console_log_without_deno() {
     run_dekascript("console_log", "console.log(\"ok\")\n", "ok");

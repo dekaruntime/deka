@@ -122,6 +122,10 @@ function uiModuleSource(file: string): string {
   return source.replace(/from\s+['"]\.\/(\w+)\.js['"]/g, 'from "./$1.mjs"')
 }
 const MODULE_SHIMS: Record<string, string> = {
+  // Closed compiler module (dsc#142): the compiler normally lowers
+  // `import { PI } from "math"` to a local binding, but serve the module too
+  // so any emitted JS that keeps the specifier resolves like io/time/crypto.
+  'math.mjs': 'export const PI = Math.PI\n',
   'io.mjs': 'export function echo(message) {\n  console.log(message)\n}\n',
   'time.mjs': 'export function now() {\n  return Date.now()\n}\n',
   'crypto.mjs':

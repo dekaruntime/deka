@@ -5,7 +5,8 @@ use crate::integrity::compute_package_integrity;
 use serde_json::Value;
 
 use runtime_core::module_spec::{
-    ds_module_id_from_rel, ds_source_candidates, is_ds_source_path, module_spec_aliases,
+    closed_stdlib_module_exports, closed_stdlib_module_id, ds_module_id_from_rel,
+    ds_source_candidates, is_ds_source_path, module_spec_aliases,
 };
 use runtime_core::modules::{
     MODULES_DIR, existing_modules_dirs, is_modules_dir_name, links_path, read_linked_modules,
@@ -177,6 +178,16 @@ impl ModuleGraph {
                 has_top_level_await: false,
             },
         );
+
+        // Closed stdlib modules resolve to a virtual target with no backing
+        // file (see `resolve_import_target`): seed their guaranteed exports
+        // and stop — there is no source to read and no further imports.
+        if let Some(exports) = closed_stdlib_module_exports(module_id) {
+            if let Some(node) = self.nodes.get_mut(module_id) {
+                node.exports = exports.iter().map(|name| (*name).to_string()).collect();
+            }
+            return;
+        }
 
         let source = match std::fs::read_to_string(file_path) {
             Ok(src) => src,
@@ -696,6 +707,18 @@ fn resolve_import_target(
     available_modules: Option<&HashSet<String>>,
 ) -> Result<ResolvedImportTarget, ValidationError> {
     let raw = raw.trim();
+    // Closed, toolchain-provided stdlib modules (dsc#142's `math`) have no
+    // package under ds_modules/: the compiler lowers their imports to local
+    // bindings in the emitted JavaScript. Resolve them to a virtual target so
+    // the graph check validates their guaranteed exports without demanding a
+    // host package — the ambient hole these modules exist to close.
+    if let Some(module_id) = closed_stdlib_module_id(raw) {
+        return Ok(ResolvedImportTarget {
+            module_id: module_id.to_string(),
+            file_path: PathBuf::from(raw),
+            integrity_target: None,
+        });
+    }
     let is_relative = raw.starts_with('.');
     let is_project_alias = raw.starts_with("@/");
 
@@ -1734,6 +1757,78 @@ mod tests {
                 || err.help_text.contains("Available modules:")),
             "expected actionable help text, got: {:?}",
             errors
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// dsc#142: `math` is a closed, compiler-provided stdlib module — the
+    /// preflight must accept it without a ds_modules package, and must still
+    /// reject specifiers it does not know.
+    #[test]
+    fn closed_math_module_resolves_without_a_package() {
+        let root = make_temp_project("math_closed_module");
+        let entry = root.join("main.ds");
+        fs::write(
+            &entry,
+            "import { PI } from \"math\"\nexport const circumference: number = PI * 2\n",
+        )
+        .expect("write entry");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(
+            errors.is_empty(),
+            "closed math module must resolve without a ds_modules package: {errors:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn closed_math_module_accepts_scoped_spelling_and_rejects_unlisted_exports() {
+        let root = make_temp_project("math_closed_scoped");
+        let entry = root.join("main.ds");
+        fs::write(&entry, "import { PI } from \"@deka/math\"\n").expect("write entry");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(errors.is_empty(), "scoped spelling must resolve: {errors:?}");
+
+        fs::write(&entry, "import { E } from \"math\"\n").expect("write entry");
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains("Missing export 'E' in 'math'")),
+            "the closed module must not gain unapproved exports: {errors:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unknown_bare_module_still_rejects() {
+        let root = make_temp_project("unknown_bare_module");
+        let entry = root.join("main.ds");
+        fs::write(&entry, "import { foo } from \"not_a_module\"\n").expect("write entry");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains("Missing module 'not_a_module'")),
+            "unknown bare modules must keep failing the preflight: {errors:?}"
         );
 
         let _ = fs::remove_dir_all(root);
