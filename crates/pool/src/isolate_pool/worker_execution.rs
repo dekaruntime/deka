@@ -1119,7 +1119,7 @@ impl WorkerThread {
         let use_esm = request.request_data.handler_entry.is_some() && self.config.use_esm;
 
         // Check if the handler code is already a self-contained async IIFE
-        // produced by the bundler (e.g. `(async function() { ... })()`).
+        // produced by dsc's bundle stage (e.g. `(async function() { ... })()`).
         // These bundles set globalThis.app internally — double-wrapping them
         // in another sync IIFE breaks top-level await and prevents the async
         // code from resolving before __dekaExecuteRequest checks globalThis.app.
@@ -1131,8 +1131,8 @@ impl WorkerThread {
         let wrapped_handler_code = if !use_esm {
             if is_pre_bundled_iife {
                 // Pre-bundled IIFE: run directly without re-wrapping.
-                // The bundler already stripped exports and wrapped in an
-                // async IIFE that sets globalThis.app.
+                // dsc's bundle stage already stripped exports and wrapped in
+                // an async IIFE that sets globalThis.app.
                 let setup_code =
                     "globalThis.app = undefined; globalThis.Deka = globalThis.Deka || {};";
                 if let Err(err) = isolate

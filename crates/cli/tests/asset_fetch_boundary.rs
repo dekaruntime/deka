@@ -387,9 +387,10 @@ fn serve_asset_references_all_resolve() {
 }
 
 /// Content-hash stripper: `/assets/ui/client.<10-hex>.js` →
-/// `/assets/ui/client.js`. deka#750 emits dist (minified/tree-shaken) and dev
-/// (readable) flavors of the client assets whose content hashes differ by
-/// design, so dev/prod comparisons must run on hash-stripped stems.
+/// `/assets/ui/client.js`. Client assets are content-hashed; while dist
+/// optimization is paused (deka#881 DECIDE-1) dist and dev emit identical
+/// bytes, but the stripper keeps the comparison correct when the deka#750
+/// dist flavor (minified/tree-shaken) is restored through dsc.
 fn strip_asset_hash(url: &str) -> String {
     let Some(base) = url.strip_suffix(".js") else {
         return url.to_string();
@@ -431,8 +432,11 @@ fn strip_importmap_hashes(
 fn serve_and_build_resolve_identical_asset_urls() {
     // Same fixture source, two tempdirs: one served, one built. The resolved
     // /assets URL stems must be identical — dev/prod parity by construction.
-    // (deka#750: dist chunks are content-hashed *after* minification, so the
-    // hashes themselves differ from dev by design; only the stems must match.)
+    // (Client assets are content-hashed; the hashes themselves may differ
+    // between flavors whenever dist optimization is active (deka#750), so
+    // only the stripped stems are compared. While the framework is paused
+    // (deka#881 DECIDE-1) the flavors emit identical bytes and the hashes
+    // match too.)
     let serve = spawn_serve();
     let http = client();
     let base = format!("http://127.0.0.1:{}", serve.port);

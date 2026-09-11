@@ -1,21 +1,21 @@
-//! deka#750: the browser-fetched client payload for an island page is
-//! tree-shaken and minified in dist output, within a strict byte budget,
-//! free of the SSR-only producer symbols, and the island still hydrates.
+//! deka#750: the browser-fetched client payload for an island page.
 //!
-//! Mechanism under test (crates/runtime/src/islands.rs + crates/bundler):
-//! - `ClientAssetFlavor::Dist` export-prunes every `ui/*` chunk to the names
-//!   its complete importer set uses (`bundler::prune_unreferenced_exports`),
-//!   then minifies (`bundler::optimize_emitted_module`, mangling locals).
+//! Mechanism under test (crates/runtime/src/islands.rs):
+//! - PAUSED (deka#881 DECIDE-1): the framework — islands included — is
+//!   paused, so dist currently ships the same readable, unpruned `ui/*`
+//!   chunks as dev (the deka#750 export-prune + minify pipeline was deleted
+//!   with crates/bundler and must be restored through dsc's optimizer stage,
+//!   not reinstated locally). The deka#750 byte budgets and the
+//!   SSR-producer-absence assertions are parked with it.
 //! - `ui/island-marker.js` is NOT split: its SSR producers
 //!   (`formatIslandStart`, `formatIslandEnd`, `encodeB64`, `utf8Bytes`) are
-//!   plain function declarations that become unreachable once browser chunks
-//!   keep only `parseIslandMarker`, so the pruner drops them.
+//!   plain function declarations, so a future pruner can drop them once
+//!   browser chunks keep only `parseIslandMarker`.
 //! - `ClientAssetFlavor::Dev` (`deka serve`) writes the readable sources
-//!   byte-identical to pre-#750 output.
+//!   byte-identical, and dist currently matches it (see above).
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Write;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -28,12 +28,9 @@ fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
-/// Budgets from deka#750: total fetched client JS for a one-island page.
-const RAW_BUDGET: usize = 12_000;
-const GZIP_BUDGET: usize = 5_000;
-
-/// SSR-side producers of `ui/island-marker.js`; none may appear in any
-/// browser-fetched dist chunk (the island-marker module is not split).
+/// SSR-side producers of `ui/island-marker.js`. While dist pruning is paused
+/// (deka#881 DECIDE-1) they appear in every flavor's chunks; the deka#750
+/// assertion that they are absent from dist returns with the optimize stage.
 const PRODUCER_SYMBOLS: [&str; 4] = [
     "formatIslandStart",
     "formatIslandEnd",
@@ -92,11 +89,60 @@ fn run_build(dir: &Path) -> (bool, String) {
     (output.status.success(), combined)
 }
 
-/// gzip -9, matching the strictest reading of the issue's budget.
-fn gzip_len(bytes: &[u8]) -> usize {
-    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(9));
-    encoder.write_all(bytes).expect("gzip write");
-    encoder.finish().expect("gzip finish").len()
+/// `<dir>/<stem>.<10-hex>.<ext>`, the content-hashed asset naming scheme.
+fn find_hashed_asset(dir: &Path, stem: &str, ext: &str) -> Option<PathBuf> {
+    fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(without_ext) = name.strip_suffix(ext) else {
+            return None;
+        };
+        let Some((file_stem, hash)) = without_ext.strip_suffix('.').unwrap_or("").rsplit_once('.')
+        else {
+            return None;
+        };
+        let is_hash = hash.len() == 10
+            && hash
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        (file_stem == stem && is_hash).then_some(entry.path())
+    })
+}
+
+/// Rewrite hashed sibling references (`./jsx.91a1195be0.js`) back to their
+/// logical form (`./jsx.js`) so a written chunk can be compared against the
+/// raw deka_ui source it was hashed from.
+fn strip_sibling_hashes(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    for (index, seg) in body.split('"').enumerate() {
+        if index > 0 {
+            out.push('"');
+        }
+        if index % 2 == 0 {
+            out.push_str(seg);
+            continue;
+        }
+        let mut replaced = false;
+        if let Some(rel) = seg.strip_prefix("./") {
+            if let Some((stem, hash_ext)) = rel.rsplit_once('.') {
+                if let Some((file_stem, hash)) = stem.rsplit_once('.') {
+                    let is_hash = hash.len() == 10
+                        && hash
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+                    if is_hash && hash_ext == "js" {
+                        out.push_str("./");
+                        out.push_str(file_stem);
+                        out.push_str(".js");
+                        replaced = true;
+                    }
+                }
+            }
+        }
+        if !replaced {
+            out.push_str(seg);
+        }
+    }
+    out
 }
 
 fn dist_js_files(dist_client: &Path) -> Vec<PathBuf> {
@@ -156,7 +202,13 @@ fn fetched_closure_urls(dist_client: &Path, html: &str) -> BTreeSet<String> {
 }
 
 #[test]
-fn dist_payload_within_budget_without_ssr_producers() {
+fn dist_assets_are_readable_sources_while_paused() {
+    // PAUSED (deka#881 DECIDE-1): dist no longer prunes or minifies. Pin what
+    // the paused pipeline guarantees: the counter page emits its client
+    // chunks, and every shipped `ui/*` chunk is byte-identical to the
+    // readable deka_ui source (SSR producers included). The deka#750 byte
+    // budgets and producer-absence assertions return with the dist
+    // optimization stage.
     let project = tempfile::tempdir().expect("tempdir");
     write_counter_project(project.path());
     let (success, combined) = run_build(project.path());
@@ -169,52 +221,35 @@ fn dist_payload_within_budget_without_ssr_producers() {
         "counter page must emit several client chunks: {files:?}"
     );
 
-    // Strict ceiling: every .js under dist/client, fetched or not.
-    let raw: usize = files.iter().map(|path| fs::metadata(path).unwrap().len() as usize).sum();
-    let gz: usize = files
-        .iter()
-        .map(|path| gzip_len(&fs::read(path).expect("read chunk")))
-        .sum();
-    assert!(
-        raw <= RAW_BUDGET,
-        "all dist/client JS raw bytes {raw} exceeds budget {RAW_BUDGET}"
-    );
-    assert!(
-        gz <= GZIP_BUDGET,
-        "all dist/client JS gzipped bytes {gz} exceeds budget {GZIP_BUDGET}"
-    );
+    let ui_dir = dist_client.join("assets").join("ui");
+    for spec in deka_ui::SPECIFIERS {
+        let source = if *spec == "ui/server" {
+            continue;
+        } else {
+            deka_ui::source_for(spec).expect("ui source")
+        };
+        let stem = deka_ui::file_name_for(spec)
+            .expect("ui file name")
+            .trim_end_matches(".js");
+        let chunk = find_hashed_asset(&ui_dir, stem, "js")
+            .unwrap_or_else(|| panic!("dist must ship ui/{stem} under a hashed name"));
+        let body = fs::read_to_string(&chunk).expect("read ui chunk");
+        // Sibling imports are rewritten to hashed names on disk; normalize
+        // those back before comparing against the raw deka_ui source.
+        let normalized = strip_sibling_hashes(&body);
+        assert!(
+            normalized == source,
+            "dist ui/{stem} must be the readable source while optimization is paused"
+        );
+    }
 
-    // Fetched-only ceiling (HTML-referenced closure).
+    // The browser-fetched closure must still resolve entirely on disk.
     let html = fs::read_to_string(dist_client.join("index.html")).expect("read dist html");
     let closure = fetched_closure_urls(&dist_client, &html);
-    let closure_raw: usize = closure
-        .iter()
-        .map(|url| fs::metadata(dist_client.join(url.trim_start_matches('/'))).unwrap().len() as usize)
-        .sum();
-    let closure_gz: usize = closure
-        .iter()
-        .map(|url| gzip_len(&fs::read(dist_client.join(url.trim_start_matches('/'))).expect("read chunk")))
-        .sum();
     assert!(
-        closure_raw <= RAW_BUDGET,
-        "fetched closure raw bytes {closure_raw} exceeds budget {RAW_BUDGET}"
+        closure.iter().any(|url| url.contains("islands-load.")),
+        "fetched closure must include the islands entry: {closure:?}"
     );
-    assert!(
-        closure_gz <= GZIP_BUDGET,
-        "fetched closure gzipped bytes {closure_gz} exceeds budget {GZIP_BUDGET}"
-    );
-
-    // The SSR producers must appear in no browser-fetched file.
-    for url in &closure {
-        let body = fs::read_to_string(dist_client.join(url.trim_start_matches('/')))
-            .expect("read closure chunk");
-        for symbol in PRODUCER_SYMBOLS {
-            assert!(
-                !body.contains(symbol),
-                "{url} must not contain SSR producer {symbol}"
-            );
-        }
-    }
 }
 
 /// Extracts `value` from the first `attr="value"` occurrence in `html`.
@@ -323,7 +358,9 @@ fn dist_island_hydrates_and_counter_increments() {
 fn dev_assets_stay_readable_and_unpruned() {
     // Dev flavor (.cache via `deka serve`) must keep the readable,
     // un-pruned sources: the SSR producers survive and the chunk is not
-    // minified. Dist absence is pinned by dist_payload_within_budget.
+    // minified. Dist matches it byte-for-byte while optimization is paused
+    // (deka#881 DECIDE-1); dist parity is pinned by
+    // dist_assets_are_readable_sources_while_paused.
     let serve = spawn_counter_serve();
     let http = Client::builder()
         .redirect(reqwest::redirect::Policy::none())

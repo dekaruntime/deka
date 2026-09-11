@@ -150,8 +150,8 @@ gh workflow run "Deploy deka test suite" --repo dekaruntime/testsuite --ref main
 cargo check -p deka_host -p php-rs -p runtime -p cli
 
 # Full Rust test stack (excluding WASM browser build)
-cargo build -p deka_http -p pool -p engine -p php-rs -p bundler
-cargo test -p deka_http -p pool -p engine -p php-rs -p bundler
+cargo build -p deka_http -p pool -p engine -p php-rs
+cargo test -p deka_http -p pool -p engine -p php-rs
 cargo test -p cli --lib -- --test-threads=1
 ```
 

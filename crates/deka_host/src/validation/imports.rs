@@ -97,8 +97,8 @@ pub fn validate_imports(
         // import a helper from the package root via `import { f } from "../helpers"`.
         // The module resolver (modules.rs resolve_import_target) handles
         // is_relative paths and emits "Missing phpx module" if the target does
-        // not exist. The bundler's guard_path_traversal is the security gate
-        // that prevents path-escaping at bundle time.
+        // not exist. The import validator's guard_path_traversal is the
+        // security gate that prevents path-escaping at bundle time.
     }
 
     let searchable = strip_comments_and_strings(&strip_import_lines(source, &import_lines));
@@ -660,9 +660,9 @@ mod tests {
     #[test]
     fn parent_relative_import_is_allowed() {
         // Regression for issue #36: `../helpers` from a subdir file must not
-        // be rejected by the validator.  The bundler's guard_path_traversal is
-        // the security gate; the validator should only reject syntactically
-        // invalid import paths.
+        // be rejected by the validator.  The import validator's
+        // guard_path_traversal is the security gate; the validator should
+        // only reject syntactically invalid import paths.
         let src = r#"import { client_ip } from "../helpers";
 $x = client_ip();"#;
         let (errors, _warnings) = validate_imports(src, "api/checkout.phpx");

@@ -2,7 +2,8 @@
 //!
 //! Each tenant gets their own DekaScript handler from `tenants/{shop_id}/main.ds`.
 //! Falls back to `default/main.ds` if the tenant dir doesn't exist.
-//! Uses the bundler (same as `deka serve`) to compile DekaScript to JS with the stdlib prelude.
+//! Uses the dsc bundle stage (same as `deka serve`) to compile DekaScript to
+//! JS with the stdlib prelude.
 
 use std::collections::HashMap;
 use std::net::TcpListener;
@@ -93,7 +94,8 @@ fn resolve_handler_path(root: &std::path::Path, shop_id: &str) -> Result<PathBuf
 
 impl PlatformState {
     /// Returns (HandlerKey, handler_code, handler_entry) for a tenant.
-    /// Uses the bundler to compile DekaScript→JS with stdlib prelude baked in.
+    /// Uses the dsc bundle stage to compile DekaScript→JS with stdlib
+    /// prelude baked in.
     /// Caches the result so subsequent requests are fast.
     ///
     /// `cache_key` is `shop_id` for main builds, `shop_id:{hash}` for previews.

@@ -166,8 +166,8 @@ pub fn ds_module_id_from_rel(rel: &str) -> String {
 ///    - extensionless `foo` → `foo.ds`, then `foo/index.ds`
 ///    - any other extension (including `.phpx`) → no DekaScript source
 ///
-/// Check-time (`validate_module_resolution`) and run-time (bundler, ESM
-/// loader, `deka build`, WASM project, style-graph walker) must use this
+/// Check-time (`validate_module_resolution`) and run-time (dsc bundle stage,
+/// ESM loader, `deka build`, WASM project, style-graph walker) must use this
 /// list so they cannot disagree. The candidate files are derived from
 /// [`DS_SOURCE_EXTENSIONS`].
 pub fn ds_source_candidates(base: &Path) -> Vec<PathBuf> {
