@@ -92,6 +92,42 @@ thread_local! {
     static JS_RUNTIME: RefCell<Option<JsRuntime>> = const { RefCell::new(None) };
 }
 
+/// Process-lifetime tokio runtime used as the context for utility-css
+/// isolates. deno_core's V8 platform forwards delayed foreground tasks
+/// (e.g. V8 memory-reducer callbacks) through `tokio::runtime::Handle`, and
+/// aborts the process when such a task is posted for an isolate that was
+/// created with no runtime in context — which is every caller outside a
+/// tokio worker thread, including libtest threads. Entering this runtime
+/// while the isolate is created keeps that registration valid. See deka#799.
+static JS_RUNTIME_TOKIO: std::sync::OnceLock<tokio::runtime::Runtime> =
+    std::sync::OnceLock::new();
+
+fn runtime_tokio() -> &'static tokio::runtime::Runtime {
+    JS_RUNTIME_TOKIO.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+            .expect("failed to build utility-css tokio runtime")
+    })
+}
+
+fn create_js_runtime(
+    create_params: Option<deno_core::v8::CreateParams>,
+) -> JsRuntime {
+    let _guard = runtime_tokio().enter();
+    let mut runtime = JsRuntime::new(RuntimeOptions {
+        create_params,
+        ..Default::default()
+    });
+    // Load the bundled generator once per isolate.
+    let _ = runtime.execute_script(
+        "utility-css-bundle.js",
+        ModuleCodeString::from(UTILITY_CSS_BUNDLE.to_string()),
+    );
+    runtime
+}
+
 fn with_runtime<F, R>(f: F) -> R
 where
     F: FnOnce(&mut JsRuntime) -> R,
@@ -99,13 +135,7 @@ where
     JS_RUNTIME.with(|cell| {
         let mut opt = cell.borrow_mut();
         if opt.is_none() {
-            let mut runtime = JsRuntime::new(RuntimeOptions::default());
-            // Load the bundled generator once per thread.
-            let _ = runtime.execute_script(
-                "utility-css-bundle.js",
-                ModuleCodeString::from(UTILITY_CSS_BUNDLE.to_string()),
-            );
-            *opt = Some(runtime);
+            *opt = Some(create_js_runtime(None));
         }
         f(opt.as_mut().unwrap())
     })
@@ -269,5 +299,41 @@ mod tests {
             },
         );
         assert_eq!(out, html);
+    }
+
+    /// deka#799: V8's memory reducer posts delayed foreground tasks to the
+    /// isolate's task runner. deno_core aborts the process (SIGABRT, no Rust
+    /// panic) when such a task is posted for an isolate created with no tokio
+    /// runtime in context. Drive GC hard under a small heap so the memory
+    /// reducer fires on plain `std::thread`s; without the fix this aborts the
+    /// whole test process before the assertions ever run.
+    #[test]
+    fn runtime_survives_memory_reducer_delayed_tasks() {
+        let stress = r#"
+            for (let i = 0; i < 2000; i++) {
+                const a = [];
+                for (let j = 0; j < 2000; j++) a.push({ x: j, s: "value-" + j });
+            }
+        "#;
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let script = stress.to_string();
+            handles.push(std::thread::spawn(move || {
+                let mut runtime = super::create_js_runtime(Some(
+                    deno_core::v8::CreateParams::default()
+                        .heap_limits(16 * 1024 * 1024, 48 * 1024 * 1024),
+                ));
+                for _ in 0..5 {
+                    let _ = runtime.execute_script(
+                        "stress",
+                        deno_core::ModuleCodeString::from(script.clone()),
+                    );
+                    runtime.v8_isolate().low_memory_notification();
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("GC stress thread panicked");
+        }
     }
 }
