@@ -7,7 +7,8 @@
 //! `dist/` is never left absent by a build the CLI reported as failed; a
 //! *crash* mid-publish leaves it at `dist.prev-<pid>` with no `dist/` at
 //! all, and [`recover_interrupted_publish`] rolls that forward at the start
-//! of the next build.
+//! of the next build. `DEKA_TEST_PUBLISH_PAUSE_MS` widens the window between
+//! the two renames so tests can kill a real build inside the transaction.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -65,6 +66,17 @@ pub fn publish(project_root: &Path, staged: &StagedDist) -> Result<(), String> {
                     dist.display()
                 )
             })?;
+        }
+    }
+    // Test-only fault injection (deka#719): widen the crash window between
+    // the two renames so an integration test can SIGKILL a real build inside
+    // the publication transaction and observe the recoverable state. Inert
+    // unless DEKA_TEST_PUBLISH_PAUSE_MS is set to a positive number.
+    if let Ok(ms) = std::env::var("DEKA_TEST_PUBLISH_PAUSE_MS") {
+        if let Ok(ms) = ms.parse::<u64>() {
+            if ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }
         }
     }
     if let Err(err) = fs::rename(&staged_dist, &dist) {
@@ -145,8 +157,11 @@ pub fn finalize(
 }
 
 /// Build the v2 deployment descriptor from the planned v1 manifest and the
-/// emitted server entries (deka#762). Payloads are recorded later, in
-/// [`finalize`], once the staged tree is final.
+/// emitted server entries (deka#762). `app`/`api` are the SAME scans the
+/// manifest was planned from — publication must not re-scan sources
+/// (deka#719: rendering, logging and publication read the manifest boundary,
+/// not fresh source walks). Payloads are recorded later, in [`finalize`],
+/// once the staged tree is final.
 #[allow(clippy::too_many_arguments)]
 pub fn build_artifact_manifest(
     manifest: &BuildManifest,
@@ -154,16 +169,15 @@ pub fn build_artifact_manifest(
     dist_root: &Path,
     worker_emitted: bool,
     trailing_slash: bool,
+    app: &runtime_core::framework::FrameworkManifest,
+    api: &[runtime_core::framework::FrameworkEntry],
 ) -> Result<runtime_core::framework::ArtifactManifestV2, String> {
     use runtime_core::framework::{
         ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactProducer,
         ArtifactRoute, ArtifactServer, ArtifactSlot, ArtifactWorker, MODULE_FORMAT, RUNTIME_ABI,
-        RouteMode, client_output_path, scan_api_dir, scan_server_defer, server_entries,
+        RouteMode, client_output_path, server_entries,
     };
 
-    let app = runtime_core::framework::scan_app_dir(&project_root.join("app"));
-    let api = scan_api_dir(&project_root.join("api"));
-    let _deferred = scan_server_defer(&project_root.join("app"));
 
     let routes: Vec<ArtifactRoute> = manifest
         .routes
@@ -196,7 +210,7 @@ pub fn build_artifact_manifest(
         })
         .collect();
 
-    let entries = server_entries(project_root, &app, &api)?;
+    let entries = server_entries(project_root, app, api)?;
 
     let slots: Vec<ArtifactSlot> = manifest
         .slots
