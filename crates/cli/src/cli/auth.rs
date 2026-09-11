@@ -121,7 +121,6 @@ fn cmd_signup(context: &Context) {
         .params
         .get("--registry-url")
         .cloned()
-        .or_else(|| std::env::var("LINKHASH_REGISTRY_URL").ok())
         .or_else(|| {
             prompt_optional(
                 "Registry URL [http://localhost:8508]: ",
@@ -200,12 +199,11 @@ fn cmd_login(context: &Context) {
         .get("--username")
         .cloned()
         .or_else(|| prompt_required("Username (@username): "));
-    let token_from_param_or_env = context
+    let token_from_param = context
         .args
         .params
         .get("--token")
-        .cloned()
-        .or_else(|| std::env::var("LINKHASH_TOKEN").ok());
+        .cloned();
     let password = context
         .args
         .params
@@ -217,7 +215,6 @@ fn cmd_login(context: &Context) {
         .params
         .get("--registry-url")
         .cloned()
-        .or_else(|| std::env::var("LINKHASH_REGISTRY_URL").ok())
         .or_else(|| {
             prompt_optional(
                 "Registry URL [http://localhost:8508]: ",
@@ -237,7 +234,7 @@ fn cmd_login(context: &Context) {
         return;
     }
 
-    let token = if let Some(token) = token_from_param_or_env {
+    let token = if let Some(token) = token_from_param {
         token
     } else if let Some(password) = password {
         if password.trim().is_empty() {

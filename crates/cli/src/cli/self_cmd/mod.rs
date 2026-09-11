@@ -1,11 +1,11 @@
 use core::{CommandSpec, Context, ParamSpec, Registry, SubcommandSpec};
 
 mod fetch;
-mod monitor;
+pub mod monitor;
 mod pairing;
 mod targets;
 mod test;
-mod update;
+pub mod update;
 
 const FETCH: SubcommandSpec = SubcommandSpec {
     name: "fetch",

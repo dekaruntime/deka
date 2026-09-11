@@ -120,22 +120,14 @@ pub fn cmd(context: &Context) {
 // Config loading
 // ---------------------------------------------------------------------------
 
-fn load_monitor_config(context: &Context) -> Result<MonitorConfig, String> {
-    let registry_url = get_param_or_env(
-        context,
-        "--registry-url",
-        &[
-            "LINKHASH_REGISTRY_URL",
-            "LINKHASH_REGISTRY",
-            "TANA_GIT_SERVER",
-        ],
-    )
-    .unwrap_or_else(|| "http://localhost:9418".to_string());
+#[doc(hidden)]
+pub fn load_monitor_config(context: &Context) -> Result<MonitorConfig, String> {
+    let registry_url = get_param(context, "--registry-url")
+        .unwrap_or_else(|| "http://localhost:9418".to_string());
 
-    let token = get_param_or_env(context, "--token", &["LINKHASH_TOKEN", "TANA_GIT_TOKEN"]);
+    let token = get_param(context, "--token");
 
-    let registry_index_url =
-        get_param_or_env(context, "--registry-index", &["LINKHASH_CARGO_INDEX"]);
+    let registry_index_url = get_param(context, "--registry-index");
 
     let poll_interval = get_poll_interval(context);
 
@@ -162,23 +154,12 @@ fn load_monitor_config(context: &Context) -> Result<MonitorConfig, String> {
     })
 }
 
-fn get_param_or_env(context: &Context, param: &str, env_vars: &[&str]) -> Option<String> {
-    context
-        .args
-        .params
-        .get(param)
-        .cloned()
-        .or_else(|| env_vars.iter().find_map(|v| std::env::var(v).ok()))
+fn get_param(context: &Context, param: &str) -> Option<String> {
+    context.args.params.get(param).cloned()
 }
 
 fn get_poll_interval(context: &Context) -> Duration {
     if let Some(raw) = context.args.params.get("--interval") {
-        if let Ok(secs) = raw.parse::<u64>() {
-            return Duration::from_secs(secs);
-        }
-    }
-
-    if let Ok(raw) = std::env::var("DEKA_MONITOR_INTERVAL") {
         if let Ok(secs) = raw.parse::<u64>() {
             return Duration::from_secs(secs);
         }

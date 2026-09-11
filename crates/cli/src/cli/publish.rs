@@ -42,11 +42,11 @@ pub fn register(registry: &mut Registry) {
     });
     registry.add_param(ParamSpec {
         name: "--token",
-        description: "PAT token (fallback: auth profile, LINKHASH_TOKEN, TANA_GIT_TOKEN)",
+        description: "PAT token (fallback: auth profile)",
     });
     registry.add_param(ParamSpec {
         name: "--registry-url",
-        description: "registry base URL (default: auth profile, LINKHASH_REGISTRY, TANA_GIT_SERVER, or http://localhost:9418)",
+        description: "registry base URL (default: auth profile or http://localhost:9418)",
     });
     registry.add_param(ParamSpec {
         name: "--registry",
@@ -85,6 +85,30 @@ struct PublishRequest {
     token: String,
     payload: serde_json::Value,
     dry_run: bool,
+}
+
+/// Resolve the publish token and registry URL from explicit channels only:
+/// token = `--token` → auth profile → error; registry = `--registry-url` /
+/// `--registry` → auth profile → `http://localhost:9418` (deka#801: no
+/// environment fallbacks).
+pub fn resolve_registry_auth(
+    params: &std::collections::HashMap<String, String>,
+    profile: Option<&crate::cli::auth_store::AuthProfile>,
+) -> anyhow::Result<(String, String)> {
+    let token = params
+        .get("--token")
+        .cloned()
+        .or_else(|| profile.map(|p| p.token.clone()))
+        .context("missing --token (or run `deka login`)")?;
+
+    let registry = params
+        .get("--registry-url")
+        .or_else(|| params.get("--registry"))
+        .cloned()
+        .or_else(|| profile.map(|p| p.registry_url.clone()))
+        .unwrap_or_else(|| "http://localhost:9418".to_string());
+
+    Ok((token, registry))
 }
 
 fn build_request(context: &Context) -> Result<PublishRequest> {
@@ -139,24 +163,7 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
         .cloned()
         .unwrap_or_else(|| "HEAD".to_string());
 
-    // Token: --token flag, auth profile, LINKHASH_TOKEN, TANA_GIT_TOKEN
-    let token = params
-        .get("--token")
-        .cloned()
-        .or_else(|| profile.as_ref().map(|p| p.token.clone()))
-        .or_else(|| std::env::var("LINKHASH_TOKEN").ok())
-        .or_else(|| std::env::var("TANA_GIT_TOKEN").ok())
-        .context("missing --token (or run `deka login`, or set LINKHASH_TOKEN / TANA_GIT_TOKEN)")?;
-
-    // Registry: --registry-url or --registry flag, auth profile, LINKHASH_REGISTRY, TANA_GIT_SERVER
-    let registry = params
-        .get("--registry-url")
-        .or_else(|| params.get("--registry"))
-        .cloned()
-        .or_else(|| profile.as_ref().map(|p| p.registry_url.clone()))
-        .or_else(|| std::env::var("LINKHASH_REGISTRY").ok())
-        .or_else(|| std::env::var("TANA_GIT_SERVER").ok())
-        .unwrap_or_else(|| "http://localhost:9418".to_string());
+    let (token, registry) = resolve_registry_auth(params, profile.as_ref())?;
 
     // Description: --description flag, or deka.json description
     let description = params

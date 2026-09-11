@@ -2,15 +2,15 @@ use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DbEngine {
+pub enum DbEngine {
     Postgres,
     Sqlite,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct DbRuntimeConfig {
-    pub(super) engine: DbEngine,
-    pub(super) location: String,
+pub struct DbRuntimeConfig {
+    pub engine: DbEngine,
+    pub location: String,
 }
 
 fn load_deka_json(cwd: &Path) -> Option<serde_json::Value> {
@@ -19,7 +19,8 @@ fn load_deka_json(cwd: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&raw).ok()
 }
 
-pub(super) fn read_db_runtime_config(cwd: &Path) -> DbRuntimeConfig {
+#[doc(hidden)]
+pub fn read_db_runtime_config(cwd: &Path) -> DbRuntimeConfig {
     let json = load_deka_json(cwd);
     let db = json
         .as_ref()
@@ -46,9 +47,7 @@ pub(super) fn read_db_runtime_config(cwd: &Path) -> DbRuntimeConfig {
             };
         }
         Some("postgres") | Some("pg") => {
-            let location = location_raw
-                .or_else(|| std::env::var("DATABASE_URL").ok())
-                .unwrap_or_else(postgres_connection_string);
+            let location = location_raw.unwrap_or_else(postgres_connection_string);
             return DbRuntimeConfig {
                 engine: DbEngine::Postgres,
                 location,
@@ -75,7 +74,7 @@ pub(super) fn read_db_runtime_config(cwd: &Path) -> DbRuntimeConfig {
         };
     }
 
-    let location = std::env::var("DATABASE_URL").unwrap_or_else(|_| postgres_connection_string());
+    let location = postgres_connection_string();
     DbRuntimeConfig {
         engine: DbEngine::Postgres,
         location,
@@ -83,13 +82,13 @@ pub(super) fn read_db_runtime_config(cwd: &Path) -> DbRuntimeConfig {
 }
 
 fn postgres_connection_string() -> String {
-    let host = std::env::var("DB_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port = std::env::var("DB_PORT").unwrap_or_else(|_| "55432".to_string());
-    let name = std::env::var("DB_NAME").unwrap_or_else(|_| "linkhash_registry".to_string());
-    let user = std::env::var("DB_USER").unwrap_or_else(|_| "postgres".to_string());
-    let pass = std::env::var("DB_PASSWORD").unwrap_or_else(|_| "postgres".to_string());
+    const DEFAULT_HOST: &str = "127.0.0.1";
+    const DEFAULT_PORT: &str = "55432";
+    const DEFAULT_NAME: &str = "linkhash_registry";
+    const DEFAULT_USER: &str = "postgres";
+    const DEFAULT_PASSWORD: &str = "postgres";
     format!(
         "host={} port={} dbname={} user={} password={}",
-        host, port, name, user, pass
+        DEFAULT_HOST, DEFAULT_PORT, DEFAULT_NAME, DEFAULT_USER, DEFAULT_PASSWORD
     )
 }

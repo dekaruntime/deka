@@ -30,12 +30,23 @@ pub fn register(registry: &mut Registry) {
     });
     registry.add_param(ParamSpec {
         name: "--gild-bearer",
-        description: "gild bearer token (default: from env GILD_BEARER_TOKEN)",
+        description: "gild bearer token (default: empty)",
     });
     registry.add_param(ParamSpec {
         name: "--run-id",
         description: "pipeline run ID (default: auto-generated)",
     });
+}
+
+/// Resolve the gild socket path and bearer token from CLI flags only
+/// (deka#801: no environment fallbacks).
+pub fn resolve_gild_endpoint(params: &HashMap<String, String>) -> (String, String) {
+    let socket = params
+        .get("--gild-socket")
+        .cloned()
+        .unwrap_or_else(|| "/run/gild/sock".to_string());
+    let bearer = params.get("--gild-bearer").cloned().unwrap_or_default();
+    (socket, bearer)
 }
 
 fn deploy_cmd(_context: &Context) {
@@ -58,21 +69,7 @@ fn run_cmd(context: &Context) {
         return;
     };
 
-    let gild_socket = context
-        .args
-        .params
-        .get("--gild-socket")
-        .cloned()
-        .or_else(|| std::env::var("GILD_SOCKET_PATH").ok())
-        .unwrap_or_else(|| "/run/gild/sock".to_string());
-
-    let bearer_token = context
-        .args
-        .params
-        .get("--gild-bearer")
-        .cloned()
-        .or_else(|| std::env::var("GILD_BEARER_TOKEN").ok())
-        .unwrap_or_default();
+    let (gild_socket, bearer_token) = resolve_gild_endpoint(&context.args.params);
 
     let run_id = context
         .args
