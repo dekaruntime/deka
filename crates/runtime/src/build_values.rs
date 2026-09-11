@@ -304,6 +304,33 @@ fn validate_slot_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Recover the host permission denial from either the direct RFD 27 wire
+/// object or @deka/fs's public `FsError.PermissionDenied(FsPermission)` value.
+/// The latter is intentionally typed for DekaScript callers, while build
+/// diagnostics still need the original marker payload for source-linked
+/// permission guidance (deka#758).
+fn permission_denial_from_error(
+    error: &serde_json::Value,
+) -> Option<runtime_core::host_bridge::PermissionDenied> {
+    let map = error.as_object()?;
+    let payload = if map.get("name").and_then(serde_json::Value::as_str) == Some("PermissionDenied")
+        && map.contains_key("capability")
+        && map.contains_key("target")
+    {
+        map
+    } else if map.get("__enum").and_then(serde_json::Value::as_str) == Some("FsError")
+        && map.get("__case").and_then(serde_json::Value::as_str) == Some("PermissionDenied")
+    {
+        map.get("value")?.as_object()?
+    } else {
+        return None;
+    };
+    Some(runtime_core::host_bridge::PermissionDenied {
+        capability: payload.get("capability")?.as_str()?.to_string(),
+        target: payload.get("target")?.as_str()?.to_string(),
+    })
+}
+
 fn unwrap_result<'a>(
     result: &'a serde_json::Value,
     entry: &BuildEntry,
@@ -320,25 +347,15 @@ fn unwrap_result<'a>(
             .get("value")
             .ok_or_else(|| format!("build `{binding}` returned malformed Result.Ok")),
         Some("Err") => {
-            // RFD 27: a permission denial crosses the DS boundary as the
-            // structured `PermissionDenied { name, capability, target }`
-            // object; re-encode it into the marker wire format so the build
-            // diagnostic stays machine-readable (deka#725). Plain string
+            // RFD 27: re-encode a direct structured denial or the public
+            // @deka/fs FsError.PermissionDenied into the marker wire format
+            // so the build diagnostic stays machine-readable. Plain string
             // errors pass through unchanged.
             let message = object.get("error").map(|error| {
                 if let Some(text) = error.as_str() {
                     return text.to_string();
                 }
-                if let Some(denial) = error.as_object().and_then(|map| {
-                    if map.get("name").and_then(serde_json::Value::as_str) != Some("PermissionDenied")
-                    {
-                        return None;
-                    }
-                    Some(runtime_core::host_bridge::PermissionDenied {
-                        capability: map.get("capability")?.as_str()?.to_string(),
-                        target: map.get("target")?.as_str()?.to_string(),
-                    })
-                }) {
+                if let Some(denial) = permission_denial_from_error(error) {
                     return denial.encode();
                 }
                 "build entry returned Result.Err".to_string()
@@ -670,6 +687,24 @@ mod tests {
         assert!(
             message.contains(r#""capability":"read""#) && message.contains(r#""target":"data/x.json""#),
             "structured denial missing: {message}"
+        );
+        // @deka/fs wraps the same host denial in its public typed error. Build
+        // diagnostics must preserve the marker rather than collapse it to a
+        // generic Result.Err (deka#758).
+        let fs_denial = serde_json::json!({
+            "__enum": "Result",
+            "__case": "Err",
+            "error": {
+                "__enum": "FsError",
+                "__case": "PermissionDenied",
+                "name": "PermissionDenied",
+                "value": { "__deka_struct": "FsPermission", "capability": "read", "target": "data/x.json" }
+            }
+        });
+        let fs_message = unwrap_result(&fs_denial, &entry).unwrap_err();
+        assert!(
+            fs_message.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+            "FsError denial marker missing: {fs_message}"
         );
         // Non-denial objects keep the generic message.
         let other = serde_json::json!({

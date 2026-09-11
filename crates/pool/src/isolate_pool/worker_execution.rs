@@ -775,10 +775,42 @@ impl WorkerThread {
                         } catch (_err) {}
                         return null;
                     };
-                    const __dekaErrorEnvelope = (err) => {
+                    // The @deka/fs public error is an enum. Keep the conversion
+                    // at the bridge boundary: package wrappers merely return the
+                    // granted action's Result and must never parse error text or
+                    // make authorization decisions (deka#758).
+                    const __dekaFsError = (error) => {
+                        if (error && typeof error === 'object' && error.__enum === 'FsError') return error;
+                        const name = error && typeof error === 'object' ? String(error.name || '') : '';
+                        if (name === 'PermissionDenied') {
+                            return {
+                                __enum: 'FsError', __case: 'PermissionDenied', name: 'PermissionDenied',
+                                value: {
+                                    __deka_struct: 'FsPermission',
+                                    capability: String(error.capability || 'read'),
+                                    target: String(error.target || '*'),
+                                },
+                            };
+                        }
+                        if (name === 'UnsupportedHost') {
+                            return { __enum: 'FsError', __case: 'UnsupportedHost', name: 'UnsupportedHost' };
+                        }
+                        if (name === 'InvalidPayload') {
+                            return { __enum: 'FsError', __case: 'InvalidPayload', name: 'InvalidPayload' };
+                        }
+                        const message = typeof error === 'string'
+                            ? error
+                            : (error && error.message ? String(error.message) : 'filesystem operation failed');
+                        return { __enum: 'FsError', __case: 'Failed', name: 'Failed', value: message };
+                    };
+                    const __dekaErrorEnvelope = (kind, err) => {
                         const message = err && err.message ? String(err.message) : String(err);
                         const denial = __dekaDenyFromMessage(message);
-                        if (denial) return denial;
+                        if (denial) {
+                            if (kind === 'fs') denial.error = __dekaFsError(denial.error);
+                            return denial;
+                        }
+                        if (kind === 'fs') return { ok: false, error: __dekaFsError(message) };
                         return { ok: false, error: message };
                     };
                     const __deka_host = (kind, action, args, grants) => {
@@ -818,6 +850,12 @@ impl WorkerThread {
                                 }
                                 return [];
                             };
+                            const fsBytePayload = (v) => v instanceof Uint8Array ? Array.from(v) : null;
+                            const fsWritesBytes = k === 'fs' && (a === 'write_file' || a === 'write_file_sync' || a === 'write');
+                            if (fsWritesBytes && fsBytePayload(list[1]) === null) {
+                                const invalid = { ok: false, error: __dekaFsError({ name: 'InvalidPayload' }) };
+                                return cat[a].async === true ? Promise.resolve(invalid) : invalid;
+                            }
                             // db_call_impl (crates/deka_host/src/modules/php/db.rs)
                             // opens with {driver, config}, not a URL string; the
                             // catalog's db.open arg is a connection URL, parsed
@@ -846,16 +884,16 @@ impl WorkerThread {
                                 if (k === 'crypto' && a === 'aes_256_gcm_encrypt') return { key: list[0], nonce: list[1], plaintext: list[2], aad: list[3] };
                                 if (k === 'crypto' && a === 'aes_256_gcm_decrypt') return { key: list[0], nonce: list[1], ciphertext: list[2], aad: list[3] };
                                 if (k === 'crypto' && a === 'bcrypt_verify') return { password: list[0], hash: list[1] };
-                                if (k === 'fs' && a === 'read_file') return { path: list[0] };
-                                if (k === 'fs' && a === 'write_file') return { path: list[0], data: toByteArray(list[1]) };
-                                if (k === 'fs' && a === 'read_dir') return { path: list[0] };
-                                if (k === 'fs' && a === 'mkdirs') return { path: list[0] };
+                                if (k === 'fs' && (a === 'read_file' || a === 'read_file_sync')) return { path: list[0] };
+                                if (k === 'fs' && (a === 'write_file' || a === 'write_file_sync')) return { path: list[0], data: fsBytePayload(list[1]) };
+                                if (k === 'fs' && (a === 'read_dir' || a === 'read_dir_sync')) return { path: list[0] };
+                                if (k === 'fs' && (a === 'mkdirs' || a === 'mkdirs_sync')) return { path: list[0] };
                                 // fs.open's second catalog arg is a write bool;
                                 // both the JSON impl and the proto encoder key
                                 // the mode string ("r"/"w" style) off `mode`.
                                 if (k === 'fs' && a === 'open') return { path: list[0], mode: list[1] ? 'w' : 'r' };
                                 if (k === 'fs' && a === 'read') return { handle: list[0], max_bytes: list[1] };
-                                if (k === 'fs' && a === 'write') return { handle: list[0], data: toByteArray(list[1]) };
+                                if (k === 'fs' && a === 'write') return { handle: list[0], data: fsBytePayload(list[1]) };
                                 if (k === 'fs' && a === 'close') return { handle: list[0] };
                                 if (k === 'db' && a === 'open') return dbOpenPayload(list[0]);
                                 if (k === 'db' && a === 'query') return { handle: list[0], sql: list[1], params: Array.isArray(list[2]) ? list[2] : [] };
@@ -878,7 +916,8 @@ impl WorkerThread {
                                 return { args: list };
                             })();
                             const routeKind = (k === 'tls' && a === 'upgrade') ? 'net' : k;
-                            const routeAction = (k === 'tls' && a === 'upgrade') ? 'tls_upgrade' : a;
+                            const routeAction = (k === 'tls' && a === 'upgrade') ? 'tls_upgrade'
+                                : (k === 'fs' && a.endsWith('_sync') ? a.slice(0, -5) : a);
                             const finish = (raw) => {
                                 const assoc = (Array.isArray(raw) && raw.length && Array.isArray(raw[0]))
                                     ? Object.fromEntries(raw)
@@ -916,6 +955,9 @@ impl WorkerThread {
                                 if (assoc && assoc.ok === true && typeof assoc.value === 'undefined' && typeof assoc.data !== 'undefined') {
                                     assoc.value = assoc.data;
                                 }
+                                if (assoc && assoc.ok !== true && k === 'fs') {
+                                    assoc.error = __dekaFsError(assoc.error);
+                                }
                                 return assoc;
                             };
                             // Catalog-async entries (exactly fs.{read_file,
@@ -935,7 +977,7 @@ impl WorkerThread {
                                 const request = ops.op_php_fs_proto_encode(routeAction, payload);
                                 return Promise.resolve(ops.op_php_fs_call_proto_async(request))
                                     .then((response) => finish(Object.entries(ops.op_php_fs_proto_decode(response) || {})))
-                                    .catch((err) => __dekaErrorEnvelope(err));
+                                    .catch((err) => __dekaErrorEnvelope(k, err));
                             }
                             const raw = __dekaFixProto(routeHostCall(routeKind, routeAction, payload));
                             if (raw && typeof raw.then === 'function') {
@@ -949,7 +991,7 @@ impl WorkerThread {
                             }
                             return finish(raw);
                         } catch (err) {
-                            return __dekaErrorEnvelope(err);
+                            return __dekaErrorEnvelope(k, err);
                         }
                     };
                     // RFD 27: these names are not user globals. Handlers get them

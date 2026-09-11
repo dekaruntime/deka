@@ -207,7 +207,7 @@ async fn slow_async_op_does_not_block_sibling_worker_request() {
     let slow_code = format!(
         r#"
 globalThis.app = async function(req) {{
-  await __deka_host('fs', 'write_file', [{marker_js}, [1]], ['fs']);
+  await __deka_host('fs', 'write_file', [{marker_js}, new Uint8Array([1])], ['fs']);
   const r = await __deka_host('fs', 'read_file', [{path_js}], ['fs']);
   return {{ status: 200, headers: {{}}, body: JSON.stringify({{ ok: r.ok === true, tEnd: Date.now() }}) }};
 }};
@@ -218,7 +218,7 @@ globalThis.app = async function(req) {{
     let medium_code = format!(
         r#"
 globalThis.app = async function(req) {{
-  await __deka_host('fs', 'write_file', [{medium_marker_js}, [1]], ['fs']);
+  await __deka_host('fs', 'write_file', [{medium_marker_js}, new Uint8Array([1])], ['fs']);
   await __deka_host('fs', 'read_file', [{medium_path_js}], ['fs']);
   return {{ status: 200, headers: {{}}, body: JSON.stringify({{ medium: true }}) }};
 }};
@@ -425,8 +425,8 @@ fn deny_read_policy() -> String {
 }
 
 /// Case B3 — an async permission denial never crosses as a throw/rejection:
-/// the Promise resolves to `{ok:false, error:{name:"PermissionDenied",
-/// capability, target}}` and the request itself succeeds.
+/// the Promise resolves to the typed `FsError.PermissionDenied`, never an
+/// empty successful byte payload, and the request itself succeeds.
 #[tokio::test]
 async fn async_bridge_rejection_never_crosses_as_throw() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -445,12 +445,15 @@ globalThis.app = async function(req) {{
     threw = String(err && err.message ? err.message : err);
   }}
   const e = r && r.error ? r.error : null;
+  const permission = e && e.value ? e.value : null;
   return {{ status: 200, headers: {{}}, body: JSON.stringify({{
     threw,
     ok: r ? r.ok : null,
-    name: e && e.name,
-    capability: e && e.capability,
-    target: e && e.target
+    hasValue: !!(r && Object.prototype.hasOwnProperty.call(r, 'value')),
+    enumName: e && e.__enum,
+    caseName: e && e.__case,
+    capability: permission && permission.capability,
+    target: permission && permission.target
   }}) }};
 }};
 "#
@@ -472,7 +475,9 @@ globalThis.app = async function(req) {{
 
     assert_eq!(parsed["threw"], serde_json::Value::Null, "body={parsed}");
     assert_eq!(parsed["ok"], serde_json::json!(false), "body={parsed}");
-    assert_eq!(parsed["name"], "PermissionDenied", "body={parsed}");
+    assert_eq!(parsed["hasValue"], false, "body={parsed}");
+    assert_eq!(parsed["enumName"], "FsError", "body={parsed}");
+    assert_eq!(parsed["caseName"], "PermissionDenied", "body={parsed}");
     assert_eq!(parsed["capability"], "read", "body={parsed}");
     assert!(
         parsed["target"]
@@ -482,3 +487,51 @@ globalThis.app = async function(req) {{
     );
 }
 
+/// The public `_sync` actions use the host's synchronous call path. They are
+/// not a Promise disguised as a synchronous wrapper, and bytes remain exact.
+#[tokio::test]
+async fn fs_sync_actions_are_blocking_and_preserve_strict_bytes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("source.bin");
+    std::fs::write(&source, [0, 0xff, 0x80, b'A']).expect("write binary fixture");
+
+    let source_js = serde_json::to_string(&source.to_string_lossy()).expect("json path");
+    let output_js = serde_json::to_string(&dir.path().join("out.bin").to_string_lossy())
+        .expect("json output path");
+    let code = format!(
+        r#"
+globalThis.app = function(req) {{
+  const read = __deka_host('fs', 'read_file_sync', [{source_js}], ['fs']);
+  const bad = __deka_host('fs', 'write_file_sync', [{output_js}, 'not bytes'], ['fs']);
+  return {{ status: 200, headers: {{}}, body: JSON.stringify({{
+    readIsPromise: !!(read && typeof read.then === 'function'),
+    readOk: read && read.ok,
+    payload: read && read.value ? Array.from(read.value) : null,
+    invalidEnum: bad && bad.error && bad.error.__enum,
+    invalidCase: bad && bad.error && bad.error.__case
+  }}) }};
+}};
+"#
+    );
+
+    let pool = php_pool(1);
+    let response = pool
+        .execute(
+            HandlerKey::new("fs_sync_strict_bytes"),
+            request_with_security(&code, allow_under(dir.path())),
+        )
+        .await
+        .expect("pool execution");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body_of(&response)).expect("json body");
+
+    assert_eq!(parsed["readIsPromise"], false, "body={parsed}");
+    assert_eq!(parsed["readOk"], true, "body={parsed}");
+    assert_eq!(parsed["payload"], serde_json::json!([0, 255, 128, 65]), "body={parsed}");
+    assert_eq!(parsed["invalidEnum"], "FsError", "body={parsed}");
+    assert_eq!(parsed["invalidCase"], "InvalidPayload", "body={parsed}");
+    assert!(
+        !dir.path().join("out.bin").exists(),
+        "a non-bytes payload must never be converted and written"
+    );
+}

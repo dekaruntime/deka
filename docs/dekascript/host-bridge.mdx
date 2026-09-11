@@ -19,7 +19,7 @@ runtime comes from this one catalog, never from a hand-maintained list.
 | Kind | Grant owner | Capability | Notes |
 |---|---|---|---|
 | `crypto` | `@deka/crypto` | — | random_bytes, digest, hmac, secure_compare, aes_256_gcm_encrypt, aes_256_gcm_decrypt, bcrypt_verify |
-| `fs` | `@deka/fs` | read / write | read_file, write_file, read_dir, mkdirs are async; open/read/write/close are sync |
+| `fs` | `@deka/fs` | read / write | read_file, write_file, read_dir, mkdirs are async; their `*_sync` twins and open/read/write/close are sync |
 | `net` | `@deka/tcp` | net | connect, listen, accept, read, write, close, set_deadline |
 | `tls` | `@deka/tls` | net | upgrade (handle → TLS handle) |
 | `time` | `@deka/time` | — | sleep_ms |

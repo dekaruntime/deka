@@ -13,7 +13,7 @@
 //!
 //! - The catalog is authoritative. [`HostAction::r#async`] MUST match the
 //!   pinned dsc exactly: precisely `fs.{read_file,write_file,read_dir,mkdirs}`
-//!   are async; every other action is sync. dsc emits
+//!   are async; their `_sync` twins and every other action are sync. dsc emits
 //!   `__deka_host(kind, action, args).then(__deka_to_result)` for async
 //!   entries and `__deka_to_result(__deka_host(kind, action, args))` for sync
 //!   ones; a flag mismatch means the DS-level `await` resolves the wrong
@@ -219,6 +219,41 @@ const FS_ACTIONS: &[HostAction] = &[
         args: &[arg("path", WireType::Str)],
         result: ResultShape::Unit,
         r#async: true,
+        capability: Some("write"),
+        hosts: Hosts::NativeOnly,
+    },
+    // These are distinct catalog actions, not package-level Promise shims.
+    // The bootstrap routes them to the synchronous implementation of the same
+    // host operation (deka#758).
+    HostAction {
+        name: "read_file_sync",
+        args: &[arg("path", WireType::Str)],
+        result: ResultShape::Bytes,
+        r#async: false,
+        capability: Some("read"),
+        hosts: Hosts::NativeOnly,
+    },
+    HostAction {
+        name: "write_file_sync",
+        args: &[arg("path", WireType::Str), arg("data", WireType::Bytes)],
+        result: ResultShape::Num,
+        r#async: false,
+        capability: Some("write"),
+        hosts: Hosts::NativeOnly,
+    },
+    HostAction {
+        name: "read_dir_sync",
+        args: &[arg("path", WireType::Str)],
+        result: ResultShape::Entries,
+        r#async: false,
+        capability: Some("read"),
+        hosts: Hosts::NativeOnly,
+    },
+    HostAction {
+        name: "mkdirs_sync",
+        args: &[arg("path", WireType::Str)],
+        result: ResultShape::Unit,
+        r#async: false,
         capability: Some("write"),
         hosts: Hosts::NativeOnly,
     },
