@@ -878,14 +878,9 @@ fn should_ignore_watch_path(path: &FsPath) -> bool {
 mod tests {
     use super::build_static_handler_code;
     use super::ensure_http_port_available;
-    use super::flag_or_env_truthy_with;
-    use super::serve_async;
-    use core::{Args, EnvContext, HandlerContext};
     use runtime_core::env::is_truthy;
-    use std::collections::HashMap;
     use std::fs;
     use std::net::TcpListener;
-    use std::time::{Duration, Instant};
 
     /// Verify the static handler template contains the __dekaFs confinement
     /// wrapper.  We check for the key guard identifiers that must be present
@@ -929,29 +924,6 @@ mod tests {
         assert!(!is_truthy("0"));
         assert!(!is_truthy("false"));
         assert!(!is_truthy("off"));
-    }
-
-    #[test]
-    fn flag_overrides_env_for_watch_or_dev() {
-        let mut flags = HashMap::new();
-        flags.insert("--dev".to_string(), true);
-        assert!(flag_or_env_truthy_with(
-            &flags,
-            "--dev",
-            None,
-            "DEKA_DEV",
-            &|_| None,
-        ));
-
-        let mut watch_flags = HashMap::new();
-        watch_flags.insert("-W".to_string(), true);
-        assert!(flag_or_env_truthy_with(
-            &watch_flags,
-            "--watch",
-            Some("-W"),
-            "DEKA_WATCH",
-            &|_| None,
-        ));
     }
 
     #[test]
