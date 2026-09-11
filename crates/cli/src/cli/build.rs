@@ -218,7 +218,21 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         // nothing to plan from, so keep the minimal-project `/` fallback.
         #[cfg(feature = "native")]
         if manifest.is_none() || !render_tasks.is_empty() {
-            runtime::prerender_static_pages(&project_root, &dist_client, &render_tasks)?;
+            // Static renders execute under the same resolved build policy as
+            // the build slots (deka.json + CLI overrides); the policy travels
+            // per execution, never through the environment (deka#801).
+            let render_policy = crate::cli::build_slots::resolve_build_policy(
+                &context.args.flags,
+                &context.args.params,
+                &project_root,
+                false,
+            )?;
+            runtime::prerender_static_pages(
+                &project_root,
+                &dist_client,
+                &render_tasks,
+                &render_policy.policy_json,
+            )?;
         }
         #[cfg(not(feature = "native"))]
         {

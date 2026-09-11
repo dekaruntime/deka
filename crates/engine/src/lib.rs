@@ -30,4 +30,8 @@ pub struct RuntimeState {
     pub dev_mode: bool,
     pub perf_mode: bool,
     pub perf_request_value: serde_json::Value,
+    /// Resolved security policy every dispatched request executes under.
+    /// Mandatory since deka#801: enforcement errors on a missing context,
+    /// never falling back to the process environment or a default.
+    pub security: pool::ExecutionSecurity,
 }

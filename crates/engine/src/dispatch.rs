@@ -75,7 +75,7 @@ pub async fn execute_request(
         request_value: serde_json::Value::Null,
         request_parts: Some(request_parts),
         mode: ExecutionMode::Request,
-        security: None,
+        security: state.security.clone(),
     };
 
     execute_request_data(state, request_data).await
@@ -124,7 +124,7 @@ pub async fn execute_request_parts(
         request_value: serde_json::Value::Null,
         request_parts: Some(request_parts),
         mode: ExecutionMode::Request,
-        security: None,
+        security: state.security.clone(),
     };
 
     let mut response = execute_request_data(state, request_data).await?;
@@ -212,7 +212,7 @@ pub async fn execute_request_value(
         request_value,
         request_parts: None,
         mode: ExecutionMode::Request,
-        security: None,
+        security: state.security.clone(),
     };
 
     execute_request_data(state, request_data).await

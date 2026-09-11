@@ -35,8 +35,9 @@ pub fn prerender_static_pages(
     project_root: &std::path::Path,
     dist_client: &std::path::Path,
     tasks: &[prerender::StaticRenderTask],
+    policy_json: &str,
 ) -> Result<(), String> {
-    prerender::prerender_static_pages(project_root, dist_client, tasks)
+    prerender::prerender_static_pages(project_root, dist_client, tasks, policy_json)
 }
 
 pub use prerender::StaticRenderTask;

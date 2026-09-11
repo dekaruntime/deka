@@ -1043,7 +1043,7 @@ impl WorkerThread {
         // false for them; those are gated by the module-graph validator in
         // #425. The multi-tenant storefronts are the case this protects.
         if !request.request_data.handler_code.trim().is_empty() && !isolate.dynamic_code_validated {
-            if let Err(err) = validation::validate_dynamic_code_from_process_env(
+            if let Err(err) = validation::validate_dynamic_code_from_security_context(
                 &request.request_data.handler_code,
                 &key.name,
             ) {

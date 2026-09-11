@@ -27,6 +27,7 @@ pub fn prerender_static_pages(
     project_root: &Path,
     dist_client: &Path,
     tasks: &[StaticRenderTask],
+    policy_json: &str,
 ) -> Result<(), String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -36,6 +37,7 @@ pub fn prerender_static_pages(
         project_root,
         dist_client,
         tasks,
+        policy_json,
     ))
 }
 
@@ -43,6 +45,7 @@ async fn prerender_static_pages_async(
     project_root: &Path,
     dist_client: &Path,
     tasks: &[StaticRenderTask],
+    policy_json: &str,
 ) -> Result<(), String> {
     init_env();
     unsafe {
@@ -103,7 +106,12 @@ async fn prerender_static_pages_async(
                     request_value: serde_json::Value::Null,
                     request_parts: None,
                     mode: ExecutionMode::StaticRender,
-                    security: None,
+                    security: pool::ExecutionSecurity {
+                        policy_json: policy_json.to_string(),
+                        // A build-phase render must fail, not block, on a
+                        // denied capability.
+                        no_prompt: true,
+                    },
                 },
             )
             .await

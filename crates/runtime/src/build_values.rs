@@ -38,10 +38,10 @@ pub struct MaterializedBuild {
 /// virtual build-value modules only when every executed entry validates
 /// successfully.
 ///
-/// `policy_json` is the project's resolved security policy (the same
-/// `DEKA_SECURITY_POLICY` payload the serve/run paths export); build entries
-/// execute under it — the existing permission system decides which host
-/// capabilities the build phase gets, with no `build.*` namespace (rfd#48).
+/// `policy_json` is the project's resolved security policy (from deka.json
+/// plus CLI overrides); build entries execute under it — the existing
+/// permission system decides which host capabilities the build phase gets,
+/// with no `build.*` namespace (rfd#48).
 ///
 /// `only`, when `Some`, rematerializes just those slot ids (deka dev's
 /// targeted invalidation): unaffected slots keep their previously
@@ -101,8 +101,8 @@ async fn materialize_build_values_async(
     // Build-phase permissions travel WITH the execution (RequestData.security
     // -> per-thread security context in the pool worker), never through the
     // process env: under `deka dev` the server keeps serving requests on
-    // other threads, which must keep observing the exported policy, not the
-    // build phase's (Codex review of deka#729). Prompts are always
+    // other threads, which must keep observing their own per-request policy,
+    // not the build phase's (Codex review of deka#729). Prompts are always
     // suppressed for the phase — a build must fail, not block, on a denied
     // capability.
     let _module_root_guard = BuildModuleRootEnv::install(project_root);
@@ -130,10 +130,10 @@ async fn materialize_build_values_async(
                     request_value: serde_json::Value::Null,
                     request_parts: None,
                     mode: ExecutionMode::Build,
-                    security: Some(pool::ExecutionSecurity {
+                    security: pool::ExecutionSecurity {
                         policy_json: policy_json.to_string(),
                         no_prompt: true,
-                    }),
+                    },
                 },
             )
             .await;

@@ -33,6 +33,8 @@ mod db_pg;
 mod fs_bridge;
 mod fs_ops;
 mod net;
+#[cfg(test)]
+mod net_tests;
 mod security;
 mod security_hint;
 #[cfg(test)]
