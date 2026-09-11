@@ -9,6 +9,40 @@ use deno_error::JsErrorBox;
 
 use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
 
+/// Resolve the optional stdlib root from the project manifest. It is a
+/// declared, reviewable input rather than an ambient process override.
+pub(crate) fn configured_module_root(project_root: &Path) -> Result<Option<PathBuf>, JsErrorBox> {
+    let manifest = project_root.join("deka.json");
+    let text = match std::fs::read_to_string(&manifest) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(JsErrorBox::generic(format!(
+                "failed to read {}: {err}",
+                manifest.display()
+            )));
+        }
+    };
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|err| JsErrorBox::generic(format!("invalid {}: {err}", manifest.display())))?;
+    let Some(root) = value.get("moduleRoot").and_then(serde_json::Value::as_str) else {
+        return Ok(None);
+    };
+    let root = PathBuf::from(root);
+    let root = if root.is_absolute() {
+        root
+    } else {
+        project_root.join(root)
+    };
+    if !root.is_dir() {
+        return Err(JsErrorBox::generic(format!(
+            "deka.json moduleRoot is not a directory: {}",
+            root.display()
+        )));
+    }
+    Ok(Some(root.canonicalize().unwrap_or(root)))
+}
+
 /// Enforce the resolved `security.allow.dynamic` policy on every module in the
 /// graph, before any of it reaches V8.
 ///
@@ -57,4 +91,58 @@ pub fn ensure_project_layout(
             context: "deka runtime",
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::configured_module_root;
+    use crate::esm_loader::PhpxEsmLoader;
+
+    #[test]
+    fn same_project_ignores_contradictory_ambient_environment() {
+        let test_bin = std::env::current_exe().expect("current test binary");
+        let run = |module_root: &str, grants: &str| {
+            let output = std::process::Command::new(&test_bin)
+                .args([
+                    "--exact",
+                    "esm_loader::policy::tests::ambient_environment_child",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("DEKA_MODULE_ROOT", module_root)
+                .env("DEKA_HOST_GRANTS", grants)
+                .env("DEKA_RUNTIME_ESM", "0")
+                .output()
+                .expect("run isolated child test");
+            assert!(output.status.success(), "child failed: {output:?}");
+            String::from_utf8(output.stdout).expect("utf-8 child output")
+        };
+
+        let restrictive = run("/not/a/project", "[]");
+        let permissive = run("/also/not/a/project", r#"[{"name":"*"}]"#);
+        assert_eq!(restrictive, permissive);
+    }
+
+    #[test]
+    #[ignore]
+    fn ambient_environment_child() {
+        let root = tempfile::tempdir().expect("project");
+        let stdlib = root.path().join("stdlib");
+        fs::create_dir_all(&stdlib).expect("stdlib root");
+        fs::write(
+            root.path().join("deka.json"),
+            r#"{"name":"ambient-proof","moduleRoot":"stdlib"}"#,
+        )
+        .expect("manifest");
+        let entry = root.path().join("main.js");
+        fs::write(&entry, "export default {}\n").expect("entry");
+        assert_eq!(
+            configured_module_root(root.path()).expect("configured root"),
+            Some(stdlib.canonicalize().expect("canonical root"))
+        );
+        PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None).expect("loader");
+        println!("ambient-proof:loader-created");
+    }
 }

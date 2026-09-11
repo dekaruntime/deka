@@ -127,7 +127,7 @@ impl PhpxEsmLoader {
         let project_root = project_root.canonicalize().unwrap_or(project_root);
         let module_root = match module_root {
             Some(root) => Some(root.canonicalize().unwrap_or(root)),
-            None => configured_module_root(&project_root)?,
+            None => policy::configured_module_root(&project_root)?,
         };
         let entry_path = entry_path.canonicalize().unwrap_or(entry_path);
         let artifact_server_root = artifact_server_root(&entry_path)?;
@@ -663,40 +663,6 @@ impl PhpxEsmLoader {
     }
 }
 
-/// Resolve the optional stdlib root from the project manifest. It is a
-/// declared, reviewable input rather than an ambient process override.
-fn configured_module_root(project_root: &Path) -> Result<Option<PathBuf>, JsErrorBox> {
-    let manifest = project_root.join("deka.json");
-    let text = match std::fs::read_to_string(&manifest) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => {
-            return Err(JsErrorBox::generic(format!(
-                "failed to read {}: {err}",
-                manifest.display()
-            )));
-        }
-    };
-    let value: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|err| JsErrorBox::generic(format!("invalid {}: {err}", manifest.display())))?;
-    let Some(root) = value.get("moduleRoot").and_then(serde_json::Value::as_str) else {
-        return Ok(None);
-    };
-    let root = PathBuf::from(root);
-    let root = if root.is_absolute() {
-        root
-    } else {
-        project_root.join(root)
-    };
-    if !root.is_dir() {
-        return Err(JsErrorBox::generic(format!(
-            "deka.json moduleRoot is not a directory: {}",
-            root.display()
-        )));
-    }
-    Ok(Some(root.canonicalize().unwrap_or(root)))
-}
-
 /// Detect the artifact posture from the entry itself, independently of the
 /// source-project root used for grants. `engine::config` has already verified
 /// the descriptor before binding; doing the inexpensive structural check here
@@ -998,54 +964,5 @@ mod tests {
             loader.kinds_for_path(&module).is_empty(),
             "a grant for another digest must not unlock this package"
         );
-    }
-
-    #[test]
-    fn same_project_ignores_contradictory_ambient_environment() {
-        let test_bin = std::env::current_exe().expect("current test binary");
-        let run = |module_root: &str, grants: &str| {
-            let output = std::process::Command::new(&test_bin)
-                .args([
-                    "--exact",
-                    "esm_loader::tests::ambient_environment_child",
-                    "--ignored",
-                    "--nocapture",
-                ])
-                .env("DEKA_MODULE_ROOT", module_root)
-                .env("DEKA_HOST_GRANTS", grants)
-                .env("DEKA_RUNTIME_ESM", "0")
-                .output()
-                .expect("run isolated child test");
-            assert!(output.status.success(), "child failed: {output:?}");
-            String::from_utf8(output.stdout).expect("utf-8 child output")
-        };
-
-        let restrictive = run("/not/a/project", "[]");
-        let permissive = run("/also/not/a/project", r#"[{"name":"*"}]"#);
-        assert_eq!(restrictive, permissive);
-    }
-
-    #[test]
-    #[ignore]
-    fn ambient_environment_child() {
-        let root = tempfile::tempdir().expect("project");
-        let stdlib = root.path().join("stdlib");
-        fs::create_dir_all(&stdlib).expect("stdlib root");
-        fs::write(
-            root.path().join("deka.json"),
-            r#"{"name":"ambient-proof","moduleRoot":"stdlib"}"#,
-        )
-            .expect("manifest");
-        let entry = root.path().join("main.js");
-        fs::write(&entry, "export default {}\n").expect("entry");
-        let loader = PhpxEsmLoader::new(
-            root.path().to_path_buf(),
-            entry,
-            None,
-            None,
-        )
-        .expect("loader");
-        assert_eq!(loader.module_root.expect("root"), stdlib.canonicalize().expect("canonical root"));
-        println!("ambient-proof:loader-created");
     }
 }
