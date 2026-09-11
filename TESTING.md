@@ -147,9 +147,9 @@ Hard-won, each from a real wrong diagnosis:
 
 ```sh
 cargo build -p cli                                  # or --release
-scripts/ci-fetch-testsuite-corpus.sh
-DEKA_NATIVE=target/debug/cli bun .cache/testsuite-corpus/run.mjs
-DEKA_NATIVE=target/debug/cli bun .cache/testsuite-corpus/run.mjs --json   # machine-readable
+./target/debug/cli self fetch testsuite             # pinned corpus -> ./testsuite
+./target/debug/cli self test suite                  # gate against the local checkout
+./target/debug/cli self test suite --list           # machine-readable listing
 scripts/typeck-published-stdlib.sh                  # smoke, one fn per package
 ```
 

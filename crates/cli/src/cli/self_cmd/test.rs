@@ -1,3 +1,4 @@
+use super::{pairing, targets};
 use core::Context;
 use std::collections::BTreeMap;
 use std::fs;
@@ -14,14 +15,102 @@ pub fn cmd(context: &Context) {
     let suite = context.args.positionals.get(0).map(|s| s.as_str());
     let result = match suite {
         Some("php") => run_php_suite(context),
-        Some(other) => Err(format!("unknown self test suite '{}'", other)),
-        None => Err("missing suite name (php)".to_string()),
+        Some(name) => match targets::by_name(name) {
+            Some(target) => run_content_suite(context, target),
+            None => Err(format!("unknown self test suite '{}'", name)),
+        },
+        None => Err("missing suite name (php, suite, tour)".to_string()),
     };
 
     if let Err(message) = result {
         stdio::error("self test", &message);
         std::process::exit(1);
     }
+}
+
+/// Run a fetched content checkout's own runner against the paired toolchain
+/// (RFD 59, deka#836): `deka self test suite|tour [--deka dir] [--dsc dir]`.
+///
+/// The runner is owned by the content repo (RFD 59 open question 3: shell to
+/// the harness, never reimplement it); `self test` orchestrates fetch +
+/// pairing + invocation. The toolchain is paired by materializing the layout
+/// the runners already look for (`<checkout>/target/release/cli` beside an
+/// optional `dsc`) — never by exporting environment variables.
+fn run_content_suite(context: &Context, target: &targets::ContentTarget) -> Result<(), String> {
+    let checkout = context.env.cwd.join(target.name);
+    if !checkout.join(target.marker_file).is_file() {
+        return Err(format!(
+            "{} is not fetched ({} is missing); run `deka self fetch {}` first",
+            target.name,
+            checkout.join(target.marker_file).display(),
+            target.name
+        ));
+    }
+    let runner = checkout.join(target.runner);
+    if !runner.is_file() {
+        return Err(format!(
+            "{} checkout has no runner at {}; re-run `deka self fetch {}`",
+            target.name,
+            runner.display(),
+            target.name
+        ));
+    }
+
+    let deka_bin = match context.args.params.get("--deka") {
+        Some(arg) => pairing::resolve_tool(arg, "cli")?,
+        None => std::env::current_exe()
+            .map_err(|err| format!("failed to resolve the running deka binary: {}", err))?,
+    };
+    // No explicit dsc: pair the running deka's own sibling compiler when one
+    // is installed; otherwise the toolchain's usual lookup (PATH) applies.
+    let dsc_bin = match context.args.params.get("--dsc") {
+        Some(arg) => Some(pairing::resolve_tool(arg, "dsc")?),
+        None => deka_bin
+            .parent()
+            .map(|dir| dir.join("dsc"))
+            .filter(|path| path.is_file()),
+    };
+    pairing::materialize(&checkout, &deka_bin, dsc_bin.as_deref())?;
+
+    let bun = pairing::find_bun()?;
+
+    let mut args: Vec<String> = vec![runner.to_string_lossy().into_owned()];
+    if let Some(filter) = context
+        .args
+        .params
+        .get("--filter")
+        .or_else(|| context.args.params.get("-f"))
+    {
+        args.push("--filter".to_string());
+        args.push(filter.clone());
+    }
+    if context.args.flags.contains_key("--list") {
+        args.push("--list".to_string());
+    }
+    if let Some(jobs) = context.args.params.get("--jobs") {
+        args.push("--jobs".to_string());
+        args.push(jobs.clone());
+    }
+
+    stdio::log(
+        "self test",
+        &format!("{}: {} {}", target.name, bun.display(), args.join(" ")),
+    );
+    let status = Command::new(&bun)
+        .args(&args)
+        .current_dir(&checkout)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|err| format!("failed to run {}: {}", bun.display(), err))?;
+    let code = status.code().unwrap_or(1);
+    if code != 0 {
+        // The runner owns the report and the exit vocabulary (1 = failed,
+        // 2 = blocked environment); propagate it untouched.
+        std::process::exit(code);
+    }
+    Ok(())
 }
 
 fn run_php_suite(context: &Context) -> Result<(), String> {
