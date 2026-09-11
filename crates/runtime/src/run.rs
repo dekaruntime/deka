@@ -11,7 +11,7 @@ use platform::Platform;
 use platform_server::ServerPlatform;
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
-use runtime_core::env::{set_default_log_level_with, set_handler_path_with, set_runtime_args_with};
+use runtime_core::env::{set_handler_path_with, set_runtime_args_with};
 use runtime_core::handler::{
     handler_input_with, is_deka_entry, is_html_entry, is_js_entry, normalize_handler_path_with,
 };
@@ -56,11 +56,6 @@ async fn run_async(context: &Context) -> Result<(), String> {
         no_prompt: !resolved_security.prompt_enabled,
     };
     let env_get = |key: &str| platform.env().get(key);
-    let mut env_set = |key: &str, value: &str| {
-        let _ = platform.env().set(key, value);
-    };
-    set_default_log_level_with(&env_get, &mut env_set);
-
     let (handler_path, extra_args) = handler_input_with(&context.args.positionals, &env_get);
     let mut env_set = |key: &str, value: &str| {
         let _ = platform.env().set(key, value);

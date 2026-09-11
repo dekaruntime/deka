@@ -152,7 +152,6 @@ fn run_deka_php(binary: &str, script: &Path) -> Result<RunResult, String> {
         .arg("run")
         .arg(script)
         .current_dir(script.parent().unwrap_or_else(|| Path::new(".")))
-        .env("LOG_LEVEL", "error")
         .stdin(Stdio::null())
         .output()
         .map_err(|err| format!("failed to run deka: {}", err))?;
