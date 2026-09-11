@@ -30,22 +30,21 @@ pub(super) fn fs_call_impl(
         deno_core::error::CoreError::from(std::io::Error::new(std::io::ErrorKind::Other, msg))
     };
 
-    let to_bytes = |value: Option<&serde_json::Value>| -> Vec<u8> {
-        let Some(value) = value else {
-            return Vec::new();
-        };
-        if let Some(arr) = value.as_array() {
-            let mut out = Vec::with_capacity(arr.len());
-            for item in arr {
-                let byte = item.as_u64().unwrap_or(0).min(255) as u8;
-                out.push(byte);
-            }
-            return out;
-        }
-        if let Some(s) = value.as_str() {
-            return s.as_bytes().to_vec();
-        }
-        Vec::new()
+    // The JS bootstrap supplies a Uint8Array as a JSON number array for the
+    // protobuf encoder. Do not accept strings, fractional numbers, or values
+    // outside u8: filesystem payloads are strict bytes (deka#758/RFD 15).
+    let to_bytes = |value: Option<&serde_json::Value>| -> Result<Vec<u8>, String> {
+        let arr = value
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "fs payload must be bytes".to_string())?;
+        arr.iter()
+            .map(|item| {
+                item.as_u64()
+                    .filter(|byte| *byte <= u8::MAX as u64)
+                    .map(|byte| byte as u8)
+                    .ok_or_else(|| "fs payload contains a non-byte value".to_string())
+            })
+            .collect()
     };
 
     let args_obj = args.as_object().cloned().unwrap_or_default();
@@ -143,7 +142,10 @@ pub(super) fn fs_call_impl(
                 .get("handle")
                 .and_then(|v| v.as_u64())
                 .ok_or_else(|| err("write: missing handle".to_string()))?;
-            let data = to_bytes(args_obj.get("data"));
+            let data = match to_bytes(args_obj.get("data")) {
+                Ok(data) => data,
+                Err(error) => return Ok(serde_json::json!({ "ok": false, "error": error })),
+            };
 
             let mut state = fs_state()
                 .lock()
@@ -202,7 +204,10 @@ pub(super) fn fs_call_impl(
             if path.is_empty() {
                 return Ok(serde_json::json!({ "ok": false, "error": "write_file: missing path" }));
             }
-            let data = to_bytes(args_obj.get("data"));
+            let data = match to_bytes(args_obj.get("data")) {
+                Ok(data) => data,
+                Err(error) => return Ok(serde_json::json!({ "ok": false, "error": error })),
+            };
             match std::fs::write(&path, &data) {
                 Ok(()) => Ok(serde_json::json!({ "ok": true, "written": data.len() })),
                 Err(e) => Ok(serde_json::json!({
@@ -241,8 +246,14 @@ pub(super) fn fs_call_impl(
                         format!("read_dir: {}", e),
                     ))
                 })?;
+                let name = entry.file_name().into_string().map_err(|_| {
+                    deno_core::error::CoreError::from(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "read_dir: entry name is not valid UTF-8",
+                    ))
+                })?;
                 out.push(serde_json::json!({
-                    "name": entry.file_name().to_string_lossy().to_string(),
+                    "name": name,
                     "is_dir": file_type.is_dir(),
                     "is_file": file_type.is_file(),
                 }));
@@ -286,6 +297,28 @@ pub(super) enum FsProtoActionKind {
     Mkdirs,
 }
 
+/// Decode the JSON-shaped payload the realm-private bootstrap passes into the
+/// protobuf encoder. This is intentionally stricter than `as_u64().min(255)`:
+/// bytes must arrive as whole values in 0..=255, never coerced text or altered
+/// numeric input (RFD 15 / deka#758).
+fn strict_proto_bytes(
+    value: Option<&serde_json::Value>,
+) -> Result<Vec<u8>, deno_core::error::CoreError> {
+    let values = value
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| core_err("fs payload must be bytes"))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_u64()
+                .filter(|byte| *byte <= u8::MAX as u64)
+                .map(|byte| byte as u8)
+                .ok_or_else(|| core_err("fs payload contains a non-byte value"))
+        })
+        .collect()
+}
+
 pub(super) fn fs_action_payload_to_proto_request(
     action: &str,
     payload: &serde_json::Value,
@@ -313,20 +346,7 @@ pub(super) fn fs_action_payload_to_proto_request(
                 .unwrap_or(65536),
         }),
         "write" => {
-            let data = args
-                .get("data")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .map(|x| x.as_u64().unwrap_or(0).min(255) as u8)
-                        .collect::<Vec<u8>>()
-                })
-                .or_else(|| {
-                    args.get("data")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.as_bytes().to_vec())
-                })
-                .unwrap_or_default();
+            let data = strict_proto_bytes(args.get("data"))?;
             Action::Write(proto::bridge_v1::FsWriteRequest {
                 handle: args.get("handle").and_then(|v| v.as_u64()).unwrap_or(0),
                 data,
@@ -343,20 +363,7 @@ pub(super) fn fs_action_payload_to_proto_request(
                 .to_string(),
         }),
         "write_file" => {
-            let data = args
-                .get("data")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .map(|x| x.as_u64().unwrap_or(0).min(255) as u8)
-                        .collect::<Vec<u8>>()
-                })
-                .or_else(|| {
-                    args.get("data")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.as_bytes().to_vec())
-                })
-                .unwrap_or_default();
+            let data = strict_proto_bytes(args.get("data"))?;
             Action::WriteFile(proto::bridge_v1::FsWriteFileRequest {
                 path: args
                     .get("path")

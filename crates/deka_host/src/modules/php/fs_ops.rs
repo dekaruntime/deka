@@ -137,8 +137,14 @@ pub(super) fn op_php_read_dir(
                 format!("Failed to read dir entry type in '{}': {}", path, e),
             ))
         })?;
+        let name = entry.file_name().into_string().map_err(|_| {
+            deno_core::error::CoreError::from(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Failed to read dir entry name: name is not valid UTF-8",
+            ))
+        })?;
         out.push(PhpDirEntry {
-            name: entry.file_name().to_string_lossy().to_string(),
+            name,
             is_dir: file_type.is_dir(),
             is_file: file_type.is_file(),
         });
