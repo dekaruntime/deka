@@ -343,11 +343,10 @@ jobs:
           DEKA_NATIVE: ${{ github.workspace }}/artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
         run: |
           # deka#845 replaced scripts/ci-fetch-tour.sh with the shipped CLI.
+          # pack-conformance.sh reads ./tour/tests/tour — leave the checkout
+          # exactly where self fetch puts it.
           chmod +x "$DEKA_NATIVE"
           "$DEKA_NATIVE" self fetch tour
-          mkdir -p .cache
-          rm -rf .cache/tour
-          mv tour .cache/tour
 
       - name: Pack conformance tree + dump
         run: |
