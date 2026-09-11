@@ -33,13 +33,16 @@
 //! - **RFD 15 over RFD 21 on bytes.** RFD 21's table types `to_string` /
 //!   `to_string_lossy` as lossy `safe` helpers (`TextDecoder` `fatal:false`)
 //!   and lists `set` and `subarray`. This catalog instead follows RFD 15's
-//!   stricter shape, which deka#756 (bytes) will inherit: bytes-to-string is
+//!   stricter shape, which deka#756 (bytes) codifies: bytes-to-string is
 //!   a **strict, fallible decode** (`deka.bytes.to_string` is `Unsafe` and
 //!   throws on invalid UTF-8, surfacing `Err`; there is deliberately no
 //!   lossy variant — silent replacement characters are the defect RFD 15
 //!   exists to remove), `bytes` is **immutable** (no `set`), and `slice`
 //!   **copies** (no `subarray` view can alias a buffer and escape as
-//!   immutable bytes).
+//!   immutable bytes). `from_array` **validates**: an element that is not
+//!   an integer in `0..=255` is `Option.None`, never coerced — the old
+//!   `Uint8Array.from` wrapped, truncated, and modulo-256'd invalid values
+//!   into altered bytes.
 //! - **No environment influence** (deka#801): the catalog is a `const`
 //!   table; nothing here reads the process environment or `deka.json`. The
 //!   loader may consult a project's `deka.json` only to decide whether a
@@ -148,9 +151,11 @@ const BYTES_METHODS: &[CatalogMethod] = &[
         name: "get",
         safety: Safety::Safe,
         args: &[arg("b", ValType::Bytes), arg("index", ValType::Number)],
-        // RFD 21: "out of range is a value, not a throw".
+        // RFD 21: "out of range is a value, not a throw". RFD 15 (deka#756):
+        // a non-integer index is the same kind of bounds failure — None, not
+        // a silently truncated lookup.
         ret: ReturnShape::OptionValue(ValType::Number),
-        doc: "indexed byte; out of range is None, not a throw",
+        doc: "indexed byte; non-integer or out of range is None, not a throw",
     },
     CatalogMethod {
         name: "slice",
@@ -176,8 +181,11 @@ const BYTES_METHODS: &[CatalogMethod] = &[
         name: "from_array",
         safety: Safety::Safe,
         args: &[arg("items", ValType::NumList)],
-        ret: ReturnShape::Value(ValType::Bytes),
-        doc: "Uint8Array.from",
+        // RFD 15 (deka#756): every element must be an integer in 0..=255.
+        // `Uint8Array.from` coerces (wraps negatives, truncates fractions,
+        // reduces mod 256) — silently altered bytes. Reject instead.
+        ret: ReturnShape::OptionValue(ValType::Bytes),
+        doc: "from Array<number>; non-integer or out-of-range element is None",
     },
     CatalogMethod {
         name: "from_string",
@@ -347,8 +355,10 @@ pub const CATALOG_HELPERS_JS: &str = r#"
   const bytes = {
     len(b) { return b.byteLength; },
     get(b, index) {
-      const i = index | 0;
-      return i >= 0 && i < b.byteLength ? some(b[i]) : none;
+      // Non-integer and out-of-range are the same failure: a bounds value,
+      // never a truncated or wrapped lookup.
+      if (!Number.isInteger(index)) return none;
+      return index >= 0 && index < b.byteLength ? some(b[index]) : none;
     },
     slice(b, start, end) {
       // Uint8Array#slice copies; the result never aliases `b`.
@@ -360,7 +370,18 @@ pub const CATALOG_HELPERS_JS: &str = r#"
       out.set(b, a.byteLength);
       return out;
     },
-    from_array(items) { return Uint8Array.from(items); },
+    from_array(items) {
+      // RFD 15: validate before allocating. Uint8Array.from coerces —
+      // fractions truncate, negatives wrap, >255 reduces mod 256 — which is
+      // exactly the silent-alteration failure mode this catalog forbids.
+      for (let i = 0; i < items.length; i++) {
+        const v = items[i];
+        if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 255) {
+          return none;
+        }
+      }
+      return some(Uint8Array.from(items));
+    },
     from_string(s) { return new TextEncoder().encode(s); },
     to_hex(b) {
       let out = "";
@@ -368,12 +389,13 @@ pub const CATALOG_HELPERS_JS: &str = r#"
       return out;
     },
     from_hex(s) {
+      // Strict: validate the whole string first. parseInt parses a numeric
+      // prefix, so "6g" would silently decode to 0x06 — altered bytes.
       if (s.length % 2 !== 0) return none;
+      if (!/^[0-9a-fA-F]*$/.test(s)) return none;
       const out = new Uint8Array(s.length / 2);
       for (let i = 0; i < out.length; i++) {
-        const byte = parseInt(s.slice(i * 2, i * 2 + 2), 16);
-        if (Number.isNaN(byte)) return none;
-        out[i] = byte;
+        out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
       }
       return some(out);
     },
@@ -490,255 +512,10 @@ pub const CATALOG_HELPERS_JS: &str = r#"
 "#;
 
 // ---- Tests -----------------------------------------------------------------
+//
+// Extracted to `deka_catalog_tests.rs` (deka#756) so this file stays under
+// the file-size gate (deka#391) as the bytes acceptance coverage grows.
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn catalog_is_closed_and_wellformed() {
-        assert!(!DEKA_CATALOG.is_empty());
-        for kind in DEKA_CATALOG {
-            assert!(!kind.name.is_empty());
-            assert!(!kind.methods.is_empty(), "kind '{}' has no methods", kind.name);
-            for method in kind.methods {
-                assert!(!method.name.is_empty(), "{}. method with empty name", kind.name);
-                assert!(!method.doc.is_empty(), "{}.{} has no doc", kind.name, method.name);
-                let mut optional_seen = false;
-                for a in method.args {
-                    assert!(!a.name.is_empty());
-                    if a.optional {
-                        optional_seen = true;
-                    } else {
-                        assert!(!optional_seen, "{}.{}: required arg after optional", kind.name, method.name);
-                    }
-                }
-                // Safety and return shape agree (RFD 21 rule 3): a Result
-                // shape means the helper throws -> Unsafe.
-                match (method.safety, method.ret) {
-                    (Safety::Unsafe, ReturnShape::ResultValue(_)) => {}
-                    (Safety::Safe, ReturnShape::Value(_) | ReturnShape::OptionValue(_)) => {}
-                    _ => panic!(
-                        "{}.{}: safety {:?} disagrees with return shape {:?}",
-                        kind.name, method.name, method.safety, method.ret
-                    ),
-                }
-            }
-            // No duplicate method names within a kind.
-            for (i, a) in kind.methods.iter().enumerate() {
-                for b in &kind.methods[..i] {
-                    assert_ne!(a.name, b.name, "kind '{}' duplicates '{}'", kind.name, a.name);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn every_entry_is_findable_and_unknown_names_are_not() {
-        for kind in DEKA_CATALOG {
-            assert_eq!(find_kind(kind.name).map(|k| k.name), Some(kind.name));
-            assert!(is_catalog_kind(kind.name));
-            for method in kind.methods {
-                let found = find_method(kind.name, method.name).expect("find_method");
-                assert_eq!(found.name, method.name);
-            }
-        }
-        assert!(find_kind("bogus").is_none());
-        assert!(find_method("bytes", "bogus").is_none());
-        assert!(find_method("bogus", "len").is_none());
-        assert!(!is_catalog_kind("bogus"));
-    }
-
-    #[test]
-    fn arity_counts_top_level_arguments_only() {
-        let get = find_method("bytes", "get").unwrap();
-        assert_eq!(arity_bounds(get), (2, 2));
-        assert!(check_arity(get, 2).is_ok());
-        assert!(check_arity(get, 1).is_err());
-        assert!(check_arity(get, 3).is_err());
-
-        let slice = find_method("bytes", "slice").unwrap();
-        assert_eq!(arity_bounds(slice), (2, 3));
-        assert!(check_arity(slice, 2).is_ok());
-        assert!(check_arity(slice, 3).is_ok());
-        assert!(check_arity(slice, 1).is_err());
-        assert!(check_arity(slice, 4).is_err());
-
-        let now = find_method("time", "now").unwrap();
-        assert_eq!(arity_bounds(now), (0, 0));
-        assert!(check_arity(now, 0).is_ok());
-        assert!(check_arity(now, 1).is_err());
-    }
-
-    /// RFD 15's stricter bytes shape is the contract deka#756 inherits. Pin it:
-    /// strict fallible decode, immutability, no aliasing views, no lossy path.
-    #[test]
-    fn bytes_family_follows_rfd15_not_rfd21_lossy_shape() {
-        // `to_string` is Unsafe (strict UTF-8, Err on failure) — RFD 21's
-        // table says safe/lossy; RFD 15 wins (deka#756 inherits this).
-        let to_string = find_method("bytes", "to_string").expect("to_string present");
-        assert_eq!(to_string.safety, Safety::Unsafe);
-        assert_eq!(to_string.ret, ReturnShape::ResultValue(ValType::String));
-
-        // No lossy variant: silent replacement characters are the defect
-        // RFD 15 exists to remove.
-        assert!(find_method("bytes", "to_string_lossy").is_none());
-
-        // Immutable bytes: no mutating `set`.
-        assert!(find_method("bytes", "set").is_none());
-
-        // No view-producing `subarray`; `slice` copies (RFD 15).
-        assert!(find_method("bytes", "subarray").is_none());
-        let slice = find_method("bytes", "slice").unwrap();
-        assert_eq!(slice.ret, ReturnShape::Value(ValType::Bytes));
-
-        // Total conversions stay safe; fallible decoders return Option values.
-        assert_eq!(find_method("bytes", "from_string").unwrap().safety, Safety::Safe);
-        assert_eq!(
-            find_method("bytes", "from_hex").unwrap().ret,
-            ReturnShape::OptionValue(ValType::Bytes)
-        );
-        assert_eq!(
-            find_method("bytes", "get").unwrap().ret,
-            ReturnShape::OptionValue(ValType::Number)
-        );
-    }
-
-    #[test]
-    fn classification_is_by_return_type() {
-        assert_eq!(find_method("json", "parse").unwrap().safety, Safety::Unsafe);
-        assert_eq!(find_method("json", "stringify").unwrap().safety, Safety::Unsafe);
-        assert_eq!(
-            find_method("json", "validate").unwrap().ret,
-            ReturnShape::Value(ValType::Bool)
-        );
-        assert_eq!(find_method("io", "echo").unwrap().safety, Safety::Safe);
-        assert_eq!(find_method("time", "now").unwrap().safety, Safety::Safe);
-    }
-
-    /// Emitted-JS proof (issue acceptance): the shipped helper source must not
-    /// publish on globalThis and must not mutate prototypes.
-    #[test]
-    fn helper_js_never_touches_global_this_or_prototypes() {
-        assert!(!CATALOG_HELPERS_JS.contains("globalThis"), "catalog helpers must not touch globalThis");
-        assert!(!CATALOG_HELPERS_JS.contains(".prototype."), "catalog helpers must not mutate prototypes");
-        assert!(!CATALOG_HELPERS_JS.contains("Object.assign"), "frozen literal surface only");
-    }
-
-    /// Every catalog entry has a shipped JS implementation with the same name
-    /// — the "zero stubs" rule: nothing is catalogued that does not exist.
-    #[test]
-    fn every_catalog_entry_is_implemented_in_helper_js() {
-        for kind in DEKA_CATALOG {
-            for method in kind.methods {
-                let needle = format!("{}( ", method.name);
-                let needle2 = format!("{}(", method.name);
-                assert!(
-                    CATALOG_HELPERS_JS.contains(&needle) || CATALOG_HELPERS_JS.contains(&needle2),
-                    "deka.{}.{} is catalogued but not implemented in CATALOG_HELPERS_JS",
-                    kind.name,
-                    method.name
-                );
-            }
-        }
-    }
-
-    /// deka#801: the catalog must be uninfluenceable by the process
-    /// environment. Poison every DEKA_* override and prove lookups are
-    /// unchanged.
-    #[test]
-    fn catalog_is_environment_independent() {
-        for (key, value) in [
-            ("DEKA_CATALOG", "bytes.len=bogus"),
-            ("DEKA_HOST_GRANTS", "[]"),
-            ("DEKA_SECURITY_POLICY", "{}"),
-            ("DEKA_DSC", "/nonexistent"),
-        ] {
-            // SAFETY: test-only env mutation; serialized by the test harness.
-            unsafe { std::env::set_var(key, value) };
-        }
-        let looked_up = (
-            find_method("bytes", "len").map(|m| m.safety),
-            find_method("bytes", "bogus"),
-            DEKA_CATALOG.len(),
-        );
-        for key in ["DEKA_CATALOG", "DEKA_HOST_GRANTS", "DEKA_SECURITY_POLICY", "DEKA_DSC"] {
-            // SAFETY: test-only env restore; serialized by the test harness.
-            unsafe { std::env::remove_var(key) };
-        }
-        assert_eq!(looked_up.0, Some(Safety::Safe));
-        assert_eq!(looked_up.1, None);
-        assert!(looked_up.2 >= 4);
-    }
-
-    /// Node-driven behavior proof when node is available (skipped otherwise):
-    /// safe helpers never throw and return their declared shape, including the
-    /// failure paths; unsafe helpers throw for the failure path.
-    #[test]
-    fn helper_js_behavior_via_node_when_available() {
-        let Ok(node) = std::process::Command::new("node")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-        else {
-            eprintln!("node not available; skipping helper behavior proof");
-            return;
-        };
-        if !node {
-            eprintln!("node not available; skipping helper behavior proof");
-            return;
-        }
-        let script = format!(
-            r#"
-const Option = {{
-  Some: (value) => ({{ __enum: "Option", __case: "Some", name: "Some", value }}),
-  None: {{ __enum: "Option", __case: "None", name: "None" }},
-}};
-const c = {CATALOG_HELPERS_JS};
-const assert = require("node:assert/strict");
-// safe: total, declared types.
-assert.equal(c.bytes.len(c.bytes.from_string("abc")), 3);
-assert.equal(c.bytes.get(c.bytes.from_string("ab"), 5).__case, "None");
-assert.equal(c.bytes.get(c.bytes.from_string("ab"), 1).value, 98);
-const sl = c.bytes.slice(c.bytes.from_string("abcd"), 1, 3);
-assert.deepEqual([...sl], [98, 99]);
-const cat = c.bytes.concat(c.bytes.from_string("ab"), c.bytes.from_string("cd"));
-assert.deepEqual([...cat], [97, 98, 99, 100]);
-assert.deepEqual([...c.bytes.from_array([1, 2, 255])], [1, 2, 255]);
-assert.equal(c.bytes.to_hex(c.bytes.from_string("ab")), "6162");
-assert.deepEqual([...c.bytes.from_hex("6162").value], [97, 98]);
-// failure path: a value the caller must handle, never fabricated bytes.
-assert.equal(c.bytes.from_hex("zz").__case, "None");
-assert.equal(c.bytes.from_hex("abc").__case, "None");
-const b64 = c.bytes.to_base64(c.bytes.from_string("abc"));
-assert.equal(b64, "YWJj");
-assert.deepEqual([...c.bytes.from_base64(b64).value], [97, 98, 99]);
-assert.equal(c.bytes.from_base64("!!").__case, "None");
-assert.equal(c.bytes.from_base64("YQ").__case, "None"); // unpadded is invalid input
-// unsafe: strict decode throws on invalid UTF-8 (no lossy substitution).
-assert.throws(() => c.bytes.to_string(new Uint8Array([0xff])));
-assert.equal(c.bytes.to_string(c.bytes.from_string("ok")), "ok");
-// json + io + time.
-assert.equal(c.json.validate("{{}}"), true);
-assert.equal(c.json.validate("{{"), false);
-assert.throws(() => c.json.parse("{{"));
-assert.equal(typeof c.time.now(), "number");
-// no ambient publication, nothing mutable.
-assert.equal(typeof globalThis.__dekaCatalogBuild, "undefined");
-assert.equal(globalThis.__dekaCatalog, undefined);
-assert.ok(Object.isFrozen(c) && Object.isFrozen(c.bytes));
-console.log("ok");
-"#
-        );
-        let output = std::process::Command::new("node")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .expect("exec node");
-        assert!(
-            output.status.success(),
-            "node behavior proof failed:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-}
+#[path = "deka_catalog_tests.rs"]
+mod tests;

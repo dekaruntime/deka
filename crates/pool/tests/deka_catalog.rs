@@ -221,7 +221,11 @@ export fn app(req: string) string {
     Ok(s) => s,
     Err(_) => "decode-failed",
   }
-  const ff: bytes = safe { deka.bytes.from_array([255]) }
+  const ffOpt: Option<bytes> = safe { deka.bytes.from_array([255]) }
+  const ff = match (ffOpt) {
+    Some(v) => v,
+    None => safe { deka.bytes.from_string("") },
+  }
   const broken: Result<string, string> = unsafe { deka.bytes.to_string(ff) }
   const invalidUtf8 = match (broken) {
     Ok(_) => "lossy",
@@ -576,4 +580,253 @@ export fn app(req: string) string {
         .await
         .expect("pool execution");
     assert_eq!(body_of(&response), "0:none::::0:0:4d:");
+}
+
+/// RFD 15 acceptance (deka#756): malformed hex, malformed base64, and
+/// out-of-range / non-integer byte-array elements are **error values** —
+/// `Option.None` the caller must handle — never altered bytes. These are
+/// the silent-corruption cases; the negative fixtures are the deliverable.
+#[tokio::test]
+async fn malformed_bytes_inputs_are_error_values_not_altered_bytes() {
+    if !ensure_dsc() {
+        println!("SKIP malformed_bytes_inputs_are_error_values_not_altered_bytes: dsc unavailable");
+        return;
+    }
+    let project = tempfile::tempdir().expect("tempdir");
+    write(project.path(), "deka.json", r#"{"name":"@deka/byteneg"}"#);
+    write(project.path(), "deka.lock", EMPTY_DEKA_LOCK);
+    write(
+        project.path(),
+        "main.ds",
+        r#"fn describe(opt: Option<bytes>) string {
+  return match (opt) {
+    Some(v) => safe { deka.bytes.to_hex(v) },
+    None => "none",
+  }
+}
+
+export fn app(req: string) string {
+  // Hex: "6g" is the load-bearing case — a prefix parser would silently
+  // emit 0x06. Here it must be None.
+  const hexG: Option<bytes> = safe { deka.bytes.from_hex("6g") }
+  const hexZ: Option<bytes> = safe { deka.bytes.from_hex("zz") }
+  const hexOdd: Option<bytes> = safe { deka.bytes.from_hex("abc") }
+  const hexOk: Option<bytes> = safe { deka.bytes.from_hex("00ff10") }
+  // Base64: bad alphabet, bad padding, unpadded, concatenated padding.
+  const b64Bang: Option<bytes> = safe { deka.bytes.from_base64("!!") }
+  const b64Unpadded: Option<bytes> = safe { deka.bytes.from_base64("YQ") }
+  const b64Pad: Option<bytes> = safe { deka.bytes.from_base64("YQ=") }
+  const b64Cat: Option<bytes> = safe { deka.bytes.from_base64("YQ==YQ==") }
+  const b64Ok: Option<bytes> = safe { deka.bytes.from_base64("AP8Q") }
+  // from_array: fractions, negatives, and out-of-range values are None,
+  // never truncated / wrapped / reduced mod 256.
+  const arrFrac: Option<bytes> = safe { deka.bytes.from_array([1.5]) }
+  const arrNeg: Option<bytes> = safe { deka.bytes.from_array([-1]) }
+  const arrOver: Option<bytes> = safe { deka.bytes.from_array([256]) }
+  const arrMixed: Option<bytes> = safe { deka.bytes.from_array([97, 256]) }
+  const arrOk: Option<bytes> = safe { deka.bytes.from_array([0, 127, 128, 255]) }
+  // get: fractional and out-of-range indices are None.
+  const b: bytes = safe { deka.bytes.from_string("ab") }
+  const fracOpt: Option<number> = safe { deka.bytes.get(b, 1.5) }
+  const frac = match (fracOpt) {
+    Some(_) => "some",
+    None => "none",
+  }
+  const oobOpt: Option<number> = safe { deka.bytes.get(b, 2) }
+  const oob = match (oobOpt) {
+    Some(_) => "some",
+    None => "none",
+  }
+  // to_string: malformed UTF-8 is Err, never replacement characters.
+  const ffOpt: Option<bytes> = safe { deka.bytes.from_array([255]) }
+  const ff = match (ffOpt) {
+    Some(v) => v,
+    None => safe { deka.bytes.from_string("") },
+  }
+  const strict: Result<string, string> = unsafe { deka.bytes.to_string(ff) }
+  const badUtf8 = match (strict) {
+    Ok(_) => "lossy",
+    Err(_) => "err",
+  }
+  return describe(hexG) + ":" + describe(hexZ) + ":" + describe(hexOdd) + ":" + describe(hexOk)
+    + ":" + describe(b64Bang) + ":" + describe(b64Unpadded) + ":" + describe(b64Pad) + ":" + describe(b64Cat)
+    + ":" + describe(b64Ok)
+    + ":" + describe(arrFrac) + ":" + describe(arrNeg) + ":" + describe(arrOver) + ":" + describe(arrMixed) + ":" + describe(arrOk)
+    + ":" + frac + ":" + oob + ":" + badUtf8
+}
+"#,
+    );
+    let entry = project.path().join("main.ds");
+
+    let pool = catalog_pool();
+    let response = pool
+        .execute(
+            HandlerKey::new("catalog_bytes_negatives"),
+            module_request(&entry, project.path()),
+        )
+        .await
+        .expect("pool execution");
+    assert_eq!(
+        body_of(&response),
+        "none:none:none:00ff10:none:none:none:none:00ff10:none:none:none:none:007f80ff:none:none:err"
+    );
+}
+
+/// deka#756 acceptance: `@deka/bytes` rebuilt as pure DekaScript composition
+/// over the closed `deka.bytes` catalog — the package's implementation path
+/// contains **no arbitrary unsafe JavaScript**. The fallible shapes RFD 15
+/// requires are the package's public surface: `to_string` is a `Result`,
+/// decoders and `from_array` are `Option`s, and there is no lossy variant
+/// and no mutator. The app below imports the package exactly as a consumer
+/// would and exercises happy paths and negative fixtures end to end.
+#[tokio::test]
+async fn deka_bytes_package_composes_catalog_without_unsafe_js() {
+    if !ensure_dsc() {
+        println!("SKIP deka_bytes_package_composes_catalog_without_unsafe_js: dsc unavailable");
+        return;
+    }
+    // The canonical package body: every operation is a `safe`/`unsafe`
+    // catalog call. No `unsafe<...> { ... }` inline-JS block, no
+    // `Uint8Array`/`TextEncoder`/`TextDecoder`/`parseInt` reach-in.
+    let package_ds = r#"export fn from_string(value: string) bytes {
+  return safe { deka.bytes.from_string(value) }
+}
+
+export fn to_string(value: bytes) Result<string, string> {
+  const r: Result<string, string> = unsafe { deka.bytes.to_string(value) }
+  return r
+}
+
+export fn len(value: bytes) number {
+  return safe { deka.bytes.len(value) }
+}
+
+export fn get(value: bytes, index: number) Option<number> {
+  return safe { deka.bytes.get(value, index) }
+}
+
+export fn slice(value: bytes, start: number) bytes {
+  return safe { deka.bytes.slice(value, start) }
+}
+
+export fn concat(a: bytes, b: bytes) bytes {
+  return safe { deka.bytes.concat(a, b) }
+}
+
+export fn from_array(values: Array<number>) Option<bytes> {
+  return safe { deka.bytes.from_array(values) }
+}
+
+export fn to_hex(value: bytes) string {
+  return safe { deka.bytes.to_hex(value) }
+}
+
+export fn from_hex(value: string) Option<bytes> {
+  return safe { deka.bytes.from_hex(value) }
+}
+
+export fn to_base64(value: bytes) string {
+  return safe { deka.bytes.to_base64(value) }
+}
+
+export fn from_base64(value: string) Option<bytes> {
+  return safe { deka.bytes.from_base64(value) }
+}
+"#;
+    // Pin the "no arbitrary unsafe JavaScript" rule: the only `unsafe` in
+    // the implementation is the catalog door `unsafe { deka.* }`.
+    for needle in ["unsafe<", "Uint8Array", "TextEncoder", "TextDecoder", "parseInt", "new "] {
+        assert!(
+            !package_ds.contains(needle),
+            "package implementation path must not contain arbitrary unsafe JS: {needle}"
+        );
+    }
+
+    let project = tempfile::tempdir().expect("tempdir");
+    write(
+        project.path(),
+        "deka.json",
+        r#"{"name":"my-app","dependencies":{"@deka/bytes":"1.0.0"}}"#,
+    );
+    let dep = project.path().join("ds_modules/@deka/bytes");
+    write(&dep, "deka.json", r#"{"name":"@deka/bytes","version":"1.0.0"}"#);
+    write(&dep, "index.ds", package_ds);
+    pin_lock(project.path(), &dep, "@deka/bytes");
+    write(
+        project.path(),
+        "main.ds",
+        r#"import { from_string, to_string, len, get, slice, concat, from_array, to_hex, from_hex, to_base64, from_base64 } from "@deka/bytes"
+
+fn describe(opt: Option<bytes>) string {
+  return match (opt) {
+    Some(v) => to_hex(v),
+    None => "none",
+  }
+}
+
+export fn app(req: string) string {
+  const b: bytes = from_string("hello")
+  const n: number = len(b)
+  const secondOpt: Option<number> = get(b, 1)
+  const second = match (secondOpt) {
+    Some(v) => v,
+    None => -1,
+  }
+  const oobOpt: Option<number> = get(b, 99)
+  const oob = match (oobOpt) {
+    Some(_) => 999,
+    None => -1,
+  }
+  const hexed: string = to_hex(b)
+  const back: string = describe(from_hex(hexed))
+  const badHex: string = describe(from_hex("6g"))
+  const oddHex: string = describe(from_hex("abc"))
+  const b64: string = to_base64(b)
+  const b64back: string = describe(from_base64(b64))
+  const badB64: string = describe(from_base64("!!"))
+  const unpaddedB64: string = describe(from_base64("YQ"))
+  const text: Result<string, string> = to_string(b)
+  const decoded = match (text) {
+    Ok(s) => s,
+    Err(_) => "decode-failed",
+  }
+  const ffOpt: Option<bytes> = from_array([255])
+  const ff = match (ffOpt) {
+    Some(v) => v,
+    None => from_string(""),
+  }
+  const broken: Result<string, string> = to_string(ff)
+  const invalidUtf8 = match (broken) {
+    Ok(_) => "lossy",
+    Err(_) => "err",
+  }
+  const arrOk: string = describe(from_array([1, 2, 255]))
+  const arrOver: string = describe(from_array([256]))
+  const arrNeg: string = describe(from_array([-1]))
+  const arrFrac: string = describe(from_array([1.5]))
+  const tail: bytes = slice(b, 1)
+  const tailHex: string = to_hex(tail)
+  const twice: bytes = concat(b, b)
+  const joined: string = to_hex(twice)
+  return string(n) + ":" + string(second) + ":" + string(oob) + ":" + hexed + ":" + back
+    + ":" + badHex + ":" + oddHex + ":" + b64 + ":" + b64back + ":" + badB64 + ":" + unpaddedB64
+    + ":" + decoded + ":" + invalidUtf8 + ":" + arrOk + ":" + arrOver + ":" + arrNeg + ":" + arrFrac
+    + ":" + tailHex + ":" + joined
+}
+"#,
+    );
+    let entry = project.path().join("main.ds");
+
+    let pool = catalog_pool();
+    let response = pool
+        .execute(
+            HandlerKey::new("catalog_bytes_package"),
+            module_request(&entry, project.path()),
+        )
+        .await
+        .expect("pool execution");
+    assert_eq!(
+        body_of(&response),
+        "5:101:-1:68656c6c6f:68656c6c6f:none:none:aGVsbG8=:68656c6c6f:none:none:hello:err:0102ff:none:none:none:656c6c6f:68656c6c6f68656c6c6f"
+    );
 }
