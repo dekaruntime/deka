@@ -19,7 +19,6 @@ members = [
     "crates/deka_host",
     "crates/wasm_guest",
     "crates/wasm_guest_macros",
-    "crates/wit_deka",
     "crates/wasm_cli",
     "crates/pm",
     "crates/deka_lsp",
