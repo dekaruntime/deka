@@ -73,8 +73,18 @@ pub fn record_build_observation(path: &str, kind: FsObservationKind) {
 mod tests {
     use super::*;
 
+    /// Serializes the tests in this module: they drive the same
+    /// process-global slot stack, and cargo runs them as parallel threads
+    /// in one process, so an interleaved run makes
+    /// `end_build_slot().is_none()` observe the other test's open slot.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
     #[test]
     fn records_only_while_a_slot_is_active() {
+        let _guard = serial();
         record_build_observation("data/a.json", FsObservationKind::Read);
         assert!(end_build_slot().is_none());
 
@@ -104,6 +114,7 @@ mod tests {
 
     #[test]
     fn duplicate_observations_are_deduped() {
+        let _guard = serial();
         begin_build_slot("slot-2");
         record_build_observation("data/a.json", FsObservationKind::Read);
         record_build_observation("data/a.json", FsObservationKind::Read);
