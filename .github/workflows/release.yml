@@ -329,6 +329,9 @@ jobs:
           chmod +x "$DEKA_NATIVE"
           bun tests/dump/scripts/dump-results.mjs
 
+      - name: Fetch pinned tour
+        run: scripts/ci-fetch-tour.sh "$GITHUB_WORKSPACE/.cache/tour"
+
       - name: Pack conformance tree + dump
         run: |
           chmod +x scripts/pack-conformance.sh
