@@ -17,7 +17,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::module_spec::{
-    ds_source_candidates, is_bare_module_specifier, module_spec_aliases, STDLIB_SPEC_PREFIXES,
+    ds_source_candidates, is_bare_module_specifier, is_closed_stdlib_module_spec,
+    module_spec_aliases, STDLIB_SPEC_PREFIXES,
 };
 use crate::modules::resolve_modules_dir;
 
@@ -54,6 +55,11 @@ impl Default for GateOptions {
 /// list. The union is the strictest reading of the three, and it closes the
 /// hole where `deka build` skipped `@deka/http` entirely because neither rule
 /// matched it.
+///
+/// Closed, toolchain-provided modules (`math`, see
+/// [`is_closed_stdlib_module_spec`]) are stdlib by membership but are exempted
+/// from the gate's declaration/installation rules by `validate_project`: the
+/// compiler provides them, so there is no package to declare or install.
 pub fn is_stdlib_module_spec(spec: &str) -> bool {
     let spec = spec.trim();
     if !is_bare_module_specifier(spec) || spec.starts_with("@user/") {
@@ -85,6 +91,7 @@ pub fn is_stdlib_module_spec(spec: &str) -> bool {
                 | "db"
                 | "time"
                 | "io"
+                | "math"
         )
 }
 
@@ -152,6 +159,10 @@ pub fn validate_project(
         .iter()
         .map(|s| s.trim().to_string())
         .filter(|s| is_stdlib_module_spec(s))
+        // Closed, toolchain-provided modules (dsc#142's `math`) ship inside
+        // the compiler: there is intentionally no package to declare or
+        // install, so Rules 2 and 3 do not apply to them.
+        .filter(|s| !is_closed_stdlib_module_spec(s))
         .collect();
 
     if stdlib_imports.is_empty() {
@@ -343,6 +354,15 @@ mod tests {
         };
         let err = validate_project(tmp.path(), &[], &opts).unwrap_err();
         assert!(err.starts_with("deka build requires deka.lock"), "{err}");
+    }
+
+    #[test]
+    fn closed_stdlib_module_needs_no_declaration_or_install() {
+        let tmp = setup(r#"{"name":"t","dependencies":{}}"#);
+        assert!(is_stdlib_module_spec("math"), "registered as stdlib");
+        assert!(is_stdlib_module_spec("@deka/math"));
+        run(tmp.path(), &["math"]).expect("toolchain-provided math must not require a package");
+        run(tmp.path(), &["@deka/math"]).expect("scoped spelling is the same module");
     }
 
     // The three copies disagreed about these two specifiers; the shared gate
