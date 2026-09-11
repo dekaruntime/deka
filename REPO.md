@@ -11,7 +11,7 @@ Downstream repos you will touch regularly:
 | Repo | Purpose | When you change the runtime here |
 |---|---|---|
 | `dekaruntime/website` | `deka.gg` homepage + tour | Update WASM artifacts and redeploy |
-| `dekaruntime/tour` | `deka.gg/tour` lessons, manifest, and native runner | Owns the pinned tour consumed here in CI (`scripts/ci-fetch-tour.sh`). Never keep a second copy in this repo. |
+| `dekaruntime/tour` | `deka.gg/tour` lessons, manifest, and native runner | Owns the pinned tour consumed here in CI (`deka self fetch tour`). Never keep a second copy in this repo. |
 | `dekaruntime/testsuite` | `testsuite.deka.gg` diagnostic grid (live browser playground) | Owns the pinned `corpus/` consumed here in CI. |
 | `dekaruntime/web-ide-kit` | Shared editor/runtime components used by both sites | Publish to npm, bump consumers |
 
@@ -93,9 +93,10 @@ DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
 
 ```bash
 # Language gate: tour lessons + Hats (native isolate). Builds the CLI.
-# Fetches the pinned tour (dekaruntime/tour) and testsuite corpus on first run:
-#   scripts/ci-fetch-tour.sh
-#   scripts/ci-fetch-testsuite-corpus.sh
+# Fetches the pinned tour (dekaruntime/tour) and testsuite corpus checkouts
+# on first run (RFD 59, deka#836):
+#   ./target/release/cli self fetch tour
+#   ./target/release/cli self fetch testsuite
 ./run.sh
 ./run.sh --filter structs
 ```

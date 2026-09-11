@@ -87,27 +87,30 @@ say "bun $(bun --version)"
 # ---------------------------------------------------------------- fixtures ---
 # The tour is owned by dekaruntime/tour (lessons, manifest, runner). This
 # checkout consumes a pinned, checksummed copy -- never a second in-repo
-# authority, which is how the deka/dsc copies drifted apart.
-TOUR_ROOT="$REPO_ROOT/.cache/tour"
+# authority, which is how the deka/dsc copies drifted apart. Both checkouts
+# are fetched by the shipped CLI (RFD 59, deka#836):
+#   ./target/release/cli self fetch tour
+#   ./target/release/cli self fetch testsuite
+TOUR_ROOT="$REPO_ROOT/tour/tests/tour"
 [[ -f "$TOUR_ROOT/manifest.json" ]] \
   || die "tour is missing: $TOUR_ROOT" \
-         "run scripts/ci-fetch-tour.sh"
-TESTSUITE_ROOT="${DEKA_TESTSUITE_ROOT:-$REPO_ROOT/.cache/testsuite-corpus}"
+         "run ./target/release/cli self fetch tour"
+TESTSUITE_ROOT="$REPO_ROOT/testsuite/corpus"
 [[ -d "$TESTSUITE_ROOT" ]] \
   || die "testsuite corpus is missing: $TESTSUITE_ROOT" \
-         "run scripts/ci-fetch-testsuite-corpus.sh or set DEKA_TESTSUITE_ROOT"
+         "run ./target/release/cli self fetch testsuite"
 
 tour_count=$(find "$TOUR_ROOT" -maxdepth 1 \( -name '*.ds' -o -name '*.dsx' \) | wc -l | tr -d ' ')
 [[ "$tour_count" -gt 0 ]] \
   || die "$TOUR_ROOT has no lessons" \
-         "re-run scripts/ci-fetch-tour.sh"
+         "re-run ./target/release/cli self fetch tour"
 
 suite_cats=$(find "$TESTSUITE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.*' | wc -l | tr -d ' ')
 [[ "$suite_cats" -gt 0 ]] \
   || die "testsuite corpus has no category folders" \
          "Hats layout is corpus/<category>/<name>/"
 
-say "fixtures: tour ($tour_count lessons, dekaruntime/tour @ .cache/tour)  testsuite ($suite_cats categories)"
+say "fixtures: tour ($tour_count lessons, dekaruntime/tour @ tour/tests/tour)  testsuite ($suite_cats categories)"
 
 # ----------------------------------------------------------------- native ---
 if [[ -n "${DEKA_NATIVE:-}" ]]; then

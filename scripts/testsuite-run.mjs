@@ -13,11 +13,11 @@ import os from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..");
-// The corpus is fetched from dekaruntime/testsuite. --root keeps the runner
-// hermetic for its own integration tests and maintainer experiments.
-let testsRoot = process.env.DEKA_TESTSUITE_ROOT
-  ? resolve(process.cwd(), process.env.DEKA_TESTSUITE_ROOT)
-  : join(repoRoot, ".cache", "testsuite-corpus");
+// The corpus is fetched from dekaruntime/testsuite by `deka self fetch
+// testsuite` (RFD 59, deka#836) and lands at <repo>/testsuite/corpus.
+// --root keeps the runner hermetic for its own integration tests and
+// maintainer experiments.
+let testsRoot = join(repoRoot, "testsuite", "corpus");
 const scratchRoot = join(__dirname, ".run-tmp");
 
 // Fixtures known to fail, loaded from the owner corpus's expected-failures.txt.
@@ -670,7 +670,7 @@ options:
   -f, --filter <substr>      Run only fixtures whose slug or title matches
   -j, --jobs <n>             Parallel native runs (default: min(8, CPUs))
   --locked                   Use existing deka.lock; fail if missing or stale
-  --root <dir>               Fixture corpus root (default: .cache/testsuite-corpus)
+  --root <dir>               Fixture corpus root (default: testsuite/corpus)
   -v, --verbose              Log package-cache hits and populates to stderr
   -h, --help                 Show this help
 
@@ -679,9 +679,9 @@ Browser/WASM is the live playground on testsuite.deka.gg.
 
 examples:
   cargo build --release -p cli
-  bun scripts/testsuite-run.mjs --root .cache/testsuite-corpus
-  bun scripts/testsuite-run.mjs --root .cache/testsuite-corpus --filter json
-  DEKA_COMPILER=v2 bun scripts/testsuite-run.mjs --root .cache/testsuite-corpus --json`);
+  bun scripts/testsuite-run.mjs --root testsuite/corpus
+  bun scripts/testsuite-run.mjs --root testsuite/corpus --filter json
+  DEKA_COMPILER=v2 bun scripts/testsuite-run.mjs --root testsuite/corpus --json`);
 }
 
 async function mapPool(items, limit, fn) {

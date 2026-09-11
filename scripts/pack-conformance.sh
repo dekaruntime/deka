@@ -11,10 +11,10 @@ commit=$(git rev-parse HEAD)
 out="${DEKA_CONFORMANCE_OUT:-$repo/dist/conformance}"
 results="${DEKA_DUMP_OUT:-$out/hats-results.json}"
 
-tour="$repo/.cache/tour"
-[[ -f "$tour/manifest.json" ]] || { echo "fatal: tour missing; run scripts/ci-fetch-tour.sh" >&2; exit 2; }
-testsuite="${DEKA_TESTSUITE_ROOT:-$repo/.cache/testsuite-corpus}"
-[[ -d "$testsuite" ]] || { echo "fatal: testsuite corpus missing; run scripts/ci-fetch-testsuite-corpus.sh" >&2; exit 2; }
+tour="$repo/tour/tests/tour"
+[[ -f "$tour/manifest.json" ]] || { echo "fatal: tour missing; run 'deka self fetch tour'" >&2; exit 2; }
+testsuite="$repo/testsuite/corpus"
+[[ -d "$testsuite" ]] || { echo "fatal: testsuite corpus missing; run 'deka self fetch testsuite'" >&2; exit 2; }
 [[ -f "$results" ]] || { echo "fatal: dump missing at $results" >&2; echo "      fix: see tests/dump/README.md" >&2; exit 2; }
 
 rm -rf "$out/tour" "$out/testsuite"

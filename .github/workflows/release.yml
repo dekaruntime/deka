@@ -313,6 +313,15 @@ jobs:
           path: artifacts
           pattern: deka-*
 
+      # RFD 59 (deka#836): the dump and the conformance pack read the pinned
+      # content checkouts; the shipped CLI fetches them (this job previously
+      # relied on the old .cache defaults without fetching anything).
+      - name: Fetch pinned content (self fetch)
+        run: |
+          chmod +x artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
+          ./artifacts/deka-cli-darwin-arm64/deka-darwin-arm64 self fetch testsuite
+          ./artifacts/deka-cli-darwin-arm64/deka-darwin-arm64 self fetch tour
+
       - name: Install dump deps and Chromium
         working-directory: tests/dump
         run: |
