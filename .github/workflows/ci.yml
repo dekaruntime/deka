@@ -105,6 +105,15 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    environment: public-ci
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      SCCACHE_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      SCCACHE_REGION: "auto"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SCCACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v5
 
@@ -115,6 +124,33 @@ jobs:
           # directory, overriding the rustup default — so clippy must be added
           # to the pinned toolchain, not to a separately installed stable.
           components: clippy
+
+      - name: Configure sccache bucket
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$SCCACHE_ENDPOINT" ]; then
+            echo "::notice::R2 cache is not configured for this run; building without sccache."
+            exit 0
+          fi
+          # Keep the Linux check cache separate from Darwin artifacts. These
+          # names match scripts/populate-sccache.sh and deka#655.
+          echo "SCCACHE_BUCKET=deka-sccache-linux-x64" >> "$GITHUB_ENV"
+          echo "sccache bucket: deka-sccache-linux-x64"
+
+      - name: Run sccache-cache
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Enable sccache compiler wrapper
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$SCCACHE_ENDPOINT" ]; then
+            exit 0
+          fi
+          if command -v sccache >/dev/null 2>&1; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            echo "sccache enabled, bucket: $SCCACHE_BUCKET"
+          else
+            echo "::warning::sccache not found on PATH - building without a compiler cache."
+          fi
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -142,6 +178,13 @@ jobs:
       # clippy component is installed by the job's Setup Rust step).
       - name: Run clippy
         run: cargo clippy --all-features
+
+      - name: Report sccache usage
+        if: ${{ always() && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --show-stats
+          fi
 
   file-size-gate:
     name: File-size gate
