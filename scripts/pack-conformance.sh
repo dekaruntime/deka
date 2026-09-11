@@ -11,7 +11,8 @@ commit=$(git rev-parse HEAD)
 out="${DEKA_CONFORMANCE_OUT:-$repo/dist/conformance}"
 results="${DEKA_DUMP_OUT:-$out/hats-results.json}"
 
-[[ -f tests/tour/manifest.json ]] || { echo "fatal: tests/tour/manifest.json missing" >&2; exit 2; }
+tour="$repo/.cache/tour"
+[[ -f "$tour/manifest.json" ]] || { echo "fatal: tour missing; run scripts/ci-fetch-tour.sh" >&2; exit 2; }
 testsuite="${DEKA_TESTSUITE_ROOT:-$repo/.cache/testsuite-corpus}"
 [[ -d "$testsuite" ]] || { echo "fatal: testsuite corpus missing; run scripts/ci-fetch-testsuite-corpus.sh" >&2; exit 2; }
 [[ -f "$results" ]] || { echo "fatal: dump missing at $results" >&2; echo "      fix: see tests/dump/README.md" >&2; exit 2; }
@@ -19,7 +20,7 @@ testsuite="${DEKA_TESTSUITE_ROOT:-$repo/.cache/testsuite-corpus}"
 rm -rf "$out/tour" "$out/testsuite"
 mkdir -p "$out/tour" "$out/testsuite"
 
-cp tests/tour/manifest.json tests/tour/*.ds tests/tour/*.dsx "$out/tour/"
+cp "$tour/manifest.json" "$tour"/*.ds "$tour"/*.dsx "$out/tour/"
 
 # Hats folders only — not the native runner or known-fail list.
 find "$testsuite" -mindepth 1 -maxdepth 1 -type d ! -name '.*' | while read -r cat; do

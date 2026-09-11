@@ -1,4 +1,0 @@
-import { echo } from "io"
-const radius = 5
-const area = 3.14159 * radius * radius
-echo(string(area.floor()))

@@ -11,6 +11,7 @@ Downstream repos you will touch regularly:
 | Repo | Purpose | When you change the runtime here |
 |---|---|---|
 | `dekaruntime/website` | `deka.gg` homepage + tour | Update WASM artifacts and redeploy |
+| `dekaruntime/tour` | `deka.gg/tour` lessons, manifest, and native runner | Owns the pinned tour consumed here in CI (`scripts/ci-fetch-tour.sh`). Never keep a second copy in this repo. |
 | `dekaruntime/testsuite` | `testsuite.deka.gg` diagnostic grid (live browser playground) | Owns the pinned `corpus/` consumed here in CI. |
 | `dekaruntime/web-ide-kit` | Shared editor/runtime components used by both sites | Publish to npm, bump consumers |
 
@@ -92,6 +93,9 @@ DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
 
 ```bash
 # Language gate: tour lessons + Hats (native isolate). Builds the CLI.
+# Fetches the pinned tour (dekaruntime/tour) and testsuite corpus on first run:
+#   scripts/ci-fetch-tour.sh
+#   scripts/ci-fetch-testsuite-corpus.sh
 ./run.sh
 ./run.sh --filter structs
 ```
@@ -119,7 +123,7 @@ deka fmt path/to/file.ds
    ```
 4. **Bump crate versions** and open a PR if the change is user-facing.
 5. **After merge**, cut a release tag to push artifacts to R2 and trigger downstream site rebuilds (see `PUBLISH.md`). `@deka/*` packages are a different pipeline (`STDLIB.md`): merge does not publish them.
-6. **Language fixtures** are owned by `dekaruntime/testsuite/corpus/`; this repo fetches a checksummed pin in CI. `tests/tour/` remains local. The dual-host dump is `tests/dump`; a release uploads it.
+6. **Language fixtures** are owned by `dekaruntime/testsuite/corpus/` and `dekaruntime/tour`; this repo fetches checksummed pins of both in CI. The dual-host dump is `tests/dump`; a release uploads it.
 
 ## How downstream sites consume the runtime
 

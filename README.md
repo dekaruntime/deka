@@ -40,8 +40,10 @@ Run the language suite:
 ./run.sh
 ```
 
-That builds the CLI, compiles every `tests/tour` lesson, and runs
-the pinned `dekaruntime/testsuite` corpus on the native isolate. See [`TESTING.md`](./TESTING.md).
+That builds the CLI, compiles every lesson of the pinned
+`dekaruntime/tour` copy (`.cache/tour`, fetched by `scripts/ci-fetch-tour.sh`),
+and runs the pinned `dekaruntime/testsuite` corpus on the native isolate. See
+[`TESTING.md`](./TESTING.md).
 
 ## Local package development
 

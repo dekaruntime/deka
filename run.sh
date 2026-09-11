@@ -85,25 +85,29 @@ command -v bun >/dev/null 2>&1 \
 say "bun $(bun --version)"
 
 # ---------------------------------------------------------------- fixtures ---
-[[ -f tests/tour/manifest.json ]] \
-  || die "tests/tour/manifest.json is missing" \
-         "this is a deka checkout; tour lessons live in tests/tour/"
+# The tour is owned by dekaruntime/tour (lessons, manifest, runner). This
+# checkout consumes a pinned, checksummed copy -- never a second in-repo
+# authority, which is how the deka/dsc copies drifted apart.
+TOUR_ROOT="$REPO_ROOT/.cache/tour"
+[[ -f "$TOUR_ROOT/manifest.json" ]] \
+  || die "tour is missing: $TOUR_ROOT" \
+         "run scripts/ci-fetch-tour.sh"
 TESTSUITE_ROOT="${DEKA_TESTSUITE_ROOT:-$REPO_ROOT/.cache/testsuite-corpus}"
 [[ -d "$TESTSUITE_ROOT" ]] \
   || die "testsuite corpus is missing: $TESTSUITE_ROOT" \
          "run scripts/ci-fetch-testsuite-corpus.sh or set DEKA_TESTSUITE_ROOT"
 
-tour_count=$(find tests/tour -maxdepth 1 -name '*.ds' | wc -l | tr -d ' ')
+tour_count=$(find "$TOUR_ROOT" -maxdepth 1 \( -name '*.ds' -o -name '*.dsx' \) | wc -l | tr -d ' ')
 [[ "$tour_count" -gt 0 ]] \
-  || die "tests/tour has no .ds lessons" \
-         "add tests/tour/<id>.ds and a row in tests/tour/manifest.json"
+  || die "$TOUR_ROOT has no lessons" \
+         "re-run scripts/ci-fetch-tour.sh"
 
 suite_cats=$(find "$TESTSUITE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.*' | wc -l | tr -d ' ')
 [[ "$suite_cats" -gt 0 ]] \
   || die "testsuite corpus has no category folders" \
          "Hats layout is corpus/<category>/<name>/"
 
-say "fixtures: tests/tour ($tour_count lessons)  testsuite ($suite_cats categories)"
+say "fixtures: tour ($tour_count lessons, dekaruntime/tour @ .cache/tour)  testsuite ($suite_cats categories)"
 
 # ----------------------------------------------------------------- native ---
 if [[ -n "${DEKA_NATIVE:-}" ]]; then
@@ -133,11 +137,11 @@ fi
 export DEKA_NATIVE
 
 # --------------------------------------------------------------------- run ---
-mkdir -m 0755 -p .cache tests/tour/.run-tmp
+mkdir -m 0755 -p .cache "$TOUR_ROOT/.run-tmp"
 REPORT="$REPO_ROOT/.cache/report.txt"
 : > "$REPORT"
 
-tour_cmd=(bun tests/tour/run.mjs)
+tour_cmd=(bun "$TOUR_ROOT/run.mjs")
 suite_cmd=(bun "$TESTSUITE_ROOT/run.mjs")
 adhoc_cmd=(bun tests/adhoc/run.mjs)
 if [[ -n "$FILTER" ]]; then
