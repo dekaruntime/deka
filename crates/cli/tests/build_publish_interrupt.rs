@@ -179,7 +179,7 @@ fn killed_mid_staging_build_leaves_prior_dist_entirely_intact() {
     // Second build, killed after the staging tree exists (some new artifacts
     // written under .deka-dist-stage/dist) but before publication begins.
     write_page(project.path(), "second edition");
-    let mut child = spawn_build(project.path(), &[]);
+    let child = spawn_build(project.path(), &[]);
     let observed = wait_for(90, || project.path().join(".deka-dist-stage").join("dist").exists());
     if !observed {
         kill_and_reap(child);
@@ -229,7 +229,7 @@ fn killed_mid_publish_recovers_prior_dist_on_next_build() {
     // (the pause is still sleeping). The previous output must survive whole
     // at dist.prev-* and dist/ must not exist in a mixed state.
     write_page(project.path(), "third edition");
-    let mut child = spawn_build(
+    let child = spawn_build(
         project.path(),
         &[("DEKA_TEST_PUBLISH_PAUSE_MS", "3000")],
     );
