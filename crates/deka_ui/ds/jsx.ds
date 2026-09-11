@@ -79,7 +79,13 @@ fn someValue<E>(children: Option<E>) E {
 
 // -- Fragment ----------------------------------------------------------
 
-fn fragmentSymbol() {
+// DekaScript has no symbol type, so the registry symbol is exported as an
+// opaque branded token. dsc 0.9.0 (dsc#119) requires exported constants to
+// carry an inferable type; the brand is what consumers see, and only ever
+// pass back as a jsx tag.
+interface FragmentTag { __fragmentTag: boolean }
+
+fn fragmentSymbol() FragmentTag {
   return match (unsafe { Symbol.for("deka.ui.Fragment") }) {
     Ok(v) => v,
     Err(_) => fragmentSymbol(),
