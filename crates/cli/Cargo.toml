@@ -25,7 +25,7 @@ pool = { path = "../pool", optional = true }
 runtime_core = { path = "../runtime_core" }
 compile = { path = "../compile", optional = true }
 core = { path ="../core" }
-stdio = { path = "../stdio" }
+stdio = "0.4.0"
 introspect = { path = "../introspect", optional = true }
 wasm_cli = { path = "../wasm_cli" }
 pm = { workspace = true, optional = true }

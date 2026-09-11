@@ -14,7 +14,7 @@ transport = { path = "../transport" }
 reqwest = { version = "0.11", features = ["stream"] }
 bytes = { workspace = true }
 deka_http = { path = "../http" }
-stdio = { path = "../stdio" }
+stdio = "0.4.0"
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
 deka_ui = { path = "../deka_ui" }
 bundler = { path = "../bundler" }
