@@ -55,9 +55,14 @@ fn single_file_check_does_not_load_project_imports() {
 
     let output = run_check(project.path(), &["check", "--single-file", "main.ds"]);
     assert!(!output.status.success(), "standalone check unexpectedly resolved a local import");
+    // dsc 0.9.0 (dsc#111) reports the unresolvable import itself instead of
+    // leaving the name as an unknown identifier; either way the import must
+    // not resolve in --single-file mode.
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("unknown identifier `answer`"),
+        stderr.contains("cannot resolve imported name `answer`")
+            || stderr.contains("unknown identifier `answer`"),
         "standalone diagnostic changed unexpectedly: {}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr
     );
 }
