@@ -259,24 +259,10 @@ mod tests {
         )
         .expect("handler");
 
-        // The platform process starts with its root selected globally. The
-        // bundle must instead use default/deka.lock for @tana/store and its
-        // transitive @deka/crypto import.
-        let previous_root = std::env::var_os("DEKA_MODULE_ROOT");
-        unsafe { std::env::set_var("DEKA_MODULE_ROOT", platform_root) };
+        // The bundle selects its project root from source-tree markers, not a
+        // process-global module root.
         let bundle = build_deka_handler_bundle(handler.to_str().expect("utf-8 handler"));
         assert!(bundle.is_ok(), "tenant bundle failed: {bundle:?}");
-        assert_eq!(
-            std::env::var_os("DEKA_MODULE_ROOT").as_deref(),
-            Some(platform_root.as_os_str()),
-            "tenant bundle must restore the platform module root"
-        );
-        unsafe {
-            match previous_root {
-                Some(value) => std::env::set_var("DEKA_MODULE_ROOT", value),
-                None => std::env::remove_var("DEKA_MODULE_ROOT"),
-            }
-        }
     }
 
     #[test]

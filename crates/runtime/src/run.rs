@@ -1,7 +1,6 @@
 use std::path::Path as FsPath;
 use std::sync::Arc;
 
-use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
 use crate::security::resolve_security_policy;
 use core::Context;
@@ -15,7 +14,6 @@ use runtime_core::env::{set_default_log_level_with, set_handler_path_with, set_r
 use runtime_core::handler::{
     handler_input_with, is_deka_entry, is_html_entry, is_js_entry, normalize_handler_path_with,
 };
-use runtime_core::modules::ensure_deka_module_root_env_with;
 use runtime_core::process::parse_exit_code;
 use runtime_core::validation::validate_deka_handler_with;
 
@@ -32,7 +30,6 @@ pub fn run(context: &Context) {
 }
 
 async fn run_async(context: &Context) -> Result<(), String> {
-    init_env();
     let platform = ServerPlatform::default();
     let resolved_security = resolve_security_policy(context)?;
     for warning in resolved_security.warnings {
@@ -89,17 +86,6 @@ async fn run_async(context: &Context) -> Result<(), String> {
             normalized
         ));
     }
-    let mut env_set = |key: &str, value: &str| {
-        let _ = platform.env().set(key, value);
-        unsafe { std::env::set_var(key, value) };
-    };
-    ensure_deka_module_root_env_with(
-        &normalized,
-        &|path| platform.fs().exists(path),
-        &|| platform.fs().current_exe().ok(),
-        &env_get,
-        &mut env_set,
-    );
     validate_deka_modules(&normalized)?;
     let serve_mode = runtime_config::ServeMode::Php;
 
@@ -111,7 +97,7 @@ async fn run_async(context: &Context) -> Result<(), String> {
     let handler_code = String::new();
 
     let runtime_cfg = runtime_config::RuntimeConfig::load();
-    let mut pool_config = PoolConfig::from_env();
+    let mut pool_config = PoolConfig::default();
     // Run mode should allow long-lived servers without timing out.
     pool_config.request_timeout_ms = 0;
     if let Some(enabled) = runtime_cfg.code_cache_enabled() {

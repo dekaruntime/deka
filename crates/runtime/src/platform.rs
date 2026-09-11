@@ -24,9 +24,6 @@ use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 use crate::js_pipeline::build_deka_handler_bundle;
 use crate::security::resolve_platform_security_for_root;
 
-mod env;
-
-use env::{install_platform_env_aliases, platform_dev_mode_enabled};
 
 pub fn platform(context: &Context) {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -213,8 +210,6 @@ impl PlatformState {
 }
 
 async fn platform_async(context: &Context) {
-    crate::env::init_env();
-    install_platform_env_aliases();
 
     let input = &context.handler.input;
     let root = PathBuf::from(if input.is_empty() { "." } else { input });
@@ -222,18 +217,6 @@ async fn platform_async(context: &Context) {
 
     // Load database config from platform-level deka.json
     runtime_config::load_database_config(&root);
-
-    // Enable security enforcement before request workers start. The
-    // prompt behavior and policy body come from default/deka.json below.
-    unsafe {
-        std::env::set_var("DEKA_SECURITY_ENFORCE", "1");
-        std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
-        std::env::set_var(
-            "DEKA_MODULE_ROOT",
-            root.join("default").to_string_lossy().as_ref(),
-        );
-        std::env::set_var("DEKA_TENANTS_DIR", root.join("tenants"));
-    }
 
     // Validate directory structure
     let default_dir = root.join("default");
@@ -299,7 +282,7 @@ async fn platform_async(context: &Context) {
     );
 
     // Build the shared execution pool config.
-    let pool_config = PoolConfig::from_env();
+    let pool_config = PoolConfig::default();
 
     let serve_mode = runtime_config::ServeMode::Php;
     let extensions_provider = Arc::new(move || crate::extensions::extensions_for_mode(&serve_mode));
@@ -332,18 +315,14 @@ async fn platform_async(context: &Context) {
         .and_then(|v| v.parse().ok())
         .unwrap_or(8530);
 
-    // Bind address. Defaults to 127.0.0.1 for single-machine dev; in
-    // sharded deployments the platform MUST be reachable from the
-    // router (phobos) so cross-shard proxy requests can land. The
-    // presence of DEKA_SHARD_SELF is a reliable signal we're in a
-    // cluster — override explicitly via DEKA_PLATFORM_BIND.
-    let bind_addr = std::env::var("DEKA_PLATFORM_BIND").unwrap_or_else(|_| {
-        if std::env::var("DEKA_SHARD_SELF").is_ok() {
-            "0.0.0.0".to_string()
-        } else {
-            "127.0.0.1".to_string()
-        }
-    });
+    // Platform binding is a CLI parameter today; the default remains local
+    // loopback. Cluster deployment must pass an explicit listener address.
+    let bind_addr = context
+        .args
+        .params
+        .get("--bind")
+        .cloned()
+        .unwrap_or_else(|| "127.0.0.1".to_string());
     let listener = match TcpListener::bind(format!("{}:{}", bind_addr, port)) {
         Ok(l) => l,
         Err(err) => {
@@ -652,7 +631,7 @@ async fn handle_platform_request(
                     .error
                     .unwrap_or_else(|| "Unknown error".to_string());
                 stdio::error("platform", &format!("handler error: {}", err));
-                let dev_mode = platform_dev_mode_enabled();
+                let dev_mode = false;
                 return Response::builder()
                     .status(500)
                     .body(axum::body::Body::from(handler_failure_body(
@@ -690,7 +669,7 @@ async fn handle_platform_request(
                     }
                     Err(err) => {
                         stdio::error("platform", &format!("response error: {}", err));
-                        let dev_mode = platform_dev_mode_enabled();
+                        let dev_mode = false;
                         Response::builder()
                             .status(500)
                             .body(axum::body::Body::from(handler_failure_body(
@@ -702,7 +681,7 @@ async fn handle_platform_request(
                 },
                 None => {
                     stdio::error("platform", "no response from handler");
-                    let dev_mode = platform_dev_mode_enabled();
+                    let dev_mode = false;
                     Response::builder()
                         .status(500)
                         .body(axum::body::Body::from(handler_failure_body(
@@ -715,7 +694,7 @@ async fn handle_platform_request(
         }
         Err(err) => {
             stdio::error("platform", &format!("handler execution failed: {}", err));
-            let dev_mode = platform_dev_mode_enabled();
+            let dev_mode = false;
             Response::builder()
                 .status(500)
                 .body(axum::body::Body::from(handler_failure_body(

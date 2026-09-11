@@ -8,7 +8,6 @@ use engine::{RuntimeEngine, config as runtime_config};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData};
 use runtime_core::framework::compiler_cache_dir;
 
-use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
 
 /// One compiler-planned build entry. The CLI owns plan parsing; runtime owns
@@ -97,7 +96,6 @@ async fn materialize_build_values_async(
         return Ok(MaterializedBuild::default());
     }
 
-    init_env();
     // Build-phase permissions travel WITH the execution (RequestData.security
     // -> per-thread security context in the pool worker), never through the
     // process env: under `deka dev` the server keeps serving requests on
@@ -105,7 +103,6 @@ async fn materialize_build_values_async(
     // not the build phase's (Codex review of deka#729). Prompts are always
     // suppressed for the phase — a build must fail, not block, on a denied
     // capability.
-    let _module_root_guard = BuildModuleRootEnv::install(project_root);
     let mut pool_config = PoolConfig::default();
     pool_config.num_workers = 1;
     pool_config.request_timeout_ms = 30_000;
@@ -189,48 +186,6 @@ async fn materialize_build_values_async(
     Ok(materialized)
 }
 
-/// The build phase's one remaining process-env export: the module root the
-/// host uses for project-relative hint classification and the stdlib-module
-/// fallback. This stays process-wide deliberately: a `deka dev` refresh
-/// rematerializes the very project the server is running (same root it
-/// already exported), and `deka build` has no concurrent request path. The
-/// security policy and prompt flag are NOT exported here — they travel
-/// per-execution via `RequestData::security` (see deka_host
-/// `security_policy_from_context`). Restores the previous value on drop (cargo
-/// runs tests as threads in one process; see deka#537).
-struct BuildModuleRootEnv {
-    module_root: Option<String>,
-}
-
-impl BuildModuleRootEnv {
-    fn install(project_root: &Path) -> Self {
-        let guard = Self {
-            module_root: std::env::var("DEKA_MODULE_ROOT").ok(),
-        };
-        unsafe {
-            std::env::set_var(
-                "DEKA_MODULE_ROOT",
-                project_root.to_string_lossy().into_owned(),
-            );
-        }
-        guard
-    }
-}
-
-impl Drop for BuildModuleRootEnv {
-    fn drop(&mut self) {
-        restore_env_var("DEKA_MODULE_ROOT", self.module_root.take());
-    }
-}
-
-fn restore_env_var(key: &str, previous: Option<String>) {
-    unsafe {
-        match previous {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
-        }
-    }
-}
 
 fn copy_dir_contents(from: &Path, to: &Path) -> Result<(), String> {
     for entry in std::fs::read_dir(from)

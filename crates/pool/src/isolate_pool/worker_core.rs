@@ -116,8 +116,7 @@ impl WorkerThread {
         introspect_profiling: Arc<AtomicBool>,
         secrets_cache: Arc<SecretsCache>,
     ) -> Self {
-        let deka_args = std::env::var("DEKA_ARGS").unwrap_or_else(|_| "[]".to_string());
-        let deka_args = serde_json::from_str(&deka_args).unwrap_or_else(|_| serde_json::json!([]));
+        let deka_args = config.deka_args.clone();
         Self {
             worker_id,
             pool_id,
@@ -362,10 +361,7 @@ impl WorkerThread {
             }
         }
 
-        let use_esm_for_hash = request.request_data.handler_entry.is_some()
-            && std::env::var("DEKA_RUNTIME_ESM")
-                .map(|value| value != "0" && value != "false")
-                .unwrap_or(true);
+        let use_esm_for_hash = request.request_data.handler_entry.is_some() && self.config.use_esm;
 
         // Compute source hash for cache validation
         let source_hash = if use_esm_for_hash {
@@ -592,7 +588,7 @@ impl WorkerThread {
             );
         }
 
-        if perf_profile_enabled() {
+        if perf_profile_enabled(&self.config) {
             let count = PERF_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
             PERF_QUEUE_TOTAL_MS.fetch_add(queue_wait_ms, Ordering::Relaxed);
             PERF_WARM_TOTAL_MS.fetch_add(warm_time.as_millis() as u64, Ordering::Relaxed);
@@ -775,7 +771,12 @@ impl WorkerThread {
             let wrapper_path = entry_wrapper_path(&project_root);
             let wrapper_specifier = ModuleSpecifier::from_file_path(&wrapper_path)
                 .map_err(|_| "invalid entry wrapper path".to_string())?;
-            let loader = PhpxEsmLoader::new(project_root, entry_path, self.config.host_grants.clone())
+            let loader = PhpxEsmLoader::new(
+                project_root.clone(),
+                entry_path,
+                Some(project_root),
+                self.config.host_grants.clone(),
+            )
                 .map_err(|err| err.to_string())?;
             let loader: Rc<dyn deno_core::ModuleLoader> = Rc::new(loader);
             (Some(loader), Some(wrapper_specifier))

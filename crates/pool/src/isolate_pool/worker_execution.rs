@@ -1116,10 +1116,7 @@ impl WorkerThread {
             isolate.dynamic_code_validated = true;
         }
 
-        let use_esm = request.request_data.handler_entry.is_some()
-            && std::env::var("DEKA_RUNTIME_ESM")
-                .map(|value| value != "0" && value != "false")
-                .unwrap_or(true);
+        let use_esm = request.request_data.handler_entry.is_some() && self.config.use_esm;
 
         // Check if the handler code is already a self-contained async IIFE
         // produced by the bundler (e.g. `(async function() { ... })()`).
@@ -1290,11 +1287,7 @@ impl WorkerThread {
             None
         };
 
-        let tenant_info = request
-            .request_data
-            .request_parts
-            .as_ref()
-            .and_then(|parts| resolve_request_tenant(&parts.headers));
+        let tenant_info = Option::<crate::tenant::TenantInfo>::None;
         let shop_secrets = if let Some(info) = tenant_info.as_ref() {
             if info.shop_id.is_empty() {
                 HashMap::new()
@@ -1321,6 +1314,8 @@ impl WorkerThread {
                 &request.request_data.request_value,
                 request.request_data.request_parts.as_ref(),
                 &self.deka_args,
+                request.request_data.handler_entry.as_deref(),
+                request.request_data.module_root.as_deref(),
                 tenant_info.as_ref(),
                 &shop_secrets,
             ) {
@@ -1471,7 +1466,7 @@ impl WorkerThread {
 
         if !isolate.handler_loaded {
             isolate.handler_loaded = true;
-            if std::env::var("DEKA_DEBUG").is_ok() {
+            if self.config.debug {
                 deka_stdio::log(
                     "handler",
                     &format!("loaded {} on worker {}", key.name, self.worker_id),

@@ -49,7 +49,11 @@ pub(crate) fn parse_module_imports(source: &str) -> Vec<String> {
     runtime_core::ds_imports::paths(source)
 }
 
-pub(crate) fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_phpx_module_spec(
+    project_root: &Path,
+    module_root: Option<&Path>,
+    specifier: &str,
+) -> Option<PathBuf> {
     // @/ is a project-root alias: @/src/pages/foo -> {project_root}/src/pages/foo.ds
     //
     // Path-traversal guard: a malicious specifier like `@/../../etc/passwd`
@@ -145,8 +149,7 @@ pub(crate) fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> 
     // DEKA_MODULE_ROOT fallback (#220): if the tenant's php_modules/ doesn't
     // contain the spec, try the runtime stdlib root. This lets stdlib-only
     // tenants (e.g. id.tana.gg) deploy without vendoring stdlib.
-    if let Some(root_os) = std::env::var_os("DEKA_MODULE_ROOT") {
-        let root = std::path::Path::new(&root_os);
+    if let Some(root) = module_root {
         for alias in aliases.iter() {
             let base = if alias.starts_with("@user/") {
                 root.join("@user").join(alias.trim_start_matches("@user/"))
@@ -164,11 +167,12 @@ pub(crate) fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> 
 
 pub(crate) fn resolve_import_path(
     project_root: &Path,
+    module_root: Option<&Path>,
     referrer: &Path,
     specifier: &str,
 ) -> Option<PathBuf> {
     if is_bare_specifier(specifier) {
-        return resolve_phpx_module_spec(project_root, specifier);
+        return resolve_phpx_module_spec(project_root, module_root, specifier);
     }
 
     if specifier.starts_with("http://") || specifier.starts_with("https://") {
@@ -236,12 +240,12 @@ mod tests {
 
         let referrer = root.path().join("main.ds");
         assert_eq!(
-            resolve_import_path(root.path(), &referrer, "./legacy"),
+            resolve_import_path(root.path(), None, &referrer, "./legacy"),
             None
         );
-        assert_eq!(resolve_phpx_module_spec(root.path(), "@/legacy"), None);
+        assert_eq!(resolve_phpx_module_spec(root.path(), None, "@/legacy"), None);
         assert_eq!(
-            resolve_import_path(root.path(), &referrer, "./legacy.phpx"),
+            resolve_import_path(root.path(), None, &referrer, "./legacy.phpx"),
             None
         );
     }
@@ -252,7 +256,7 @@ mod tests {
         let modules = root.path().join("ds_modules").join("legacy");
         fs::create_dir_all(&modules).expect("ds_modules");
         fs::write(modules.join("index.phpx"), "export const value = 1;").expect("index phpx");
-        assert_eq!(resolve_phpx_module_spec(root.path(), "legacy"), None);
+        assert_eq!(resolve_phpx_module_spec(root.path(), None, "legacy"), None);
     }
 
     #[test]
@@ -269,7 +273,8 @@ mod tests {
         let resolved = resolve_project_root(&entry).expect("js handler has a project root");
         assert_eq!(resolved, root.path());
 
-        PhpxEsmLoader::new(root.path().to_path_buf(), entry, None).expect("js loader skips dsc");
+        PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None)
+            .expect("js loader skips dsc");
     }
 
     #[test]

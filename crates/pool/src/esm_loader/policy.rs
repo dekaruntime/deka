@@ -34,7 +34,11 @@ pub(crate) fn enforce_dynamic_policy(modules: &HashMap<PathBuf, String>) -> Resu
     Ok(())
 }
 
-pub fn ensure_project_layout(project_root: &Path, imports: &[String]) -> Result<(), String> {
+pub fn ensure_project_layout(
+    project_root: &Path,
+    module_root: Option<PathBuf>,
+    imports: &[String],
+) -> Result<(), String> {
     // DEKA_MODULE_ROOT is the stdlib-only-tenant escape (#220): when it points
     // at a root *other* than this project, the runtime supplies the stdlib and
     // a local ds_modules/ tree is not expected.
@@ -44,8 +48,6 @@ pub fn ensure_project_layout(project_root: &Path, imports: &[String]) -> Result<
     // ordinary run, so the early return always fired (deka#229, deka#430).
     // Comparing against the project root preserves what #220 actually needed
     // and drops the accidental blanket bypass.
-    let module_root = std::env::var_os("DEKA_MODULE_ROOT").map(PathBuf::from);
-
     runtime_core::project_gate::validate_project(
         project_root,
         imports,

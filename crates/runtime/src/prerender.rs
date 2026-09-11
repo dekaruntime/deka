@@ -4,13 +4,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
 use engine::{RuntimeEngine, config as runtime_config};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData};
-use runtime_core::env::set_handler_path_with;
 use runtime_core::framework;
-use runtime_core::modules::ensure_deka_module_root_env_with;
 use runtime_core::storefront_envelope::StorefrontResponse;
 
 /// One static render the build must produce: the page's route template, the
@@ -47,10 +44,6 @@ async fn prerender_static_pages_async(
     tasks: &[StaticRenderTask],
     policy_json: &str,
 ) -> Result<(), String> {
-    init_env();
-    unsafe {
-        std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
-    }
     crate::islands::write_island_client_assets_for_project(
         project_root,
         crate::islands::ClientAssetFlavor::Dev,
@@ -86,16 +79,6 @@ async fn prerender_static_pages_async(
         let entry =
             framework::write_static_render_entry(project_root, &task.template, &task.params)?;
         let handler_path = entry.to_string_lossy().to_string();
-        let mut env_set = |key: &str, value: &str| unsafe { std::env::set_var(key, value) };
-        let env_get = |key: &str| std::env::var(key).ok();
-        set_handler_path_with(&handler_path, &env_get, &mut env_set);
-        ensure_deka_module_root_env_with(
-            &handler_path,
-            &|path| path.exists(),
-            &|| std::env::current_exe().ok(),
-            &env_get,
-            &mut env_set,
-        );
         let response = engine
             .execute(
                 HandlerKey::new(format!("prerender:{route}")),

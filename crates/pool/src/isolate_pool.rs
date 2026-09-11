@@ -16,7 +16,6 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::thread::{self, JoinHandle};
@@ -66,8 +65,4 @@ use worker_core::*;
 mod helpers;
 mod worker_compile;
 mod worker_execution;
-#[allow(unused_imports)]
-pub(crate) use helpers::is_dev_mode;
 use helpers::*;
-
-

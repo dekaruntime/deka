@@ -1,7 +1,8 @@
 use std::cell::Cell;
-use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
+
+use super::config::PoolConfig;
 
 pub(super) const ID_ALPHABET: [char; 62] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
@@ -12,7 +13,6 @@ pub(super) const ID_ALPHABET: [char; 62] = [
 
 pub(super) static POOL_IDS: AtomicU64 = AtomicU64::new(1);
 pub(super) const REQUEST_BATCH_MAX: usize = 8;
-pub(super) static PERF_PROFILE_ENABLED: OnceLock<bool> = OnceLock::new();
 pub(super) static PERF_COUNT: AtomicU64 = AtomicU64::new(0);
 pub(super) static PERF_QUEUE_TOTAL_MS: AtomicU64 = AtomicU64::new(0);
 pub(super) static PERF_WARM_TOTAL_MS: AtomicU64 = AtomicU64::new(0);
@@ -81,10 +81,6 @@ pub(super) fn get_thread_cpu_time() -> Duration {
     Duration::ZERO
 }
 
-pub(super) fn perf_profile_enabled() -> bool {
-    *PERF_PROFILE_ENABLED.get_or_init(|| {
-        std::env::var("DEKA_PERF_MODE")
-            .map(|value| value != "false" && value != "0")
-            .unwrap_or(false)
-    })
+pub(super) fn perf_profile_enabled(config: &PoolConfig) -> bool {
+    config.perf_profile
 }

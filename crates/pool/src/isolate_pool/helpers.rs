@@ -1,46 +1,27 @@
 use super::*;
 
-/// Cached dev-mode flag. Read once per process from `DEKA_DEV_MODE` so the
-/// env lookup is never on the hot request path.
-static DEV_MODE: OnceLock<bool> = OnceLock::new();
-
-/// Returns `true` when the runtime is operating in development mode.
-///
-/// Activated by `DEKA_DEV_MODE=1`.
-///
-/// In dev mode `pick_shard_for_request` always returns shard 0 so every
-/// shop hits the local Docker Neo4j/Redis, regardless of shop_id.
-/// This prevents the shard-hash from routing dev-created shops to a remote
-/// production shard that doesn't hold their data.
-pub(crate) fn is_dev_mode() -> bool {
-    *DEV_MODE.get_or_init(|| is_dev_mode_from_env(|key| std::env::var(key).ok()))
-}
-
-pub(super) fn is_dev_mode_from_env(mut env_get: impl FnMut(&str) -> Option<String>) -> bool {
-    env_get("DEKA_DEV_MODE").as_deref() == Some("1")
-}
-
-pub(super) fn resolve_request_tenant(
-    headers: &[(String, String)],
-) -> Option<crate::tenant::TenantInfo> {
-    crate::tenant::resolve_tenant_info_from_host_strict(headers)
-}
-
 pub(super) fn set_request_globals(
     runtime: &mut JsRuntime,
     request: &serde_json::Value,
     request_parts: Option<&RequestParts>,
     deka_args: &serde_json::Value,
+    handler_path: Option<&str>,
+    module_root: Option<&str>,
     tenant_info: Option<&crate::tenant::TenantInfo>,
     shop_secrets: &SecretsMap,
 ) -> Result<(), String> {
     deno_core::scope!(scope, runtime);
     let context = scope.get_current_context();
     let global = context.global(scope);
-    let handler_path = std::env::var("HANDLER_PATH").unwrap_or_default();
-    let cwd = std::env::current_dir()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_else(|_| ".".to_string());
+    let handler_path = handler_path.unwrap_or_default();
+    let cwd = module_root
+        .map(str::to_string)
+        .or_else(|| {
+            std::path::Path::new(handler_path)
+                .parent()
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| ".".to_string());
 
     if let Some(parts) = request_parts {
         let (request_uri, request_pathname) = split_request_url(&parts.url);
@@ -133,11 +114,7 @@ pub(super) fn set_request_globals(
         serde_v8::to_v8(scope, deka_args).map_err(|err| format!("deka args to v8: {}", err))?;
     deka_obj.set(scope, args_key.into(), args_val);
 
-    let resolved_tenant_info = request_parts.and_then(|parts| {
-        tenant_info
-            .cloned()
-            .or_else(|| resolve_request_tenant(&parts.headers))
-    });
+    let resolved_tenant_info = request_parts.and_then(|_| tenant_info.cloned());
     let has_routed_shop = resolved_tenant_info
         .as_ref()
         .is_some_and(|info| !info.shop_id.is_empty());
@@ -290,43 +267,6 @@ pub(super) fn set_request_globals(
             global.set(scope, shard_key_key.into(), shard_key_val.into());
         }
 
-        // Tenant connection env — inject SHOP_NEO4J_URL, SHOP_REDIS_URL,
-        // SHOP_NEO4J_USER, SHOP_NEO4J_PASSWORD into $_SERVER so PHPX
-        // storefront code can connect without hardcoding localhost. The
-        // values are sourced from the host process env and are only
-        // injected into tenant-code isolates.
-        {
-            let neo4j_url = std::env::var("DEKA_NEO4J_URI")
-                .unwrap_or_else(|_| "bolt://127.0.0.1:7687".to_string());
-            let redis_url = std::env::var("DEKA_REDIS_URL")
-                .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-            let neo4j_user =
-                std::env::var("DEKA_NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string());
-            let neo4j_password = std::env::var("DEKA_NEO4J_PASSWORD")
-                .or_else(|_| std::env::var("NEO4J_PASSWORD"))
-                .unwrap_or_default();
-
-            tracing::info!(shop_id = %shop_id, shard_key = %shard_key, "tenant env injection");
-
-            if let Some(server_key) = v8::String::new(scope, "_SERVER") {
-                if let Some(server_val) = global.get(scope, server_key.into()) {
-                    if let Some(server_obj) = server_val.to_object(scope) {
-                        for (key, val) in &[
-                            ("SHOP_NEO4J_URL", neo4j_url.as_str()),
-                            ("SHOP_REDIS_URL", redis_url.as_str()),
-                            ("SHOP_NEO4J_USER", neo4j_user.as_str()),
-                            ("SHOP_NEO4J_PASSWORD", neo4j_password.as_str()),
-                        ] {
-                            if let (Some(k), Some(v)) =
-                                (v8::String::new(scope, key), v8::String::new(scope, val))
-                            {
-                                server_obj.set(scope, k.into(), v.into());
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     Ok(())
