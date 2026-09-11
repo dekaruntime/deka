@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 platform = { path = "../platform" }
-rand = "0.8"
+rand = "0.10"
 deno_core = { workspace = true }
 deno_napi = { workspace = true }
 deno_permissions = { workspace = true }
