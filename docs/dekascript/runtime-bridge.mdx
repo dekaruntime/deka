@@ -59,19 +59,22 @@ matching or converting them.
 | Method | Safety | Returns | Notes |
 |---|---|---|---|
 | `len(b)` | safe | `number` | byte length |
-| `get(b, index)` | safe | `Option<number>` | out of range is `None`, not a throw |
+| `get(b, index)` | safe | `Option<number>` | non-integer or out of range is `None`, not a throw |
 | `slice(b, start, end?)` | safe | `bytes` | **copies** — never a view |
 | `concat(a, b)` | safe | `bytes` | fresh buffer |
-| `from_array(items)` | safe | `bytes` | from `Array<number>` |
+| `from_array(items)` | safe | `Option<bytes>` | every element must be an integer in `0..=255`; anything else is `None`, never coerced |
 | `from_string(s)` | safe | `bytes` | UTF-8 encode, total |
 | `to_hex(b)` | safe | `string` | lowercase hex |
-| `from_hex(s)` | safe | `Option<bytes>` | invalid input is `None` |
+| `from_hex(s)` | safe | `Option<bytes>` | invalid input is `None` — a prefix like `"6g"` is **not** partially parsed |
 | `to_base64(b)` | safe | `string` | standard base64 |
-| `from_base64(s)` | safe | `Option<bytes>` | invalid input is `None` |
+| `from_base64(s)` | safe | `Option<bytes>` | invalid input is `None` — bad alphabet, bad padding, or unpadded |
 | `to_string(b)` | unsafe | `Result<string, string>` | **strict** UTF-8 decode; invalid input is `Err`, never lossy |
 
 Bytes follow RFD 15's stricter shape rather than RFD 21's original table
-(see below): immutable, decoding is fallible, and there is no lossy variant.
+(see below): immutable, decoding is fallible, validation replaces coercion,
+and there is no lossy variant. The `@deka/bytes` stdlib package is built
+entirely as DekaScript composition over this table — its implementation
+path contains no arbitrary unsafe JavaScript.
 
 ### `deka.json`
 
@@ -116,7 +119,7 @@ to the lowered content. The user's `deka.lock` is never touched.
 
 RFD 21's original catalog typed `to_string` / `to_string_lossy` as lossy
 `safe` helpers and listed `set` and `subarray`. This catalog follows RFD 15's
-stricter contract instead, which the bytes work (deka#756) will inherit:
+stricter contract instead, which deka#756 codified:
 
 - `deka.bytes.to_string` is **strict and fallible** (`Unsafe`): invalid UTF-8
   is an `Err` value, never a replacement-character substitution. There is no
@@ -124,6 +127,14 @@ stricter contract instead, which the bytes work (deka#756) will inherit:
 - Bytes are **immutable**: there is no `set`.
 - `slice` **copies**: there is no `subarray` view that could alias a mutable
   buffer and escape as immutable bytes.
+- `from_array` **validates**: an element that is not an integer in `0..=255`
+  makes the whole call `None`. The coercion paths it replaces (`Uint8Array.from`
+  wrapping negatives, truncating fractions, reducing mod 256) were silent
+  byte alteration, the failure mode RFD 15 exists to remove.
+- Malformed hex and base64 are **errors, not altered bytes**: `from_hex`
+  rejects the whole string rather than prefix-parsing it (`"6g"` is `None`,
+  not `0x06`), and `from_base64` rejects bad alphabet, bad padding, and
+  unpadded input outright.
 
 ## No environment influence
 
