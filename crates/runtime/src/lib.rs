@@ -11,7 +11,6 @@ mod build_values;
 mod css;
 mod dev;
 mod dsc_transpile;
-mod env;
 mod extensions;
 mod islands;
 mod js_pipeline;
@@ -27,8 +26,16 @@ pub fn run(context: &Context) {
     run::run(context);
 }
 
+pub fn run_with_dsc(context: &Context, dsc: Option<std::path::PathBuf>) {
+    run::run_with_dsc(context, dsc);
+}
+
 pub fn serve(context: &Context) {
     serve::serve(context);
+}
+
+pub fn serve_with_dsc(context: &Context, dsc: Option<std::path::PathBuf>) {
+    serve::serve_with_dsc(context, dsc);
 }
 
 pub fn prerender_static_pages(
@@ -36,8 +43,9 @@ pub fn prerender_static_pages(
     dist_client: &std::path::Path,
     tasks: &[prerender::StaticRenderTask],
     policy_json: &str,
+    dsc: Option<std::path::PathBuf>,
 ) -> Result<(), String> {
-    prerender::prerender_static_pages(project_root, dist_client, tasks, policy_json)
+    prerender::prerender_static_pages(project_root, dist_client, tasks, policy_json, dsc)
 }
 
 pub use prerender::StaticRenderTask;
@@ -47,8 +55,10 @@ pub fn materialize_build_values(
     entries: Vec<build_values::BuildEntry>,
     policy_json: &str,
     only: Option<&std::collections::BTreeSet<String>>,
+    dsc: Option<std::path::PathBuf>,
+    dev_mode: bool,
 ) -> Result<build_values::MaterializedBuild, String> {
-    build_values::materialize_build_values(project_root, entries, policy_json, only)
+    build_values::materialize_build_values(project_root, entries, policy_json, only, dsc, dev_mode)
 }
 
 pub use build_values::{BuildEntry, MaterializedBuild};
@@ -59,6 +69,15 @@ pub fn write_island_client_assets(
     flavor: islands::ClientAssetFlavor,
 ) -> Result<(), String> {
     islands::write_island_client_assets(assets_dir, islands, flavor)
+}
+
+pub fn write_island_client_assets_with_dsc(
+    assets_dir: &std::path::Path,
+    islands: &[runtime_core::framework::ClientIsland],
+    flavor: islands::ClientAssetFlavor,
+    dsc: &std::path::Path,
+) -> Result<(), String> {
+    islands::write_island_client_assets_with_dsc(assets_dir, islands, flavor, dsc)
 }
 
 pub fn write_island_client_assets_for_project(

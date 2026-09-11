@@ -19,22 +19,12 @@ use runtime_core::host_bridge::GrantTable;
 
 const EMPTY_DEKA_LOCK: &str = r#"{"lockfileVersion":1,"packages":{}}"#;
 
-/// Locate the pinned dsc once and point `DEKA_DSC` at it so pool worker
-/// threads resolve the same binary. Mirrors how the CLI tests provision dsc
-/// (`scripts/ci-install-dsc.sh target/tmp/dsc`): explicit `DEKA_DSC` first,
-/// then the repo-local CI install, then `find_dsc` (sibling/PATH).
+/// Locate the repository-pinned compiler without consulting test-process
+/// configuration.
 fn ensure_dsc() -> bool {
     static DSC: OnceLock<Option<PathBuf>> = OnceLock::new();
     let resolved = DSC
         .get_or_init(|| {
-            if std::env::var_os("DEKA_NO_DSC").is_some() {
-                return None;
-            }
-            if let Ok(path) = std::env::var("DEKA_DSC")
-                && Path::new(&path).is_file()
-            {
-                return Some(PathBuf::from(path));
-            }
             let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/dsc");
             if local.is_file() {
                 return Some(local);
@@ -42,15 +32,7 @@ fn ensure_dsc() -> bool {
             runtime_core::dsc::find_dsc().ok().flatten()
         })
         .clone();
-    match resolved {
-        Some(path) => {
-            // SAFETY: test-binary-wide, idempotent value; every dsc-gated test
-            // in this file agrees on the same binary.
-            unsafe { std::env::set_var("DEKA_DSC", &path) };
-            true
-        }
-        None => false,
-    }
+    resolved.is_some()
 }
 
 fn write(root: &Path, rel: &str, body: &str) {
@@ -521,14 +503,6 @@ export fn app(req: string) {
     );
     let entry = project.path().join("main.ds");
 
-    // The loader falls back to DEKA_HOST_GRANTS when no explicit table is
-    // configured; make sure this test observes the truly unpublished state.
-    let _env_guard = host_grants_env_lock().lock().expect("env lock");
-    let previous = std::env::var("DEKA_HOST_GRANTS").ok();
-    // SAFETY: single-process test binary; no other test in this file touches
-    // DEKA_HOST_GRANTS, and the previous value is restored below.
-    unsafe { std::env::remove_var("DEKA_HOST_GRANTS") };
-
     let pool = no_grant_pool();
     let response = pool
         .execute(
@@ -537,11 +511,6 @@ export fn app(req: string) {
         )
         .await
         .expect("pool execution");
-
-    match previous {
-        Some(value) => unsafe { std::env::set_var("DEKA_HOST_GRANTS", value) },
-        None => unsafe { std::env::remove_var("DEKA_HOST_GRANTS") },
-    }
 
     assert!(!response.success, "no table → no grants → load refusal");
     let error = response.error.unwrap_or_default();
@@ -601,11 +570,6 @@ export async fn app(req: string) Promise<string> {
         .expect("grant file json"),
     );
 
-    let _env_guard = host_grants_env_lock().lock().expect("env lock");
-    let previous = std::env::var("DEKA_HOST_GRANTS").ok();
-    // SAFETY: serialized by host_grants_env_lock; restored below.
-    unsafe { std::env::remove_var("DEKA_HOST_GRANTS") };
-
     let pool = no_grant_pool();
     let response = pool
         .execute(
@@ -620,48 +584,6 @@ export async fn app(req: string) Promise<string> {
         "project grant table alone must drive both the grant and the boundary"
     );
 
-    // Override precedence: DEKA_HOST_GRANTS wins over the project file. The
-    // env table also grants fs, so the fs call clears the grant gate and is
-    // stopped one layer down by the read permission instead (denied-other,
-    // not HostGrantDenied).
-    let env_table = GrantTable::from_json(
-        r#"[{"name":"@deka/cryptofix","version":"1.0.0","digest":"OVERRIDE","kinds":["crypto","fs"]}]"#,
-    )
-    .expect("env grant table");
-    // Point the env table at the real digest so the grant lookup hits.
-    let env_table = GrantTable {
-        grants: vec![runtime_core::host_bridge::HostGrant {
-            digest: digest.to_string(),
-            ..env_table.grants[0].clone()
-        }],
-    };
-    // SAFETY: serialized by host_grants_env_lock; restored below.
-    unsafe {
-        std::env::set_var(
-            "DEKA_HOST_GRANTS",
-            serde_json::to_string(&env_table).expect("env table json"),
-        )
-    };
-
-    let pool = no_grant_pool();
-    let response = pool
-        .execute(
-            HandlerKey::new("grant_env_overrides_project_file"),
-            module_request(&entry, project.path()),
-        )
-        .await
-        .expect("pool execution");
-
-    match previous {
-        Some(value) => unsafe { std::env::set_var("DEKA_HOST_GRANTS", value) },
-        None => unsafe { std::env::remove_var("DEKA_HOST_GRANTS") },
-    }
-
-    assert_eq!(
-        body_of(&response),
-        "dep-ok|fs-denied-other",
-        "the env override must widen the grant and shift the fs denial to the permission layer"
-    );
 }
 
 /// Catalog coverage: every action the browser shim can serve (NativeAndBrowser

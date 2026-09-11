@@ -43,7 +43,7 @@ mod transforms;
 
 pub use graph_hash::hash_module_graph;
 pub use policy::ensure_project_layout;
-pub use resolver::{entry_wrapper_path, is_javascript_entry, resolve_project_root};
+pub use resolver::{entry_wrapper_path, entry_wrapper_path_with, is_javascript_entry, resolve_project_root};
 pub use transforms::entry_wrapper_source;
 
 use grants::{
@@ -81,6 +81,12 @@ fn write_ui_file_if_changed(path: &Path, source: &str) -> std::io::Result<bool> 
 #[derive(Clone)]
 pub struct PhpxEsmLoader {
     project_root: PathBuf,
+    /// Explicit stdlib root for a stdlib-only tenant. This is intentionally
+    /// distinct from `project_root`; ordinary projects pass their own root.
+    module_root: Option<PathBuf>,
+    /// Compiler selected by the caller for source-posture execution. It is
+    /// absent for artifact-only serve, which must never compile.
+    dsc: Option<PathBuf>,
     cache_dir: PathBuf,
     entry_specifier: ModuleSpecifier,
     wrapper_specifier: ModuleSpecifier,
@@ -88,8 +94,8 @@ pub struct PhpxEsmLoader {
     /// Pre-compiled module graph for compiler v2. When present, `.ds` files
     /// are served from this map instead of compiled on demand.
     v2_modules: Option<HashMap<PathBuf, String>>,
-    /// RFD 27 grant table: explicit config, else the `DEKA_HOST_GRANTS`
-    /// override, else the project-installed `deka.grants.json` (deka#797).
+    /// RFD 27 grant table: explicit caller configuration, else the
+    /// project-installed `deka.grants.json` (deka#797).
     grant_table: Option<GrantTable>,
     /// Bridge kinds granted to the project root (cached at construction).
     root_kinds: Vec<String>,
@@ -112,7 +118,10 @@ impl PhpxEsmLoader {
     pub fn new(
         project_root: PathBuf,
         entry_path: PathBuf,
+        module_root: Option<PathBuf>,
         host_grants: Option<GrantTable>,
+        dsc: Option<PathBuf>,
+        dev_mode: bool,
     ) -> Result<Self, JsErrorBox> {
         // Canonicalize both paths before any prefix comparison. dsc's graph
         // dump and `fs::canonicalize` both resolve macOS's /var → /private/var
@@ -121,9 +130,13 @@ impl PhpxEsmLoader {
         // paths would silently fall out of the workspace-grant rule and every
         // bridge call would report "not granted any host kinds".
         let project_root = project_root.canonicalize().unwrap_or(project_root);
+        let module_root = match module_root {
+            Some(root) => Some(root.canonicalize().unwrap_or(root)),
+            None => policy::configured_module_root(&project_root)?,
+        };
         let entry_path = entry_path.canonicalize().unwrap_or(entry_path);
         let artifact_server_root = artifact_server_root(&entry_path)?;
-        let cache_dir = runtime_core::framework::compiler_cache_dir(&project_root);
+        let cache_dir = runtime_core::framework::compiler_cache_dir_with(&project_root, dev_mode);
         if artifact_server_root.is_none() {
             std::fs::create_dir_all(&cache_dir).map_err(|err| {
                 JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err))
@@ -131,29 +144,15 @@ impl PhpxEsmLoader {
         }
         let entry_specifier = ModuleSpecifier::from_file_path(&entry_path)
             .map_err(|_| JsErrorBox::generic("invalid entry module path"))?;
-        let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path(&project_root))
+        let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path_with(&project_root, dev_mode))
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
 
-        // RFD 27 (deka#797): resolve the host grant table. Precedence:
-        // 1. an explicit table (`PoolConfig.host_grants`) wins outright;
-        // 2. the `DEKA_HOST_GRANTS` env var is an explicit override, kept for
-        //    tests and embedded hosts;
-        // 3. the project-installed table (`<project_root>/deka.grants.json`,
-        //    written by `deka add` / `deka install`) is the production
-        //    source — a fresh install needs no programmatic config and no
-        //    environment variable.
+        // RFD 27 (deka#797): an explicit caller table wins; otherwise the
+        // project-installed table is the production source. A process-wide
+        // grant override would let unrelated code widen bridge authority.
         let grant_table = match host_grants {
             Some(table) => Some(table),
-            None => std::env::var("DEKA_HOST_GRANTS")
-                .ok()
-                .and_then(|json| match GrantTable::from_json(&json) {
-                    Ok(table) => Some(table),
-                    Err(err) => {
-                        tracing::warn!("ignoring invalid DEKA_HOST_GRANTS: {err}");
-                        None
-                    }
-                })
-                .or_else(|| read_project_grant_table(&project_root)),
+            None => read_project_grant_table(&project_root),
         };
 
         // Eager project-root check: only official `@deka/*` packages may
@@ -180,14 +179,22 @@ impl PhpxEsmLoader {
         // JS/MJS/CJS entries are WinterTC workers: load as-is, do not send
         // them through dsc (dsc only compiles .ds/.dsx).
         let v2_modules = if entry_path.is_file() && !is_javascript_entry(&entry_path) {
-            let modules = crate::dsc_compile::compile_graph(&project_root, &entry_path)
-                .map_err(JsErrorBox::generic)?;
+            let modules = match dsc.as_deref() {
+                Some(dsc) => crate::dsc_compile::compile_graph_with_dsc(
+                    &project_root,
+                    &entry_path,
+                    dsc,
+                ),
+                None => crate::dsc_compile::compile_graph(&project_root, &entry_path),
+            }
+            .map_err(JsErrorBox::generic)?;
             let imports: Vec<String> = modules
                 .keys()
                 .filter_map(|path| std::fs::read_to_string(path).ok())
                 .flat_map(|source| parse_module_imports(&source))
                 .collect();
-            policy::ensure_project_layout(&project_root, &imports).map_err(JsErrorBox::generic)?;
+            policy::ensure_project_layout(&project_root, module_root.clone(), &imports)
+                .map_err(JsErrorBox::generic)?;
             policy::enforce_dynamic_policy(&modules)?;
             Some(modules)
         } else {
@@ -196,6 +203,8 @@ impl PhpxEsmLoader {
 
         let loader = Self {
             project_root,
+            module_root,
+            dsc,
             cache_dir,
             entry_specifier,
             wrapper_specifier,
@@ -376,12 +385,16 @@ impl PhpxEsmLoader {
         }
         // Linked packages sit outside the consumer project, so the entry
         // graph dump does not include them. Compile that tree through dsc.
-        let js = crate::dsc_compile::compile_file(path).map_err(JsErrorBox::generic)?;
+        let js = match self.dsc.as_deref() {
+            Some(dsc) => crate::dsc_compile::compile_file_with_dsc(path, dsc),
+            None => crate::dsc_compile::compile_file(path),
+        }
+        .map_err(JsErrorBox::generic)?;
         Ok(ModuleSourceCode::String(js.into()))
     }
 
     fn resolve_phpx_module_spec(&self, specifier: &str) -> Option<PathBuf> {
-        resolve_phpx_module_spec(&self.project_root, specifier)
+        resolve_phpx_module_spec(&self.project_root, self.module_root.as_deref(), specifier)
     }
 
     /// Build values are compiler-addressed virtual modules. The Deka host
@@ -402,7 +415,8 @@ impl PhpxEsmLoader {
         {
             return None;
         }
-        let path = runtime_core::framework::compiler_cache_dir(&self.project_root)
+        let path = self
+            .cache_dir
             .join("build-values")
             .join(format!("{id}.js"));
         if path.is_file() {
@@ -748,7 +762,7 @@ mod tests {
     fn source_extensions_have_distinct_cache_paths() {
         let root = tempfile::tempdir().expect("temp project");
         let loader =
-            PhpxEsmLoader::new(root.path().to_path_buf(), root.path().join("main.ds"), None)
+            PhpxEsmLoader::new(root.path().to_path_buf(), root.path().join("main.ds"), None, None, None, false)
                 .expect("loader");
 
         let ds = loader.cache_path_for(&root.path().join("main.ds"));
@@ -763,7 +777,7 @@ mod tests {
         let root = tempfile::tempdir().expect("temp project");
         let entry = root.path().join("handler.js");
         fs::write(&entry, "export default {};\n").expect("write js handler");
-        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None).expect("loader");
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false).expect("loader");
 
         let path = loader
             .materialize_ui_module("ui/jsx")
@@ -792,7 +806,7 @@ mod tests {
         // not a server payload, but Deno resolves it as the main module
         // before the wrapper imports the verified entry.
         let mut loader =
-            PhpxEsmLoader::new(root.path().to_path_buf(), entry, None).expect("loader");
+            PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false).expect("loader");
         loader.artifact_server_root = Some(server.clone());
         let wrapper = loader.wrapper_specifier.clone();
 
@@ -875,7 +889,7 @@ mod tests {
         )
         .expect("grant table");
         let loader =
-            PhpxEsmLoader::new(root.path().to_path_buf(), entry, Some(table)).expect("loader");
+            PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, Some(table), None, false).expect("loader");
 
         assert_eq!(loader.kinds_for_path(&module), vec!["crypto".to_string()]);
         // Root-owned sources get no kinds (this fixture root declares none).
@@ -886,8 +900,7 @@ mod tests {
         );
     }
 
-    /// RFD 27 (deka#797): with no explicit table and no DEKA_HOST_GRANTS
-    /// override, the loader falls back to the project-installed grant table
+    /// RFD 27 (deka#797): with no explicit table the loader falls back to the project-installed grant table
     /// (`deka.grants.json`, written by `deka add` / `deka install`).
     #[test]
     fn dependency_module_kinds_come_from_project_grant_table_file() {
@@ -915,26 +928,15 @@ mod tests {
         )
         .expect("deka.lock");
 
-        // The production source: written by the installer, keyed by the
-        // lockfile-pinned digest. The env override must be absent for this
-        // fallback to be observed.
-        let previous = std::env::var("DEKA_HOST_GRANTS").ok();
-        // SAFETY: this test binary serializes env access through the test
-        // harness; the value is restored below and no other test in this
-        // binary reads DEKA_HOST_GRANTS concurrently by name.
-        unsafe { std::env::remove_var("DEKA_HOST_GRANTS") };
+        // The production source is written by the installer and keyed by the
+        // lockfile-pinned digest.
         fs::write(
             root.path().join("deka.grants.json"),
             r#"[{"name":"@deka/fs","version":"1.0.0","digest":"sha256:bbb","kinds":["fs"]}]"#,
         )
         .expect("deka.grants.json");
 
-        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None).expect("loader");
-
-        match previous {
-            Some(value) => unsafe { std::env::set_var("DEKA_HOST_GRANTS", value) },
-            None => unsafe { std::env::remove_var("DEKA_HOST_GRANTS") },
-        }
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false).expect("loader");
 
         assert_eq!(loader.kinds_for_path(&module), vec!["fs".to_string()]);
     }
@@ -968,21 +970,13 @@ mod tests {
         .expect("deka.lock");
         // Grant keyed by a *different* digest (e.g. a tampered lockfile pin):
         // the lookup must miss.
-        let previous = std::env::var("DEKA_HOST_GRANTS").ok();
-        // SAFETY: see the sibling test above.
-        unsafe { std::env::remove_var("DEKA_HOST_GRANTS") };
         fs::write(
             root.path().join("deka.grants.json"),
             r#"[{"name":"@deka/fs","version":"1.0.0","digest":"sha256:other","kinds":["fs"]}]"#,
         )
         .expect("deka.grants.json");
 
-        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None).expect("loader");
-
-        match previous {
-            Some(value) => unsafe { std::env::set_var("DEKA_HOST_GRANTS", value) },
-            None => unsafe { std::env::remove_var("DEKA_HOST_GRANTS") },
-        }
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false).expect("loader");
 
         assert!(
             loader.kinds_for_path(&module).is_empty(),

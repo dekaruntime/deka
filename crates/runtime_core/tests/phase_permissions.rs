@@ -427,7 +427,7 @@ fn resolution_is_independent_of_the_process_environment() {
         "DEKA_ALLOW_ALL",
     ]
     .iter()
-    .map(|key| (key.to_string(), std::env::var(key).ok()))
+    .map(|key| (key.to_string(), None))
     .collect();
     for (key, _) in &saved {
         unsafe { std::env::set_var(key, "1") };

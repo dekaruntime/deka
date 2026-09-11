@@ -22,20 +22,12 @@ use pool::{ExecutionMode, HandlerKey, IsolatePool, PoolConfig, RequestData, Requ
 
 const EMPTY_DEKA_LOCK: &str = r#"{"lockfileVersion":1,"packages":{}}"#;
 
-/// Locate the pinned dsc once and point `DEKA_DSC` at it so pool worker
-/// threads resolve the same binary (same provisioning as host_grants tests).
+/// Locate the repository-pinned compiler without consulting test-process
+/// configuration.
 fn ensure_dsc() -> bool {
     static DSC: OnceLock<Option<PathBuf>> = OnceLock::new();
     let resolved = DSC
         .get_or_init(|| {
-            if std::env::var_os("DEKA_NO_DSC").is_some() {
-                return None;
-            }
-            if let Ok(path) = std::env::var("DEKA_DSC")
-                && Path::new(&path).is_file()
-            {
-                return Some(PathBuf::from(path));
-            }
             let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/dsc");
             if local.is_file() {
                 return Some(local);
@@ -43,15 +35,7 @@ fn ensure_dsc() -> bool {
             runtime_core::dsc::find_dsc().ok().flatten()
         })
         .clone();
-    match resolved {
-        Some(path) => {
-            // SAFETY: test-binary-wide, idempotent value; every dsc-gated test
-            // in this file agrees on the same binary.
-            unsafe { std::env::set_var("DEKA_DSC", &path) };
-            true
-        }
-        None => false,
-    }
+    resolved.is_some()
 }
 
 fn write(root: &Path, rel: &str, body: &str) {

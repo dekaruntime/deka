@@ -1,5 +1,7 @@
 // ========== Configuration ==========
 
+use std::path::PathBuf;
+
 /// Configuration for the isolate pool
 #[derive(Clone)]
 pub struct PoolConfig {
@@ -22,10 +24,22 @@ pub struct PoolConfig {
     /// Enable per-request profiling data (op timings)
     pub introspect_profiling: bool,
     /// RFD 27 host grant table for DekaScript-from-disk modules. `None` lets
-    /// the ESM loader resolve the table: the `DEKA_HOST_GRANTS` env override
-    /// first, then the project-installed `deka.grants.json` written by
+    /// the ESM loader use the project-installed `deka.grants.json` written by
     /// `deka add` / `deka install` (deka#797).
     pub host_grants: Option<runtime_core::host_bridge::GrantTable>,
+    /// Arguments exposed to a handler. The command dispatcher supplies these;
+    /// worker threads never consult process-global state.
+    pub deka_args: serde_json::Value,
+    /// Explicit execution posture selected by the dispatcher/configuration.
+    pub use_esm: bool,
+    pub debug: bool,
+    pub perf_profile: bool,
+    /// Compiler explicitly selected by the caller for source-posture work.
+    /// Built artifacts leave this unset and cannot compile at serve time.
+    pub dsc: Option<PathBuf>,
+    /// Select the isolated development cache for dev build values and their
+    /// generated module wrapper.
+    pub dev_mode: bool,
 }
 
 impl Default for PoolConfig {
@@ -42,61 +56,12 @@ impl Default for PoolConfig {
             scheduler_strategy: SchedulerStrategy::LeastLoaded,
             introspect_profiling: false,
             host_grants: None,
-        }
-    }
-}
-
-impl PoolConfig {
-    /// Create config from environment variables
-    ///
-    /// Environment variables:
-    /// - ISOLATE_WORKERS: Number of worker threads (default: num_cpus)
-    /// - ISOLATES_PER_WORKER: Max isolates per worker (0 = unlimited)
-    /// - ISOLATE_IDLE_TIMEOUT: Idle timeout in seconds (0 = never evict)
-    /// - ISOLATE_METRICS: Enable metrics (default: true)
-    /// - ISOLATE_CODE_CACHE: Enable V8 code cache (default: true)
-    /// - ISOLATE_REQUEST_TIMEOUT_MS: Request timeout in ms (0 = no timeout)
-    /// - ISOLATE_QUEUE_TIMEOUT_MS: Queue timeout in ms (0 = no timeout)
-    /// - ISOLATE_SCHEDULER: "consistent" or "least_loaded"
-    pub fn from_env() -> Self {
-        let default_workers = default_num_workers();
-        Self {
-            num_workers: std::env::var("ISOLATE_WORKERS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(default_workers),
-            max_isolates_per_worker: std::env::var("ISOLATES_PER_WORKER")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(100),
-            idle_timeout_secs: std::env::var("ISOLATE_IDLE_TIMEOUT")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(300),
-            enable_metrics: std::env::var("ISOLATE_METRICS")
-                .map(|v| v != "false" && v != "0")
-                .unwrap_or(true),
-            enable_code_cache: std::env::var("ISOLATE_CODE_CACHE")
-                .map(|v| v != "false" && v != "0")
-                .unwrap_or(true),
-            request_timeout_ms: std::env::var("ISOLATE_REQUEST_TIMEOUT_MS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(30_000),
-            queue_timeout_ms: std::env::var("ISOLATE_QUEUE_TIMEOUT_MS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(10_000),
-            scheduler_strategy: std::env::var("ISOLATE_SCHEDULER")
-                .ok()
-                .and_then(|value| SchedulerStrategy::from_env(&value))
-                .unwrap_or(SchedulerStrategy::LeastLoaded),
-            introspect_profiling: std::env::var("INTROSPECT_PROFILING")
-                .map(|value| value != "false" && value != "0")
-                .unwrap_or(false),
-            // Grant tables are not env-scalar config; the ESM loader resolves
-            // them (env override, then project-installed table) when None.
-            host_grants: None,
+            deka_args: serde_json::json!([]),
+            use_esm: true,
+            debug: false,
+            perf_profile: false,
+            dsc: None,
+            dev_mode: false,
         }
     }
 }
@@ -110,14 +75,4 @@ fn default_num_workers() -> usize {
 pub enum SchedulerStrategy {
     ConsistentHash,
     LeastLoaded,
-}
-
-impl SchedulerStrategy {
-    fn from_env(value: &str) -> Option<Self> {
-        match value.to_lowercase().as_str() {
-            "consistent" | "hash" => Some(Self::ConsistentHash),
-            "least_loaded" | "least" => Some(Self::LeastLoaded),
-            _ => None,
-        }
-    }
 }

@@ -23,6 +23,9 @@ pub(crate) struct ServerEntriesPlan<'a> {
     pub has_manifest: bool,
     pub emitted_src: bool,
     pub emitted_api: bool,
+    /// Compiler selected by the CLI for this build invocation. This is not
+    /// carried into serve: built artifacts must run without dsc.
+    pub dsc: &'a Path,
 }
 
 pub(crate) fn emit_server_entries(plan: &ServerEntriesPlan<'_>) -> Result<(), String> {
@@ -35,6 +38,7 @@ pub(crate) fn emit_server_entries(plan: &ServerEntriesPlan<'_>) -> Result<(), St
             plan.project_root,
             plan.entries_dir,
             plan.dist_server,
+            plan.dsc,
         )?;
         // Fill in modules no entry imports (dynamic-import targets, non-DS
         // assets) from the emitted trees; graph modules already in place win.

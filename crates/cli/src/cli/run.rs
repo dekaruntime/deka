@@ -34,7 +34,20 @@ pub fn cmd(context: &Context) {
     }
     match prepare_run_context(context) {
         Ok(prepared) => {
-            runtime::run(&prepared.context);
+            let dsc = prepared
+                .context
+                .args
+                .positionals
+                .first()
+                .filter(|path| runtime_core::entry::has_run_source_ext(path))
+                .map(|_| crate::dsc::find_dsc())
+                .transpose()
+                .unwrap_or_else(|err| {
+                    stdio::error("run", &err);
+                    std::process::exit(1);
+                })
+                .flatten();
+            runtime::run_with_dsc(&prepared.context, dsc);
             // RFD 55: situational advisories come last, after the work.
             if prepared.loose_file {
                 stdio::note(crate::cli::user_cache::NOT_A_PROJECT_NOTE);

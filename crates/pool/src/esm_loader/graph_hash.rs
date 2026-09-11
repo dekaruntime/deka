@@ -34,7 +34,7 @@ pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {
         if ext == "ds" || ext == "dsx" {
             let imports = parse_module_imports(&source);
             for spec in imports {
-                if let Some(resolved) = resolve_import_path(&project_root, &path, spec.trim()) {
+                if let Some(resolved) = resolve_import_path(&project_root, None, &path, spec.trim()) {
                     stack.push(resolved);
                 }
             }

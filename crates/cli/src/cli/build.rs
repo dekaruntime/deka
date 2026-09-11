@@ -90,7 +90,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // not the server product. Prefer default emit into staging (so dist/ is
     // not created on a failed compile), then promote trees and copy host
     // static files (public/ → dist/client, prerender/worker/_redirects/…).
-    build_dsc::require_dsc()?;
+    let dsc = build_dsc::require_dsc()?;
     // The dist staging tree hosts the generated server entries while they
     // compile: it sits inside the project root at the same relative depth as
     // the serve-time compiler cache (`.cache/dekascript`), so the entries it
@@ -177,6 +177,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         &planned,
         false,
         None,
+        Some(dsc.clone()),
     )?;
     #[cfg(feature = "native")]
     let values = materialized.values.clone();
@@ -217,6 +218,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
             has_manifest: manifest.is_some(),
             emitted_src,
             emitted_api,
+            dsc: &dsc,
         },
     )?;
 
@@ -244,6 +246,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
                 &dist_client,
                 &render_tasks,
                 &render_policy.policy_json,
+                Some(dsc.clone()),
             )?;
         }
         #[cfg(not(feature = "native"))]
@@ -392,16 +395,22 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     if !islands.is_empty() {
         #[cfg(feature = "native")]
         {
-            runtime::write_island_client_assets(
+            runtime::write_island_client_assets_with_dsc(
                 &dist_client.join("assets"),
                 &islands,
                 ClientAssetFlavor::Dist,
+                &dsc,
             )?;
             let cache_assets = project_root
                 .join(".cache")
                 .join("dekascript")
                 .join("assets");
-            runtime::write_island_client_assets(&cache_assets, &islands, ClientAssetFlavor::Dev)?;
+            runtime::write_island_client_assets_with_dsc(
+                &cache_assets,
+                &islands,
+                ClientAssetFlavor::Dev,
+                &dsc,
+            )?;
         }
         inject_island_scripts(&dist_client, &islands)?;
     }

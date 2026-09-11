@@ -613,6 +613,23 @@ pub fn write_island_client_assets_for_project(
     project_root: &Path,
     flavor: ClientAssetFlavor,
 ) -> Result<(), String> {
+    write_island_client_assets_for_project_with_optional_dsc(project_root, flavor, None)
+}
+
+/// Build-only form with a compiler selected at the CLI boundary.
+pub fn write_island_client_assets_for_project_with_dsc(
+    project_root: &Path,
+    flavor: ClientAssetFlavor,
+    dsc: &Path,
+) -> Result<(), String> {
+    write_island_client_assets_for_project_with_optional_dsc(project_root, flavor, Some(dsc))
+}
+
+fn write_island_client_assets_for_project_with_optional_dsc(
+    project_root: &Path,
+    flavor: ClientAssetFlavor,
+    dsc: Option<&Path>,
+) -> Result<(), String> {
     if !runtime_core::framework::is_source_app_router_project(project_root) {
         return Ok(());
     }
@@ -623,7 +640,7 @@ pub fn write_island_client_assets_for_project(
         return Ok(());
     }
     let assets_dir = runtime_core::framework::compiler_cache_dir(project_root).join("assets");
-    write_island_client_assets(&assets_dir, &islands, flavor)?;
+    write_island_client_assets_with_optional_dsc(&assets_dir, &islands, flavor, dsc)?;
     if !deferred.is_empty() {
         write_defer_client_assets(&assets_dir, flavor)?;
     }
@@ -646,7 +663,10 @@ struct IslandChunk {
 /// `export { ... }` for bound-but-unexported components. Keep-sets for dist
 /// pruning must be computed from these pre-rewrite sources, so compilation is
 /// a separate pass from writing.
-fn compile_island_chunks(islands: &[ClientIsland]) -> Result<Vec<IslandChunk>, String> {
+fn compile_island_chunks(
+    islands: &[ClientIsland],
+    dsc: Option<&Path>,
+) -> Result<Vec<IslandChunk>, String> {
     let mut chunks = Vec::new();
     for directive in ["load", "idle", "visible"] {
         let group: Vec<&ClientIsland> = islands
@@ -662,7 +682,10 @@ fn compile_island_chunks(islands: &[ClientIsland]) -> Result<Vec<IslandChunk>, S
             if !seen_files.insert(island.file.clone()) {
                 continue;
             }
-            let mut js = crate::dsc_transpile::compile_file(&island.file)?;
+            let mut js = match dsc {
+                Some(dsc) => crate::dsc_transpile::compile_file_with_dsc(&island.file, dsc),
+                None => crate::dsc_transpile::compile_file(&island.file),
+            }?;
             let mod_stem = format!("island-{directive}-{idx}");
             idx += 1;
             let names: Vec<&str> = group
@@ -715,7 +738,27 @@ pub fn write_island_client_assets(
     islands: &[ClientIsland],
     flavor: ClientAssetFlavor,
 ) -> Result<(), String> {
-    let chunks = compile_island_chunks(islands)?;
+    write_island_client_assets_with_optional_dsc(assets_dir, islands, flavor, None)
+}
+
+/// Build-only form with the compiler selected by the CLI. Artifact serve does
+/// not call this and therefore never receives a compiler path.
+pub fn write_island_client_assets_with_dsc(
+    assets_dir: &Path,
+    islands: &[ClientIsland],
+    flavor: ClientAssetFlavor,
+    dsc: &Path,
+) -> Result<(), String> {
+    write_island_client_assets_with_optional_dsc(assets_dir, islands, flavor, Some(dsc))
+}
+
+fn write_island_client_assets_with_optional_dsc(
+    assets_dir: &Path,
+    islands: &[ClientIsland],
+    flavor: ClientAssetFlavor,
+    dsc: Option<&Path>,
+) -> Result<(), String> {
+    let chunks = compile_island_chunks(islands, dsc)?;
     // Dist pruning needs the full importer set before any ui chunk is
     // written; dev skips the analysis entirely.
     let keep = if flavor == ClientAssetFlavor::Dist {

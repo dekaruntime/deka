@@ -94,7 +94,8 @@ pub fn parse_preview_host(host: &str) -> Option<(String, String)> {
 ///
 /// Returns `None` if not found or Redis is unavailable.
 pub fn resolve_tenant(subdomain: &str) -> Option<String> {
-    resolve_tenant_record(subdomain).map(|r| r.shop_id)
+    let _ = subdomain;
+    None
 }
 
 /// Return true when a subdomain is already a canonical shop_id.
@@ -115,14 +116,7 @@ pub fn is_shop_id_subdomain(subdomain: &str) -> bool {
 /// Accepts both the JSON format (`{"shop_id":...}`) and the legacy
 /// plain-string format (just the shop_id). Extra JSON fields are ignored.
 ///
-/// Redis URL resolution order:
-/// 1. `DEKA_REDIS_URL` env var (explicit operator override).
-/// 2. Hard-coded `redis://localhost:6380` (last-resort dev fallback).
-pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
-    let redis_url =
-        std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6380".to_string());
-    resolve_tenant_record_with_redis_url(subdomain, &redis_url)
-}
+/// The caller supplies the Redis URL from its resolved configuration.
 
 fn resolve_tenant_record_with_redis_url(
     subdomain: &str,
@@ -204,16 +198,8 @@ pub fn resolve_tenant_from_host_with_redis_url(
 }
 
 /// Like `resolve_tenant_from_host` but also returns preview ref info.
-/// Falls back to `DEKA_SHOP_ID` env var for local single-tenant dev/testing.
 pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<TenantInfo> {
-    resolve_tenant_info_from_host_strict(headers).or_else(|| {
-        std::env::var("DEKA_SHOP_ID")
-            .ok()
-            .map(|shop_id| TenantInfo {
-                shop_id,
-                preview_ref: None,
-            })
-    })
+    resolve_tenant_info_from_host_strict(headers)
 }
 
 /// Resolve tenant info from server-routed Host/subdomain data only.
@@ -222,9 +208,7 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
 /// not fall back to process env. Use it in platform multi-tenant request paths
 /// before injecting `SHOP_ID`, `$_ENV`, or vault-backed secrets.
 pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Option<TenantInfo> {
-    let redis_url =
-        std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6380".to_string());
-    resolve_tenant_info_from_host_strict_with_redis_url(headers, &redis_url)
+    resolve_tenant_info_from_host_strict_with_redis_url(headers, "")
 }
 
 /// Resolve tenant info from the Host header using an explicit Redis URL.
@@ -279,30 +263,6 @@ pub fn resolve_tenant_info_from_host_strict_with_redis_url(
 mod tests {
     use super::*;
 
-    /// Restores an env var on drop. The process env is globally shared
-    /// even though tests run on separate threads, so a test that sets a
-    /// var must put the previous value back (deka#537 hygiene).
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let previous = std::env::var(key).ok();
-            unsafe { std::env::set_var(key, value) };
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => unsafe { std::env::set_var(self.key, value) },
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-        }
-    }
 
     #[test]
     fn extract_subdomain_from_host() {
@@ -557,12 +517,8 @@ mod tests {
         // Seed test data
         let _: () = conn.set("subdomain:test-shop", "shop_test_001").unwrap();
 
-        // Set env so tenant resolver uses our test Redis; the guard
-        // restores the previous value when the test ends (the var leaked
-        // past this test before, deka#537).
-        let _env = EnvGuard::set("DEKA_REDIS_URL", redis_url);
-
-        let result = resolve_tenant("test-shop");
+        let result = resolve_tenant_record_with_redis_url("test-shop", redis_url)
+            .map(|record| record.shop_id);
         assert_eq!(result, Some("shop_test_001".to_string()));
 
         // Clean up

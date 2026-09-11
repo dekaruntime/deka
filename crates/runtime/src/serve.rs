@@ -1,10 +1,10 @@
 use std::path::Path as FsPath;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use std::{io, net::TcpListener};
 
-use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
 use crate::security::resolve_security_policy;
 use core::Context;
@@ -15,8 +15,7 @@ use platform::Platform;
 use platform_server::ServerPlatform;
 use pool::validation::PoolWorkers;
 use pool::{HandlerKey, PoolConfig};
-use runtime_core::env::{flag_or_env_truthy_with, set_dev_flag_with, set_handler_path_with};
-use runtime_core::modules::ensure_deka_module_root_env_with;
+use runtime_core::env::{set_dev_flag_with, set_handler_path_with};
 use runtime_core::validation::validate_deka_handler_with;
 use stdio as stdio_log;
 use transport::{
@@ -26,19 +25,22 @@ use transport::{
 static WATCHER_GUARDS: OnceLock<Mutex<Vec<notify::RecommendedWatcher>>> = OnceLock::new();
 
 pub fn serve(context: &Context) {
+    serve_with_dsc(context, None);
+}
+
+pub fn serve_with_dsc(context: &Context, dsc: Option<PathBuf>) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("failed to start tokio runtime");
 
-    if let Err(err) = rt.block_on(serve_async(context)) {
+    if let Err(err) = rt.block_on(serve_async(context, dsc)) {
         stdio_log::error("serve", &err);
         std::process::exit(1);
     }
 }
 
-async fn serve_async(context: &Context) -> Result<(), String> {
-    init_env();
+async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), String> {
     let platform = ServerPlatform::default();
     let resolved_security = resolve_security_policy(context)?;
     for warning in resolved_security.warnings {
@@ -95,10 +97,17 @@ async fn serve_async(context: &Context) -> Result<(), String> {
             .or_else(|| crate::islands::find_app_router_root(&resolved.path))
     };
     if let Some(root) = app_router_root.as_deref() {
-        crate::islands::write_island_client_assets_for_project(
-            &root,
-            crate::islands::ClientAssetFlavor::Dev,
-        )?;
+        match dsc.as_deref() {
+            Some(dsc) => crate::islands::write_island_client_assets_for_project_with_dsc(
+                &root,
+                crate::islands::ClientAssetFlavor::Dev,
+                dsc,
+            )?,
+            None => crate::islands::write_island_client_assets_for_project(
+                &root,
+                crate::islands::ClientAssetFlavor::Dev,
+            )?,
+        }
         crate::css::write_route_css_assets_for_project(&root)?;
         // The serve-entry was generated inside resolve_handler_path, before
         // the hashed assets existed; swap its logical /assets URLs for the
@@ -124,17 +133,6 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         lower.ends_with(".js") || lower.ends_with(".mjs") || lower.ends_with(".cjs")
     };
     if matches!(resolved.mode, runtime_config::ServeMode::Php) && !is_js_handler {
-        let mut env_set = |key: &str, value: &str| {
-            let _ = platform.env().set(key, value);
-            unsafe { std::env::set_var(key, value) };
-        };
-        ensure_deka_module_root_env_with(
-            &handler_path,
-            &|path| platform.fs().exists(path),
-            &|| platform.fs().current_exe().ok(),
-            &env_get,
-            &mut env_set,
-        );
         validate_deka_modules(&handler_path)?;
     }
     let mut env_set = |key: &str, value: &str| {
@@ -150,7 +148,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     let mut serve_options = pool::validation::ServeOptions::default();
     apply_cli_serve_overrides(context, &mut serve_options);
 
-    let pool_config = configure_pool(&serve_options, watch_enabled);
+    let pool_config = configure_pool(&serve_options, watch_enabled, dsc, dev_mode);
     let pool_workers = pool_config.num_workers;
 
     let serve_mode = resolved.mode.clone();
@@ -245,33 +243,27 @@ fn validate_deka_modules(handler_path: &str) -> Result<(), String> {
 }
 
 fn watch_enabled(context: &Context) -> bool {
-    flag_or_env_truthy_with(
-        &context.args.flags,
-        "--watch",
-        Some("-W"),
-        "DEKA_WATCH",
-        &|key| std::env::var(key).ok(),
-    )
+    context.args.flags.contains_key("--watch") || context.args.flags.contains_key("-W")
 }
 
 fn dev_enabled(context: &Context) -> bool {
-    flag_or_env_truthy_with(&context.args.flags, "--dev", None, "DEKA_DEV", &|key| {
-        std::env::var(key).ok()
-    })
+    context.args.flags.contains_key("--dev")
 }
 
 fn perf_mode_enabled() -> bool {
-    std::env::var("DEKA_PERF_MODE")
-        .map(|value| value != "false" && value != "0")
-        .unwrap_or(false)
+    false
 }
 
 fn configure_pool(
     serve_options: &pool::validation::ServeOptions,
     watch_enabled: bool,
+    dsc: Option<PathBuf>,
+    dev_mode: bool,
 ) -> PoolConfig {
     let runtime_cfg = runtime_config::RuntimeConfig::load();
-    let mut pool_config = PoolConfig::from_env();
+    let mut pool_config = PoolConfig::default();
+    pool_config.dsc = dsc;
+    pool_config.dev_mode = dev_mode;
 
     if let Some(workers) = serve_options.workers.clone() {
         pool_config.num_workers = match workers {
@@ -655,7 +647,6 @@ async fn serve_listeners(
     if let Some(unix) = serve_options
         .unix
         .clone()
-        .or_else(|| std::env::var("DEKA_UNIX").ok())
     {
         let label = if unix.starts_with('\0') {
             format!("unix:@{}", unix.trim_start_matches('\0'))
@@ -673,7 +664,6 @@ async fn serve_listeners(
     if let Some(addr) = serve_options
         .tcp
         .clone()
-        .or_else(|| std::env::var("DEKA_TCP").ok())
     {
         stdio_log::log("listen", &format!("tcp://{}", addr));
         return transport::serve(state, transport::ListenConfig::Tcp(TcpOptions { addr })).await;
@@ -682,7 +672,6 @@ async fn serve_listeners(
     if let Some(addr) = serve_options
         .udp
         .clone()
-        .or_else(|| std::env::var("DEKA_UDP").ok())
     {
         stdio_log::log("listen", &format!("udp://{}", addr));
         return transport::serve(state, transport::ListenConfig::Udp(UdpOptions { addr })).await;
@@ -691,17 +680,12 @@ async fn serve_listeners(
     if let Some(addr) = serve_options
         .dns
         .clone()
-        .or_else(|| std::env::var("DEKA_DNS").ok())
     {
         stdio_log::log("listen", &format!("dns://{}", addr));
         return transport::serve(state, transport::ListenConfig::Dns(DnsOptions { addr })).await;
     }
 
-    if let Some(port) = serve_options.ws.or_else(|| {
-        std::env::var("DEKA_WS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-    }) {
+    if let Some(port) = serve_options.ws {
         stdio_log::log("listen", &format!("ws://localhost:{}", port));
         return transport::serve(state, transport::ListenConfig::Ws(WsOptions { port })).await;
     }
@@ -709,7 +693,6 @@ async fn serve_listeners(
     if let Some(addr) = serve_options
         .redis
         .clone()
-        .or_else(|| std::env::var("DEKA_REDIS").ok())
     {
         stdio_log::log("listen", &format!("redis://{}", addr));
         return transport::serve(state, transport::ListenConfig::Redis(RedisOptions { addr }))
@@ -718,7 +701,6 @@ async fn serve_listeners(
 
     let port = serve_options
         .port
-        .or_else(|| std::env::var("PORT").ok().and_then(|p| p.parse().ok()))
         .unwrap_or(8530);
     ensure_http_port_available(port)?;
     let listeners = pool_workers.max(1);
@@ -912,14 +894,9 @@ fn should_ignore_watch_path(path: &FsPath) -> bool {
 mod tests {
     use super::build_static_handler_code;
     use super::ensure_http_port_available;
-    use super::flag_or_env_truthy_with;
-    use super::serve_async;
-    use core::{Args, EnvContext, HandlerContext};
     use runtime_core::env::is_truthy;
-    use std::collections::HashMap;
     use std::fs;
     use std::net::TcpListener;
-    use std::time::{Duration, Instant};
 
     /// Verify the static handler template contains the __dekaFs confinement
     /// wrapper.  We check for the key guard identifiers that must be present
@@ -963,29 +940,6 @@ mod tests {
         assert!(!is_truthy("0"));
         assert!(!is_truthy("false"));
         assert!(!is_truthy("off"));
-    }
-
-    #[test]
-    fn flag_overrides_env_for_watch_or_dev() {
-        let mut flags = HashMap::new();
-        flags.insert("--dev".to_string(), true);
-        assert!(flag_or_env_truthy_with(
-            &flags,
-            "--dev",
-            None,
-            "DEKA_DEV",
-            &|_| None,
-        ));
-
-        let mut watch_flags = HashMap::new();
-        watch_flags.insert("-W".to_string(), true);
-        assert!(flag_or_env_truthy_with(
-            &watch_flags,
-            "--watch",
-            Some("-W"),
-            "DEKA_WATCH",
-            &|_| None,
-        ));
     }
 
     #[test]

@@ -4,13 +4,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
 use engine::{RuntimeEngine, config as runtime_config};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData};
-use runtime_core::env::set_handler_path_with;
 use runtime_core::framework;
-use runtime_core::modules::ensure_deka_module_root_env_with;
 use runtime_core::storefront_envelope::StorefrontResponse;
 
 /// One static render the build must produce: the page's route template, the
@@ -28,6 +25,7 @@ pub fn prerender_static_pages(
     dist_client: &Path,
     tasks: &[StaticRenderTask],
     policy_json: &str,
+    dsc: Option<PathBuf>,
 ) -> Result<(), String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -38,6 +36,7 @@ pub fn prerender_static_pages(
         dist_client,
         tasks,
         policy_json,
+        dsc,
     ))
 }
 
@@ -46,15 +45,19 @@ async fn prerender_static_pages_async(
     dist_client: &Path,
     tasks: &[StaticRenderTask],
     policy_json: &str,
+    dsc: Option<PathBuf>,
 ) -> Result<(), String> {
-    init_env();
-    unsafe {
-        std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
+    match dsc.as_deref() {
+        Some(dsc) => crate::islands::write_island_client_assets_for_project_with_dsc(
+            project_root,
+            crate::islands::ClientAssetFlavor::Dev,
+            dsc,
+        )?,
+        None => crate::islands::write_island_client_assets_for_project(
+            project_root,
+            crate::islands::ClientAssetFlavor::Dev,
+        )?,
     }
-    crate::islands::write_island_client_assets_for_project(
-        project_root,
-        crate::islands::ClientAssetFlavor::Dev,
-    )?;
     crate::css::write_route_css_assets_for_project(project_root)?;
 
     // Explicit render plan: every static route and staticParams instance the
@@ -72,6 +75,7 @@ async fn prerender_static_pages_async(
     let mut pool_config = PoolConfig::default();
     pool_config.num_workers = 1;
     pool_config.request_timeout_ms = 30_000;
+    pool_config.dsc = dsc;
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let serve_mode = runtime_config::ServeMode::Php;
     let extensions_provider = Arc::new(move || extensions_for_mode(&serve_mode));
@@ -86,16 +90,6 @@ async fn prerender_static_pages_async(
         let entry =
             framework::write_static_render_entry(project_root, &task.template, &task.params)?;
         let handler_path = entry.to_string_lossy().to_string();
-        let mut env_set = |key: &str, value: &str| unsafe { std::env::set_var(key, value) };
-        let env_get = |key: &str| std::env::var(key).ok();
-        set_handler_path_with(&handler_path, &env_get, &mut env_set);
-        ensure_deka_module_root_env_with(
-            &handler_path,
-            &|path| path.exists(),
-            &|| std::env::current_exe().ok(),
-            &env_get,
-            &mut env_set,
-        );
         let response = engine
             .execute(
                 HandlerKey::new(format!("prerender:{route}")),

@@ -18,7 +18,6 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::env::env_truthy_with;
 use crate::modules::MODULES_DIR;
 
 mod artifact_manifest;
@@ -47,14 +46,10 @@ pub use codegen::{
 
 /// Serve/dev compiler artifact directory.
 ///
-/// When `DEKA_DEV` is set (`deka` / `deka serve --dev`), artifacts go under
-/// `ds_modules/.cache/dev`. Otherwise the legacy `.cache/dekascript` path is
-/// used (also a build staging area). Production `dist/` is unchanged.
+/// Callers that need the development cache must select it explicitly with
+/// [`compiler_cache_dir_with`]. The default is the production cache.
 pub fn compiler_cache_dir(project_root: &Path) -> PathBuf {
-    compiler_cache_dir_with(
-        project_root,
-        env_truthy_with("DEKA_DEV", &|key| std::env::var(key).ok()),
-    )
+    compiler_cache_dir_with(project_root, false)
 }
 
 pub fn compiler_cache_dir_with(project_root: &Path, dev_mode: bool) -> PathBuf {

@@ -43,6 +43,7 @@ pub fn materialize_planned_slots(
     planned: &[PlannedSource],
     dev: bool,
     only: Option<&BTreeSet<String>>,
+    dsc: Option<PathBuf>,
 ) -> Result<runtime::MaterializedBuild, String> {
     let mut slots: Vec<build_dsc::BuildPlanSlot> = planned
         .iter()
@@ -64,8 +65,14 @@ pub fn materialize_planned_slots(
             descriptor: entry.slot.descriptor.clone(),
         })
         .collect();
-    let materialized =
-        runtime::materialize_build_values(project_root, staged, &policy.policy_json, only);
+    let materialized = runtime::materialize_build_values(
+        project_root,
+        staged,
+        &policy.policy_json,
+        only,
+        dsc,
+        dev,
+    );
     build_dsc::remove_staged_build_entries(&entries)?;
     materialized
 }
@@ -108,12 +115,8 @@ pub fn refresh_dev_build_slots(
     project_root: &Path,
     request: runtime::build_watch::BuildSlotRefreshRequest,
 ) -> Result<(), String> {
-    // Dev artifacts live in the dev compiler cache; the startup path runs
-    // before `runtime::serve` installs the dev flag, so install it here.
-    // `deka build` never reaches this function.
-    unsafe {
-        std::env::set_var("DEKA_DEV", "1");
-    }
+    // Dev artifacts use the explicit dev cache below; no process-global flag
+    // selects their location.
     let app_dir = project_root.join("app");
     let src_dir = project_root.join("src");
     let api_dir = project_root.join("api");
@@ -121,8 +124,8 @@ pub fn refresh_dev_build_slots(
         project_root,
         &[app_dir.as_path(), src_dir.as_path(), api_dir.as_path()],
     )?;
-    let manifest_path =
-        runtime_core::framework::compiler_cache_dir(project_root).join("build-manifest.json");
+    let manifest_path = runtime_core::framework::compiler_cache_dir_with(project_root, true)
+        .join("build-manifest.json");
     let existing_manifest =
         match std::fs::read_to_string(&manifest_path) {
             Ok(raw) => Some(serde_json::from_str::<BuildManifest>(&raw).map_err(|err| {
@@ -180,6 +183,7 @@ pub fn refresh_dev_build_slots(
         &planned,
         true,
         only.as_ref(),
+        build_dsc::require_dsc().ok(),
     )?;
     update_dev_manifest(
         project_root,
@@ -276,7 +280,8 @@ fn update_dev_manifest(
     // restored span, duplicate watch event) is NOT swept: its module was just
     // republished.
     let live: BTreeSet<&str> = manifest.slots.iter().map(|slot| slot.id.as_str()).collect();
-    let published = runtime_core::framework::compiler_cache_dir(project_root).join("build-values");
+    let published = runtime_core::framework::compiler_cache_dir_with(project_root, true)
+        .join("build-values");
     for id in dropped_ids
         .into_iter()
         .filter(|id| !live.contains(id.as_str()))
