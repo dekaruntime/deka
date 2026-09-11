@@ -768,7 +768,7 @@ impl WorkerThread {
             // specifier computed here must spell the identical path or
             // load_source never recognizes it.
             let project_root = project_root.canonicalize().unwrap_or(project_root);
-            let wrapper_path = entry_wrapper_path(&project_root);
+            let wrapper_path = entry_wrapper_path_with(&project_root, self.config.dev_mode);
             let wrapper_specifier = ModuleSpecifier::from_file_path(&wrapper_path)
                 .map_err(|_| "invalid entry wrapper path".to_string())?;
             let loader = PhpxEsmLoader::new(
@@ -776,6 +776,8 @@ impl WorkerThread {
                 entry_path,
                 None,
                 self.config.host_grants.clone(),
+                self.config.dsc.clone(),
+                self.config.dev_mode,
             )
                 .map_err(|err| err.to_string())?;
             let loader: Rc<dyn deno_core::ModuleLoader> = Rc::new(loader);

@@ -25,6 +25,17 @@ pub fn compile_graph(
             "{DEKA_VALIDATION_ERROR_MARKER}dsc is required to compile DekaScript in the isolate. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH."
         )
     })?;
+    compile_graph_with_dsc(project_root, entry, &dsc)
+}
+
+/// Compile a graph with a compiler selected by the caller. Build owns its
+/// compiler selection at the CLI boundary; runtime/pool do not read it from
+/// the ambient process environment.
+pub fn compile_graph_with_dsc(
+    project_root: &Path,
+    entry: &Path,
+    dsc: &Path,
+) -> Result<HashMap<PathBuf, String>, String> {
 
     // RFD 21 (deka#754): validate every DekaScript source in the tree against
     // the closed deka.* catalog before dsc runs, lowering `safe { deka.* }`
@@ -140,6 +151,17 @@ pub fn lookup_js<'a>(
 pub fn compile_file(source: &Path) -> Result<String, String> {
     let root = source.parent().unwrap_or(source);
     let modules = compile_graph(root, source)?;
+    compiled_file(&modules, source)
+}
+
+/// Compile one linked-package source with the compiler selected by the caller.
+pub fn compile_file_with_dsc(source: &Path, dsc: &Path) -> Result<String, String> {
+    let root = source.parent().unwrap_or(source);
+    let modules = compile_graph_with_dsc(root, source, dsc)?;
+    compiled_file(&modules, source)
+}
+
+fn compiled_file(modules: &HashMap<PathBuf, String>, source: &Path) -> Result<String, String> {
     lookup_js(&modules, source)
         .cloned()
         .ok_or_else(|| {

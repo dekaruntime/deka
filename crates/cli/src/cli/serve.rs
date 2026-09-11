@@ -52,7 +52,35 @@ pub fn cmd(context: &Context) {
         // RFD 55: situational advisories come last of the setup output.
         stdio::note(crate::cli::user_cache::NOT_A_PROJECT_NOTE);
     }
-    runtime::serve(&context);
+    let dsc = if serves_built_artifact(&context) {
+        None
+    } else {
+        match crate::dsc::find_dsc() {
+            Ok(path) => path,
+            Err(err) => {
+                stdio::error("serve", &err);
+                std::process::exit(1);
+            }
+        }
+    };
+    runtime::serve_with_dsc(&context, dsc);
+}
+
+/// A built artifact has its verified executable entry under `dist/server/`.
+/// Do not resolve a compiler for this posture: the artifact-only gate removes
+/// DEKA_DSC and puts a poisoned `dsc` first on PATH to prove serve cannot use
+/// one.
+fn serves_built_artifact(context: &Context) -> bool {
+    let Ok(resolved) = core::resolve_handler_path(&context.handler.input) else {
+        return false;
+    };
+    let Some(server_dir) = resolved.path.parent() else {
+        return false;
+    };
+    server_dir.file_name().is_some_and(|name| name == "server")
+        && server_dir
+            .parent()
+            .is_some_and(|dist| dist.join("build-manifest.json").is_file())
 }
 
 /// Resolve the handler the way `runtime::serve` will. When it is a `.ds` /

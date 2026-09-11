@@ -1,5 +1,7 @@
 // ========== Configuration ==========
 
+use std::path::PathBuf;
+
 /// Configuration for the isolate pool
 #[derive(Clone)]
 pub struct PoolConfig {
@@ -32,6 +34,12 @@ pub struct PoolConfig {
     pub use_esm: bool,
     pub debug: bool,
     pub perf_profile: bool,
+    /// Compiler explicitly selected by the caller for source-posture work.
+    /// Built artifacts leave this unset and cannot compile at serve time.
+    pub dsc: Option<PathBuf>,
+    /// Select the isolated development cache for dev build values and their
+    /// generated module wrapper.
+    pub dev_mode: bool,
 }
 
 impl Default for PoolConfig {
@@ -52,6 +60,8 @@ impl Default for PoolConfig {
             use_esm: true,
             debug: false,
             perf_profile: false,
+            dsc: None,
+            dev_mode: false,
         }
     }
 }

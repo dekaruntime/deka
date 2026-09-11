@@ -32,7 +32,7 @@ fn build_deka_handler_bundle_in_project(
         .unwrap_or_else(|_| "\"\"".to_string());
     let tenant_root_injection = format!("globalThis.__dekaFsTenantRoot = {};\n", root_json);
 
-    let dsc = runtime_core::dsc::find_dsc()?.ok_or_else(|| {
+    let dsc = crate::dsc_transpile::find_dsc()?.ok_or_else(|| {
         "dsc is required to bundle DekaScript handlers. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH.".to_string()
     })?;
     // dsc refuses to overwrite a file it did not generate. tempfile()

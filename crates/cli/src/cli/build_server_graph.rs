@@ -62,6 +62,7 @@ pub fn compile_and_reroot_entries(
     project_root: &Path,
     entries_dir: &Path,
     dist_server: &Path,
+    dsc: &Path,
 ) -> Result<EmittedEntries, String> {
     let sources = generate_entry_sources(project_root, entries_dir)?;
 
@@ -76,7 +77,7 @@ pub fn compile_and_reroot_entries(
     // the write by `assert_entry_linkage` — every named import of every
     // emitted entry must resolve in the merged graph.
     for (name, source_path) in &sources {
-        let graph = pool::dsc_compile::compile_graph(project_root, source_path)
+        let graph = pool::dsc_compile::compile_graph_with_dsc(project_root, source_path, dsc)
             .map_err(|err| format!("failed to compile server entry {name}: {err}"))?;
         for (path, js) in graph {
             modules.entry(path).or_insert(js);

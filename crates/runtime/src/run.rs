@@ -1,4 +1,5 @@
 use std::path::Path as FsPath;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::extensions::extensions_for_mode;
@@ -18,18 +19,22 @@ use runtime_core::process::parse_exit_code;
 use runtime_core::validation::validate_deka_handler_with;
 
 pub fn run(context: &Context) {
+    run_with_dsc(context, None);
+}
+
+pub fn run_with_dsc(context: &Context, dsc: Option<PathBuf>) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("failed to start tokio runtime");
 
-    if let Err(err) = rt.block_on(run_async(context)) {
+    if let Err(err) = rt.block_on(run_async(context, dsc)) {
         eprintln!("{}", err);
         std::process::exit(1);
     }
 }
 
-async fn run_async(context: &Context) -> Result<(), String> {
+async fn run_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), String> {
     let platform = ServerPlatform::default();
     let resolved_security = resolve_security_policy(context)?;
     for warning in resolved_security.warnings {
@@ -98,6 +103,7 @@ async fn run_async(context: &Context) -> Result<(), String> {
 
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let mut pool_config = PoolConfig::default();
+    pool_config.dsc = dsc;
     // Run mode should allow long-lived servers without timing out.
     pool_config.request_timeout_ms = 0;
     if let Some(enabled) = runtime_cfg.code_cache_enabled() {

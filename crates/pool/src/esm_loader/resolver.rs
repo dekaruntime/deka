@@ -42,7 +42,12 @@ pub fn resolve_project_root(entry_path: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn entry_wrapper_path(project_root: &Path) -> PathBuf {
-    runtime_core::framework::compiler_cache_dir(project_root).join("__deka_entry.js")
+    entry_wrapper_path_with(project_root, false)
+}
+
+pub fn entry_wrapper_path_with(project_root: &Path, dev_mode: bool) -> PathBuf {
+    runtime_core::framework::compiler_cache_dir_with(project_root, dev_mode)
+        .join("__deka_entry.js")
 }
 
 pub(crate) fn parse_module_imports(source: &str) -> Vec<String> {
@@ -273,7 +278,7 @@ mod tests {
         let resolved = resolve_project_root(&entry).expect("js handler has a project root");
         assert_eq!(resolved, root.path());
 
-        PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None)
+        PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false)
             .expect("js loader skips dsc");
     }
 

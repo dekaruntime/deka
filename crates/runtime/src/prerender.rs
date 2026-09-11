@@ -25,6 +25,7 @@ pub fn prerender_static_pages(
     dist_client: &Path,
     tasks: &[StaticRenderTask],
     policy_json: &str,
+    dsc: Option<PathBuf>,
 ) -> Result<(), String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -35,6 +36,7 @@ pub fn prerender_static_pages(
         dist_client,
         tasks,
         policy_json,
+        dsc,
     ))
 }
 
@@ -43,11 +45,19 @@ async fn prerender_static_pages_async(
     dist_client: &Path,
     tasks: &[StaticRenderTask],
     policy_json: &str,
+    dsc: Option<PathBuf>,
 ) -> Result<(), String> {
-    crate::islands::write_island_client_assets_for_project(
-        project_root,
-        crate::islands::ClientAssetFlavor::Dev,
-    )?;
+    match dsc.as_deref() {
+        Some(dsc) => crate::islands::write_island_client_assets_for_project_with_dsc(
+            project_root,
+            crate::islands::ClientAssetFlavor::Dev,
+            dsc,
+        )?,
+        None => crate::islands::write_island_client_assets_for_project(
+            project_root,
+            crate::islands::ClientAssetFlavor::Dev,
+        )?,
+    }
     crate::css::write_route_css_assets_for_project(project_root)?;
 
     // Explicit render plan: every static route and staticParams instance the
@@ -65,6 +75,7 @@ async fn prerender_static_pages_async(
     let mut pool_config = PoolConfig::default();
     pool_config.num_workers = 1;
     pool_config.request_timeout_ms = 30_000;
+    pool_config.dsc = dsc;
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let serve_mode = runtime_config::ServeMode::Php;
     let extensions_provider = Arc::new(move || extensions_for_mode(&serve_mode));

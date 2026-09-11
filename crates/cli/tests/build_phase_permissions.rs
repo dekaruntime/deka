@@ -28,7 +28,9 @@ const FIXTUREFS_SOURCE: &str = "export async fn read_file(p: string) Promise<Res
 
 /// Writes the fixture package into the project's ds_modules/, pins its
 /// fsGraph digest in deka.lock (the same shape `deka install` writes), and
-/// returns the DEKA_HOST_GRANTS grant-table JSON keyed by that digest.
+/// writes the project-local grant table keyed by that digest. The returned
+/// JSON is retained for callers that deliberately poison the former ambient
+/// override; loader authority comes only from `deka.grants.json`.
 fn add_fixturefs(project: &Path) -> String {
     let package = project.join("ds_modules").join("@deka").join("fixturefs");
     fs::create_dir_all(&package).expect("mkdir fixturefs");
@@ -58,7 +60,7 @@ fn add_fixturefs(project: &Path) -> String {
     fs::write(&lock_path, serde_json::to_string_pretty(&lock).expect("lock json"))
         .expect("write deka.lock");
 
-    serde_json::to_string(&serde_json::json!([
+    let grants = serde_json::to_string(&serde_json::json!([
         {
             "name": "@deka/fixturefs",
             "version": "1.0.0",
@@ -66,7 +68,9 @@ fn add_fixturefs(project: &Path) -> String {
             "kinds": ["fs"]
         }
     ]))
-    .expect("grant table json")
+    .expect("grant table json");
+    fs::write(project.join("deka.grants.json"), &grants).expect("write fixturefs grants");
+    grants
 }
 
 /// Scaffolds a fresh web project into `dir` via `deka init`.
@@ -84,11 +88,11 @@ fn init_project(dir: &Path) {
     );
 }
 
-fn run_build(dir: &Path, host_grants: &str) -> (bool, String) {
+fn run_build(dir: &Path, _host_grants: &str) -> (bool, String) {
     let output = Command::new(cli_bin())
         .arg("build")
         .current_dir(dir)
-        .env("DEKA_HOST_GRANTS", host_grants)
+        .env_remove("DEKA_HOST_GRANTS")
         .output()
         .expect("run deka build");
     let combined = format!(
@@ -99,11 +103,11 @@ fn run_build(dir: &Path, host_grants: &str) -> (bool, String) {
     (output.status.success(), combined)
 }
 
-fn run_with_args(dir: &Path, args: &[&str], host_grants: &str) -> (bool, String) {
+fn run_with_args(dir: &Path, args: &[&str], _host_grants: &str) -> (bool, String) {
     let output = Command::new(cli_bin())
         .args(args)
         .current_dir(dir)
-        .env("DEKA_HOST_GRANTS", host_grants)
+        .env_remove("DEKA_HOST_GRANTS")
         .output()
         .expect("run deka");
     let combined = format!(

@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::esm_loader::{
-    PhpxEsmLoader, entry_wrapper_path, hash_module_graph, resolve_project_root,
+    PhpxEsmLoader, entry_wrapper_path_with, hash_module_graph, resolve_project_root,
 };
 use crate::secrets_cache::{SecretsCache, SecretsMap};
 use crate::validation;

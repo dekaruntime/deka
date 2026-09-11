@@ -142,7 +142,7 @@ mod tests {
             configured_module_root(root.path()).expect("configured root"),
             Some(stdlib.canonicalize().expect("canonical root"))
         );
-        PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None).expect("loader");
+        PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false).expect("loader");
         println!("ambient-proof:loader-created");
     }
 }

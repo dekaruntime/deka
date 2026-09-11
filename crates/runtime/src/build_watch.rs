@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use runtime_core::framework::{
-    BuildManifest, SlotInvalidation, affected_slots, compiler_cache_dir,
+    BuildManifest, SlotInvalidation, affected_slots, compiler_cache_dir_with,
 };
 
 /// What one watch event asks the refresh hook to do.
@@ -80,7 +80,7 @@ pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -
         return false;
     };
 
-    let manifest_path = compiler_cache_dir(project_root).join("build-manifest.json");
+    let manifest_path = compiler_cache_dir_with(project_root, dev_mode).join("build-manifest.json");
     let manifest = match std::fs::read_to_string(&manifest_path) {
         Ok(raw) => match serde_json::from_str::<BuildManifest>(&raw) {
             Ok(manifest) => Some(manifest),

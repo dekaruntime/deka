@@ -33,7 +33,7 @@ pub fn ensure_compiler_cache(handler_input: &str) -> Result<(), String> {
     let root = project_root_from_handler(handler_input)
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
-    let cache = runtime_core::framework::compiler_cache_dir(&root);
+    let cache = runtime_core::framework::compiler_cache_dir_with(&root, true);
     std::fs::create_dir_all(&cache)
         .map_err(|err| format!("failed to create {}: {err}", cache.display()))?;
     Ok(())

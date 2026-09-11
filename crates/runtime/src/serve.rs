@@ -1,4 +1,5 @@
 use std::path::Path as FsPath;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -24,18 +25,22 @@ use transport::{
 static WATCHER_GUARDS: OnceLock<Mutex<Vec<notify::RecommendedWatcher>>> = OnceLock::new();
 
 pub fn serve(context: &Context) {
+    serve_with_dsc(context, None);
+}
+
+pub fn serve_with_dsc(context: &Context, dsc: Option<PathBuf>) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("failed to start tokio runtime");
 
-    if let Err(err) = rt.block_on(serve_async(context)) {
+    if let Err(err) = rt.block_on(serve_async(context, dsc)) {
         stdio_log::error("serve", &err);
         std::process::exit(1);
     }
 }
 
-async fn serve_async(context: &Context) -> Result<(), String> {
+async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), String> {
     let platform = ServerPlatform::default();
     let resolved_security = resolve_security_policy(context)?;
     for warning in resolved_security.warnings {
@@ -92,10 +97,17 @@ async fn serve_async(context: &Context) -> Result<(), String> {
             .or_else(|| crate::islands::find_app_router_root(&resolved.path))
     };
     if let Some(root) = app_router_root.as_deref() {
-        crate::islands::write_island_client_assets_for_project(
-            &root,
-            crate::islands::ClientAssetFlavor::Dev,
-        )?;
+        match dsc.as_deref() {
+            Some(dsc) => crate::islands::write_island_client_assets_for_project_with_dsc(
+                &root,
+                crate::islands::ClientAssetFlavor::Dev,
+                dsc,
+            )?,
+            None => crate::islands::write_island_client_assets_for_project(
+                &root,
+                crate::islands::ClientAssetFlavor::Dev,
+            )?,
+        }
         crate::css::write_route_css_assets_for_project(&root)?;
         // The serve-entry was generated inside resolve_handler_path, before
         // the hashed assets existed; swap its logical /assets URLs for the
@@ -136,7 +148,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     let mut serve_options = pool::validation::ServeOptions::default();
     apply_cli_serve_overrides(context, &mut serve_options);
 
-    let pool_config = configure_pool(&serve_options, watch_enabled);
+    let pool_config = configure_pool(&serve_options, watch_enabled, dsc, dev_mode);
     let pool_workers = pool_config.num_workers;
 
     let serve_mode = resolved.mode.clone();
@@ -245,9 +257,13 @@ fn perf_mode_enabled() -> bool {
 fn configure_pool(
     serve_options: &pool::validation::ServeOptions,
     watch_enabled: bool,
+    dsc: Option<PathBuf>,
+    dev_mode: bool,
 ) -> PoolConfig {
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let mut pool_config = PoolConfig::default();
+    pool_config.dsc = dsc;
+    pool_config.dev_mode = dev_mode;
 
     if let Some(workers) = serve_options.workers.clone() {
         pool_config.num_workers = match workers {

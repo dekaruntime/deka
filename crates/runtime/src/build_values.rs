@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use engine::{RuntimeEngine, config as runtime_config};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData};
-use runtime_core::framework::compiler_cache_dir;
+use runtime_core::framework::compiler_cache_dir_with;
 
 use crate::extensions::extensions_for_mode;
 
@@ -50,6 +50,8 @@ pub fn materialize_build_values(
     entries: Vec<BuildEntry>,
     policy_json: &str,
     only: Option<&std::collections::BTreeSet<String>>,
+    dsc: Option<PathBuf>,
+    dev_mode: bool,
 ) -> Result<MaterializedBuild, String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -60,6 +62,8 @@ pub fn materialize_build_values(
         entries,
         policy_json,
         only,
+        dsc,
+        dev_mode,
     ))
 }
 
@@ -68,10 +72,12 @@ async fn materialize_build_values_async(
     entries: Vec<BuildEntry>,
     policy_json: &str,
     only: Option<&std::collections::BTreeSet<String>>,
+    dsc: Option<PathBuf>,
+    dev_mode: bool,
 ) -> Result<MaterializedBuild, String> {
     use runtime_core::framework::FsObservation;
 
-    let cache_dir = compiler_cache_dir(project_root);
+    let cache_dir = compiler_cache_dir_with(project_root, dev_mode);
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let staging = tempfile::Builder::new()
@@ -106,6 +112,7 @@ async fn materialize_build_values_async(
     let mut pool_config = PoolConfig::default();
     pool_config.num_workers = 1;
     pool_config.request_timeout_ms = 30_000;
+    pool_config.dsc = dsc;
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let serve_mode = runtime_config::ServeMode::Php;
     let extensions_provider = Arc::new(move || extensions_for_mode(&serve_mode));
