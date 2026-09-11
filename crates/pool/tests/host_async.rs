@@ -207,7 +207,7 @@ async fn slow_async_op_does_not_block_sibling_worker_request() {
     let slow_code = format!(
         r#"
 globalThis.app = async function(req) {{
-  await __deka_host('fs', 'write_file', [{marker_js}, [1]], ['fs']);
+  await __deka_host('fs', 'write_file', [{marker_js}, new Uint8Array([1])], ['fs']);
   const r = await __deka_host('fs', 'read_file', [{path_js}], ['fs']);
   return {{ status: 200, headers: {{}}, body: JSON.stringify({{ ok: r.ok === true, tEnd: Date.now() }}) }};
 }};
@@ -218,7 +218,7 @@ globalThis.app = async function(req) {{
     let medium_code = format!(
         r#"
 globalThis.app = async function(req) {{
-  await __deka_host('fs', 'write_file', [{medium_marker_js}, [1]], ['fs']);
+  await __deka_host('fs', 'write_file', [{medium_marker_js}, new Uint8Array([1])], ['fs']);
   await __deka_host('fs', 'read_file', [{medium_path_js}], ['fs']);
   return {{ status: 200, headers: {{}}, body: JSON.stringify({{ medium: true }}) }};
 }};
