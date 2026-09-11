@@ -81,9 +81,12 @@ pub(super) fn op_php_path_resolve(#[string] base: String, #[string] path: String
     let _ = enforce_read(Some(&base));
     let _ = enforce_read(Some(&path));
     if let Some(stripped) = path.strip_prefix("@/") {
-        let root = std::env::var("DEKA_MODULE_ROOT")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
+        // The `@/` alias resolves against the module root the dispatch layer
+        // installed explicitly; the process environment is not consulted
+        // (deka#801). Fall back to the cwd, as before.
+        let root = crate::host_config::handler_paths()
+            .and_then(|paths| paths.module_root.clone())
+            .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| {
                 std::env::current_dir()
                     .ok()

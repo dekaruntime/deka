@@ -1,10 +1,15 @@
 //! deka.gg registry + R2 tarball CDN endpoints for stdlib installs (deka#797).
 //!
-//! `DEKA_PM_REGISTRY_URL` / `DEKA_PM_STDLIB_CDN` exist solely so tests and CI
-//! can serve the deka.gg registry + CDN shape from a local fixture server
-//! (deka#797 grant-table tests run the real installer hermetically). They are
-//! not a configuration channel — production installs always use deka.gg
-//! (deka#801).
+//! `DEKA_PM_REGISTRY_URL` / `DEKA_PM_STDLIB_CDN` are test-infrastructure
+//! variables (deka#801), in the same sanctioned category as `DEKA_BLESS` /
+//! `DEKA_DSC` / `DEKA_WASM` / `DEKA_NATIVE` / `DEKA_TESTSUITE_ROOT`: they
+//! exist solely so tests and CI can serve the deka.gg registry + CDN shape
+//! from a local fixture server (deka#797 grant-table tests run the real
+//! installer hermetically by spawning the real CLI as a child process, where
+//! env is the only injection channel — see
+//! `crates/cli/tests/grant_table_plumbing.rs`). They are not a configuration
+//! channel: production installs always use deka.gg, and no product code or
+//! script reads them as config.
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;

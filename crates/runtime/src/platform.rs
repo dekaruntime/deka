@@ -216,9 +216,20 @@ async fn platform_async(context: &Context) {
     let root = std::fs::canonicalize(&root).unwrap_or(root);
 
     // Load database config from platform-level deka.json. The parsed values
-    // thread into the pageview tracker explicitly (deka#801); the env publish
-    // inside is the interim deka_host channel (see engine::config, deka#801).
+    // thread into the pageview tracker explicitly (deka#801) and into the
+    // host bridge modules via deka_host's explicit process-wide store —
+    // never through the process environment.
     let db_config = runtime_config::load_database_config(&root);
+    deka_host::host_config::install_database_endpoints(deka_host::host_config::DatabaseEndpoints {
+        neo4j_uri: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.uri.clone()),
+        neo4j_user: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.user.clone()),
+        neo4j_password: db_config
+            .neo4j
+            .as_ref()
+            .and_then(|neo4j| neo4j.password.clone()),
+        neo4j_db: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.db.clone()),
+        redis_url: db_config.redis_url.clone(),
+    });
     deka_http::analytics::init(
         db_config
             .redis_url

@@ -76,15 +76,25 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
         .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
 
     // Load neo4j/redis config from deka.json; the values thread into the
-    // HTTP layer explicitly (deka#801) instead of being read back from the
-    // process environment. The env publish inside load_database_config is
-    // the interim deka_host channel (see engine::config, deka#801).
+    // HTTP layer explicitly (deka#801) and into the host bridge modules via
+    // deka_host's explicit process-wide store — never through the process
+    // environment.
     let config_dir = if resolved.path.is_dir() {
         &resolved.path
     } else {
         resolved.path.parent().unwrap_or(&resolved.path)
     };
     let db_config = runtime_config::load_database_config(config_dir);
+    deka_host::host_config::install_database_endpoints(deka_host::host_config::DatabaseEndpoints {
+        neo4j_uri: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.uri.clone()),
+        neo4j_user: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.user.clone()),
+        neo4j_password: db_config
+            .neo4j
+            .as_ref()
+            .and_then(|neo4j| neo4j.password.clone()),
+        neo4j_db: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.db.clone()),
+        redis_url: db_config.redis_url.clone(),
+    });
     let http_config = deka_http::HttpConfig {
         neo4j: db_config
             .neo4j
@@ -160,6 +170,13 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
         let _ = platform.env().set(key, value);
     };
     set_handler_path_with(&handler_path, &env_get, &mut env_set);
+    // The host bridge (security hints, `@/` path resolution) reads the
+    // handler location from this explicit install, not the process
+    // environment (deka#801).
+    deka_host::host_config::install_handler_paths(deka_host::host_config::HandlerPaths {
+        handler_path: Some(handler_path.clone()),
+        module_root: None,
+    });
 
     stdio_log::log("handler", &format!("loaded {}", handler_path));
     if dev_mode {
