@@ -1,4 +1,4 @@
-//! Beautiful error formatting for validation errors using deka-validation.
+//! Beautiful error formatting for validation errors using the shared formatter.
 
 /// Format a validation error with the shared Deka formatting.
 pub fn format_validation_error(

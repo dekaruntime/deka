@@ -26,7 +26,7 @@ swc_ecma_visit = { workspace = true }
 
 redis = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
-deka-validation = { path = "../deka-validation" }
+deka-validation = { version = "0.2", features = ["wasm"] }
 # Staged catalog compiles verify rewritten dependency packages against the
 # real deka.lock with the same integrity hashes `deka install` pins.
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
