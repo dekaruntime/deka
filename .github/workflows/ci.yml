@@ -163,22 +163,16 @@ jobs:
       - name: Forbid vendored testsuite corpus
         run: |
           if find tests -type d -name testsuite -print -quit | grep -q .; then
-            echo "::error::testsuite corpus must not be vendored; use scripts/ci-fetch-testsuite-corpus.sh"
+            echo "::error::testsuite corpus must not be vendored; it is owned by dekaruntime/testsuite. Use 'deka self fetch testsuite'"
             exit 1
           fi
 
       - name: Forbid vendored tour
         run: |
           if find tests -type d -name tour -print -quit | grep -q .; then
-            echo "::error::tour must not be vendored; it is owned by dekaruntime/tour. Use scripts/ci-fetch-tour.sh"
+            echo "::error::tour must not be vendored; it is owned by dekaruntime/tour. Use 'deka self fetch tour'"
             exit 1
           fi
-
-      - name: Fetch pinned testsuite corpus
-        run: scripts/ci-fetch-testsuite-corpus.sh "$GITHUB_WORKSPACE/.cache/testsuite-corpus"
-
-      - name: Fetch pinned tour
-        run: scripts/ci-fetch-tour.sh "$GITHUB_WORKSPACE/.cache/tour"
 
       - name: Where am I?
         run: |
@@ -274,6 +268,14 @@ jobs:
       - name: Build CLI for runtime execution tests
         run: cargo build --release -p cli
 
+      # RFD 59 (deka#836): the shipped CLI fetches the pinned content
+      # checkouts. This replaces scripts/ci-fetch-testsuite-corpus.sh and
+      # scripts/ci-fetch-tour.sh, and is the zero-environment-variable path.
+      - name: Fetch pinned content (self fetch)
+        run: |
+          ./target/release/cli self fetch testsuite
+          ./target/release/cli self fetch tour
+
       # rfd#38: language compile is dsc. Fetch the published CLI + browser
       # wasm; do not rebuild deka_compiler_wasm from this tree.
       - name: Install published dsc
@@ -322,7 +324,6 @@ jobs:
         env:
           DEKA_DSC: ${{ github.workspace }}/.ci/dsc
           DEKA_WASM: ${{ github.workspace }}/.ci/wasm/deka_compiler.wasm
-          DEKA_TESTSUITE_ROOT: ${{ github.workspace }}/.cache/testsuite-corpus
         run: ./run.sh --skip-build --locked
 
       - name: Install dump harness deps + Chromium
@@ -338,7 +339,6 @@ jobs:
           DEKA_DSC: ${{ github.workspace }}/.ci/dsc
           DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
           DEKA_WASM: ${{ github.workspace }}/.ci/wasm/deka_compiler.wasm
-          DEKA_TESTSUITE_ROOT: ${{ github.workspace }}/.cache/testsuite-corpus
         run: bun tests/dump/scripts/smoke.mjs
 
       # A fresh HTTP request can observe an edit even when the injected HMR
