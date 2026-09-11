@@ -67,12 +67,31 @@ pub struct PageviewEvent {
 
 static SENDER: OnceLock<mpsc::SyncSender<PageviewEvent>> = OnceLock::new();
 
+/// Redis URL for the background worker, installed once by the caller.
+/// Replaces the `DEKA_REDIS_URL` read (deka#801): the environment is not a
+/// config channel. Defaults to `redis://localhost:6379` when the caller never
+/// installs a URL.
+static REDIS_URL: OnceLock<String> = OnceLock::new();
+
+/// Install the Redis URL the pageview worker connects to. Idempotent; the
+/// first install wins. Must be called before the first tracked pageview
+/// (the router and the platform server both install it at startup).
+pub fn init(redis_url: &str) {
+    let _ = REDIS_URL.set(redis_url.to_string());
+}
+
+fn configured_redis_url() -> String {
+    REDIS_URL
+        .get()
+        .cloned()
+        .unwrap_or_else(|| "redis://localhost:6379".to_string())
+}
+
 /// Initialise the background pageview worker (lazy, once-per-process).
 fn ensure_worker() -> &'static mpsc::SyncSender<PageviewEvent> {
     SENDER.get_or_init(|| {
         let (tx, rx) = mpsc::sync_channel::<PageviewEvent>(CHANNEL_CAPACITY);
-        let redis_url = std::env::var("DEKA_REDIS_URL")
-            .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+        let redis_url = configured_redis_url();
         thread::Builder::new()
             .name("deka-pageviews".to_string())
             .spawn(move || run_worker(rx, redis_url))
@@ -373,18 +392,16 @@ mod tests {
         assert!(!track_pageview(&req_headers, 302, &h));
     }
 
-    // End-to-end integration test: requires a reachable Redis at
-    // DEKA_REDIS_TEST_URL. Skips silently if not configured so CI stays clean.
+    // End-to-end integration test: requires the dev Docker Redis at
+    // localhost:6380 (same pattern as pool's redis_lookup_integration).
+    // Skips silently if not reachable so CI stays clean.
     //
     // Seeds a `subdomain:{name}` → `{shop_id}` key in Redis so the
     // Host-based resolver can find it (analytics now uses
     // `resolve_tenant_from_host` which ignores X-Shop-ID).
     #[test]
     fn end_to_end_redis_integration() {
-        let url = match std::env::var("DEKA_REDIS_TEST_URL") {
-            Ok(v) => v,
-            Err(_) => return,
-        };
+        let url = "redis://localhost:6380".to_string();
         let client = match redis::Client::open(url.as_str()) {
             Ok(c) => c,
             Err(_) => return,

@@ -5,10 +5,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::app_router;
+use crate::config::HttpConfig;
 use engine::RuntimeState;
 
-pub async fn serve_unix(state: Arc<RuntimeState>, socket_path: &str) -> Result<(), String> {
-    let app = app_router(state);
+pub async fn serve_unix(
+    state: Arc<RuntimeState>,
+    socket_path: &str,
+    config: HttpConfig,
+) -> Result<(), String> {
+    let app = app_router(state, config);
     let listener = bind_unix_listener(socket_path)?;
     loop {
         let (stream, _) = listener.accept().await.map_err(|err| err.to_string())?;

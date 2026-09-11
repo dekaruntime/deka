@@ -16,14 +16,22 @@ pub struct UtilityCssConfig {
     pub preflight: bool,
 }
 
+impl Default for UtilityCssConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            preflight: DEFAULT_PREFLIGHT,
+        }
+    }
+}
+
 /// Inject utility CSS into an HTML response.
 ///
 /// The actual scanning/generation is performed by the shared TypeScript
 /// implementation bundled at build time and executed inside a `deno_core`
 /// isolate. This keeps the browser tour and the server runtime on a single
 /// implementation and a single JSON registry.
-pub fn inject_utility_css(html: &str) -> String {
-    let config = load_config();
+pub fn inject_utility_css(html: &str, config: UtilityCssConfig) -> String {
     if !config.enabled {
         return html.to_string();
     }
@@ -195,23 +203,23 @@ pub fn collect_classes(html: &str) -> std::collections::BTreeSet<String> {
     out
 }
 
-fn load_config() -> UtilityCssConfig {
-    let path = config_path();
+/// Load the utility-CSS config from `deka.css.json` under the given project
+/// root. `None` (or a missing file) keeps the built-in defaults. The root is
+/// caller-supplied — the `DEKA_PROJECT_ROOT` env read is gone (deka#801).
+pub fn load_config(project_root: Option<&std::path::Path>) -> UtilityCssConfig {
+    let Some(root) = project_root else {
+        return UtilityCssConfig::default();
+    };
+    let path = config_path(root);
     if !path.exists() {
-        return UtilityCssConfig {
-            enabled: true,
-            preflight: DEFAULT_PREFLIGHT,
-        };
+        return UtilityCssConfig::default();
     }
     let contents = fs::read_to_string(&path).unwrap_or_default();
     parse_config(&contents)
 }
 
-fn config_path() -> PathBuf {
-    std::env::var("DEKA_PROJECT_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("deka.css.json")
+fn config_path(project_root: &std::path::Path) -> PathBuf {
+    project_root.join("deka.css.json")
 }
 
 fn parse_config(contents: &str) -> UtilityCssConfig {
@@ -233,6 +241,10 @@ fn parse_config(contents: &str) -> UtilityCssConfig {
 mod tests {
     use super::{collect_classes, inject_utility_css, inject_utility_css_with_config, UtilityCssConfig};
 
+    fn default_config() -> UtilityCssConfig {
+        UtilityCssConfig::default()
+    }
+
     #[test]
     fn utility_css_for_classes_emits_rules() {
         let css = super::utility_css_for_classes(&["p-4".to_string(), "bg-white".to_string()], false);
@@ -244,7 +256,7 @@ mod tests {
     #[test]
     fn injects_style_for_basic_classes() {
         let html = "<html><head></head><body><div class=\"bg-white text-gray-900 p-4\"></div></body></html>";
-        let out = inject_utility_css(html);
+        let out = inject_utility_css(html, default_config());
         assert!(out.contains("__deka_utility_css"));
         assert!(out.contains(".bg-white{background-color:#ffffff;}"));
         assert!(out.contains(".text-gray-900{color:#111827;}"));
@@ -254,7 +266,7 @@ mod tests {
     #[test]
     fn supports_variants() {
         let html = "<html><head></head><body><a class=\"hover:text-blue-600 md:grid-cols-3\"></a></body></html>";
-        let out = inject_utility_css(html);
+        let out = inject_utility_css(html, default_config());
         assert!(out.contains(".hover\\:text-blue-600:hover{color:#2563eb;}"));
         assert!(out.contains("@media (min-width: 768px){.md\\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr));}}"));
     }

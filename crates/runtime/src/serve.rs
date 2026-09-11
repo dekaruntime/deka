@@ -75,13 +75,34 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
     let resolved = runtime_config::resolve_handler_path(&context.handler.input)
         .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
 
-    // Load neo4j/redis config from deka.json into env vars
+    // Load neo4j/redis config from deka.json; the values thread into the
+    // HTTP layer explicitly (deka#801) instead of being read back from the
+    // process environment. The env publish inside load_database_config is
+    // the interim deka_host channel (see engine::config, deka#801).
     let config_dir = if resolved.path.is_dir() {
         &resolved.path
     } else {
         resolved.path.parent().unwrap_or(&resolved.path)
     };
-    runtime_config::load_database_config(config_dir);
+    let db_config = runtime_config::load_database_config(config_dir);
+    let http_config = deka_http::HttpConfig {
+        neo4j: db_config
+            .neo4j
+            .map(|neo4j| deka_http::Neo4jConfig {
+                uri: neo4j
+                    .uri
+                    .unwrap_or_else(|| "bolt://localhost:7687".to_string()),
+                user: neo4j.user.unwrap_or_else(|| "neo4j".to_string()),
+                password: neo4j.password.unwrap_or_default(),
+                db: neo4j.db.unwrap_or_else(|| "neo4j".to_string()),
+            })
+            .unwrap_or_default(),
+        redis_url: db_config
+            .redis_url
+            .unwrap_or_else(|| "redis://localhost:6379".to_string()),
+        project_root: Some(config_dir.to_path_buf()),
+        ..Default::default()
+    };
     // Built-artifact posture (deka#762): when the resolved handler is a
     // compiled dist/server entry, production serves the artifact — no
     // source-posture asset generation, no cache rewrites, and static files
@@ -216,7 +237,7 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
 
     spawn_archive_task(&state, engine.archive());
 
-    serve_listeners(state, &serve_options, perf_mode, pool_workers).await
+    serve_listeners(state, &serve_options, perf_mode, pool_workers, http_config).await
 }
 
 fn apply_cli_serve_overrides(
@@ -643,6 +664,7 @@ async fn serve_listeners(
     serve_options: &pool::validation::ServeOptions,
     perf_mode: bool,
     pool_workers: usize,
+    http_config: deka_http::HttpConfig,
 ) -> Result<(), String> {
     if let Some(unix) = serve_options
         .unix
@@ -656,7 +678,10 @@ async fn serve_listeners(
         stdio_log::log("listen", &label);
         return transport::serve(
             state,
-            transport::ListenConfig::Unix(UnixOptions { path: unix }),
+            transport::ListenConfig::Unix(UnixOptions {
+                path: unix,
+                http: http_config,
+            }),
         )
         .await;
     }
@@ -712,6 +737,7 @@ async fn serve_listeners(
             port,
             listeners,
             perf_mode,
+            http: http_config,
         }),
     )
     .await?;

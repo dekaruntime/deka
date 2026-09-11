@@ -26,15 +26,16 @@ const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 static API_GRAPH: OnceCell<Graph> = OnceCell::const_new();
 
 /// Get or create the shared Neo4j connection for API queries.
-async fn get_graph() -> Result<&'static Graph, String> {
+async fn get_graph(neo4j: &crate::config::Neo4jConfig) -> Result<&'static Graph, String> {
+    // Clone into the init closure so the OnceCell future is 'static and the
+    // connection is configured from the caller's config, never the process
+    // environment (deka#801).
+    let uri = neo4j.uri.clone();
+    let user = neo4j.user.clone();
+    let password = neo4j.password.clone();
+    let db = neo4j.db.clone();
     API_GRAPH
-        .get_or_try_init(|| async {
-            let uri = std::env::var("DEKA_NEO4J_URI")
-                .unwrap_or_else(|_| "bolt://localhost:7687".to_string());
-            let user = std::env::var("DEKA_NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string());
-            let password = std::env::var("DEKA_NEO4J_PASSWORD").unwrap_or_default();
-            let db = std::env::var("DEKA_NEO4J_DB").unwrap_or_else(|_| "neo4j".to_string());
-
+        .get_or_try_init(|| async move {
             let config = neo4rs::ConfigBuilder::default()
                 .uri(&uri)
                 .user(&user)
@@ -57,6 +58,7 @@ async fn get_graph() -> Result<&'static Graph, String> {
 pub async fn handle_api_request(
     path: &str,
     headers: &[(String, String)],
+    neo4j: &crate::config::Neo4jConfig,
 ) -> Response<axum::body::Body> {
     let allowed_origin = cors_allowed_origin(headers);
 
@@ -70,16 +72,16 @@ pub async fn handle_api_request(
 
     // Route the API path
     if path == "/api/products" {
-        api_products(&shop_id, allowed_origin).await
+        api_products(&shop_id, allowed_origin, neo4j).await
     } else if path == "/api/categories" {
-        api_categories(&shop_id, allowed_origin).await
+        api_categories(&shop_id, allowed_origin, neo4j).await
     } else if path == "/api/shop" {
-        api_shop(&shop_id, allowed_origin).await
+        api_shop(&shop_id, allowed_origin, neo4j).await
     } else if let Some(sku) = path.strip_prefix("/api/products/") {
         if sku.is_empty() || sku.contains('/') {
             json_response(404, &json!({ "error": "not found" }), allowed_origin)
         } else {
-            api_product_by_sku(&shop_id, sku, allowed_origin).await
+            api_product_by_sku(&shop_id, sku, allowed_origin, neo4j).await
         }
     } else {
         json_response(404, &json!({ "error": "not found" }), allowed_origin)
@@ -87,8 +89,12 @@ pub async fn handle_api_request(
 }
 
 /// `GET /api/products` — all products for a shop.
-async fn api_products(shop_id: &str, allowed_origin: Option<&str>) -> Response<axum::body::Body> {
-    let graph = match get_graph().await {
+async fn api_products(
+    shop_id: &str,
+    allowed_origin: Option<&str>,
+    neo4j: &crate::config::Neo4jConfig,
+) -> Response<axum::body::Body> {
+    let graph = match get_graph(neo4j).await {
         Ok(g) => g,
         Err(e) => return json_response(503, &json!({ "error": e }), allowed_origin),
     };
@@ -116,8 +122,9 @@ async fn api_product_by_sku(
     shop_id: &str,
     sku: &str,
     allowed_origin: Option<&str>,
+    neo4j: &crate::config::Neo4jConfig,
 ) -> Response<axum::body::Body> {
-    let graph = match get_graph().await {
+    let graph = match get_graph(neo4j).await {
         Ok(g) => g,
         Err(e) => return json_response(503, &json!({ "error": e }), allowed_origin),
     };
@@ -146,8 +153,12 @@ async fn api_product_by_sku(
 }
 
 /// `GET /api/categories` — distinct product categories for a shop.
-async fn api_categories(shop_id: &str, allowed_origin: Option<&str>) -> Response<axum::body::Body> {
-    let graph = match get_graph().await {
+async fn api_categories(
+    shop_id: &str,
+    allowed_origin: Option<&str>,
+    neo4j: &crate::config::Neo4jConfig,
+) -> Response<axum::body::Body> {
+    let graph = match get_graph(neo4j).await {
         Ok(g) => g,
         Err(e) => return json_response(503, &json!({ "error": e }), allowed_origin),
     };
@@ -170,8 +181,12 @@ async fn api_categories(shop_id: &str, allowed_origin: Option<&str>) -> Response
 }
 
 /// `GET /api/shop` — shop info.
-async fn api_shop(shop_id: &str, allowed_origin: Option<&str>) -> Response<axum::body::Body> {
-    let graph = match get_graph().await {
+async fn api_shop(
+    shop_id: &str,
+    allowed_origin: Option<&str>,
+    neo4j: &crate::config::Neo4jConfig,
+) -> Response<axum::body::Body> {
+    let graph = match get_graph(neo4j).await {
         Ok(g) => g,
         Err(e) => return json_response(503, &json!({ "error": e }), allowed_origin),
     };

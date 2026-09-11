@@ -2,7 +2,7 @@
 
 pub mod analytics;
 pub mod api;
-mod debug;
+pub mod config;
 mod fast;
 mod listener;
 pub mod rate_limit;
@@ -13,5 +13,6 @@ pub mod websocket;
 
 pub mod unix;
 
+pub use config::{HttpConfig, Neo4jConfig};
 pub use router::app_router;
 pub use server::serve_http;

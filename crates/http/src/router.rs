@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::Extension;
 use axum::http::header::CONTENT_LENGTH;
 use axum::middleware::from_fn_with_state;
 use axum::{
@@ -11,32 +12,53 @@ use axum::{
 use base64::Engine;
 
 use crate::analytics::track_pageview;
-use crate::utility_css::inject_utility_css;
+use crate::config::{HttpConfig, Neo4jConfig};
+use crate::utility_css::{UtilityCssConfig, inject_utility_css};
 use crate::websocket::{handle_hmr_websocket, handle_websocket, set_hmr_runtime_state};
 use engine::{RuntimeState, execute_request_parts};
 
-use crate::debug::http_debug_enabled;
 use crate::rate_limit::{RateLimiter, middleware as rate_limit_middleware};
 
-pub fn app_router(state: Arc<RuntimeState>) -> Router {
-    let rate_limiter = RateLimiter::from_env();
+/// Request-path configuration installed by the caller (deka#801). Replaces
+/// the per-request `DEKA_*` env reads; built once in
+/// `app_router_with_rate_limiter` and carried as an axum extension.
+#[derive(Clone)]
+struct HttpExtensions {
+    debug: bool,
+    platform_api: bool,
+    neo4j: Arc<Neo4jConfig>,
+    utility_css: UtilityCssConfig,
+}
+
+pub fn app_router(state: Arc<RuntimeState>, config: HttpConfig) -> Router {
+    let rate_limiter = Arc::new(RateLimiter::new(config.rate_limit.clone()));
     rate_limiter.spawn_janitor();
-    app_router_with_rate_limiter(state, rate_limiter)
+    app_router_with_rate_limiter(state, rate_limiter, config)
 }
 
 pub fn app_router_with_rate_limiter(
     state: Arc<RuntimeState>,
     rate_limiter: Arc<RateLimiter>,
+    config: HttpConfig,
 ) -> Router {
     set_hmr_runtime_state(Arc::clone(&state));
+    crate::analytics::init(&config.redis_url);
+    let extensions = HttpExtensions {
+        debug: config.debug,
+        platform_api: config.platform_api,
+        neo4j: Arc::new(config.neo4j),
+        utility_css: crate::utility_css::load_config(config.project_root.as_deref()),
+    };
     Router::new()
         .fallback(handle_request)
         .with_state(state)
+        .layer(Extension(extensions))
         .layer(from_fn_with_state(rate_limiter, rate_limit_middleware))
 }
 
 async fn handle_request(
     State(state): State<Arc<RuntimeState>>,
+    Extension(extensions): Extension<HttpExtensions>,
     ws: Option<WebSocketUpgrade>,
     request: Request,
 ) -> impl IntoResponse {
@@ -51,9 +73,10 @@ async fn handle_request(
     }
 
     // ── Built-in REST API (/api/*) — skip V8 isolate entirely ──
-    // Only active when DEKA_PLATFORM_API=1 (set by `deka platform`).
-    // Standalone `deka serve` apps own their own /api/* routes.
-    if platform_api_enabled() && (path.starts_with("/api/") || path == "/api") {
+    // Only active when the caller enables it (HttpConfig::platform_api;
+    // deka#801 — the `DEKA_PLATFORM_API` env toggle is gone). Standalone
+    // `deka serve` apps own their own /api/* routes.
+    if extensions.platform_api && (path.starts_with("/api/") || path == "/api") {
         let mut headers = Vec::with_capacity(request.headers().len());
         for (key, value) in request.headers().iter() {
             headers.push((
@@ -61,7 +84,7 @@ async fn handle_request(
                 value.to_str().unwrap_or("").to_string(),
             ));
         }
-        return crate::api::handle_api_request(&path, &headers)
+        return crate::api::handle_api_request(&path, &headers, &extensions.neo4j)
             .await
             .into_response();
     }
@@ -79,7 +102,7 @@ async fn handle_request(
             .body(axum::body::Body::from("WebSocket upgrade required"))
             .unwrap();
     }
-    if http_debug_enabled() {
+    if extensions.debug {
         tracing::info!("[http] request {} {}", method, uri);
     }
     let (headers, body) = if state.perf_mode {
@@ -132,7 +155,7 @@ async fn handle_request(
     .await
     {
         Ok(mut response_envelope) => {
-            if http_debug_enabled() {
+            if extensions.debug {
                 tracing::info!("[http] response {} {}", response_envelope.status, uri);
             }
             // Fire-and-forget pageview tracking. Filters to 2xx + text/html
@@ -194,7 +217,8 @@ async fn handle_request(
                     response_envelope.body = inject_hmr_client(&response_envelope.body);
                 }
                 if is_html {
-                    response_envelope.body = inject_utility_css(&response_envelope.body);
+                    response_envelope.body =
+                        inject_utility_css(&response_envelope.body, extensions.utility_css);
                 }
                 response
                     .body(axum::body::Body::from(response_envelope.body))
@@ -212,19 +236,6 @@ async fn handle_request(
                 .unwrap()
         }
     }
-}
-
-/// Returns true when the built-in /api/* platform handler should be active.
-/// Set DEKA_PLATFORM_API=1 in the deka platform launchd plist.
-/// `deka serve` leaves this unset so PHPX apps own their own /api/* routes.
-fn platform_api_enabled() -> bool {
-    std::env::var("DEKA_PLATFORM_API")
-        .map(|value| is_truthy(&value))
-        .unwrap_or(false)
-}
-
-fn is_truthy(value: &str) -> bool {
-    matches!(value, "1" | "true" | "yes" | "on")
 }
 
 fn handler_failure_body(detail: &str, dev_mode: bool) -> String {
@@ -413,7 +424,7 @@ fn inject_hmr_client(html: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{handler_failure_body, inject_hmr_client, is_truthy, read_static_file};
+    use super::{handler_failure_body, inject_hmr_client, read_static_file};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -508,16 +519,6 @@ mod tests {
             "the injector owns the one module script wrapper; its JavaScript fragments must not add HTML"
         );
         assert_eq!(out.matches("</script>").count(), 1);
-    }
-
-    #[test]
-    fn truthy_parser_matches_expected_values() {
-        assert!(is_truthy("1"));
-        assert!(is_truthy("true"));
-        assert!(is_truthy("yes"));
-        assert!(is_truthy("on"));
-        assert!(!is_truthy("false"));
-        assert!(!is_truthy("0"));
     }
 
     #[test]
