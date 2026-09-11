@@ -65,6 +65,32 @@ const PREVIEW_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// How often the cleanup task runs (every hour).
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
+/// Resolve the on-disk handler path for a tenant.
+///
+/// `shop_id` arrives from tenant resolution, whose fast path already applies
+/// the shop_id charset rule — but the Redis `subdomain:*` fallback
+/// (`parse_subdomain_value`) returns whatever string is stored under the
+/// key, with no validation on the stored value. Re-validate at the point of
+/// use with the same `is_shop_id_subdomain` rule (deka#870): a failing value
+/// is a hard error and must never reach a path join.
+fn resolve_handler_path(root: &std::path::Path, shop_id: &str) -> Result<PathBuf, String> {
+    if shop_id.is_empty() {
+        return Ok(root.join("default").join("main.ds"));
+    }
+    if !pool::tenant::is_shop_id_subdomain(shop_id) {
+        return Err(format!(
+            "rejected invalid shop_id {:?} — refusing to resolve handler path",
+            shop_id
+        ));
+    }
+    let tenant = root.join("tenants").join(shop_id).join("main.ds");
+    Ok(if tenant.exists() {
+        tenant
+    } else {
+        root.join("default").join("main.ds")
+    })
+}
+
 impl PlatformState {
     /// Returns (HandlerKey, handler_code, handler_entry) for a tenant.
     /// Uses the bundler to compile DekaScript→JS with stdlib prelude baked in.
@@ -99,15 +125,18 @@ impl PlatformState {
             }
         }
 
-        // Resolve handler path — try tenant-specific, fall back to default
-        let handler_path = if shop_id.is_empty() {
-            self.root.join("default").join("main.ds")
-        } else {
-            let tenant = self.root.join("tenants").join(shop_id).join("main.ds");
-            if tenant.exists() {
-                tenant
-            } else {
-                self.root.join("default").join("main.ds")
+        // Resolve handler path — try tenant-specific, fall back to default.
+        // A shop_id that fails validation is a hard error: it never joins
+        // a filesystem path and no handler code is produced.
+        let handler_path = match resolve_handler_path(&self.root, shop_id) {
+            Ok(path) => path,
+            Err(err) => {
+                stdio::error("platform", &err);
+                return (
+                    HandlerKey::new("tenant:invalid-shop-id".to_string()),
+                    String::new(),
+                    None,
+                );
             }
         };
 
@@ -740,6 +769,104 @@ fn claims_cloudflare_ip_without_ray(headers: &[(String, String)]) -> bool {
     !headers
         .iter()
         .any(|(key, value)| key.eq_ignore_ascii_case("cf-ray") && !value.trim().is_empty())
+}
+
+#[cfg(test)]
+mod shop_id_path_validation_tests {
+    use super::resolve_handler_path;
+
+    struct TestRoot(std::path::PathBuf);
+
+    impl TestRoot {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "deka-870-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(dir.join("tenants")).unwrap();
+            std::fs::create_dir_all(dir.join("default")).unwrap();
+            std::fs::write(dir.join("default").join("main.ds"), "// default").unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn traversal_shaped_shop_ids_are_hard_errors() {
+        let root = TestRoot::new("negative");
+        for bad in [
+            "../escape",
+            "..",
+            "shop_../escape",
+            "shop_%2e%2e/escape",
+            "/abs/path",
+            " ",
+            "shop_αβγ",
+            "shop_😀",
+            "shop_ok/../../etc/passwd",
+            "shop_x\\..\\escape",
+            "shop_Oops",
+            "shop_ sneaky",
+        ] {
+            assert!(
+                resolve_handler_path(&root.0, bad).is_err(),
+                "fixture {bad:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_shop_id_never_touches_the_filesystem() {
+        let root = TestRoot::new("canary");
+        // Canary at the exact location "../escape" would resolve to if it
+        // were joined: <root>/tenants/../escape/main.ds == <root>/escape/main.ds.
+        // If validation ever happened after the join (or not at all), the
+        // exists() check would find this file and resolve it.
+        std::fs::create_dir_all(root.0.join("escape")).unwrap();
+        std::fs::write(root.0.join("escape").join("main.ds"), "// escaped").unwrap();
+
+        assert!(resolve_handler_path(&root.0, "../escape").is_err());
+        assert!(resolve_handler_path(&root.0, "..").is_err());
+    }
+
+    #[test]
+    fn valid_shop_ids_resolve_as_before() {
+        let root = TestRoot::new("positive");
+        std::fs::create_dir_all(root.0.join("tenants").join("shop_alpha-1")).unwrap();
+        std::fs::write(
+            root.0.join("tenants").join("shop_alpha-1").join("main.ds"),
+            "// tenant",
+        )
+        .unwrap();
+
+        // Existing tenant dir → tenant-specific handler.
+        assert_eq!(
+            resolve_handler_path(&root.0, "shop_alpha-1").unwrap(),
+            root.0
+                .join("tenants")
+                .join("shop_alpha-1")
+                .join("main.ds")
+        );
+        // Valid charset, missing dir → default fallback.
+        assert_eq!(
+            resolve_handler_path(&root.0, "shop_missing").unwrap(),
+            root.0.join("default").join("main.ds")
+        );
+        // Empty shop_id → default tenant (never a tenants/ join).
+        assert_eq!(
+            resolve_handler_path(&root.0, "").unwrap(),
+            root.0.join("default").join("main.ds")
+        );
+    }
 }
 
 #[cfg(test)]

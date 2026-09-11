@@ -491,6 +491,36 @@ mod tests {
     }
 
     #[test]
+    fn redis_fallback_values_fail_point_of_use_validation() {
+        // deka#870: the Redis `subdomain:*` fallback returns whatever string
+        // is stored under the key, with no validation of the stored value.
+        // The point-of-use guard in platform.rs re-applies this same charset
+        // rule, so every malicious fallback value below must fail it — the
+        // rule is shared, not reimplemented.
+        let malicious = [
+            r#"{"shop_id":"../escape"}"#,
+            r#"{"shop_id":"/abs/path"}"#,
+            r#"{"shop_id":"shop_αβγ"}"#,
+            r#"{"shop_id":"shop_ok/../../etc/passwd"}"#,
+            r#"{"shop_id":""}"#, // empty JSON shop_id falls back to the raw text
+            "../escape",
+            "%2e%2e/escape",
+            " ",
+        ];
+        for raw in malicious {
+            let rec = parse_subdomain_value(raw);
+            assert!(
+                !is_shop_id_subdomain(&rec.shop_id),
+                "fallback value {raw:?} (shop_id {:?}) must fail point-of-use validation",
+                rec.shop_id
+            );
+        }
+
+        let valid = parse_subdomain_value(r#"{"shop_id":"shop_alpha-1_beta"}"#);
+        assert!(is_shop_id_subdomain(&valid.shop_id));
+    }
+
+    #[test]
     fn tenant_info_cache_key_preview() {
         let info = TenantInfo {
             shop_id: "shop_beta".to_string(),
