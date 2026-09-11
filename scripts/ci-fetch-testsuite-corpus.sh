@@ -6,7 +6,14 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 pin="$root/scripts/testsuite-corpus-version"
+archive_override=
+if [[ "${1:-}" == "--archive" ]]; then
+  archive_override=${2:-}
+  [[ -n "$archive_override" && -f "$archive_override" ]] || { echo "--archive requires a readable archive file" >&2; exit 2; }
+  shift 2
+fi
 dest=${1:-"$root/.cache/testsuite-corpus"}
+[[ $# -le 1 ]] || { echo "usage: $0 [--archive <archive.tar.gz>] [destination]" >&2; exit 2; }
 version=$(sed -n '1p' "$pin")
 expected=$(sed -n '2p' "$pin")
 [[ "$version" =~ ^corpus-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid corpus version: $version" >&2; exit 2; }
@@ -20,8 +27,12 @@ sha256_file() {
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 archive="$tmp/corpus.tar.gz"
-url="${DEKA_TESTSUITE_ARCHIVE_URL:-https://github.com/dekaruntime/testsuite/archive/refs/tags/${version}.tar.gz}"
-curl -fsSL "$url" -o "$archive"
+if [[ -n "$archive_override" ]]; then
+  cp "$archive_override" "$archive"
+else
+  url="https://github.com/dekaruntime/testsuite/archive/refs/tags/${version}.tar.gz"
+  curl -fsSL "$url" -o "$archive"
+fi
 actual=$(sha256_file "$archive")
 [[ "$actual" == "$expected" ]] || { echo "testsuite corpus checksum mismatch: expected $expected, got $actual" >&2; exit 1; }
 tar -xzf "$archive" -C "$tmp"
