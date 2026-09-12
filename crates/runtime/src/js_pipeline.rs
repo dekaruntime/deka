@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[cfg(test)]
-use runtime_core::modules::MODULES_DIR;
+use deka_modules::modules::MODULES_DIR;
 
 fn parse_module_imports(source: &str) -> Vec<String> {
-    runtime_core::ds_imports::paths(source)
+    deka_modules::ds_imports::paths(source)
 }
 
 pub fn build_deka_handler_bundle(handler_path: &str) -> Result<String, String> {
@@ -94,10 +94,10 @@ pub fn ensure_project_layout(
     module_root: Option<&Path>,
     imports: &[String],
 ) -> Result<(), String> {
-    runtime_core::project_gate::validate_project(
+    deka_modules::project_gate::validate_project(
         project_root,
         imports,
-        &runtime_core::project_gate::GateOptions {
+        &deka_modules::project_gate::GateOptions {
             module_root: module_root.map(|p| p.to_path_buf()),
             require_lockfile: true,
             context: "deka run",
@@ -208,7 +208,7 @@ mod tests {
         assert!(
             imports
                 .iter()
-                .all(|spec| runtime_core::project_gate::is_stdlib_module_spec(spec)),
+                .all(|spec| deka_modules::project_gate::is_stdlib_module_spec(spec)),
             "scoped stdlib specifiers must be gated"
         );
 

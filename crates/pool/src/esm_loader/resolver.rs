@@ -6,10 +6,10 @@
 
 use std::path::{Path, PathBuf};
 
-use runtime_core::module_spec::{
+use deka_modules::module_spec::{
     ds_source_candidates, is_bare_module_specifier, module_spec_aliases, resolve_ds_source_file,
 };
-use runtime_core::modules::{read_linked_modules, MODULES_DIR};
+use deka_modules::modules::{read_linked_modules, MODULES_DIR};
 
 pub fn is_javascript_entry(path: &Path) -> bool {
     path.extension()
@@ -51,7 +51,7 @@ pub fn entry_wrapper_path_with(project_root: &Path, dev_mode: bool) -> PathBuf {
 }
 
 pub(crate) fn parse_module_imports(source: &str) -> Vec<String> {
-    runtime_core::ds_imports::paths(source)
+    deka_modules::ds_imports::paths(source)
 }
 
 pub(crate) fn resolve_phpx_module_spec(

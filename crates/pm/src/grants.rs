@@ -375,7 +375,7 @@ mod tests {
         };
         use crate::payload::InstallPayload;
         use deka_host::integrity::compute_package_integrity;
-        use runtime_core::modules::MODULES_DIR;
+        use deka_modules::modules::MODULES_DIR;
         use serde_json::json;
         use std::collections::BTreeMap;
         use std::fs;

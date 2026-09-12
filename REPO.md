@@ -39,7 +39,7 @@ crates/
   deka_host/          # parser + validation (shared PHPX/DS parser)
   php-rs/               # typechecker (`phpx/typeck/check/`)
   runtime/              # native runtime (Deno/V8 isolate execution)
-  runtime_core/         # module resolution, security policy
+  runtime_core/         # catalog, dist, process and runtime helpers
 docs/                   # RFCs and design notes
 tests/                  # integration tests
 scripts/                # build/test helpers
@@ -57,7 +57,7 @@ assets/                 # shared CSS bundle
 | Validation / diagnostics | `crates/deka_host/src/validation/`, published validation crate |
 | Native execution | `crates/runtime/src/`, `crates/cli/src/` |
 | WASM compiler | `crates/deka_compiler_wasm/src/` |
-| Module resolution | `crates/runtime_core/src/modules.rs`, `crates/deka_host/src/validation/modules.rs` |
+| Module resolution | `deka-modules` (crates.io, `dekaruntime/modules`), `crates/deka_host/src/validation/modules.rs` |
 
 ## Common commands
 

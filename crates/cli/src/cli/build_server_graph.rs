@@ -378,7 +378,7 @@ fn rewrite_module_specifiers(
     importer_target: &str,
 ) -> Result<String, String> {
     let mut out = js.to_string();
-    let specs = runtime_core::ds_imports::paths(js);
+    let specs = deka_modules::ds_imports::paths(js);
     for spec in specs {
         let replacement = match classify_specifier(&spec) {
             SpecKind::Relative => {
@@ -626,7 +626,7 @@ fn assert_server_jail(dist_server: &Path) -> Result<(), String> {
     for file in &js_files {
         let source = fs::read_to_string(file)
             .map_err(|err| format!("failed to read {}: {err}", file.display()))?;
-        for spec in runtime_core::ds_imports::paths(&source) {
+        for spec in deka_modules::ds_imports::paths(&source) {
             if !(spec.starts_with("./") || spec.starts_with("../")) {
                 continue;
             }

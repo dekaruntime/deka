@@ -23,7 +23,7 @@ Read before arguing with anything below.
 | Executable route JS lands in `dist/app/`, `dist/src/`, `dist/api/`; `dist/server/` holds only `ds_modules/`, `deka.json`, `deka.lock` | `crates/cli/src/cli/build.rs:191-207, 288-309` | RFD 54 says the server graph is `dist/server/`. Today it is not. |
 | Build values ship at `dist/app/.build-values/<id>.js`, and `deka:dev/<id>` is resolved **cache-first**, dist second, in production | `crates/pool/src/esm_loader.rs:359-381` (`resolve_build_value_module`), `crates/cli/src/cli/build_values_dist.rs` | A `deka:dev` scheme is live on the production path, and the cache outranks the artifact. Both die in v2. |
 | `PhpxEsmLoader::new` calls `dsc_compile::compile_graph(...)` at isolate creation for any `.ds`/`.dsx` entry | `crates/pool/src/esm_loader.rs:96, 157` | This is the defect RFD 54 was written about. |
-| The loader guesses extensions for extensionless specifiers (`.ds`/`.dsx` source candidates, then `target.js` / `target/index.js`) | `crates/runtime_core/src/module_spec.rs:92, 142`, `crates/pool/src/esm_loader/resolver.rs:186-197` | Ambiguous resolution is fine for source, unacceptable for an artifact whose bytes were fixed at build time. |
+| The loader guesses extensions for extensionless specifiers (`.ds`/`.dsx` source candidates, then `target.js` / `target/index.js`) | `deka-modules` crate (`module_spec`), `crates/pool/src/esm_loader/resolver.rs:186-197` | Ambiguous resolution is fine for source, unacceptable for an artifact whose bytes were fixed at build time. |
 | `is_source_app_router_project` = root `index.html` **and** `app/page.ds(x)` | `crates/runtime_core/src/framework/manifest.rs:37-41` | Directly contradicts RFD 54 amendment 1. |
 | `is_built_app_router_project` = `dist/client/index.html` **and** `dist/app/page.js` | `manifest.rs:50-53` | Correct posture (#760 did its job), wrong predicate: it must be "the manifest verifies", not two file-existence probes. |
 | `ensure_web_project_layout` **hard-requires** a root `index.html` and **rejects** `public/index.html` | `crates/cli/src/cli/build/project.rs:85-112` | Also contradicts amendment 1: it makes `index.html` a mandatory source-root marker. |
@@ -289,7 +289,7 @@ The rules are what make that possible.
 2. **Every relative specifier is extension-explicit and resolves inside
    `dist/server/`.** No extensionless imports, no directory/`index.js` resolution,
    no `..` escaping the server root. This is a real change to the loader: the
-   candidate-guessing in `crates/runtime_core/src/module_spec.rs` and
+   candidate-guessing in the `deka-modules` crate (`module_spec`) and
    `crates/pool/src/esm_loader/resolver.rs` is **disabled in artifact posture**,
    not merely unused.
 3. **The only legal bare specifiers are the `compat.host_imports` allowlist**,

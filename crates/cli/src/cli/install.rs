@@ -1,8 +1,8 @@
 use anyhow::Result;
 use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
+use deka_modules::module_spec::canonical_php_package_spec;
+use deka_modules::modules::MODULES_DIR;
 use pm::{InstallPayload, run_install};
-use runtime_core::module_spec::canonical_php_package_spec;
-use runtime_core::modules::MODULES_DIR;
 use std::path::{Path, PathBuf};
 use stdio;
 

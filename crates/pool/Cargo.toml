@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+deka-modules = "0.1.0"
 compiler = { path = "../compiler" }
 serve = { path = "../serve" }
 security = { path = "../security" }

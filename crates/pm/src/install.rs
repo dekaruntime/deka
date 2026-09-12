@@ -1,8 +1,8 @@
 use crate::{grants, lock, payload::InstallPayload, registry, spec::parse_package_spec};
 use anyhow::{Context, Result, anyhow, bail};
 use deka_host::integrity::compute_package_integrity;
-use runtime_core::module_spec::canonical_php_package_spec;
-use runtime_core::modules::{MODULES_DIR, install_modules_dir, is_modules_dir_name, read_links_at};
+use deka_modules::module_spec::canonical_php_package_spec;
+use deka_modules::modules::{MODULES_DIR, install_modules_dir, is_modules_dir_name, read_links_at};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{

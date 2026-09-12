@@ -1,6 +1,6 @@
 use crate::validation::imports::ImportKind;
 use crate::validation::modules::collect_import_specs;
-use runtime_core::module_spec::is_ds_source_path;
+use deka_modules::module_spec::is_ds_source_path;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::Read;

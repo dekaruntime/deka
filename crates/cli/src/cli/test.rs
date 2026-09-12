@@ -1,5 +1,5 @@
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use runtime_core::modules::MODULES_DIR;
+use deka_modules::modules::MODULES_DIR;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};

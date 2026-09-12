@@ -53,10 +53,10 @@ pub(super) fn ensure_project_layout(
     module_root: Option<&Path>,
     imports: &[String],
 ) -> Result<(), String> {
-    runtime_core::project_gate::validate_project(
+    deka_modules::project_gate::validate_project(
         project_root,
         imports,
-        &runtime_core::project_gate::GateOptions {
+        &deka_modules::project_gate::GateOptions {
             module_root: module_root.map(|p| p.to_path_buf()),
             require_lockfile: true,
             context: "deka build",

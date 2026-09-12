@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
-use runtime_core::module_spec::{canonical_php_package_spec, is_valid_package_name};
-use runtime_core::modules::{LinkEntry, read_links_at, write_links_at};
+use deka_modules::module_spec::{canonical_php_package_spec, is_valid_package_name};
+use deka_modules::modules::{LinkEntry, read_links_at, write_links_at};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -68,7 +68,7 @@ pub fn unlink_package_at(project_dir: &Path, package: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{link_package_at, unlink_package_at};
-    use runtime_core::modules::{links_path, read_links_at};
+    use deka_modules::modules::{links_path, read_links_at};
     use std::fs;
 
     #[test]

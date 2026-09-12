@@ -1,4 +1,4 @@
-use runtime_core::modules::MODULES_DIR;
+use deka_modules::modules::MODULES_DIR;
 use std::{
     fs,
     io::{Read, Write},

@@ -1,5 +1,5 @@
 use core::Context;
-use runtime_core::modules::MODULES_DIR;
+use deka_modules::modules::MODULES_DIR;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -137,7 +137,7 @@ fn emit_import_map_json(import_paths: &[String], output_path: &Path) -> String {
 
 fn default_import_map() -> BTreeMap<String, String> {
     let mut imports = BTreeMap::from([("@/".to_string(), "/".to_string())]);
-    for prefix in runtime_core::module_spec::STDLIB_SPEC_PREFIXES {
+    for prefix in deka_modules::module_spec::STDLIB_SPEC_PREFIXES {
         imports.insert((*prefix).to_string(), stdlib_prefix_target(prefix));
     }
     imports
@@ -152,7 +152,7 @@ fn default_import_map() -> BTreeMap<String, String> {
 /// literal list that can drift away from where packages actually land
 /// (deka#622 finding D).
 fn stdlib_prefix_target(prefix: &str) -> String {
-    let scoped = runtime_core::module_spec::module_spec_aliases(prefix)
+    let scoped = deka_modules::module_spec::module_spec_aliases(prefix)
         .into_iter()
         .find(|alias| alias.starts_with("@deka/"))
         .expect("bare stdlib prefixes must carry a @deka alias");
@@ -202,7 +202,7 @@ struct JsBuildOutput {
 fn build_to_string(input_path: &Path) -> Result<JsBuildOutput, String> {
     let source = fs::read_to_string(input_path)
         .map_err(|err| format!("failed to read {}: {}", input_path.display(), err))?;
-    let import_paths = runtime_core::ds_imports::paths(&source);
+    let import_paths = deka_modules::ds_imports::paths(&source);
 
     // Validate the source before checking project layout so that syntax/type
     // errors are surfaced immediately instead of being blocked by a missing

@@ -1,6 +1,6 @@
 use anyhow::{bail, Context as AnyhowContext, Result};
-use runtime_core::modules::is_modules_dir_name;
 use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
+use deka_modules::modules::is_modules_dir_name;
 use serde_json::json;
 use std::io::{self, Write};
 use std::process::Command;
@@ -790,7 +790,7 @@ fn prompt_yes_no(prompt: &str, default_yes: bool) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::{reject_publish_tree_appledouble_at, reject_publish_tree_php_modules_at};
-    use runtime_core::modules::MODULES_DIR;
+    use deka_modules::modules::MODULES_DIR;
     use std::{fs, process::Command};
 
     #[test]

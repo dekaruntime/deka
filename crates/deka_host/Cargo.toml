@@ -29,6 +29,7 @@ runtime = [
 ]
 
 [dependencies]
+deka-modules = "0.1.0"
 security = { path = "../security" }
 permissions = { path = "../permissions" }
 deno_core = { workspace = true, optional = true }

@@ -1,12 +1,8 @@
 pub mod data_envelope;
 pub mod deka_catalog;
-pub mod ds_imports;
 pub mod ds_tla;
 pub mod dist;
-pub mod module_spec;
-pub mod modules;
 pub mod platform_env;
-pub mod project_gate;
 pub mod process;
 
 /// Marker prefixed to validation error messages that are propagated from the
