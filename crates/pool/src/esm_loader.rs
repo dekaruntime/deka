@@ -34,7 +34,6 @@ use deno_error::JsErrorBox;
 
 use permissions::host_bridge::{self, GrantTable};
 
-mod catalog_gate;
 mod grants;
 mod graph_hash;
 mod policy;
@@ -74,9 +73,6 @@ pub struct PhpxEsmLoader {
     grant_table: Option<GrantTable>,
     /// Bridge kinds granted to the project root (cached at construction).
     root_kinds: Vec<String>,
-    /// Whether the project root manifest names an official `@deka/*` package
-    /// (RFD 21: only official stdlib sources may call the `deka.*` catalog).
-    root_official: bool,
     /// Lockfile-pinned fsGraph digests by package name, read once from
     /// `<project_root>/deka.lock` (defensive inline JSON parse).
     lock_digests: HashMap<String, String>,
@@ -149,7 +145,6 @@ impl PhpxEsmLoader {
         };
 
         let lock_digests = read_lock_digests(&project_root);
-        let root_official = host_bridge::is_official_package_name(&root_name);
 
         // JS/MJS/CJS entries are WinterTC workers: load as-is, do not send
         // them through dsc (dsc only compiles .ds/.dsx).
@@ -187,7 +182,6 @@ impl PhpxEsmLoader {
             v2_modules,
             grant_table,
             root_kinds,
-            root_official,
             lock_digests,
             package_kinds: Rc::new(RefCell::new(HashMap::new())),
             artifact_server_root,
@@ -213,16 +207,6 @@ impl PhpxEsmLoader {
                         path.display()
                     )));
                 }
-            }
-            // RFD 21 (deka#754): the closed deka.* catalog is stdlib-only. A
-            // compiled module from a non-official package that references a
-            // catalog kind can never resolve its helpers — refuse to boot.
-            // Official packages were validated at the source boundary before
-            // dsc ran (unknown helpers, arity, classification).
-            if let Some(message) =
-                catalog_gate::non_official_catalog_reference(&loader, modules)
-            {
-                return Err(JsErrorBox::generic(message));
             }
         }
 
@@ -532,11 +516,7 @@ impl PhpxEsmLoader {
                 )));
             }
             let mut code = self.load_js_source(&path)?;
-            code = prepend_host_bindings(
-                code,
-                &self.kinds_for_path(&path),
-                self.catalog_eligible_for_path(&path),
-            );
+            code = prepend_host_bindings(code, &self.kinds_for_path(&path));
             if specifier == &self.entry_specifier {
                 code = append_entry_footer(code);
             }
@@ -578,11 +558,7 @@ impl PhpxEsmLoader {
             "ds" | "dsx" => self.load_ds_source(&path)?,
             _ => self.load_js_source(&path)?,
         };
-        code = prepend_host_bindings(
-            code,
-            &self.kinds_for_path(&path),
-            self.catalog_eligible_for_path(&path),
-        );
+        code = prepend_host_bindings(code, &self.kinds_for_path(&path));
         if specifier == &self.entry_specifier {
             code = append_entry_footer(code);
         }

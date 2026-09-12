@@ -1,16 +1,15 @@
 //! RFD 21 `deka.*` catalog acceptance tests (deka#754).
 //!
 //! End-to-end through `IsolatePool` with real on-disk projects compiled by
-//! the pinned `dsc` (0.8.2, see `scripts/dsc-version`): stdlib packages
+//! the pinned `dsc` (see `scripts/dsc-version`): stdlib packages
 //! calling `safe { deka.kind.method(...) }` (non-throwing, declared type)
 //! and `unsafe { deka.kind.method(...) }` (throwing → `Result`), plus the
 //! closed-catalog enforcement: unknown helpers, wrong arity, and user-package
 //! use are source diagnostics. Also proves the catalog is not published on
 //! `globalThis`.
 //!
-//! dsc types the ambient `deka` global as `Infer`, so a `safe` result must be
-//! bound to an annotated `const` (its declared type) before it can be matched
-//! or converted — the tests below model that discipline.
+//! dsc owns catalog validation and bundles the helpers in emitted modules.
+//! These tests exercise that output without runtime-installed catalog helpers.
 //!
 //! Tests that need dsc skip (print + early return) when no compiler is
 //! available; Rust-only assertions are unconditional.
@@ -297,7 +296,7 @@ async fn catalog_is_not_published_on_global_this() {
 }
 
 /// Unknown kind, unknown method, wrong arity, throwing helpers under `safe`,
-/// and bare catalog calls are source diagnostics with file:line:col — the
+/// and bare catalog calls are source diagnostics with line:column — the
 /// project refuses to load before any user code runs.
 #[tokio::test]
 async fn closed_catalog_rejects_unknown_helpers_and_wrong_arity() {
@@ -309,12 +308,12 @@ async fn closed_catalog_rejects_unknown_helpers_and_wrong_arity() {
         (
             "unknown_kind",
             "export fn app(req: string) string {\n  const n: number = safe { deka.bogus.len(req) }\n  return string(n)\n}\n",
-            "unknown `deka` kind `bogus`",
+            "unknown catalog helper `deka.bogus.len`",
         ),
         (
             "unknown_method",
             "export fn app(req: string) string {\n  const n: number = safe { deka.bytes.bogus(req) }\n  return string(n)\n}\n",
-            "unknown `deka.bytes` helper `bogus`",
+            "unknown catalog helper `deka.bytes.bogus`",
         ),
         (
             "wrong_arity",
@@ -329,7 +328,7 @@ async fn closed_catalog_rejects_unknown_helpers_and_wrong_arity() {
         (
             "bare_call",
             "export fn app(req: string) string {\n  const n: number = deka.bytes.len(req)\n  return string(n)\n}\n",
-            "must appear as the body of `safe { }` or `unsafe { }`",
+            "catalog calls require `safe { }` or `unsafe { }`",
         ),
     ] {
         let project = tempfile::tempdir().expect("tempdir");
@@ -349,33 +348,35 @@ async fn closed_catalog_rejects_unknown_helpers_and_wrong_arity() {
         let error = error_of(&response);
         assert!(error.contains(needle), "{name}: expected {needle:?} in {error}");
         assert!(
-            error.contains("main.ds:2:"),
+            error.contains("2:28:") || error.contains("2:21:"),
             "{name}: diagnostic should carry a source location: {error}"
         );
     }
 }
 
 /// `safe` / `unsafe` catalog calls are stdlib-only. An application project
-/// root may not use them even though dsc itself would accept the ambient
-/// `deka` global — the loader's scan rejects it with a source diagnostic.
+/// root may not use them because dsc rejects non-stdlib catalog calls with a source diagnostic.
 #[tokio::test]
 async fn user_package_catalog_use_is_a_source_diagnostic() {
     if !ensure_dsc() {
         println!("SKIP user_package_catalog_use_is_a_source_diagnostic: dsc unavailable");
         return;
     }
-    for (name, source) in [
+    for (name, source, needle) in [
         (
             "user_safe",
             "export fn app(req: string) string {\n  const n: number = safe { deka.bytes.len(req) }\n  return string(n)\n}\n",
+            "stdlib-only",
         ),
         (
             "user_unsafe",
             "export fn app(req: string) string {\n  const r: Result<unknown, string> = unsafe { deka.json.parse(req) }\n  return \"x\"\n}\n",
+            "stdlib-only",
         ),
         (
             "user_bare",
             "export fn app(req: string) string {\n  const n: number = deka.bytes.len(req)\n  return string(n)\n}\n",
+            "catalog calls require `safe { }` or `unsafe { }`",
         ),
     ] {
         let project = tempfile::tempdir().expect("tempdir");
@@ -394,8 +395,8 @@ async fn user_package_catalog_use_is_a_source_diagnostic() {
             .expect("pool execution");
         let error = error_of(&response);
         assert!(
-            error.contains("stdlib-only"),
-            "{name}: expected stdlib-only diagnostic in {error}"
+            error.contains(needle),
+            "{name}: expected {needle:?} in {error}"
         );
     }
 }
@@ -450,7 +451,7 @@ async fn unofficial_dependency_catalog_use_is_rejected() {
 }
 
 /// A stdlib dependency (`ds_modules/@deka/bytestest`) imported by an
-/// application: its `safe` calls compile through the staged lowering, and
+/// application: its `safe` calls compile directly through dsc, and
 /// the app observes the package's returned values. Catalog authority comes
 /// from the `@deka/*` identity — no grant table entry is involved.
 #[tokio::test]
@@ -813,4 +814,34 @@ export fn app(req: string) string {
         body_of(&response),
         "5:101:-1:68656c6c6f:68656c6c6f:none:none:aGVsbG8=:68656c6c6f:none:none:hello:err:0102ff:none:none:none:656c6c6f:68656c6c6f68656c6c6f"
     );
+}
+
+/// A compiled JS entry bypasses DekaScript compilation in the loader. It must
+/// carry everything needed for catalog calls even without a runtime catalog.
+#[tokio::test]
+async fn emitted_catalog_js_runs_without_bootstrap_helpers() {
+    if !ensure_dsc() {
+        println!("SKIP emitted_catalog_js_runs_without_bootstrap_helpers: dsc unavailable");
+        return;
+    }
+    let project = tempfile::tempdir().expect("tempdir");
+    write(project.path(), "deka.json", r#"{"name":"@deka/catalogemitted"}"#);
+    write(project.path(), "deka.lock", EMPTY_DEKA_LOCK);
+    write(project.path(), "main.ds", r#"
+export fn app(req: string) string {
+  const b: bytes = safe { deka.bytes.from_string("deka") }
+  return safe { deka.bytes.to_hex(b) }
+}
+"#);
+    let source = project.path().join("main.ds");
+    let modules = pool::dsc_compile::compile_graph(project.path(), &source).expect("compile original graph");
+    let js = pool::dsc_compile::lookup_js(&modules, &source).expect("emitted entry");
+    assert!(js.contains("const __dsc_catalog ="), "compiler must bundle catalog helpers");
+    write(project.path(), "compiled.js", js);
+    let entry = project.path().join("compiled.js");
+    let response = catalog_pool()
+        .execute(HandlerKey::new("catalog_emitted_js"), module_request(&entry, project.path()))
+        .await
+        .expect("pool execution");
+    assert_eq!(body_of(&response), "64656b61");
 }

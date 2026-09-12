@@ -29,22 +29,21 @@ A catalog call must appear as the entire body of `safe { }` or `unsafe { }`:
 Anything else is a source diagnostic before any user code runs: an unknown
 kind, an unknown method, the wrong arity, a throwing helper under `safe`, a
 bare `deka.*` call outside the two doors, or a nested `safe`/`unsafe` block
-(bind the result to a `const` first). Diagnostics carry `file:line:column`.
+(bind the result to a `const` first). Diagnostics carry source line and column positions.
 
 ## Who may call it
 
 Catalog calls are **stdlib-only**. A package qualifies when its registry
 identity is an official `@deka/*` name — the project root whose `deka.json`
 declares one, or a dependency under `ds_modules/` whose directory is `@deka/*`.
-Application code and unofficial packages calling `deka.*` are refused with a
-source diagnostic, and the loader additionally rejects compiled JS from
-non-official modules that mentions `deka.<kind>.` at all.
+Application code and unofficial packages calling `deka.*` are refused by dsc
+at compile time with a source diagnostic.
 
-The catalog is not an ambient global: `globalThis.deka` carries no catalog
-kinds, and the internal surface (`Symbol.for('deka.host.internal')`) is
-frozen. Official modules receive their `deka` binding from the per-module
-preamble; `deka.ui` remains a live lookup into the UI channel and is not part
-of the catalog.
+The catalog is not an ambient global. dsc 0.49.0 validates catalog calls and
+bundles the helper implementations into emitted JavaScript. Deka executes
+that output without installing a catalog in the isolate bootstrap or adding
+a per-module `deka` binding. Native host capabilities still use the separate,
+grant-gated host bridge.
 
 ## The catalog
 
@@ -106,14 +105,13 @@ caller. This is the shape RFD 21 exists to enforce: the old pattern of
 catching an error and substituting a made-up value is a source diagnostic
 now, not a runtime habit.
 
-## Integrity under staging
+## Compilation and package integrity
 
-`safe` blocks are lowered before the pinned `dsc` compiles, in a hardlinked
-mirror under `.cache` — the user's tree is never modified. Because dsc
-verifies every locked dependency by hashing the sources it reads, staging
-first verifies each rewritten dependency package against the real `deka.lock`
-(failing closed on any mismatch) and then re-pins only the mirror's lock copy
-to the lowered content. The user's `deka.lock` is never touched.
+Deka passes the original source graph directly to the pinned dsc compiler.
+dsc validates and lowers `safe`/`unsafe` catalog calls and emits their helpers
+alongside the compiled code. Dependency integrity is checked against the
+original sources and `deka.lock`; no rewritten source mirror or temporary
+lockfile re-pinning is needed.
 
 ## RFD 15 over RFD 21 on bytes
 
@@ -139,9 +137,9 @@ stricter contract instead, which deka#756 codified:
 ## No environment influence
 
 The catalog is a compile-time constant table
-(`runtime_core::deka_catalog::DEKA_CATALOG`). Nothing in it — kinds, methods,
+owned by dsc. Nothing in it — kinds, methods,
 classification, or helper implementations — is influenced by the process
-environment or by `deka.json` (deka#801). The loader may read `deka.json`
+environment or by `deka.json` (deka#801). The compiler may read `deka.json`
 only to decide whether a *package* is an official `@deka/*` package; it can
 never change what the catalog contains.
 
