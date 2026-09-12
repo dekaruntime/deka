@@ -12,12 +12,12 @@ pub mod validation;
 
 #[cfg(feature = "runtime")]
 pub fn php_extension() -> Extension {
-    modules::php::init()
+    modules::init()
 }
 
 #[cfg(feature = "runtime")]
 pub fn extensions() -> Vec<Extension> {
-    vec![modules::php::init()]
+    vec![modules::init()]
 }
 
 /// Build the host extensions with the net bridge pinned to an explicit
@@ -26,7 +26,7 @@ pub fn extensions() -> Vec<Extension> {
 /// and the net bridge resolves the policy from it per call.
 #[cfg(feature = "runtime")]
 pub fn extensions_with_net_policy(policy: SecurityPolicy) -> Vec<Extension> {
-    vec![modules::php::init_with_net_policy(policy)]
+    vec![modules::init_with_net_policy(policy)]
 }
 
 #[cfg(feature = "runtime")]

@@ -21,7 +21,7 @@ pub struct OperationCapability {
 // Single source of truth for operation -> capability classification.
 // New runtime operations must be added here first.
 pub const OPERATION_CAPABILITY_MATRIX: &[OperationCapability] = &[
-    // Registered php host ops (crates/deka_host/src/modules/php/mod.rs).
+    // Registered host ops (crates/deka_host/src/modules/mod.rs).
     OperationCapability {
         op_id: "php.op_php_read_file_sync",
         capability: Capability::Read,
@@ -315,7 +315,7 @@ pub fn capability_for_operation(op_id: &str) -> Capability {
 }
 
 pub const KNOWN_RUNTIME_OPERATION_IDS: &[&str] = &[
-    // Registered php ops.
+    // Registered host ops.
     "php.op_php_read_file_sync",
     "php.op_php_write_file_sync",
     "php.op_php_mkdirs",
