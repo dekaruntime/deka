@@ -27,6 +27,7 @@ const FLUSH: SubcommandSpec = SubcommandSpec {
 const SUBCOMMANDS: &[SubcommandSpec] = &[MIGRATE, INFO, FLUSH];
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "db",
     category: "database",
     summary: "database tooling for DekaScript ORM generation and migrations",

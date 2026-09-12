@@ -236,7 +236,11 @@ impl PlatformState {
 }
 
 async fn platform_async(context: &Context) {
-    let input = &context.handler.input;
+    let input = &context
+        .extensions()
+        .get::<::run::handler::HandlerSnapshot>()
+        .expect("handler snapshot populated before dispatch")
+        .input;
     let root = PathBuf::from(if input.is_empty() { "." } else { input });
     let root = std::fs::canonicalize(&root).unwrap_or(root);
 

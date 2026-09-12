@@ -9,6 +9,7 @@ use stdio;
 use crate::cli::auth_store;
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "publish",
     category: "package",
     summary: "publish a DekaScript package release to Linkhash",

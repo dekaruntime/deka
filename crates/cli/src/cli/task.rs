@@ -22,6 +22,7 @@ use std::thread;
 use stdio::{raw, warn_simple};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "task",
     category: "runtime",
     summary: "run a task from deka.json",

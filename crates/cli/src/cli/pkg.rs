@@ -1,6 +1,7 @@
 use core::{CommandSpec, Context, Registry, SubcommandSpec};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "pkg",
     category: "package",
     summary: "package operations",

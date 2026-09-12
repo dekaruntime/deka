@@ -1,6 +1,7 @@
 use core::{CommandSpec, Context, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "dev",
     category: "runtime",
     summary: "serve with HTTP + HMR (dev mode)",

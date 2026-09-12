@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use wasm_cli as wasm_cmd;
 
 pub mod cli;
+pub mod context;
 pub mod dsc;
 
 pub fn build_registry() -> Registry {
@@ -113,12 +114,12 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
     }
 
     let env = core::EnvContext::load();
-    let handler = match core::HandlerContext::from_env(cmd) {
+    let handler = match ::run::handler::HandlerSnapshot::from_positionals(&cmd.positionals) {
         Ok(handler) => handler,
-        Err(_) => match core::resolve_handler_path(".") {
+        Err(_) => match ::run::handler::resolve_handler_path(".") {
             Ok(resolved) => {
-                let static_config = core::StaticServeConfig::load(&resolved.directory);
-                core::HandlerContext {
+                let static_config = ::serve::config::StaticServeConfig::load(&resolved.directory);
+                ::run::handler::HandlerSnapshot {
                     input: ".".to_string(),
                     resolved,
                     static_config,
@@ -133,11 +134,9 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
         },
     };
 
-    let context = core::Context {
-        args: cmd.clone(),
-        env,
-        handler,
-    };
+    let mut context = core::Context::new(cmd.clone());
+    context.env = env;
+    context.extensions_mut().insert(handler);
 
     if cmd.commands.len() > 2 {
         cli::error(None);

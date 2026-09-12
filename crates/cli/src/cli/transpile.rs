@@ -1,6 +1,7 @@
 use core::{CommandSpec, Context, ParamSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "transpile",
     category: "project",
     summary: "emit JavaScript from a .ds file or directory (execs dsc)",

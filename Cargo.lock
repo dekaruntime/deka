@@ -840,6 +840,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "serve",
  "sha2 0.10.9",
  "stdio",
  "tar",
@@ -977,8 +978,7 @@ dependencies = [
 name = "core"
 version = "0.48.1"
 dependencies = [
- "serde",
- "serde_json",
+ "deka-cli-core",
 ]
 
 [[package]]
@@ -1296,6 +1296,12 @@ dependencies = [
  "serde",
  "uuid",
 ]
+
+[[package]]
+name = "deka-cli-core"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "959a3a6061fd69200fa3e0653f51dd985a12948e4a55c83c36ba9756b61cb208"
 
 [[package]]
 name = "deka-lsp"
@@ -5106,15 +5112,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "platform_browser"
-version = "0.48.1"
-dependencies = [
- "anyhow",
- "platform",
- "rand 0.8.5",
-]
-
-[[package]]
 name = "platform_server"
 version = "0.48.1"
 dependencies = [
@@ -5875,6 +5872,7 @@ version = "0.48.1"
 dependencies = [
  "runtime_core",
  "serde_json",
+ "serve",
  "tempfile",
 ]
 
@@ -8277,6 +8275,7 @@ name = "wasm_cli"
 version = "0.48.1"
 dependencies = [
  "core",
+ "run",
  "serde_json",
  "stdio",
 ]

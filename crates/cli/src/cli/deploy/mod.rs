@@ -13,6 +13,7 @@ const RUN: SubcommandSpec = SubcommandSpec {
 const SUBCOMMANDS: &[SubcommandSpec] = &[RUN];
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "deploy",
     category: "pipeline",
     summary: "linkhash pipeline deployment and execution",

@@ -1,6 +1,7 @@
 use core::{CommandSpec, Context, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "compile",
     category: "project",
     summary: "compile to single-file executable",

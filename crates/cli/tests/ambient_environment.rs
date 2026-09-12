@@ -88,29 +88,27 @@ fn cli_config_ignores_contradictory_ambient_environment() {
 }
 
 fn dummy_context(cwd: PathBuf) -> core::Context {
-    Context {
-        args: core::Args {
-            flags: HashMap::new(),
-            params: HashMap::new(),
-            commands: vec!["self".to_string(), "monitor".to_string()],
-            positionals: Vec::new(),
-        },
-        env: core::EnvContext {
-            vars: HashMap::new(),
-            cwd,
-        },
-        handler: core::HandlerContext {
+    let mut context = Context::new(core::Args {
+        flags: HashMap::new(),
+        params: HashMap::new(),
+        commands: vec!["self".to_string(), "monitor".to_string()],
+        positionals: Vec::new(),
+    });
+    context.env.cwd = cwd;
+    context
+        .extensions_mut()
+        .insert(::run::handler::HandlerSnapshot {
             input: ".".to_string(),
-            resolved: core::ResolvedHandler {
+            resolved: ::run::handler::ResolvedHandler {
                 path: PathBuf::from("."),
                 directory: PathBuf::from("."),
-                mode: core::ServeMode::Php,
-                config: core::ServeConfig::default(),
+                mode: ::serve::config::ServeMode::Php,
+                config: ::serve::config::ServeConfig::default(),
             },
-            static_config: core::StaticServeConfig::default(),
+            static_config: ::serve::config::StaticServeConfig::default(),
             serve_config_path: None,
-        },
-    }
+        });
+    context
 }
 
 #[test]

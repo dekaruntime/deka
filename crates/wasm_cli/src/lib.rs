@@ -4,6 +4,7 @@ use core::{CommandSpec, Context, ParamSpec, Registry, SubcommandSpec};
 use std::path::{Path, PathBuf};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "wasm_cli",
     name: "wasm",
     category: "extensions",
     summary: "manage wasm extensions",
@@ -246,7 +247,13 @@ fn project_root(context: &Context) -> PathBuf {
     if let Some(root) = context.args.params.get("--folder") {
         return PathBuf::from(root);
     }
-    context.handler.resolved.directory.clone()
+    context
+        .extensions()
+        .get::<::run::handler::HandlerSnapshot>()
+        .expect("handler snapshot populated before dispatch")
+        .resolved
+        .directory
+        .clone()
 }
 
 struct ModuleSpec {

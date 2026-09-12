@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use core::{CommandSpec, Context, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "verify",
     category: "project",
     summary: "verify dist/ against the artifact manifest's payload digests",

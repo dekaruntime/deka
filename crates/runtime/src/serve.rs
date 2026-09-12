@@ -1,7 +1,6 @@
 use std::path::Path as FsPath;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use std::{io, net::TcpListener};
 
@@ -10,7 +9,6 @@ use crate::security::resolve_security_policy;
 use core::Context;
 use deka_host::validation::{format_validation_error, modules::validate_module_resolution};
 use engine::{RuntimeEngine, RuntimeState, config as runtime_config, set_engine};
-use notify::Watcher;
 use platform::Platform;
 use platform_server::ServerPlatform;
 use pool::validation::PoolWorkers;
@@ -19,7 +17,9 @@ use serve::validation::validate_deka_handler_with;
 use stdio as stdio_log;
 use transport::{DnsOptions, HttpOptions, TcpOptions, UdpOptions, UnixOptions, WsOptions};
 
-static WATCHER_GUARDS: OnceLock<Mutex<Vec<notify::RecommendedWatcher>>> = OnceLock::new();
+mod watch;
+
+use watch::start_watch;
 
 pub fn serve(context: &Context) {
     serve_with_dsc(context, None);
@@ -63,9 +63,22 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
 
     let dev_mode = dev_enabled(context);
     let watch_enabled = watch_enabled(context) || dev_mode;
-    crate::dev::prepare(dev_mode, &context.handler.input)?;
-    let resolved = runtime_config::resolve_handler_path(&context.handler.input)
-        .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
+    crate::dev::prepare(
+        dev_mode,
+        &context
+            .extensions()
+            .get::<::run::handler::HandlerSnapshot>()
+            .expect("handler snapshot populated before dispatch")
+            .input,
+    )?;
+    let resolved = runtime_config::resolve_handler_path(
+        &context
+            .extensions()
+            .get::<::run::handler::HandlerSnapshot>()
+            .expect("handler snapshot populated before dispatch")
+            .input,
+    )
+    .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
 
     let config_dir = if resolved.path.is_dir() {
         &resolved.path
@@ -91,8 +104,14 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
     let app_router_root = if artifact.is_some() {
         None
     } else {
-        crate::asset_urls::find_app_router_root(FsPath::new(&context.handler.input))
-            .or_else(|| crate::asset_urls::find_app_router_root(&resolved.path))
+        crate::asset_urls::find_app_router_root(FsPath::new(
+            &context
+                .extensions()
+                .get::<::run::handler::HandlerSnapshot>()
+                .expect("handler snapshot populated before dispatch")
+                .input,
+        ))
+        .or_else(|| crate::asset_urls::find_app_router_root(&resolved.path))
     };
 
     let handler_path = resolved.path.to_string_lossy().to_string();
@@ -731,116 +750,6 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0))
         .as_millis() as u64
-}
-
-fn start_watch(
-    handler_path: &str,
-    engine: Arc<RuntimeEngine>,
-    dev_mode: bool,
-) -> Result<(), String> {
-    let path = FsPath::new(handler_path);
-    let project_root = project_root_from_handler(handler_path);
-    let watch_root = project_root
-        .as_deref()
-        .unwrap_or_else(|| path.parent().unwrap_or_else(|| FsPath::new(".")));
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Result<notify::Event>>();
-
-    let mut watcher = notify::recommended_watcher(move |res| {
-        let _ = tx.send(res);
-    })
-    .map_err(|err| err.to_string())?;
-
-    watcher
-        .watch(watch_root, notify::RecursiveMode::Recursive)
-        .map_err(|err| err.to_string())?;
-
-    // Keep watcher alive for process lifetime; dropping it stops event delivery.
-    if let Ok(mut guards) = WATCHER_GUARDS.get_or_init(|| Mutex::new(Vec::new())).lock() {
-        guards.push(watcher);
-    }
-
-    tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                Ok(event) => {
-                    let mut changed: Vec<String> = Vec::new();
-                    for path in &event.paths {
-                        if should_ignore_watch_path(path) {
-                            continue;
-                        }
-                        let normalized = path.to_string_lossy().replace('\\', "/");
-                        if !changed.iter().any(|existing| existing == &normalized) {
-                            changed.push(normalized);
-                        }
-                    }
-                    if changed.is_empty() {
-                        continue;
-                    }
-
-                    if let Some(root) = project_root.as_ref() {
-                        if runtime_core::dist::is_source_app_router_project(root) {
-                            if crate::build_watch::on_watch_event(root, &changed, dev_mode) {
-                                let _ = engine.pool().evict_all().await;
-                            }
-                            if let Err(err) = runtime_core::dist::write_app_router_entry(root) {
-                                tracing::warn!(
-                                    "failed to regenerate serve-entry after {}: {err}",
-                                    changed.join(", ")
-                                );
-                            }
-                        }
-                    }
-                    if dev_mode {
-                        stdio_log::log("hmr", &format!("changed {}", changed.join(", ")));
-                        transport::notify_hmr_changed(&changed);
-                    }
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                    let evicted = engine.pool().evict_all().await;
-                    if evicted > 0 {
-                        stdio_log::log("watch", &format!("evicted {}", evicted));
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!("watch error: {}", err);
-                }
-            }
-        }
-    });
-
-    Ok(())
-}
-
-fn project_root_from_handler(handler_path: &str) -> Option<std::path::PathBuf> {
-    let mut current = std::path::Path::new(handler_path).parent()?;
-    loop {
-        if current.join("deka.json").is_file() {
-            return Some(current.to_path_buf());
-        }
-        current = current.parent()?;
-    }
-}
-
-fn should_ignore_watch_path(path: &FsPath) -> bool {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    if normalized.is_empty() {
-        return true;
-    }
-
-    if normalized.ends_with("/deka.lock") {
-        return true;
-    }
-
-    // Generated/transient paths that should not trigger HMR loops.
-    if normalized
-        .split('/')
-        .any(|seg| matches!(seg, ".cache" | "node_modules" | "target" | ".git"))
-        || normalized.ends_with("/ds_modules")
-        || normalized.ends_with("/php_modules")
-    {
-        return true;
-    }
-
-    false
 }
 
 #[cfg(test)]

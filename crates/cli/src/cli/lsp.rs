@@ -1,6 +1,7 @@
 use core::{CommandSpec, Context, FlagSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "lsp",
     category: "tooling",
     summary: "run the DekaScript language server",

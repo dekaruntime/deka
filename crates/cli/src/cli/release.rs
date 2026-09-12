@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 use stdio;
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "release",
     category: "package",
     summary: "bump, tag, push, and publish a package release",

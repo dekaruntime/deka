@@ -10,6 +10,7 @@ mod project;
 mod single_file;
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "build",
     category: "project",
     summary: "build a DekaScript file into a JavaScript module",

@@ -37,6 +37,7 @@ const FLUSH: SubcommandSpec = SubcommandSpec {
 const SUBCOMMANDS: &[SubcommandSpec] = &[GENERATE, MIGRATE, INFO, FLUSH];
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "db",
     category: "database",
     summary: "database tooling (platform-gated)",

@@ -1,6 +1,7 @@
 use core::{CommandSpec, Context, FlagSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "check",
     category: "project",
     summary: "validate a DekaScript source file (execs dsc)",

@@ -6,6 +6,7 @@ mod assets;
 use assets::UiAssets;
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "introspect",
     name: "introspect",
     category: "debug",
     summary: "inspect deka-runtime scheduler state",
