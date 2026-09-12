@@ -1,9 +1,9 @@
 //! deka#801 regression pin for `deka_host`: host behavior (module-root
-//! resolution, neo4j/redis endpoint defaults, target-capability validation)
+//! resolution, neo4j endpoint defaults, target-capability validation)
 //! comes from explicit inputs and installer functions only; contradictory
 //! process environment must not change behavior. Before this pin,
 //! `DEKA_MODULE_ROOT`, `DEKA_TARGET` / `DEKA_HOST_PROFILE`, `DEKA_NEO4J_*`,
-//! `DEKA_REDIS_URL`, `HANDLER_PATH`, and `DEKA_SECURITY_NO_PROMPT` were read
+//! `HANDLER_PATH`, and `DEKA_SECURITY_NO_PROMPT` were read
 //! from the ambient environment at call time.
 //!
 //! Pattern follows the engine pin (deka#847, crates/engine/tests/
@@ -31,7 +31,7 @@ fn host_modules_ignore_contradictory_ambient_environment() {
             //   with the module the child's entry imports).
             // - DEKA_TARGET / DEKA_HOST_PROFILE select the 'adwa' target,
             //   which blocks capability imports the 'server' target allows.
-            // - DEKA_NEO4J_* / DEKA_REDIS_URL point the bridge defaults at
+            // - DEKA_NEO4J_* point the bridge defaults at
             //   nonexistent endpoints.
             // - HANDLER_PATH names a fake PHPX handler (project-kind hints).
             // - DEKA_SECURITY_NO_PROMPT suppresses interactive prompts.
@@ -47,7 +47,6 @@ fn host_modules_ignore_contradictory_ambient_environment() {
                 ("DEKA_NEO4J_USER", "poisoned".to_string()),
                 ("DEKA_NEO4J_PASSWORD", "poisoned".to_string()),
                 ("DEKA_NEO4J_DB", "poisoned".to_string()),
-                ("DEKA_REDIS_URL", "redis://127.0.0.1:1".to_string()),
                 ("DEKA_SECURITY_NO_PROMPT", "1".to_string()),
                 ("HANDLER_PATH", "/nonexistent/project/main.phpx".to_string()),
             ]);
@@ -126,14 +125,10 @@ fn ambient_environment_child() {
     );
 
     // Bridge endpoint defaults: resolve from the installed deka_host store
-    // (nothing installed here), never from DEKA_NEO4J_* / DEKA_REDIS_URL.
+    // (nothing installed here), never from DEKA_NEO4J_*.
     println!(
         "ambient-proof:neo4j-uri={}",
         deka_host::modules::neo4j::shard_route_neo4j(&serde_json::Value::Null)
-    );
-    println!(
-        "ambient-proof:redis-url={}",
-        deka_host::modules::redis_mod::shard_route_redis(&serde_json::Value::Null)
     );
     println!(
         "ambient-proof:database-endpoints={:?}",

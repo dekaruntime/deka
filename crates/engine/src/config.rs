@@ -471,13 +471,12 @@ mod tests {
 }
 
 /// Database connection settings parsed from a project's `deka.json`
-/// (`{ "neo4j": {...}, "redis": {...} }`). Returned by
+/// (`{ "neo4j": {...} }`). Returned by
 /// [`load_database_config`] so callers thread it explicitly instead of
 /// publishing it through the process environment (deka#801).
 #[derive(Debug, Clone, Default)]
 pub struct DatabaseConfig {
     pub neo4j: Option<Neo4jConfig>,
-    pub redis_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -496,8 +495,7 @@ pub struct Neo4jConfig {
 /// Example deka.json:
 /// ```json
 /// {
-///   "neo4j": { "uri": "bolt://localhost:7687", "user": "neo4j", "password": "secret", "db": "neo4j" },
-///   "redis": { "url": "redis://localhost:6379" }
+///   "neo4j": { "uri": "bolt://localhost:7687", "user": "neo4j", "password": "secret", "db": "neo4j" }
 /// }
 /// ```
 pub fn load_database_config(directory: &std::path::Path) -> DatabaseConfig {
@@ -525,13 +523,7 @@ pub fn load_database_config(directory: &std::path::Path) -> DatabaseConfig {
             .map(str::to_string),
         db: neo4j.get("db").and_then(|v| v.as_str()).map(str::to_string),
     });
-    let redis_url = root
-        .get("redis")
-        .and_then(|redis| redis.get("url").or_else(|| redis.get("uri")))
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-
-    let config = DatabaseConfig { neo4j, redis_url };
+    let config = DatabaseConfig { neo4j };
 
     // deka#801: values used to be published into the process environment here
     // as an interim channel for deka_host modules. That channel is gone —

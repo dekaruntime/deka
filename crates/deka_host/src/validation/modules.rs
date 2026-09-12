@@ -944,7 +944,6 @@ fn is_deka_stdlib_root(root: &str) -> bool {
             | "test"
             | "neo4j"
             | "payments"
-            | "redis"
             | "string"
             | "tcp"
             | "time"

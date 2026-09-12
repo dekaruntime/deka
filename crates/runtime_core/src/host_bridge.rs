@@ -25,7 +25,7 @@
 //!   encoded with [`PERMISSION_DENIED_MARKER`] so it survives the CoreError /
 //!   thrown-message boundary. It is never a throw into DekaScript.
 //!
-//! Kinds with no host implementation yet (redis, neo4j, vault) are
+//! Kinds with no host implementation yet (neo4j, vault) are
 //! deliberately absent — the catalog lists only genuinely host-implemented
 //! actions, zero stubs.
 
@@ -439,7 +439,7 @@ const DB_ACTIONS: &[HostAction] = &[
 ];
 
 /// The single authoritative bridge catalog (RFD 27). Every entry is genuinely
-/// host-implemented; kinds with no DS action surface yet (redis, neo4j,
+/// host-implemented; kinds with no DS action surface yet (neo4j,
 /// vault) are absent, not stubbed.
 pub const HOST_CATALOG: &[HostKind] = &[
     HostKind {

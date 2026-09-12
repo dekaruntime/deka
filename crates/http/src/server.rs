@@ -23,9 +23,6 @@ pub async fn serve_http(
     let listener_count = listeners.max(1);
     let rate_limiter = Arc::new(RateLimiter::new(config.rate_limit.clone()));
     rate_limiter.spawn_janitor();
-    // The perf path never builds the axum router, so install the analytics
-    // Redis URL here too; the install is idempotent (deka#801).
-    crate::analytics::init(&config.redis_url);
     if listener_count == 1 {
         let listener = tokio::net::TcpListener::bind(addr)
             .await

@@ -238,7 +238,6 @@ pub(super) fn set_request_globals(
         let shard_key = shop_id.clone();
 
         if !shop_id.is_empty() {
-            // globalThis.__shopId — used by bridge layer for Redis prefixing
             let shop_id_key =
                 v8::String::new(scope, "__shopId").ok_or_else(|| "shop id key".to_string())?;
             let shop_id_val =
@@ -266,7 +265,6 @@ pub(super) fn set_request_globals(
                 v8::String::new(scope, &shard_key).ok_or_else(|| "shard key val".to_string())?;
             global.set(scope, shard_key_key.into(), shard_key_val.into());
         }
-
     }
 
     Ok(())

@@ -2,7 +2,7 @@
 //! exchanged at the storefront's data boundary:
 //!
 //! ```text
-//!   PHPX stdlib (neo4j / redis modules)  ⇄  zega_backend  ⇄  zega-server
+//!   PHPX stdlib and KV clients  ⇄  zega_backend  ⇄  zega-server
 //! ```
 //!
 //! This boundary historically broke exactly the way the seam system exists to
@@ -59,13 +59,13 @@ pub struct CqlExecuteResponse {
 
 // ---- KV -------------------------------------------------------------------
 
-/// `redis` module → backend: a keyed read (`get`) or delete (`del`).
+/// KV client → backend: a keyed read (`get`) or delete (`del`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KvKeyRequest {
     pub key: String,
 }
 
-/// `redis` module → backend: a keyed write (`set`), optional TTL in seconds.
+/// KV client → backend: a keyed write (`set`), optional TTL in seconds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KvSetRequest {
     pub key: String,
