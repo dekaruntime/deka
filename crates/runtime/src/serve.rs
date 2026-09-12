@@ -80,6 +80,8 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
     };
     let http_config = deka_http::HttpConfig {
         project_root: Some(config_dir.to_path_buf()),
+        static_entry: matches!(resolved.mode, runtime_config::ServeMode::Static)
+            .then(|| resolved.path.clone()),
         ..Default::default()
     };
     // Built-artifact posture (deka#762): when the resolved handler is a
@@ -790,8 +792,7 @@ fn start_watch(
                             if crate::build_watch::on_watch_event(root, &changed, dev_mode) {
                                 let _ = engine.pool().evict_all().await;
                             }
-                            if let Err(err) = runtime_core::dist::write_app_router_entry(root)
-                            {
+                            if let Err(err) = runtime_core::dist::write_app_router_entry(root) {
                                 tracing::warn!(
                                     "failed to regenerate serve-entry after {}: {err}",
                                     changed.join(", ")

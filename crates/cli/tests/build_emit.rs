@@ -8,19 +8,9 @@ fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
-fn init_project(dir: &Path) {
-    let output = Command::new(cli_bin())
-        .args(["init", "."])
-        .current_dir(dir)
-        .output()
-        .expect("run deka init");
-    assert!(
-        output.status.success(),
-        "deka init failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+#[path = "support/app_router.rs"]
+mod app_router;
+use app_router::init_project;
 
 fn run_build(dir: &Path) -> (bool, String) {
     let output = Command::new(cli_bin())
@@ -52,8 +42,14 @@ fn build_help_does_not_build() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.status.success(), "deka build --help must exit 0: {combined}");
-    assert!(combined.contains("build"), "help must mention build: {combined}");
+    assert!(
+        output.status.success(),
+        "deka build --help must exit 0: {combined}"
+    );
+    assert!(
+        combined.contains("build"),
+        "help must mention build: {combined}"
+    );
     assert!(
         !project.path().join("dist").exists(),
         "deka build --help must not write dist"
@@ -194,5 +190,3 @@ export fn Page() {
         "failed build entries must not promote dist output"
     );
 }
-
-

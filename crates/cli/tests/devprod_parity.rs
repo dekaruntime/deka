@@ -25,27 +25,20 @@ fn test_dsc() -> PathBuf {
             .expect("resolve sibling/repository dsc")
             .expect("parity tests require dsc: set DEKA_DSC to the pinned compiler"),
     };
-    assert!(dsc.is_file(), "parity compiler is not a file: {}", dsc.display());
+    assert!(
+        dsc.is_file(),
+        "parity compiler is not a file: {}",
+        dsc.display()
+    );
     dsc.canonicalize()
         .unwrap_or_else(|error| panic!("invalid parity compiler {}: {error}", dsc.display()))
 }
 
-fn init_project(dir: &Path) {
-    let output = Command::new(cli_bin())
-        .args(["init", "."])
-        .current_dir(dir)
-        .output()
-        .expect("run deka init");
-    assert!(
-        output.status.success(),
-        "deka init failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+#[path = "support/app_router.rs"]
+mod app_router;
+use app_router::init_project;
 
-/// Scaffolds the multi-module fixture into `dir` (via `deka init`, like the
-/// other cli integration tests) and returns the project root.
+/// Scaffolds the multi-module source app-router fixture into `dir`.
 fn write_fixture(dir: &Path) {
     init_project(dir);
 

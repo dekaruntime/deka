@@ -16,7 +16,7 @@ function parseArgs(argv) {
 }
 
 const NAMES = [
-  { name: "deka-init", title: "deka init writes a project v2 can compile" },
+  { name: "deka-init", title: "deka init writes a static project ready to serve" },
   { name: "deka-serve", title: "deka init && deka serve answers HTTP 200" },
   { name: "wasm-io", title: "WASM compiles import { echo } from io" },
 ];

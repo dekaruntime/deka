@@ -41,20 +41,11 @@ fn client() -> Client {
         .expect("reqwest client")
 }
 
+#[path = "support/app_router.rs"]
+mod app_router;
 fn init_project(dir: &Path) {
-    let output = Command::new(cli_bin())
-        .args(["init", "."])
-        .current_dir(dir)
-        .output()
-        .expect("deka init");
-    assert!(
-        output.status.success(),
-        "deka init failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    // The framework renderer is extracted; public HTTP serving remains live.
-    fs::write(dir.join("public/ready.txt"), "source-project-ready").expect("write readiness asset");
+    app_router::init_project(dir);
+    fs::write(dir.join("public/ready.txt"), "source-project-ready").unwrap();
 }
 
 fn serve_source_project(command: &str, root: &Path) {

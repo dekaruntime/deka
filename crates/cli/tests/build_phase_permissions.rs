@@ -76,20 +76,10 @@ fn add_fixturefs(project: &Path) -> String {
     grants
 }
 
-/// Scaffolds a fresh web project into `dir` via `deka init`.
-fn init_project(dir: &Path) {
-    let output = Command::new(cli_bin())
-        .args(["init", "."])
-        .current_dir(dir)
-        .output()
-        .expect("run deka init");
-    assert!(
-        output.status.success(),
-        "deka init failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+// Pin the source app-router shape independently of the static init template.
+#[path = "support/app_router.rs"]
+mod app_router;
+use app_router::init_project;
 
 fn run_build(dir: &Path, _host_grants: &str) -> (bool, String) {
     let output = Command::new(cli_bin())

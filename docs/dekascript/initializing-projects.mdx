@@ -1,0 +1,24 @@
+---
+title: Initialize a project
+---
+
+`deka init` creates a static starter site. Run these commands in an empty directory:
+
+```sh
+deka init
+deka serve
+```
+
+The home page responds with HTTP 200 and displays **Deka App** and **Project
+initialized.** Its stylesheet is served at `/style.css`.
+
+Edit `public/index.html` and `public/style.css` to change the site. The generated
+`deka.json` selects static serving with `public/` as its entry directory; project
+configuration and source files outside that directory are not public. The
+`app/`, `api/`, and `src/` directories are created empty for future development.
+Running `deka init` again preserves existing files.
+
+The starter does not use JSX page rendering, layouts, islands, hydration, or
+prerendering. Those framework features are paused while the component foundation
+moves to dsc. Existing JSX projects are not converted by `deka init`; their
+framework rendering remains unavailable during the extraction.

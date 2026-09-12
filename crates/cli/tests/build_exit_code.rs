@@ -14,38 +14,10 @@ fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
-/// Scaffolds a fresh web project into `dir` via `deka init`, exactly the way
-/// a human would (per the issue's reproduction), and asserts the scaffold
-/// succeeded.
-fn init_project(dir: &Path) {
-    let output = Command::new(cli_bin())
-        .args(["init", "."])
-        .current_dir(dir)
-        .output()
-        .expect("run deka init");
-    assert!(
-        output.status.success(),
-        "deka init failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        dir.join("deka.json").is_file(),
-        "deka init should scaffold deka.json"
-    );
-    assert!(
-        dir.join("deka.lock").is_file(),
-        "deka init should scaffold deka.lock"
-    );
-    assert!(
-        dir.join("app").join("page.dsx").is_file(),
-        "deka init should scaffold app/page.dsx"
-    );
-    assert!(
-        dir.join("index.html").is_file(),
-        "deka init should scaffold index.html"
-    );
-}
+// Pin the source app-router shape independently of the static init template.
+#[path = "support/app_router.rs"]
+mod app_router;
+use app_router::init_project;
 
 fn run_build(dir: &Path) -> (bool, String) {
     let output = Command::new(cli_bin())
@@ -102,4 +74,3 @@ fn build_exits_nonzero_on_invalid_source() {
         "deka build should not write dist/ output when source fails to compile"
     );
 }
-

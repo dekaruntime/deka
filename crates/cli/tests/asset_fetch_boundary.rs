@@ -58,19 +58,9 @@ fn client() -> Client {
         .expect("reqwest client")
 }
 
-fn init_project(dir: &Path) {
-    let output = Command::new(cli_bin())
-        .args(["init", "."])
-        .current_dir(dir)
-        .output()
-        .expect("deka init");
-    assert!(
-        output.status.success(),
-        "deka init failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+#[path = "support/app_router.rs"]
+mod app_router;
+use app_router::init_project;
 
 /// Supply public documents so these tests do not require the paused JSX
 /// renderer. Asset names are real content hashes, and nested imports ensure

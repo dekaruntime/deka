@@ -19,23 +19,9 @@ fn cli_bin() -> &'static str {
 
 /// Scaffolds a fresh web project into `dir` via `deka init`, exactly the way
 /// a human would, and asserts the scaffold succeeded.
-fn init_project(dir: &Path) {
-    let output = Command::new(cli_bin())
-        .args(["init", "."])
-        .current_dir(dir)
-        .output()
-        .expect("run deka init");
-    assert!(
-        output.status.success(),
-        "deka init failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        dir.join("app").join("page.dsx").is_file(),
-        "deka init should scaffold app/page.dsx"
-    );
-}
+#[path = "support/app_router.rs"]
+mod app_router;
+use app_router::init_project;
 
 fn run_build(dir: &Path) -> (bool, String) {
     run_build_with_env(dir, &[])
