@@ -25,7 +25,7 @@ pub(crate) fn enforce_host_allowed_with(
     url_str: &str,
 ) -> Result<(), String> {
     let host = host_of(url_str).ok_or_else(|| format!("invalid url: '{}'", url_str))?;
-    match crate::modules::php::enforce_net_public_with(policy, &host) {
+    match crate::modules::enforce_net_public_with(policy, &host) {
         Ok(()) => Ok(()),
         Err(err) => Err(format!("host_not_allowed: {} ({})", host, err)),
     }

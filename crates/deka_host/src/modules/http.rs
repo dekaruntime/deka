@@ -9,7 +9,7 @@
 //!
 //! Every network call is gated by the shared `enforce_net` policy the
 //! rest of the runtime already uses (`crates/runtime_core`
-//! + `match_rule_item` in `crates/deka_host/src/modules/php/mod.rs`),
+//! + `match_rule_item` in `crates/deka_host/src/modules/security.rs`),
 //! with one extension: wildcard DNS labels like `*.squareup.com` are
 //! accepted in the `net.allow` list. That extension lives next to the
 //! existing matcher so TCP and DNS clients pick it up too.
@@ -189,7 +189,7 @@ fn websockets() -> &'static Mutex<HashMap<u64, WsEntry>> {
 
 // ---------------------------------------------------------------------------
 // Capability gate — host extracted from URL, matched against the
-// existing `net` allowlist. The matcher lives in `php/mod.rs` so other
+// existing `net` allowlist. The matcher lives in `security.rs` so other
 // net ops share it; we only extract+normalize the host here.
 // ---------------------------------------------------------------------------
 
@@ -203,7 +203,7 @@ fn websockets() -> &'static Mutex<HashMap<u64, WsEntry>> {
 /// dispatch path installed; use `http_call_with_policy` to pin the policy
 /// instead.
 pub fn http_call(action: &str, payload: &Value) -> Value {
-    match crate::modules::php::security_policy_from_context() {
+    match crate::modules::security_policy_from_context() {
         Ok(policy) => http_call_with_policy(&policy, action, payload),
         Err(err) => json!({
             "ok": false,

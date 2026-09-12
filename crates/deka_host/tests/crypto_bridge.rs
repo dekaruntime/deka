@@ -3,7 +3,7 @@ use deno_core::{JsRuntime, ModuleCodeString, ModuleSpecifier, RuntimeOptions};
 #[tokio::test(flavor = "current_thread")]
 async fn crypto_bcrypt_verify_bridge_returns_bool_result() {
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: vec![deka_host::modules::php::init()],
+        extensions: vec![deka_host::modules::init()],
         ..Default::default()
     });
 
@@ -38,7 +38,7 @@ async fn crypto_bcrypt_verify_bridge_returns_bool_result() {
 #[tokio::test(flavor = "current_thread")]
 async fn crypto_digest_hmac_secure_compare_bridge() {
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: vec![deka_host::modules::php::init()],
+        extensions: vec![deka_host::modules::init()],
         ..Default::default()
     });
 

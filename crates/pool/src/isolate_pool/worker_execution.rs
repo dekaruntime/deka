@@ -781,7 +781,7 @@ impl WorkerThread {
                                 const invalid = { ok: false, error: __dekaFsError({ name: 'InvalidPayload' }) };
                                 return cat[a].async === true ? Promise.resolve(invalid) : invalid;
                             }
-                            // db_call_impl (crates/deka_host/src/modules/php/db.rs)
+                            // db_call_impl (crates/deka_host/src/modules/db.rs)
                             // opens with {driver, config}, not a URL string; the
                             // catalog's db.open arg is a connection URL, parsed
                             // here into the driver/config shape the host expects.
