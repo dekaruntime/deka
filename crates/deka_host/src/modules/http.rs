@@ -21,7 +21,7 @@
 //! Handles are u64 IDs allocated by atomic counters. Each kind
 //! (response-stream, client, websocket) has its own map protected by a
 //! Mutex. The maps leak a dedicated multi-thread tokio runtime for
-//! async I/O, following the same pattern `modules/neo4j.rs` uses so
+//! async I/O, using a dedicated Tokio runtime so
 //! sync ops can call async reqwest / tungstenite without hanging the
 //! isolate's own runtime.
 
@@ -58,7 +58,7 @@ fn http_handle() -> &'static Handle {
             .expect("failed to create @deka/http tokio runtime");
         let handle = rt.handle().clone();
         // Leak the runtime — it lives for the process lifetime. Same
-        // pattern as neo4j.rs.
+        // the runtime is available for the process lifetime.
         std::mem::forget(rt);
         handle
     })

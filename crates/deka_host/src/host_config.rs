@@ -8,31 +8,6 @@
 
 use std::sync::OnceLock;
 
-/// Database connection endpoints resolved from deka.json by the dispatch
-/// layer. Replaces the `DEKA_NEO4J_*` process-environment
-/// reads (deka#801); each consumer falls back to its hardcoded default when
-/// a field is `None` or nothing has been installed.
-#[derive(Debug, Clone, Default)]
-pub struct DatabaseEndpoints {
-    pub neo4j_uri: Option<String>,
-    pub neo4j_user: Option<String>,
-    pub neo4j_password: Option<String>,
-    pub neo4j_db: Option<String>,
-}
-
-static DATABASE_ENDPOINTS: OnceLock<DatabaseEndpoints> = OnceLock::new();
-
-/// Install the database endpoints for this process. Called once by the
-/// dispatch layer after it resolves deka.json; later installs are ignored.
-pub fn install_database_endpoints(endpoints: DatabaseEndpoints) {
-    let _ = DATABASE_ENDPOINTS.set(endpoints);
-}
-
-/// The installed database endpoints, if the dispatch layer installed any.
-pub fn database_endpoints() -> Option<&'static DatabaseEndpoints> {
-    DATABASE_ENDPOINTS.get()
-}
-
 /// Handler paths the dispatch layer resolved for this process. Replaces the
 /// `HANDLER_PATH` / `DEKA_MODULE_ROOT` process-environment reads in the
 /// PHPX-legacy bridge (deka#801).

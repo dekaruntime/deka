@@ -13,7 +13,6 @@ pub fn build_registry() -> Registry {
     cli::register_global_flags(&mut registry);
     cli::register_global_params(&mut registry);
     cli::init::register(&mut registry);
-    cli::user::register(&mut registry);
     wasm_cmd::register(&mut registry);
     #[cfg(target_arch = "wasm32")]
     cli::db_wasm::register(&mut registry);

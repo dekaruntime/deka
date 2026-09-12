@@ -11,7 +11,7 @@ use axum::{
 };
 use base64::Engine;
 
-use crate::config::{HttpConfig, Neo4jConfig};
+use crate::config::HttpConfig;
 use crate::utility_css::{UtilityCssConfig, inject_utility_css};
 use crate::websocket::{handle_hmr_websocket, handle_websocket, set_hmr_runtime_state};
 use engine::{RuntimeState, execute_request_parts};
@@ -24,8 +24,6 @@ use crate::rate_limit::{RateLimiter, middleware as rate_limit_middleware};
 #[derive(Clone)]
 struct HttpExtensions {
     debug: bool,
-    platform_api: bool,
-    neo4j: Arc<Neo4jConfig>,
     utility_css: UtilityCssConfig,
 }
 
@@ -43,8 +41,6 @@ pub fn app_router_with_rate_limiter(
     set_hmr_runtime_state(Arc::clone(&state));
     let extensions = HttpExtensions {
         debug: config.debug,
-        platform_api: config.platform_api,
-        neo4j: Arc::new(config.neo4j),
         utility_css: crate::utility_css::load_config(config.project_root.as_deref()),
     };
     Router::new()
@@ -68,23 +64,6 @@ async fn handle_request(
     }
     if let Some(response) = try_asset_response(&state, &path) {
         return response;
-    }
-
-    // ── Built-in REST API (/api/*) — skip V8 isolate entirely ──
-    // Only active when the caller enables it (HttpConfig::platform_api;
-    // deka#801 — the `DEKA_PLATFORM_API` env toggle is gone). Standalone
-    // `deka serve` apps own their own /api/* routes.
-    if extensions.platform_api && (path.starts_with("/api/") || path == "/api") {
-        let mut headers = Vec::with_capacity(request.headers().len());
-        for (key, value) in request.headers().iter() {
-            headers.push((
-                key.as_str().to_string(),
-                value.to_str().unwrap_or("").to_string(),
-            ));
-        }
-        return crate::api::handle_api_request(&path, &headers, &extensions.neo4j)
-            .await
-            .into_response();
     }
 
     let hmr_path = path == "/_deka/hmr";

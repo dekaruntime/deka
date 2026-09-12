@@ -45,21 +45,17 @@ fn http_config_ignores_contradictory_ambient_environment() {
 
     let contradictions_a = [
         ("DEKA_HTTP_DEBUG", "0"),
-        ("DEKA_PLATFORM_API", "0"),
         ("DEKA_RATE_LIMIT_DISABLED", "0"),
         ("DEKA_RATE_LIMIT_REQUESTS_PER_MINUTE", "1"),
         ("DEKA_RATE_LIMIT_BURST", "1"),
         ("DEKA_PROJECT_ROOT", "/not/a/project"),
-        ("DEKA_NEO4J_URI", "bolt://127.0.0.1:1"),
     ];
     let contradictions_b = [
         ("DEKA_HTTP_DEBUG", "1"),
-        ("DEKA_PLATFORM_API", "1"),
         ("DEKA_RATE_LIMIT_DISABLED", "1"),
         ("DEKA_RATE_LIMIT_REQUESTS_PER_MINUTE", "99999"),
         ("DEKA_RATE_LIMIT_BURST", "99999"),
         ("DEKA_PROJECT_ROOT", "/also/not/a/project"),
-        ("DEKA_NEO4J_URI", "bolt://example.invalid:9999"),
     ];
     assert_eq!(run(&contradictions_a), run(&contradictions_b));
 }
@@ -85,15 +81,12 @@ fn ambient_environment_child() {
     let css = deka_http::utility_css::load_config(config.project_root.as_deref());
 
     println!("ambient-proof:debug={}", config.debug);
-    println!("ambient-proof:platform-api={}", config.platform_api);
     println!("ambient-proof:rate-disabled={}", config.rate_limit.disabled);
     println!(
         "ambient-proof:rate-rpm={}",
         config.rate_limit.requests_per_minute
     );
     println!("ambient-proof:rate-burst={}", config.rate_limit.burst);
-    println!("ambient-proof:neo4j-uri={}", config.neo4j.uri);
-    println!("ambient-proof:neo4j-user={}", config.neo4j.user);
     println!("ambient-proof:css-enabled={}", css.enabled);
     println!("ambient-proof:css-preflight={}", css.preflight);
 

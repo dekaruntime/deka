@@ -32,7 +32,7 @@ use crate::storefront_envelope::ToSeam;
 
 // ---- CQL ------------------------------------------------------------------
 
-/// `neo4j` module → backend: run a Cypher query (`query` = rows wanted).
+/// Zega CQL bridge → backend: run a CQL query (`query` = rows wanted).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CqlQueryRequest {
     pub cypher: String,

@@ -1,9 +1,9 @@
 //! deka#801 regression pin for `deka_host`: host behavior (module-root
-//! resolution, neo4j endpoint defaults, target-capability validation)
+//! resolution and target-capability validation)
 //! comes from explicit inputs and installer functions only; contradictory
 //! process environment must not change behavior. Before this pin,
-//! `DEKA_MODULE_ROOT`, `DEKA_TARGET` / `DEKA_HOST_PROFILE`, `DEKA_NEO4J_*`,
-//! `HANDLER_PATH`, and `DEKA_SECURITY_NO_PROMPT` were read
+//! `DEKA_MODULE_ROOT`, `DEKA_TARGET` / `DEKA_HOST_PROFILE`, `HANDLER_PATH`,
+//! and `DEKA_SECURITY_NO_PROMPT` were read
 //! from the ambient environment at call time.
 //!
 //! Pattern follows the engine pin (deka#847, crates/engine/tests/
@@ -31,22 +31,14 @@ fn host_modules_ignore_contradictory_ambient_environment() {
             //   with the module the child's entry imports).
             // - DEKA_TARGET / DEKA_HOST_PROFILE select the 'adwa' target,
             //   which blocks capability imports the 'server' target allows.
-            // - DEKA_NEO4J_* point the bridge defaults at
-            //   nonexistent endpoints.
             // - HANDLER_PATH names a fake PHPX handler (project-kind hints).
             // - DEKA_SECURITY_NO_PROMPT suppresses interactive prompts.
-            let offered = std::env::temp_dir().join(format!(
-                "deka_host_ambient_offered_{}",
-                std::process::id()
-            ));
+            let offered = std::env::temp_dir()
+                .join(format!("deka_host_ambient_offered_{}", std::process::id()));
             command.envs([
                 ("DEKA_MODULE_ROOT", offered.to_string_lossy().into_owned()),
                 ("DEKA_TARGET", "adwa".to_string()),
                 ("DEKA_HOST_PROFILE", "adwa".to_string()),
-                ("DEKA_NEO4J_URI", "bolt://127.0.0.1:1".to_string()),
-                ("DEKA_NEO4J_USER", "poisoned".to_string()),
-                ("DEKA_NEO4J_PASSWORD", "poisoned".to_string()),
-                ("DEKA_NEO4J_DB", "poisoned".to_string()),
                 ("DEKA_SECURITY_NO_PROMPT", "1".to_string()),
                 ("HANDLER_PATH", "/nonexistent/project/main.phpx".to_string()),
             ]);
@@ -73,10 +65,8 @@ fn host_modules_ignore_contradictory_ambient_environment() {
     // A module root that WOULD resolve the child's unresolved import if the
     // ambient environment were still a config channel. The child must ignore
     // it.
-    let offered = std::env::temp_dir().join(format!(
-        "deka_host_ambient_offered_{}",
-        std::process::id()
-    ));
+    let offered =
+        std::env::temp_dir().join(format!("deka_host_ambient_offered_{}", std::process::id()));
     std::fs::create_dir_all(offered.join("ds_modules")).expect("write offered ds_modules");
     std::fs::write(offered.join("deka.lock"), "{}").expect("write offered lock");
     std::fs::write(
@@ -96,10 +86,7 @@ fn ambient_environment_child() {
     // cwd is an empty dir: no cwd-relative project candidate can load. Any
     // ambient env the parent sets points at values that would change host
     // behavior; the proof lines must show they were not read.
-    let cwd = std::env::temp_dir().join(format!(
-        "deka_host_ambient_cwd_{}",
-        std::process::id()
-    ));
+    let cwd = std::env::temp_dir().join(format!("deka_host_ambient_cwd_{}", std::process::id()));
     std::fs::create_dir_all(&cwd).expect("mkdir");
     std::env::set_current_dir(&cwd).expect("chdir");
 
@@ -108,9 +95,14 @@ fn ambient_environment_child() {
 
     // Module-root resolution: 'proven' exists only in the DEKA_MODULE_ROOT
     // the parent offers. Both runs must miss it identically.
-    let resolution_errors =
-        deka_host::validation::modules::validate_module_resolution("import { value } from 'proven'\n", entry.to_string_lossy().as_ref());
-    println!("ambient-proof:module-resolution-errors={}", resolution_errors.len());
+    let resolution_errors = deka_host::validation::modules::validate_module_resolution(
+        "import { value } from 'proven'\n",
+        entry.to_string_lossy().as_ref(),
+    );
+    println!(
+        "ambient-proof:module-resolution-errors={}",
+        resolution_errors.len()
+    );
 
     // Target-capability validation against an explicit target: the ambient
     // DEKA_TARGET / DEKA_HOST_PROFILE must not select the target.
@@ -124,16 +116,6 @@ fn ambient_environment_child() {
         capability_errors.len()
     );
 
-    // Bridge endpoint defaults: resolve from the installed deka_host store
-    // (nothing installed here), never from DEKA_NEO4J_*.
-    println!(
-        "ambient-proof:neo4j-uri={}",
-        deka_host::modules::neo4j::shard_route_neo4j(&serde_json::Value::Null)
-    );
-    println!(
-        "ambient-proof:database-endpoints={:?}",
-        deka_host::host_config::database_endpoints()
-    );
     println!(
         "ambient-proof:handler-paths={:?}",
         deka_host::host_config::handler_paths()

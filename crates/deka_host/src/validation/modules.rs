@@ -14,7 +14,8 @@ use runtime_core::modules::{
 
 use super::{ErrorKind, Severity, ValidationError};
 use crate::validation::imports::{
-    ImportKind, ImportSpec, consume_comment_line, is_ident, parse_import_line, strip_php_tags_inline,
+    ImportKind, ImportSpec, consume_comment_line, is_ident, parse_import_line,
+    strip_php_tags_inline,
 };
 
 #[derive(Debug, Clone)]
@@ -942,7 +943,6 @@ fn is_deka_stdlib_root(root: &str) -> bool {
             | "json"
             | "jwt"
             | "test"
-            | "neo4j"
             | "payments"
             | "string"
             | "tcp"
@@ -1487,11 +1487,7 @@ fn validate_package_integrity(
 
 /// Rewrite the `moduleGraph.hash` of one package entry inside a parsed
 /// deka.lock, in whichever shape the lockfile stores its packages.
-fn heal_module_graph_hash_in_lock(
-    lock_json: &mut Value,
-    name: &str,
-    module_hash: &str,
-) -> bool {
+fn heal_module_graph_hash_in_lock(lock_json: &mut Value, name: &str, module_hash: &str) -> bool {
     let packages = if lock_json.get("packages").is_some() {
         match lock_json.get_mut("packages") {
             Some(packages) => packages,
@@ -1796,7 +1792,10 @@ mod tests {
             &fs::read_to_string(&entry).expect("read entry"),
             entry.to_string_lossy().as_ref(),
         );
-        assert!(errors.is_empty(), "scoped spelling must resolve: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "scoped spelling must resolve: {errors:?}"
+        );
 
         fs::write(&entry, "import { E } from \"math\"\n").expect("write entry");
         let errors = validate_module_resolution(
@@ -1982,11 +1981,7 @@ mod tests {
         // can report the parse diagnostic.
         let root = make_temp_project("default_import_not_export");
         let entry = root.join("main.ds");
-        fs::write(
-            &entry,
-            "import foo from \"./bar.ds\"\nconsole.log(foo)\n",
-        )
-        .expect("write entry");
+        fs::write(&entry, "import foo from \"./bar.ds\"\nconsole.log(foo)\n").expect("write entry");
         fs::write(root.join("bar.ds"), "export const foo = 1\n").expect("write bar");
 
         let errors = validate_module_resolution(

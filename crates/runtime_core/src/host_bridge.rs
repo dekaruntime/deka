@@ -25,7 +25,7 @@
 //!   encoded with [`PERMISSION_DENIED_MARKER`] so it survives the CoreError /
 //!   thrown-message boundary. It is never a throw into DekaScript.
 //!
-//! Kinds with no host implementation yet (neo4j, vault) are
+//! Kinds with no host implementation yet (vault) are
 //! deliberately absent — the catalog lists only genuinely host-implemented
 //! actions, zero stubs.
 
@@ -126,7 +126,10 @@ const CRYPTO_ACTIONS: &[HostAction] = &[
     },
     HostAction {
         name: "digest",
-        args: &[arg("algorithm", WireType::Str), arg("data", WireType::Bytes)],
+        args: &[
+            arg("algorithm", WireType::Str),
+            arg("data", WireType::Bytes),
+        ],
         result: ResultShape::Bytes,
         r#async: false,
         capability: None,
@@ -267,7 +270,10 @@ const FS_ACTIONS: &[HostAction] = &[
     },
     HostAction {
         name: "read",
-        args: &[arg("handle", WireType::Handle), arg("max_bytes", WireType::Num)],
+        args: &[
+            arg("handle", WireType::Handle),
+            arg("max_bytes", WireType::Num),
+        ],
         result: ResultShape::Bytes,
         r#async: false,
         capability: Some("read"),
@@ -275,7 +281,10 @@ const FS_ACTIONS: &[HostAction] = &[
     },
     HostAction {
         name: "write",
-        args: &[arg("handle", WireType::Handle), arg("data", WireType::Bytes)],
+        args: &[
+            arg("handle", WireType::Handle),
+            arg("data", WireType::Bytes),
+        ],
         result: ResultShape::Num,
         r#async: false,
         capability: Some("write"),
@@ -318,7 +327,10 @@ const NET_ACTIONS: &[HostAction] = &[
     },
     HostAction {
         name: "read",
-        args: &[arg("handle", WireType::Handle), arg("max_bytes", WireType::Num)],
+        args: &[
+            arg("handle", WireType::Handle),
+            arg("max_bytes", WireType::Num),
+        ],
         result: ResultShape::Bytes,
         r#async: false,
         capability: Some("net"),
@@ -326,7 +338,10 @@ const NET_ACTIONS: &[HostAction] = &[
     },
     HostAction {
         name: "write",
-        args: &[arg("handle", WireType::Handle), arg("data", WireType::Bytes)],
+        args: &[
+            arg("handle", WireType::Handle),
+            arg("data", WireType::Bytes),
+        ],
         result: ResultShape::Num,
         r#async: false,
         capability: Some("net"),
@@ -342,7 +357,10 @@ const NET_ACTIONS: &[HostAction] = &[
     },
     HostAction {
         name: "set_deadline",
-        args: &[arg("handle", WireType::Handle), arg("millis", WireType::Num)],
+        args: &[
+            arg("handle", WireType::Handle),
+            arg("millis", WireType::Num),
+        ],
         result: ResultShape::Unit,
         r#async: false,
         capability: Some("net"),
@@ -352,7 +370,10 @@ const NET_ACTIONS: &[HostAction] = &[
 
 const TLS_ACTIONS: &[HostAction] = &[HostAction {
     name: "upgrade",
-    args: &[arg("handle", WireType::Handle), arg("server_name", WireType::Str)],
+    args: &[
+        arg("handle", WireType::Handle),
+        arg("server_name", WireType::Str),
+    ],
     result: ResultShape::Handle,
     r#async: false,
     capability: Some("net"),
@@ -439,8 +460,8 @@ const DB_ACTIONS: &[HostAction] = &[
 ];
 
 /// The single authoritative bridge catalog (RFD 27). Every entry is genuinely
-/// host-implemented; kinds with no DS action surface yet (neo4j,
-/// vault) are absent, not stubbed.
+/// host-implemented; kinds with no DS action surface yet (vault) are absent,
+/// not stubbed.
 pub const HOST_CATALOG: &[HostKind] = &[
     HostKind {
         name: "crypto",
@@ -494,7 +515,10 @@ pub fn find_kind(name: &str) -> Option<&'static HostKind> {
 
 /// Look up an action by kind and action name.
 pub fn find_action(kind: &str, action: &str) -> Option<&'static HostAction> {
-    find_kind(kind)?.actions.iter().find(|candidate| candidate.name == action)
+    find_kind(kind)?
+        .actions
+        .iter()
+        .find(|candidate| candidate.name == action)
 }
 
 /// JSON gate payload for the JS bootstrap (`{kind: {action: {async: bool}}}`),
@@ -584,7 +608,9 @@ pub fn resolve_project_root_grants(
     manifest_path: &Path,
     host_kinds: Option<&[String]>,
 ) -> Result<Vec<String>, GrantError> {
-    let Some(kinds) = host_kinds else { return Ok(Vec::new()) };
+    let Some(kinds) = host_kinds else {
+        return Ok(Vec::new());
+    };
     if is_official_package_name(manifest_name) {
         Ok(kinds.to_vec())
     } else {
@@ -599,8 +625,13 @@ pub fn resolve_project_root_grants(
 /// and ignored. Grants come only from the grant table via the lockfile-pinned
 /// digest; no pin or no table hit → no grants.
 pub fn resolve_dependency_grants(table: &GrantTable, lock_digest: Option<&str>) -> Vec<String> {
-    let Some(digest) = lock_digest else { return Vec::new() };
-    table.lookup(digest).map(|grant| grant.kinds.clone()).unwrap_or_default()
+    let Some(digest) = lock_digest else {
+        return Vec::new();
+    };
+    table
+        .lookup(digest)
+        .map(|grant| grant.kinds.clone())
+        .unwrap_or_default()
 }
 
 /// Union of the kinds granted to a project: the project-root grants (workspace
@@ -648,7 +679,8 @@ impl PermissionDenied {
     /// Wire encoding: [`PERMISSION_DENIED_MARKER`] + compact JSON
     /// `{"capability":..,"target":..}`.
     pub fn encode(&self) -> String {
-        let json = serde_json::to_string(self).unwrap_or_else(|_| "{\"capability\":\"\",\"target\":\"\"}".to_string());
+        let json = serde_json::to_string(self)
+            .unwrap_or_else(|_| "{\"capability\":\"\",\"target\":\"\"}".to_string());
         format!("{PERMISSION_DENIED_MARKER}{json}")
     }
 
@@ -677,7 +709,11 @@ mod tests {
                 kind.name,
                 kind.grant_owner
             );
-            assert!(!kind.actions.is_empty(), "kind '{}' has no actions", kind.name);
+            assert!(
+                !kind.actions.is_empty(),
+                "kind '{}' has no actions",
+                kind.name
+            );
             for action in kind.actions {
                 assert!(
                     !action.name.is_empty() && !action.args.is_empty(),
@@ -686,7 +722,10 @@ mod tests {
                     action.name
                 );
                 assert!(
-                    matches!(action.capability, None | Some("read" | "write" | "net" | "db")),
+                    matches!(
+                        action.capability,
+                        None | Some("read" | "write" | "net" | "db")
+                    ),
                     "{}.{} has invalid capability {:?}",
                     kind.name,
                     action.name,
@@ -826,7 +865,10 @@ mod tests {
         let official = resolve_project_root_grants("@deka/fs", &path, Some(&["fs".to_string()]));
         assert_eq!(official, Ok(vec!["fs".to_string()]));
         // Official root without kinds grants nothing.
-        assert_eq!(resolve_project_root_grants("@deka/fs", &path, None), Ok(vec![]));
+        assert_eq!(
+            resolve_project_root_grants("@deka/fs", &path, None),
+            Ok(vec![])
+        );
         // App root declaring kinds is a compile error.
         let app = resolve_project_root_grants("my-app", &path, Some(&["fs".to_string()]));
         assert_eq!(
@@ -837,7 +879,10 @@ mod tests {
             })
         );
         // App root without kinds is fine and grants nothing.
-        assert_eq!(resolve_project_root_grants("my-app", &path, None), Ok(vec![]));
+        assert_eq!(
+            resolve_project_root_grants("my-app", &path, None),
+            Ok(vec![])
+        );
         assert!(is_official_package_name("@deka/crypto"));
         assert!(!is_official_package_name("my-app"));
     }
@@ -848,7 +893,10 @@ mod tests {
             r#"[{"name":"@deka/fs","version":"1.0.0","digest":"sha256:aaa","kinds":["fs"]}]"#,
         )
         .unwrap();
-        assert_eq!(resolve_dependency_grants(&table, Some("sha256:aaa")), vec!["fs"]);
+        assert_eq!(
+            resolve_dependency_grants(&table, Some("sha256:aaa")),
+            vec!["fs"]
+        );
         // No lock pin → no grants, even with a populated table.
         assert!(resolve_dependency_grants(&table, None).is_empty());
         // Pin with no table hit → no grants.
@@ -865,7 +913,11 @@ mod tests {
         )
         .unwrap();
         let root = Ok(vec!["crypto".to_string(), "fs".to_string()]);
-        let digests = vec![Some("sha256:aaa".to_string()), None, Some("sha256:bbb".to_string())];
+        let digests = vec![
+            Some("sha256:aaa".to_string()),
+            None,
+            Some("sha256:bbb".to_string()),
+        ];
         let names = granted_kind_names(&root, &table, &digests).expect("grants");
         // Deduped, first-seen order: root kinds then dependency kinds.
         assert_eq!(names, vec!["crypto", "fs", "net", "tls"]);
@@ -892,7 +944,10 @@ mod tests {
         assert_eq!(PermissionDenied::decode(""), None);
         // Truncated payload: marker present but no/invalid JSON.
         assert_eq!(PermissionDenied::decode(PERMISSION_DENIED_MARKER), None);
-        assert_eq!(PermissionDenied::decode(&format!("{PERMISSION_DENIED_MARKER}{{")), None);
+        assert_eq!(
+            PermissionDenied::decode(&format!("{PERMISSION_DENIED_MARKER}{{")),
+            None
+        );
         assert_eq!(
             PermissionDenied::decode(&format!("{PERMISSION_DENIED_MARKER}[1,2]")),
             None
