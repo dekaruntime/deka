@@ -1,6 +1,7 @@
 use core::{CommandSpec, Context, ParamSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "fmt",
     category: "project",
     summary: "format DekaScript source or emitted JavaScript (execs dsc)",

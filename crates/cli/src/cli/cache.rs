@@ -16,6 +16,7 @@ const CLEAR: core::SubcommandSpec = core::SubcommandSpec {
 };
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "cache",
     category: "runtime",
     summary: "manage the user-global cache",

@@ -9,6 +9,7 @@ use std::process::Command;
 use stdio;
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "run",
     category: "runtime",
     summary: "run the app",

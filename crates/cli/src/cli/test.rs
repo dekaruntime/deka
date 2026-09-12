@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 use stdio;
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "test",
     category: "runtime",
     summary: "run DekaScript tests",

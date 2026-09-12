@@ -977,6 +977,9 @@ dependencies = [
 [[package]]
 name = "core"
 version = "0.48.1"
+dependencies = [
+ "deka-cli-core",
+]
 
 [[package]]
 name = "core-foundation"
@@ -1293,6 +1296,12 @@ dependencies = [
  "serde",
  "uuid",
 ]
+
+[[package]]
+name = "deka-cli-core"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "959a3a6061fd69200fa3e0653f51dd985a12948e4a55c83c36ba9756b61cb208"
 
 [[package]]
 name = "deka-lsp"

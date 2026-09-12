@@ -1,6 +1,7 @@
 use core::{CommandSpec, Context, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "platform",
     category: "runtime",
     summary: "multi-tenant platform server — serves per-tenant DekaScript handlers from tenants/ directory",

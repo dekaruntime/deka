@@ -1,6 +1,7 @@
 use core::{CommandSpec, Context, FlagSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "serve",
     category: "runtime",
     summary: "serve a handler or directory",

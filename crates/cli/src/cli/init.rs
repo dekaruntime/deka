@@ -3,6 +3,7 @@ use std::path::Path;
 use stdio::{error as stdio_error, raw};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "init",
     category: "project",
     summary: "initialize a new app project",

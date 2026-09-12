@@ -4,6 +4,7 @@ use core::{CommandSpec, Context, ParamSpec, Registry, SubcommandSpec};
 use std::path::{Path, PathBuf};
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "wasm_cli",
     name: "wasm",
     category: "extensions",
     summary: "manage wasm extensions",

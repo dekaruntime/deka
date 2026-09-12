@@ -38,6 +38,7 @@ const UPDATE: SubcommandSpec = SubcommandSpec {
 const SUBCOMMANDS: &[SubcommandSpec] = &[FETCH, MONITOR, TEST, UPDATE];
 
 const COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "self",
     category: "internal",
     summary: "internal deka maintenance commands",

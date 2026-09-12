@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use stdio;
 
 const INSTALL_COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "install",
     category: "package",
     summary: "install dependencies via the package manager",
@@ -16,6 +17,7 @@ const INSTALL_COMMAND: CommandSpec = CommandSpec {
 };
 
 const ADD_COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "add",
     category: "package",
     summary: "install package(s) from the index",
@@ -25,6 +27,7 @@ const ADD_COMMAND: CommandSpec = CommandSpec {
 };
 
 const I_COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "i",
     category: "package",
     summary: "install package(s) from the index",
@@ -34,6 +37,7 @@ const I_COMMAND: CommandSpec = CommandSpec {
 };
 
 const UPDATE_COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "update",
     category: "package",
     summary: "update dependencies to latest within semver range",

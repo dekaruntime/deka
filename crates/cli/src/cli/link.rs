@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use stdio;
 
 const LINK_COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "link",
     category: "package",
     summary: "link a local package working tree into this project",
@@ -13,6 +14,7 @@ const LINK_COMMAND: CommandSpec = CommandSpec {
 };
 
 const UNLINK_COMMAND: CommandSpec = CommandSpec {
+    owner: "",
     name: "unlink",
     category: "package",
     summary: "remove a local package link without touching its target",
