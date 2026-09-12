@@ -6,27 +6,40 @@
 //! `<sha256-10>` is the first 10 hex chars of the sha256 of the final file
 //! bytes. `deka build` (dist) and `deka serve` (.cache) both call into these
 //! writers; within one [`ClientAssetFlavor`] identical source yields identical
-//! names. The flavors differ by design since deka#750: dist output is
-//! tree-shaken and minified, dev output stays readable, and content
-//! addressing means their hashes differ.
+//! names.
 //!
+//! PAUSED (deka#881 DECIDE-1): the framework — islands included — is paused
+//! as of 2026-09-10, so the dist flavor currently emits the same readable,
+//! unpruned chunks as dev. The deka#750 dist pipeline (export pruning +
+//! minification via the now-deleted `bundler` crate) is parked, not removed
+//! from the design: when the framework resumes, dist optimization must be
+//! re-wired through dsc's optimizer/bundle stage (dsc owns bundling since
+//! dsc#157), never by reinstating a bundler copy in this repo.
 //! Alongside the chunks this module writes `importmap.json` (RFD 24 §10.7):
 //! the logical specifiers (`ui/jsx`, `ui/client`, `islands/load`, ...) map
 //! to the hashed `/assets/...` URLs. `write_defer_client_assets` merges into
 //! the same file, so it must run after `write_island_client_assets`.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use runtime_core::framework::ClientIsland;
 
 /// How browser-bound client assets are emitted (deka#750).
+///
+/// PAUSED (deka#881 DECIDE-1): the dist optimization this flavor used to
+/// select (export pruning + minification) is parked with the framework pause;
+/// both flavors currently emit the same readable chunks. The enum survives so
+/// `deka build`/`deka serve` call sites keep their contract — restore the
+/// Dist behavior through dsc's optimizer stage when the framework resumes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ClientAssetFlavor {
     /// `deka serve` / dev cache: readable, unpruned sources.
     Dev,
     /// `deka build` dist: tree-shaken + minified (deka#750 payload budget).
+    /// Currently emits readable sources like [`ClientAssetFlavor::Dev`]
+    /// (paused, deka#881 DECIDE-1).
     Dist,
 }
 
@@ -431,150 +444,35 @@ fn hash_ui_modules(modules: &mut [UiModule]) -> BTreeMap<String, String> {
     hashed
 }
 
-/// Per-module export pruning plan for dist: `named` maps a ui-specifier to
-/// the exported names its importers use; `keep_all` lists specifiers some
-/// importer observed without naming bindings (namespace/default/side-effect
-/// import, `export *`, dynamic `import()`), which must not be pruned at all.
-/// `None` means "no pruning": some importer used direct `eval`/`with`/dynamic
-/// scope, so any binding may be observed and everything must survive.
-type UiKeepSets = Option<UiPrunePlan>;
-
-struct UiPrunePlan {
-    named: BTreeMap<String, HashSet<String>>,
-    keep_all: HashSet<String>,
-}
-
-/// Synthetic import line every client entry issues: `hydrate` (and
-/// `registerIsland` for the island entries) come from `ui/client`.
-const CLIENT_ENTRY_IMPORTS: &str =
-    "import { hydrate, registerIsland } from \"ui/client\";";
-
-/// Optimize browser-bound source per flavor (deka#750): dist chunks are
-/// export-pruned + minified; dev chunks pass through byte-identical.
+/// Optimize browser-bound source per flavor (deka#750).
+///
+/// PAUSED (deka#881 DECIDE-1): dist used to export-prune + minify here via
+/// the deleted `bundler` crate. Both flavors pass through until the framework
+/// resumes; dist optimization must then be re-wired through dsc's optimizer
+/// stage (dsc owns bundling since dsc#157).
 fn optimize_client_chunk(
-    name: &str,
+    _name: &str,
     source: &str,
-    flavor: ClientAssetFlavor,
+    _flavor: ClientAssetFlavor,
 ) -> Result<String, String> {
-    match flavor {
-        ClientAssetFlavor::Dev => Ok(source.to_string()),
-        ClientAssetFlavor::Dist => bundler::optimize_emitted_module(source, Path::new(name)),
-    }
+    Ok(source.to_string())
 }
 
-/// Map an import specifier (`"ui/jsx"` or the sibling form `"./jsx.js"`) to
-/// the `deka_ui` specifier it resolves to, or `None` when it is not a shipped
-/// client chunk (e.g. an island module import).
-fn resolve_ui_import_target(spec: &str) -> Option<String> {
-    for candidate in [spec.to_string(), format!("{spec}.js"), format!("{spec}.mjs")] {
-        if deka_ui::source_for(&candidate).is_some() {
-            return Some(candidate);
-        }
-    }
-    let file = spec.rsplit(['/', '\\']).next().unwrap_or(spec);
-    for known in deka_ui::SPECIFIERS {
-        if deka_ui::file_name_for(known) == Some(file) {
-            return Some((*known).to_string());
-        }
-    }
-    None
-}
-
-/// Compute per-module export keep-sets across the complete set of modules a
-/// browser can load: the given island-chunk sources (pre ui-rewrite), the
-/// synthetic client entry import, and every ui module's own relative imports.
-/// Returns `Ok(None)` when any importer uses dynamic scope — nothing is
-/// prunable then. Importers outside this set (a hand-written module reaching
-/// into a `ui/*` chunk) are unsupported: pruning assumes the keep-set here
-/// is complete.
-fn compute_ui_keep_sets(importer_sources: &[String]) -> Result<UiKeepSets, String> {
-    let mut plan = UiPrunePlan {
-        named: BTreeMap::new(),
-        keep_all: HashSet::new(),
-    };
-    let mut scan = |source: &str, file: &str| -> Result<bool, String> {
-        let scan = bundler::scan_module_imports(source, Path::new(file))?;
-        if scan.uses_dynamic_scope {
-            return Ok(true);
-        }
-        for (spec, use_) in scan.imports {
-            let Some(target) = resolve_ui_import_target(&spec) else {
-                continue;
-            };
-            match use_ {
-                bundler::ImportUse::KeepAll => {
-                    // Any binding may be observed: never prune this module.
-                    plan.named.remove(&target);
-                    plan.keep_all.insert(target);
-                }
-                bundler::ImportUse::Named(names) => {
-                    if !plan.keep_all.contains(&target) {
-                        plan.named.entry(target).or_default().extend(names);
-                    }
-                }
-            }
-        }
-        Ok(false)
-    };
-    for source in importer_sources {
-        if scan(source, "island.js")? {
-            return Ok(None);
-        }
-    }
-    if scan(CLIENT_ENTRY_IMPORTS, "client-entry.js")? {
-        return Ok(None);
-    }
-    for module in client_ui_modules() {
-        if scan(&module.source, &format!("{}.js", module.stem))? {
-            return Ok(None);
-        }
-    }
-    Ok(Some(plan))
-}
-
-/// Write the shared `ui/*` chunks under hashed names; returns the names. In
-/// the `Dist` flavor each module is export-pruned to its keep-set and
-/// minified before hashing; `Dev` writes the readable sources unchanged. A
-/// module that prunes to nothing is still written as `export {};`: under the
-/// complete-importer-set contract no known importer can reference it, and
-/// keeping a non-empty file + importmap entry preserves dev/prod parity.
+/// Write the shared `ui/*` chunks under hashed names; returns the names.
+///
+/// PAUSED (deka#881 DECIDE-1): the `Dist` flavor used to export-prune each
+/// module to its keep-set and minify before hashing (deka#750, via the
+/// deleted `bundler` crate). Both flavors now write the readable sources
+/// unchanged; restore dist pruning + minification through dsc's optimizer
+/// stage when the framework resumes.
 fn write_ui_chunks(
     ui_dir: &Path,
     flavor: ClientAssetFlavor,
-    keep: &UiKeepSets,
 ) -> Result<UiChunkNames, String> {
+    let _ = flavor;
     fs::create_dir_all(ui_dir)
         .map_err(|err| format!("failed to create {}: {err}", ui_dir.display()))?;
     let mut modules = client_ui_modules();
-    if flavor == ClientAssetFlavor::Dist {
-        for module in &mut modules {
-            // Rewrite dsc-emitted match machinery first so pruning sees the
-            // simplified bindings (the Result prelude half becomes unreachable
-            // and drops; deka#771).
-            module.source = bundler::simplify_emitted_module(
-                &module.source,
-                &Path::new(&format!("{}.js", module.stem)),
-            )?;
-            let pruned = match keep {
-                Some(plan) if !plan.keep_all.contains(module.specifier) => {
-                    bundler::prune_unreferenced_exports(
-                        &module.source,
-                        &Path::new(&format!("{}.js", module.stem)),
-                        &plan.named.get(module.specifier).cloned().unwrap_or_default(),
-                    )?
-                }
-                _ => module.source.clone(),
-            };
-            module.source =
-                optimize_client_chunk(&format!("{}.js", module.stem), &pruned, flavor)?;
-            if module.source.trim().is_empty() {
-                // Pruned to nothing: still a valid, non-empty ES module so the
-                // written file + importmap entry survive dev/prod parity and
-                // the "assets are non-empty on disk" check.
-                module.source = "export {};\n".to_string();
-            }
-        }
-    }
     let hashed = hash_ui_modules(&mut modules);
     let keep: BTreeSet<String> = hashed.values().cloned().collect();
     for module in &modules {
@@ -660,9 +558,9 @@ struct IslandChunk {
 }
 
 /// Compile every island source file exactly once per directive, appending
-/// `export { ... }` for bound-but-unexported components. Keep-sets for dist
-/// pruning must be computed from these pre-rewrite sources, so compilation is
-/// a separate pass from writing.
+/// `export { ... }` for bound-but-unexported components. Compilation is a
+/// separate pass from writing so the emitted JS is stable before any chunk
+/// name is hashed from it.
 fn compile_island_chunks(
     islands: &[ClientIsland],
     dsc: Option<&Path>,
@@ -759,15 +657,7 @@ fn write_island_client_assets_with_optional_dsc(
     dsc: Option<&Path>,
 ) -> Result<(), String> {
     let chunks = compile_island_chunks(islands, dsc)?;
-    // Dist pruning needs the full importer set before any ui chunk is
-    // written; dev skips the analysis entirely.
-    let keep = if flavor == ClientAssetFlavor::Dist {
-        let sources: Vec<String> = chunks.iter().map(|chunk| chunk.js.clone()).collect();
-        compute_ui_keep_sets(&sources)?
-    } else {
-        None
-    };
-    let ui_names = write_ui_chunks(&assets_dir.join("ui"), flavor, &keep)?;
+    let ui_names = write_ui_chunks(&assets_dir.join("ui"), flavor)?;
     let mut importmap_entries = ui_names.importmap_entries();
     let mut keep_root: BTreeSet<String> = BTreeSet::new();
 
@@ -837,12 +727,7 @@ fn write_island_client_assets_with_optional_dsc(
 }
 
 pub fn write_defer_client_assets(assets_dir: &Path, flavor: ClientAssetFlavor) -> Result<(), String> {
-    let keep = if flavor == ClientAssetFlavor::Dist {
-        compute_ui_keep_sets(&[])?
-    } else {
-        None
-    };
-    let ui_names = write_ui_chunks(&assets_dir.join("ui"), flavor, &keep)?;
+    let ui_names = write_ui_chunks(&assets_dir.join("ui"), flavor)?;
     let entry = format!(
         "import {{ hydrate }} from \"./ui/{}\";\nhydrate();\n",
         ui_names.file("ui/client")

@@ -1,10 +1,8 @@
-use bundler::{bundle_virtual_entry, BuildOptions, VirtualSource};
 use core::Context;
 use runtime_core::modules::MODULES_DIR;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use super::project;
 use crate::cli::build_dsc;
@@ -58,24 +56,14 @@ pub(super) fn build_bundle_to_path(
     output_path: &Path,
     minify: bool,
 ) -> Result<(), String> {
+    // `build_to_string` validates the entry and enforces project layout
+    // (ds_modules present) before dsc resolves the import graph.
     let output = build_to_string(input_path)?;
-    let entry_js = output.js.clone();
-    let entry_path = fs::canonicalize(input_path)
-        .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
-    let provider = Arc::new(PhpxProvider::new(entry_path.clone(), entry_js));
-    let bundle = bundle_virtual_entry(
-        &entry_path,
-        BuildOptions {
-            project_root: output.project_root,
-            minify,
-            iife: false,
-            client: false,
-            // Single-file compilation inlines the prelude per module; only
-            // module-graph bundles carry a detached program prelude.
-            prelude: None,
-        },
-        provider,
-    )?;
+
+    // Bundling is dsc's stage (dsc#157): `dsc transpile --bundle` resolves the
+    // entry's graph — including `.ds` imports, which it compiles itself — and
+    // emits one file. minify maps onto dsc's `--treeshake`.
+    let bundle = build_dsc::transpile_bundle(&output.project_root, input_path, minify)?;
 
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)
@@ -229,38 +217,4 @@ fn build_to_string(input_path: &Path) -> Result<JsBuildOutput, String> {
         import_paths,
         project_root,
     })
-}
-
-struct PhpxProvider {
-    entry_path: PathBuf,
-    entry_source: String,
-}
-
-impl PhpxProvider {
-    fn new(entry_path: PathBuf, entry_source: String) -> Self {
-        Self {
-            entry_path,
-            entry_source,
-        }
-    }
-}
-
-impl VirtualSource for PhpxProvider {
-    fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
-        if path == self.entry_path {
-            return Ok(Some(self.entry_source.clone()));
-        }
-
-        if !project::is_deka_source_path(path) {
-            return Ok(None);
-        }
-
-        let input = path
-            .to_str()
-            .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
-        let source =
-            fs::read_to_string(path).map_err(|err| format!("failed to read {}: {}", input, err))?;
-        let js = build_dsc::transpile_file(path)?;
-        Ok(Some(js))
-    }
 }

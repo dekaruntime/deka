@@ -56,8 +56,19 @@ pub fn transpile_file(path: &Path) -> Result<String, String> {
     run_transpile(path, None, &["transpile"])
 }
 
-pub fn transpile_bundle(project_root: &Path, entry: &Path) -> Result<String, String> {
-    run_transpile(entry, Some(project_root), &["transpile", "--bundle"])
+/// Bundle stage: `dsc transpile <entry> --bundle [--treeshake] --out <tmp>`,
+/// run from `project_root` so graph imports resolve against the project.
+/// `minify` maps onto dsc's `--treeshake` (dsc owns minification semantics).
+pub fn transpile_bundle(
+    project_root: &Path,
+    entry: &Path,
+    minify: bool,
+) -> Result<String, String> {
+    if minify {
+        run_transpile(entry, Some(project_root), &["transpile", "--bundle", "--treeshake"])
+    } else {
+        run_transpile(entry, Some(project_root), &["transpile", "--bundle"])
+    }
 }
 
 /// Ask the released compiler for a build plan. A plan is data, never an

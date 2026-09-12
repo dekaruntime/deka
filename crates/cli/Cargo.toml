@@ -14,7 +14,6 @@ native = [
   "dep:tokio",
   "dep:postgres",
   "dep:deka_host",
-  "dep:bundler",
   "dep:rusqlite",
   "dep:deno_task_shell",
   "dep:ctrlc",
@@ -45,7 +44,6 @@ ctrlc = { version = "3", optional = true }
 deno_task_shell = { version = "0.29.0", optional = true }
 glob = "0.3.1"
 serde_yaml = "0.9"
-bundler = { path = "../bundler", optional = true }
 deka_ui = { path = "../deka_ui" }
 libc = "0.2"
 tempfile = "3.23.0"

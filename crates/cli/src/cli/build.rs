@@ -727,13 +727,13 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
         .map_err(|err| format!("failed to read {}: {err}", entry.display()))?;
     let graph_imports = runtime_core::ds_imports::paths(&entry_source);
     project::ensure_project_layout(project_root, None, &graph_imports)?;
-    let bundled = build_dsc::transpile_bundle(project_root, &entry)?;
+    let bundled = build_dsc::transpile_bundle(project_root, &entry, false)?;
     let mut defer_bundle = String::new();
     let has_defer =
         !runtime_core::framework::scan_server_defer(&project_root.join("app")).is_empty();
     if has_defer {
         let defer_entry = runtime_core::framework::write_defer_router_entry(project_root)?;
-        let raw = build_dsc::transpile_bundle(project_root, &defer_entry)?;
+        let raw = build_dsc::transpile_bundle(project_root, &defer_entry, false)?;
         defer_bundle = retarget_app_export(&raw, "DeferApp");
     }
     let public_files = runtime_core::framework::collect_public_rel_paths(project_root);

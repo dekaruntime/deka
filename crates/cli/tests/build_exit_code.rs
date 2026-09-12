@@ -80,6 +80,43 @@ fn find_hashed_asset(dir: &Path, stem: &str, ext: &str) -> Option<std::path::Pat
     })
 }
 
+/// Rewrite hashed sibling references (`./jsx.91a1195be0.js`) back to their
+/// logical form (`./jsx.js`) so a written chunk can be compared against the
+/// raw deka_ui source it was hashed from.
+fn strip_sibling_hashes(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    for (index, seg) in body.split('"').enumerate() {
+        if index > 0 {
+            out.push('"');
+        }
+        if index % 2 == 0 {
+            out.push_str(seg);
+            continue;
+        }
+        let mut replaced = false;
+        if let Some(rel) = seg.strip_prefix("./") {
+            if let Some((stem, hash_ext)) = rel.rsplit_once('.') {
+                if let Some((file_stem, hash)) = stem.rsplit_once('.') {
+                    let is_hash = hash.len() == 10
+                        && hash
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+                    if is_hash && hash_ext == "js" {
+                        out.push_str("./");
+                        out.push_str(file_stem);
+                        out.push_str(".js");
+                        replaced = true;
+                    }
+                }
+            }
+        }
+        if !replaced {
+            out.push_str(seg);
+        }
+    }
+    out
+}
+
 /// File name of the hashed asset, panicking with context when missing.
 fn hashed_asset_name_in(dir: &Path, stem: &str, ext: &str) -> String {
     find_hashed_asset(dir, stem, ext)
@@ -456,27 +493,32 @@ fn build_emits_island_chunk_without_server_renderer() {
         find_hashed_asset(&assets.join("ui"), "reactive", "js").expect("hashed ui/reactive chunk"),
     )
     .expect("read ui/reactive");
-    let mut payload = jsx.clone();
-    payload.push_str(&client);
-    payload.push_str(&reactive);
-    payload.push_str(&js);
     if let Some(island_mod) = find_hashed_asset(&assets, "island-load-0", "js") {
         let mod_js = fs::read_to_string(&island_mod).expect("read island module");
         assert!(
             !mod_js.contains("renderToString") && !mod_js.contains("from \"ui/server\""),
             "compiled island module must not import the server renderer: {mod_js}"
         );
-        payload.push_str(&mod_js);
     }
-    assert!(
-        gzip_len(jsx.as_bytes()) < 2_048,
-        "ui/jsx gzip budget is 2KiB, got {}",
-        gzip_len(jsx.as_bytes())
+    // PAUSED (deka#881 DECIDE-1): dist no longer minifies or prunes, so the
+    // deka#750 gzip budgets (ui/jsx < 2KiB, one-button payload < 16KiB) are
+    // parked. Pin what holds instead: every shipped ui chunk is the readable
+    // deka_ui source, byte-identical up to the hashed-sibling-import rewrite
+    // the writer applies on disk.
+    assert_eq!(
+        strip_sibling_hashes(&jsx),
+        deka_ui::JSX,
+        "dist ui/jsx must be the readable source while optimization is paused"
     );
-    assert!(
-        gzip_len(payload.as_bytes()) < 16_384,
-        "one-button island gzip budget is 16KiB, got {}",
-        gzip_len(payload.as_bytes())
+    assert_eq!(
+        strip_sibling_hashes(&client),
+        deka_ui::CLIENT,
+        "dist ui/client must be the readable source while optimization is paused"
+    );
+    assert_eq!(
+        strip_sibling_hashes(&reactive),
+        deka_ui::REACTIVE,
+        "dist ui/reactive must be the readable source while optimization is paused"
     );
 }
 
@@ -935,11 +977,4 @@ fn build_island_change_rotates_hash_and_importmap() {
         !index.contains(&first_url),
         "dist html must not reference the stale hashed URL: {index}"
     );
-}
-
-fn gzip_len(bytes: &[u8]) -> usize {
-    use std::io::Write;
-    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    encoder.write_all(bytes).expect("gzip write");
-    encoder.finish().expect("gzip finish").len()
 }

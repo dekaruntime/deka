@@ -63,32 +63,34 @@ use super::*;
         assert!(deka_ui::ISLAND_MARKER.contains("parseIslandMarker"));
     }
 
-    /// Dist flavor: ui/island-marker prunes to the browser-visible surface
-    /// (`parseIslandMarker` and its transitive deps); the SSR producers are
-    /// gone, and the dev flavor keeps the readable source untouched.
+    /// PAUSED (deka#881 DECIDE-1): with the framework pause, the dist flavor
+    /// no longer prunes or minifies — dist ui chunks are byte-identical to
+    /// the readable dev sources, SSR producers included. When dist
+    /// optimization is restored (through dsc's optimizer stage), this test
+    /// flips back to asserting producers are gone from dist.
     #[test]
-    fn dist_prunes_island_marker_dev_keeps_it() {
-        let keep = compute_ui_keep_sets(&[]).expect("keep sets");
+    fn dist_matches_dev_while_framework_paused() {
         let dist = tempfile::tempdir().expect("tempdir");
-        let dist_names = write_ui_chunks(dist.path(), ClientAssetFlavor::Dist, &keep)
-            .expect("write dist ui chunks");
+        let dist_names =
+            write_ui_chunks(dist.path(), ClientAssetFlavor::Dist).expect("write dist ui chunks");
+        let dev = tempfile::tempdir().expect("tempdir");
+        let dev_names =
+            write_ui_chunks(dev.path(), ClientAssetFlavor::Dev).expect("write dev ui chunks");
+
+        assert_eq!(
+            dist_names.hashed, dev_names.hashed,
+            "dist and dev must hash identically while dist optimization is paused"
+        );
         let dist_marker = fs::read_to_string(dist.path().join(dist_names.file("ui/island-marker")))
             .expect("read dist island-marker");
         assert!(dist_marker.contains("parseIslandMarker"), "{dist_marker}");
         for symbol in ["formatIslandStart", "formatIslandEnd", "encodeB64", "utf8Bytes"] {
             assert!(
-                !dist_marker.contains(symbol),
-                "dist island-marker must not contain {symbol}: {dist_marker}"
+                dist_marker.contains(symbol),
+                "dist island-marker keeps SSR producer {symbol} while pruning is paused"
             );
         }
-
-        let dev = tempfile::tempdir().expect("tempdir");
-        let dev_names =
-            write_ui_chunks(dev.path(), ClientAssetFlavor::Dev, &None).expect("write dev ui chunks");
-        let dev_marker = fs::read_to_string(dev.path().join(dev_names.file("ui/island-marker")))
-            .expect("read dev island-marker");
-        assert!(dev_marker.contains("formatIslandStart"), "{dev_marker}");
-        assert!(dev_marker.contains("export function parseIslandMarker"), "{dev_marker}");
+        assert!(dist_marker.contains("export function parseIslandMarker"), "{dist_marker}");
     }
 
     // The client chunk 404s the moment it loads if any relative sibling
@@ -97,7 +99,7 @@ use super::*;
     #[test]
     fn ui_chunks_rewrite_every_client_sibling_import() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let names = write_ui_chunks(tmp.path(), ClientAssetFlavor::Dev, &None).expect("write ui chunks");
+        let names = write_ui_chunks(tmp.path(), ClientAssetFlavor::Dev).expect("write ui chunks");
         let client_src =
             fs::read_to_string(tmp.path().join(names.file("ui/client"))).expect("read client");
         let written: BTreeSet<String> = fs::read_dir(tmp.path())
@@ -136,7 +138,7 @@ use super::*;
     #[test]
     fn rewrite_ui_imports_resolves_to_written_chunks() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let names = write_ui_chunks(tmp.path(), ClientAssetFlavor::Dev, &None).expect("write ui chunks");
+        let names = write_ui_chunks(tmp.path(), ClientAssetFlavor::Dev).expect("write ui chunks");
         assert_eq!(
             names.hashed.len(),
             deka_ui::SPECIFIERS.len(),
