@@ -20,7 +20,7 @@ pub fn compile_graph(
     project_root: &Path,
     entry: &Path,
 ) -> Result<HashMap<PathBuf, String>, String> {
-    let dsc = runtime_core::dsc::find_dsc()?.ok_or_else(|| {
+    let dsc = compiler::dsc::find_dsc()?.ok_or_else(|| {
         format!(
             "{DEKA_VALIDATION_ERROR_MARKER}dsc is required to compile DekaScript in the isolate. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH."
         )

@@ -394,7 +394,9 @@ fn reject_vendored_php_modules(package_root: &Path, package_name: &str) -> Resul
             let entry = entry?;
             let file_type = entry.file_type()?;
             let entry_name = entry.file_name();
-            if is_modules_dir_name(&entry_name.to_string_lossy()) {
+            if is_modules_dir_name(&entry_name.to_string_lossy())
+                || entry_name.to_string_lossy().eq_ignore_ascii_case("php_modules")
+            {
                 bail!(
                     "package {} contains vendored {} at {}; packages must declare dependencies in deka.json",
                     package_name,
@@ -592,7 +594,7 @@ fn copy_github_package_files(source: &Path, target: &Path) -> Result<()> {
         let dst_path = target.join(&name);
         let file_type = entry.file_type()?;
 
-        if is_modules_dir_name(&name_str) {
+        if is_modules_dir_name(&name_str) || name_str.eq_ignore_ascii_case("php_modules") {
             bail!(
                 "package artifact contains vendored {name_str} at {}; packages must declare dependencies in deka.json",
                 src_path.display()

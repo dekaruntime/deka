@@ -57,7 +57,6 @@ deka unlink @scope/my-package
 
 Links are stored in the consumer's developer-only `.deka/links.json` (keep
 `.deka/` out of version control). During
-bundling, a local link takes precedence over the installed copy in `ds_modules`
-(and the legacy `php_modules` directory); `deka unlink` removes only that
+bundling, a local link takes precedence over the installed copy in `ds_modules`; `deka unlink` removes only that
 metadata and never deletes the package working tree. The linked package must
 declare a scoped `name` such as `@scope/my-package` in its `deka.json`.

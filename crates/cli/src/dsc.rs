@@ -34,7 +34,7 @@ pub fn find_dsc() -> Result<Option<PathBuf>, String> {
         ));
     }
 
-    if let Some(dsc) = runtime_core::dsc::find_dsc()? {
+    if let Some(dsc) = compiler::dsc::find_dsc()? {
         return Ok(Some(dsc));
     }
     if let Ok(path_var) = env::var("PATH") {

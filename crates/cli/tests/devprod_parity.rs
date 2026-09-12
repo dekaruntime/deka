@@ -21,7 +21,7 @@ fn test_dsc() -> PathBuf {
     // belongs to the caller, just as it does at the CLI build boundary.
     let dsc = match std::env::var_os("DEKA_DSC") {
         Some(path) => PathBuf::from(path),
-        None => runtime_core::dsc::find_dsc()
+        None => compiler::dsc::find_dsc()
             .expect("resolve sibling/repository dsc")
             .expect("parity tests require dsc: set DEKA_DSC to the pinned compiler"),
     };

@@ -32,7 +32,7 @@ fn ensure_dsc() -> bool {
             if local.is_file() {
                 return Some(local);
             }
-            runtime_core::dsc::find_dsc().ok().flatten()
+            compiler::dsc::find_dsc().ok().flatten()
         })
         .clone();
     resolved.is_some()

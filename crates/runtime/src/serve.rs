@@ -15,8 +15,7 @@ use platform::Platform;
 use platform_server::ServerPlatform;
 use pool::validation::PoolWorkers;
 use pool::{HandlerKey, PoolConfig};
-use runtime_core::env::{set_dev_flag_with, set_handler_path_with};
-use runtime_core::validation::validate_deka_handler_with;
+use serve::validation::validate_deka_handler_with;
 use stdio as stdio_log;
 use transport::{DnsOptions, HttpOptions, TcpOptions, UdpOptions, UnixOptions, WsOptions};
 
@@ -61,14 +60,9 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
         policy_json: resolved_security.policy_json.clone(),
         no_prompt: !resolved_security.prompt_enabled,
     };
-    let env_get = |key: &str| platform.env().get(key);
 
     let dev_mode = dev_enabled(context);
     let watch_enabled = watch_enabled(context) || dev_mode;
-    let mut env_set = |key: &str, value: &str| {
-        let _ = platform.env().set(key, value);
-    };
-    set_dev_flag_with(dev_mode, &env_get, &mut env_set);
     crate::dev::prepare(dev_mode, &context.handler.input)?;
     let resolved = runtime_config::resolve_handler_path(&context.handler.input)
         .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
@@ -121,10 +115,6 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
     if matches!(resolved.mode, runtime_config::ServeMode::Php) && !is_js_handler {
         validate_deka_modules(&handler_path)?;
     }
-    let mut env_set = |key: &str, value: &str| {
-        let _ = platform.env().set(key, value);
-    };
-    set_handler_path_with(&handler_path, &env_get, &mut env_set);
     // The host bridge (security hints, `@/` path resolution) reads the
     // handler location from this explicit install, not the process
     // environment (deka#801).
@@ -857,7 +847,6 @@ fn should_ignore_watch_path(path: &FsPath) -> bool {
 mod tests {
     use super::build_static_handler_code;
     use super::ensure_http_port_available;
-    use runtime_core::env::is_truthy;
     use std::net::TcpListener;
 
     /// Verify the static handler template contains the __dekaFs confinement
@@ -891,17 +880,6 @@ mod tests {
             !code.contains("const __dekaFs = globalThis.fs"),
             "expected __dekaFs NOT to be a bare globalThis.fs alias"
         );
-    }
-
-    #[test]
-    fn truthy_parser_matches_expected_values() {
-        assert!(is_truthy("1"));
-        assert!(is_truthy("true"));
-        assert!(is_truthy("yes"));
-        assert!(is_truthy("on"));
-        assert!(!is_truthy("0"));
-        assert!(!is_truthy("false"));
-        assert!(!is_truthy("off"));
     }
 
     #[test]

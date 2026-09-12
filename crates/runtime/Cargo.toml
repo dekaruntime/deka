@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+compiler = { path = "../compiler" }
+run = { path = "../run" }
+serve = { path = "../serve" }
 security = { path = "../security" }
 permissions = { path = "../permissions" }
 core = { path = "../core" }

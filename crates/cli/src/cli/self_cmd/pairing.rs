@@ -11,7 +11,7 @@
 //! Two pairing shapes, one per runner contract:
 //!
 //! - The corpus runner execs only `cli run`, and `deka run` finds dsc via
-//!   [`runtime_core::dsc::find_dsc`] — the `dsc` file beside the executable
+//!   [`compiler::dsc::find_dsc`] — the `dsc` file beside the executable
 //!   it is running. A `dsc` symlink is enough.
 //! - The tour runner execs the `dsc` file *directly* (it prefers it over
 //!   `cli`) and uses that same binary for `deka add io` on a cold package

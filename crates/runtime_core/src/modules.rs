@@ -8,8 +8,6 @@ use std::path::{Path, PathBuf};
 
 /// Consumer package install directory (`deka add` / `deka install`).
 pub const MODULES_DIR: &str = "ds_modules";
-/// Pre-cutover install directory. Resolution still accepts this if present.
-pub const LEGACY_MODULES_DIR: &str = "php_modules";
 pub const DEKA_CONFIG_DIR: &str = ".deka";
 pub const LINKS_FILE: &str = "links.json";
 pub const LINKS_VERSION: u32 = 1;
@@ -191,48 +189,27 @@ fn validate_link_manifest(manifest: &LinkManifest) -> Result<(), String> {
 }
 
 pub fn is_modules_dir_name(name: &str) -> bool {
-    name.eq_ignore_ascii_case(MODULES_DIR) || name.eq_ignore_ascii_case(LEGACY_MODULES_DIR)
+    name.eq_ignore_ascii_case(MODULES_DIR)
 }
 
-/// Directory new installs write into. Uses `ds_modules` unless this project
-/// already has only a legacy `php_modules/` tree.
+/// Directory new installs write into.
 pub fn install_modules_dir(project: &Path) -> PathBuf {
-    let modern = project.join(MODULES_DIR);
-    if modern.is_dir() {
-        return modern;
-    }
-    let legacy = project.join(LEGACY_MODULES_DIR);
-    if legacy.is_dir() {
-        return legacy;
-    }
-    modern
+    project.join(MODULES_DIR)
 }
 
-/// Directory to resolve imports from. Prefers `ds_modules/`, then `php_modules/`.
+/// Directory to resolve imports from.
 pub fn resolve_modules_dir(project: &Path) -> PathBuf {
-    let modern = project.join(MODULES_DIR);
-    if modern.is_dir() {
-        return modern;
-    }
-    let legacy = project.join(LEGACY_MODULES_DIR);
-    if legacy.is_dir() {
-        return legacy;
-    }
-    modern
+    project.join(MODULES_DIR)
 }
 
-/// Every consumer-modules directory that exists on disk, modern first.
+/// Every consumer-modules directory that exists on disk.
 pub fn existing_modules_dirs(project: &Path) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    let modern = project.join(MODULES_DIR);
-    if modern.is_dir() {
-        dirs.push(modern);
+    let modules = project.join(MODULES_DIR);
+    if modules.is_dir() {
+        vec![modules]
+    } else {
+        Vec::new()
     }
-    let legacy = project.join(LEGACY_MODULES_DIR);
-    if legacy.is_dir() {
-        dirs.push(legacy);
-    }
-    dirs
 }
 
 pub fn detect_deka_module_root_with<Exists, CurrentExe>(
@@ -322,6 +299,26 @@ mod tests {
         let root = PathBuf::from("/tmp/new-app");
         assert_eq!(install_modules_dir(&root), root.join(MODULES_DIR));
         assert_eq!(resolve_modules_dir(&root), root.join(MODULES_DIR));
+    }
+
+    #[test]
+    fn legacy_tree_is_not_an_install_or_resolution_fallback() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path();
+        std::fs::create_dir(root.join("php_modules")).unwrap();
+        assert_eq!(install_modules_dir(root), root.join(MODULES_DIR));
+        assert_eq!(resolve_modules_dir(root), root.join(MODULES_DIR));
+        assert!(super::existing_modules_dirs(root).is_empty());
+        assert!(!super::is_modules_dir_name("Php_Modules"));
+
+        std::fs::create_dir(root.join(MODULES_DIR)).unwrap();
+        assert_eq!(
+            super::existing_modules_dirs(root),
+            vec![root.join(MODULES_DIR)]
+        );
+        assert_eq!(install_modules_dir(root), root.join(MODULES_DIR));
+        assert_eq!(resolve_modules_dir(root), root.join(MODULES_DIR));
+        assert!(super::is_modules_dir_name("Ds_Modules"));
     }
 
     #[test]

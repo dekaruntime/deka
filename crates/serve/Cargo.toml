@@ -1,0 +1,8 @@
+[package]
+name = "serve"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

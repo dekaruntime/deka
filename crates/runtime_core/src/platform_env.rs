@@ -8,8 +8,6 @@
 use std::collections::BTreeSet;
 
 use security::security_policy::{RuleList, SecurityPolicy};
-use crate::seam::{SeamBoundary, SeamContract, SeamDefinition, SeamRecord, SeamType};
-use crate::storefront_envelope::ToSeam;
 
 /// Snapshot the present values of every manifest-allowed name from the
 /// supplied env getter. Names that are unset are omitted from the
@@ -57,72 +55,6 @@ pub fn snapshot_env_from_process() -> Vec<(String, String)> {
     // a security allowlist to turn the ambient process environment into an
     // implicit configuration source.
     Vec::new()
-}
-
-pub fn platform_env_policy_contract() -> SeamContract {
-    let mut contract = SeamContract::new("platform_env_policy", 1);
-    contract.boundaries.push(SeamBoundary {
-        function: "inject_env_policy".to_string(),
-        request: "PlatformEnvPolicyRequest".to_string(),
-        response: "PlatformEnvPolicySnapshot".to_string(),
-    });
-
-    contract.definitions.push(record(
-        "PlatformEnvVar",
-        [
-            ("name", String::seam_type()),
-            ("value", String::seam_type()),
-        ],
-    ));
-    contract.definitions.push(record(
-        "PlatformEnvPolicyRequest",
-        [
-            ("security_policy_json", String::seam_type()),
-            ("process_env", Vec::<PlatformEnvVar>::seam_type()),
-        ],
-    ));
-    contract.definitions.push(record(
-        "PlatformEnvPolicySnapshot",
-        [
-            ("server", Vec::<PlatformEnvVar>::seam_type()),
-            ("env", Vec::<PlatformEnvVar>::seam_type()),
-            ("process_env", Vec::<PlatformEnvVar>::seam_type()),
-        ],
-    ));
-    contract
-}
-
-struct PlatformEnvVar;
-
-impl ToSeam for PlatformEnvVar {
-    fn seam_type() -> SeamType {
-        SeamType::Named {
-            name: "PlatformEnvVar".to_string(),
-        }
-    }
-
-    fn seam_definitions() -> Vec<SeamDefinition> {
-        vec![record(
-            "PlatformEnvVar",
-            [
-                ("name", String::seam_type()),
-                ("value", String::seam_type()),
-            ],
-        )]
-    }
-}
-
-fn record(
-    name: &str,
-    fields: impl IntoIterator<Item = (&'static str, SeamType)>,
-) -> SeamDefinition {
-    SeamDefinition::Record(SeamRecord {
-        name: name.to_string(),
-        fields: fields
-            .into_iter()
-            .map(|(field, ty)| (field.to_string(), ty))
-            .collect(),
-    })
 }
 
 #[cfg(test)]
@@ -216,66 +148,5 @@ mod tests {
         );
         let snap = snapshot_env_from_process();
         assert!(snap.is_empty());
-    }
-
-    #[test]
-    fn platform_env_policy_contract_round_trips_json() {
-        let contract = platform_env_policy_contract();
-        let actual = serde_json::to_value(&contract).unwrap();
-
-        assert_eq!(
-            actual,
-            serde_json::json!({
-                "format": "seam.contract@1",
-                "name": "platform_env_policy",
-                "version": 1,
-                "boundaries": [
-                    {
-                        "function": "inject_env_policy",
-                        "request": "PlatformEnvPolicyRequest",
-                        "response": "PlatformEnvPolicySnapshot"
-                    }
-                ],
-                "definitions": [
-                    {
-                        "kind": "record",
-                        "name": "PlatformEnvVar",
-                        "fields": {
-                            "name": { "kind": "primitive", "name": "String" },
-                            "value": { "kind": "primitive", "name": "String" }
-                        }
-                    },
-                    {
-                        "kind": "record",
-                        "name": "PlatformEnvPolicyRequest",
-                        "fields": {
-                            "process_env": {
-                                "kind": "list",
-                                "item": { "kind": "named", "name": "PlatformEnvVar" }
-                            },
-                            "security_policy_json": { "kind": "primitive", "name": "String" }
-                        }
-                    },
-                    {
-                        "kind": "record",
-                        "name": "PlatformEnvPolicySnapshot",
-                        "fields": {
-                            "env": {
-                                "kind": "list",
-                                "item": { "kind": "named", "name": "PlatformEnvVar" }
-                            },
-                            "process_env": {
-                                "kind": "list",
-                                "item": { "kind": "named", "name": "PlatformEnvVar" }
-                            },
-                            "server": {
-                                "kind": "list",
-                                "item": { "kind": "named", "name": "PlatformEnvVar" }
-                            }
-                        }
-                    }
-                ]
-            })
-        );
     }
 }

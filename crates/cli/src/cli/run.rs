@@ -39,7 +39,7 @@ pub fn cmd(context: &Context) {
                 .args
                 .positionals
                 .first()
-                .filter(|path| runtime_core::entry::has_run_source_ext(path))
+                .filter(|path| run::entry::has_run_source_ext(path))
                 .map(|_| crate::dsc::find_dsc())
                 .transpose()
                 .unwrap_or_else(|err| {
@@ -61,7 +61,7 @@ pub fn cmd(context: &Context) {
 }
 
 fn cli_arg_is_source_file(context: &Context) -> bool {
-    requested_script_name(context).is_some_and(runtime_core::entry::has_run_source_ext)
+    requested_script_name(context).is_some_and(run::entry::has_run_source_ext)
 }
 
 struct PreparedRun {
@@ -74,7 +74,7 @@ struct PreparedRun {
 fn prepare_run_context(context: &Context) -> Result<PreparedRun, String> {
     let cwd = std::env::current_dir().map_err(|err| format!("failed to get cwd: {err}"))?;
     let (cli_arg, extra_args) = split_run_positionals(&context.args.positionals);
-    let resolved = runtime_core::entry::resolve_entry(&cwd, cli_arg)?;
+    let resolved = run::entry::resolve_entry(&cwd, cli_arg)?;
     if resolved.path.is_dir() {
         return Err(format!(
             "resolved entry is a directory ({}); deka run executes a .ds/.dsx/.js module, not an HTTP server. Use `deka serve` for app/ and api/ directories.",
@@ -112,8 +112,8 @@ fn prepare_run_context(context: &Context) -> Result<PreparedRun, String> {
 fn split_run_positionals(positionals: &[String]) -> (Option<&str>, &[String]) {
     match positionals.split_first() {
         Some((first, rest))
-            if runtime_core::entry::has_run_source_ext(first)
-                || runtime_core::entry::looks_like_file_arg(first) =>
+            if run::entry::has_run_source_ext(first)
+                || run::entry::looks_like_file_arg(first) =>
         {
             (Some(first.as_str()), rest)
         }

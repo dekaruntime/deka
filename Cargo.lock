@@ -817,6 +817,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "compile",
+ "compiler",
  "core",
  "ctrlc",
  "deka-lsp",
@@ -831,6 +832,7 @@ dependencies = [
  "pool",
  "postgres",
  "reqwest",
+ "run",
  "runtime",
  "runtime_core",
  "rusqlite",
@@ -896,6 +898,10 @@ dependencies = [
  "stdio",
  "tempfile",
 ]
+
+[[package]]
+name = "compiler"
+version = "0.48.1"
 
 [[package]]
 name = "compression-codecs"
@@ -2675,6 +2681,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "serve",
  "tokio",
  "toml",
  "tracing",
@@ -5159,6 +5166,7 @@ dependencies = [
 name = "pool"
 version = "0.48.1"
 dependencies = [
+ "compiler",
  "core_affinity",
  "deka-validation",
  "deka_host",
@@ -5175,6 +5183,7 @@ dependencies = [
  "security",
  "serde",
  "serde_json",
+ "serve",
  "stdio",
  "swc_common 18.0.1",
  "swc_ecma_ast 19.0.0",
@@ -5861,6 +5870,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "run"
+version = "0.48.1"
+dependencies = [
+ "runtime_core",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "runtime"
 version = "0.48.1"
 dependencies = [
@@ -5868,6 +5886,7 @@ dependencies = [
  "base64 0.21.7",
  "bytes",
  "compile",
+ "compiler",
  "core",
  "deka_host",
  "deka_http",
@@ -5881,9 +5900,11 @@ dependencies = [
  "platform_server",
  "pool",
  "reqwest",
+ "run",
  "runtime_core",
  "security",
  "serde_json",
+ "serve",
  "stdio",
  "tempfile",
  "tokio",
@@ -6392,6 +6413,14 @@ checksum = "66cf8fedced2fcf12406bcb34223dffb92eaf34908ede12fed414c82b7f00b3e"
 dependencies = [
  "base16ct 1.0.0",
  "serde",
+]
+
+[[package]]
+name = "serve"
+version = "0.48.1"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
