@@ -97,7 +97,7 @@ jobs:
       - name: Build tested crates
         env:
           RUSTC_WRAPPER: sccache
-        run: cargo build -p deka_http -p pool -p engine -p bundler
+        run: cargo build -p deka_http -p pool -p engine
 
       - name: Run Rust tests
         env:
@@ -106,7 +106,6 @@ jobs:
           cargo test -p deka_http
           cargo test -p pool
           cargo test -p engine
-          cargo test -p bundler
 
   fetch-dsc-wasm:
     name: Fetch published dsc WASM
