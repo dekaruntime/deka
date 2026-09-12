@@ -339,13 +339,15 @@ function restoreCachedModules(cacheDir: string, tmpDir: string) {
   }
 }
 
-function installPackages(
+export function installPackages(
   cliPath: string,
   tmpDir: string,
   packages: string[]
 ): { ok: boolean; error?: string; stderr: string } {
   const cacheKey = packages.slice().sort().join('+')
-  const cacheDir = path.join(process.cwd(), '.cache', 'deka-packages', cacheKey)
+  // Version the cache: pre-grants entries cannot distinguish an omitted table
+  // from a legitimate grant-free install. Other runners still use the old cache.
+  const cacheDir = path.join(process.cwd(), '.cache', 'deka-packages', 'with-grants-v1', cacheKey)
   const cachedLock = path.join(cacheDir, 'deka.lock')
   const hasCachedModules =
     fs.existsSync(path.join(cacheDir, 'ds_modules')) ||
@@ -354,6 +356,10 @@ function installPackages(
   if (fs.existsSync(cachedLock) && hasCachedModules) {
     restoreCachedModules(cacheDir, tmpDir)
     fs.copyFileSync(cachedLock, path.join(tmpDir, 'deka.lock'))
+    const cachedGrants = path.join(cacheDir, 'deka.grants.json')
+    if (fs.existsSync(cachedGrants)) {
+      fs.copyFileSync(cachedGrants, path.join(tmpDir, 'deka.grants.json'))
+    }
     declareRestoredModules(tmpDir)
     return { ok: true, stderr: '' }
   }
@@ -389,6 +395,10 @@ function installPackages(
   const lockPath = path.join(tmpDir, 'deka.lock')
   if (fs.existsSync(lockPath)) {
     fs.copyFileSync(lockPath, cachedLock)
+  }
+  const grantsPath = path.join(tmpDir, 'deka.grants.json')
+  if (fs.existsSync(grantsPath)) {
+    fs.copyFileSync(grantsPath, path.join(cacheDir, 'deka.grants.json'))
   }
   return { ok: true, stderr }
 }
