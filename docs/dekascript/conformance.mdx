@@ -16,3 +16,18 @@ Release builds use a corpus version tag. Development builds validating a
 paired runtime and corpus change may use a full immutable commit SHA;
 branch names and abbreviated SHAs are rejected. The final release pin is
 the next corpus tag published with the lockstep release.
+
+When testing a source checkout, install the compiler pinned in
+`scripts/dsc-version` with `scripts/ci-install-dsc.sh`. The compiler and corpus
+must agree on language behavior: the math fixtures require dsc 0.48.1, which
+rejects ambient `Math` during typechecking and provides `PI` through the
+compiler-owned `math` module. An older compiler can accept `Math.PI` or report
+a missing package for `math`, even with the current runtime.
+
+Use `import { PI } from "math"` for the constant (value
+`3.141592653589793`) and number methods such as `x.sqrt()` for operations.
+Using ambient `Math` produces this compiler diagnostic before execution:
+
+```text
+`Math` is not available in DekaScript; import { PI } from "math" instead for PI, or use number methods such as `x.sqrt()`
+```
