@@ -734,8 +734,10 @@ impl WorkerThread {
                         return { ok: false, error: message };
                     };
                     const __deka_host = (kind, action, args, grants) => {
+                        // Keep the kind visible to catch for typed fs errors.
+                        let k = '';
                         try {
-                            const k = String(kind || '');
+                            k = String(kind || '');
                             const a = String(action || '');
                             const cat = DS_HOST_CATALOG[k];
                             if (!cat || typeof cat[a] === 'undefined') {
@@ -1615,5 +1617,79 @@ impl WorkerThread {
             result_decode_ms,
         );
         (outcome, profile)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        ExecutionMode, ExecutionSecurity, HandlerKey, IsolatePool, PoolConfig, RequestData,
+    };
+    use std::sync::Arc;
+
+    // Run the production bootstrap and real Rust host ops. Assert in Rust after
+    // execution: a JS throw must fail the test, not skip an unreachable check.
+    #[tokio::test]
+    async fn thrown_host_ops_return_error_envelopes() {
+        let pool = IsolatePool::new(
+            PoolConfig {
+                num_workers: 1,
+                enable_code_cache: false,
+                ..PoolConfig::default()
+            },
+            Arc::new(platform_server::extensions_for_php_server),
+        );
+        let response = pool.execute(
+            HandlerKey::new("thrown_host_ops_return_error_envelopes"),
+            RequestData {
+                handler_code: r#"
+                    globalThis.app = function() {
+                        const accept = __deka_host('net', 'accept', [0], ['net']);
+                        const upgrade = __deka_host('tls', 'upgrade', [1, ''], ['tls']);
+                        // A synchronous fs permission throw must retain #758's
+                        // typed error, not fall back to the string envelope.
+                        const fs = __deka_host('fs', 'read_file_sync', ['/deka-envelope-denied'], ['fs']);
+                        return { status: 200, headers: {}, body: JSON.stringify({accept, upgrade, fs}) };
+                    };
+                "#.to_string(),
+                handler_entry: None,
+                module_root: None,
+                request_value: serde_json::Value::Null,
+                request_parts: None,
+                mode: ExecutionMode::Request,
+                security: ExecutionSecurity {
+                    policy_json: r#"{"security":{"allow":{},"prompt":false}}"#.to_string(),
+                    no_prompt: true,
+                },
+            },
+        ).await.expect("pool execution");
+        assert!(
+            response.success,
+            "host exception escaped: {:?}",
+            response.error
+        );
+        let result = response.result.expect("response result");
+        let body: serde_json::Value =
+            serde_json::from_str(result["body"].as_str().expect("response body"))
+                .expect("JSON envelopes");
+        assert_eq!(body["accept"]["ok"], false);
+        assert!(
+            body["accept"]["error"]
+                .as_str()
+                .expect("accept error")
+                .contains("unknown listener handle"),
+            "{body}"
+        );
+        assert_eq!(body["upgrade"]["ok"], false);
+        assert!(
+            body["upgrade"]["error"]
+                .as_str()
+                .expect("upgrade error")
+                .contains("unknown handle 1"),
+            "{body}"
+        );
+        assert_eq!(body["fs"]["ok"], false);
+        assert_eq!(body["fs"]["error"]["__enum"], "FsError");
+        assert_eq!(body["fs"]["error"]["__case"], "PermissionDenied");
     }
 }

@@ -8,6 +8,12 @@ std**lib** packages may call from DekaScript. There is one table, it is
 validated at load time, and every failure is a value the caller must handle —
 never a fabricated fallback.
 
+Native host-operation exceptions are returned through the bridge as error
+Results. For example, accepting an unknown TCP listener or upgrading an unknown
+TLS handle yields `Err`, so matching the result can print `err` normally.
+Filesystem failures retain the typed `FsError` variants, including
+`PermissionDenied`; they are not flattened to strings.
+
 ```ts
 const len: number = safe { deka.bytes.len(b) }
 const text: Result<string, string> = unsafe { deka.bytes.to_string(b) }
