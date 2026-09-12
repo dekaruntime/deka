@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
-use runtime_core::host_bridge;
+use permissions::host_bridge;
 
 use crate::deka_catalog_scan::{scan_source, ScanDiagnostic};
 

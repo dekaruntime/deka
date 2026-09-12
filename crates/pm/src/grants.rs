@@ -11,7 +11,7 @@
 //! Trust root, in both directions:
 //!
 //! - Kinds come from the authoritative runtime catalog
-//!   (`runtime_core::host_bridge::HOST_CATALOG`): every kind whose grant
+//!   (`permissions::host_bridge::HOST_CATALOG`): every kind whose grant
 //!   owner is exactly the package identity. A package can never obtain a
 //!   kind the published catalog does not assign to its identity — never
 //!   from its own manifest asking for it (a dependency `host.kinds` field is
@@ -26,7 +26,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use runtime_core::host_bridge::{GrantTable, HostGrant};
+use permissions::host_bridge::{GrantTable, HostGrant};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -46,7 +46,7 @@ pub fn grant_table_path(project_dir: &Path) -> PathBuf {
 /// (`@deka/fs` → `["fs"]`, `@deka/crypto` → `["crypto"]`, ...). Packages the
 /// catalog assigns no kinds to (`@deka/json`, `@deka/http`, ...) get none.
 pub fn catalog_kinds_for_package(name: &str) -> Vec<String> {
-    runtime_core::host_bridge::HOST_CATALOG
+    permissions::host_bridge::HOST_CATALOG
         .iter()
         .filter(|kind| kind.grant_owner == name)
         .map(|kind| kind.name.to_string())

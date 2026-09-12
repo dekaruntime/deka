@@ -53,8 +53,8 @@ fn process_env_cannot_widen_the_installed_policy() {
     // 1. A permissive process env + a restrictive installed context: the
     //    context decides, so the read stays denied.
     let restrictive = r#"{"security":{"allow":{"read":["/nonexistent-deka-restrictive-canary"]},"deny":{},"prompt":false}}"#;
-    let _guard = runtime_core::security_context::set_security_context(
-        runtime_core::security_context::SecurityContext {
+    let _guard = ::security::security_context::set_security_context(
+        ::security::security_context::SecurityContext {
             policy_json: Some(restrictive.to_string()),
             no_prompt: true,
         },
@@ -87,7 +87,7 @@ fn process_env_cannot_widen_the_installed_policy() {
 /// another thread keeps its own, narrower answer.
 #[test]
 fn build_phase_policy_is_not_observable_by_other_threads() {
-    use runtime_core::security_context::{SecurityContext, set_security_context};
+    use ::security::security_context::{SecurityContext, set_security_context};
 
     let target = "data/secret.txt";
     let ordinary_policy =

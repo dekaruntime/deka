@@ -6,7 +6,7 @@ use mysql::prelude::Queryable;
 use mysql::{OptsBuilder, Params as MyParams, Pool as MyPool, Value as MyValue};
 
 use prost::Message as ProstMessage;
-use runtime_core::security_policy::{RuleList, SecurityPolicy, parse_deka_security_policy};
+use ::security::security_policy::{RuleList, SecurityPolicy, parse_deka_security_policy};
 use rusqlite::types::ValueRef as SqliteValueRef;
 use rusqlite::{Connection as SqliteConnection, params_from_iter as sqlite_params_from_iter};
 use serde_json::{Map, Value};

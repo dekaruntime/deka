@@ -30,4 +30,4 @@ pub fn extensions_with_net_policy(policy: SecurityPolicy) -> Vec<Extension> {
 }
 
 #[cfg(feature = "runtime")]
-pub use runtime_core::security_policy::SecurityPolicy;
+pub use security::security_policy::SecurityPolicy;

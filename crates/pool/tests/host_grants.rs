@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock};
 use pool::{
     ExecutionMode, HandlerKey, IsolatePool, PoolConfig, RequestData, RequestParts,
 };
-use runtime_core::host_bridge::GrantTable;
+use permissions::host_bridge::GrantTable;
 
 const EMPTY_DEKA_LOCK: &str = r#"{"lockfileVersion":1,"packages":{}}"#;
 

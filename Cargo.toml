@@ -5,6 +5,8 @@ members = [
     "crates/cli",
     "crates/runtime",
     "crates/runtime_core",
+    "crates/security",
+    "crates/permissions",
     "crates/compile",
     "crates/http",
     "crates/introspect",

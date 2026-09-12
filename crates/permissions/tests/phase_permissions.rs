@@ -5,14 +5,14 @@
 
 use std::path::Path;
 
-use runtime_core::permissions::{ExecutionPhase, FsGrant, parse_permissions};
-use runtime_core::security_policy::RuleList;
+use permissions::permissions::{ExecutionPhase, FsGrant, parse_permissions};
+use security::security_policy::RuleList;
 
-fn parse(json: serde_json::Value) -> runtime_core::permissions::PermissionsParseOutcome {
+fn parse(json: serde_json::Value) -> permissions::permissions::PermissionsParseOutcome {
     parse_permissions(&json)
 }
 
-fn must_parse(json: serde_json::Value) -> runtime_core::permissions::Permissions {
+fn must_parse(json: serde_json::Value) -> permissions::permissions::Permissions {
     let outcome = parse(json);
     assert!(
         !outcome.has_errors(),
@@ -22,14 +22,14 @@ fn must_parse(json: serde_json::Value) -> runtime_core::permissions::Permissions
     outcome.permissions.expect("phase-aware permissions")
 }
 
-fn error_codes(outcome: &runtime_core::permissions::PermissionsParseOutcome) -> Vec<&str> {
+fn error_codes(outcome: &permissions::permissions::PermissionsParseOutcome) -> Vec<&str> {
     outcome
         .diagnostics
         .iter()
         .filter(|diag| {
             matches!(
                 diag.level,
-                runtime_core::security_policy::PolicyDiagnosticLevel::Error
+                security::security_policy::PolicyDiagnosticLevel::Error
             )
         })
         .map(|diag| diag.code)
@@ -151,7 +151,7 @@ fn resolved_policies_deny_every_capability_by_default() {
         );
         assert!(!scope.dynamic, "{phase:?}: dynamic is removed");
         assert!(
-            policy.deny == runtime_core::security_policy::SecurityScope::default(),
+            policy.deny == security::security_policy::SecurityScope::default(),
             "{phase:?}: phase-aware profiles express deny-by-default, not deny rules"
         );
     }
@@ -375,7 +375,7 @@ fn malformed_targets_are_manifest_errors() {
             .find(|d| {
                 matches!(
                     d.level,
-                    runtime_core::security_policy::PolicyDiagnosticLevel::Error
+                    security::security_policy::PolicyDiagnosticLevel::Error
                 )
             })
             .expect("an error diagnostic");

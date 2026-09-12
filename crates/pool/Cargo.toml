@@ -4,6 +4,8 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+security = { path = "../security" }
+permissions = { path = "../permissions" }
 nanoid = { workspace = true }
 core_affinity = { workspace = true }
 deno_core = { workspace = true }

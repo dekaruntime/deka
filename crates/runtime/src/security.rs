@@ -1,7 +1,7 @@
 use core::Context;
 use core::ServeMode;
 use runtime_core::modules::MODULES_DIR;
-use runtime_core::security_policy::{
+use ::security::security_policy::{
     RuleList, SecurityCliOverrides, merge_policy_with_cli_manifest_net_env,
     parse_deka_security_policy, policy_to_json,
 };
@@ -33,9 +33,9 @@ pub fn resolve_security_policy_for_root(
 ) -> Result<ResolvedSecurityPolicy, String> {
     let document = read_deka_json(root)?;
     let phase = if dev {
-        runtime_core::permissions::ExecutionPhase::DevRequest
+        permissions::permissions::ExecutionPhase::DevRequest
     } else {
-        runtime_core::permissions::ExecutionPhase::ProdRequest
+        permissions::permissions::ExecutionPhase::ProdRequest
     };
     if let Some(resolved) = resolve_phase_aware(&document, root, phase)? {
         return Ok(resolved);
@@ -47,7 +47,7 @@ pub fn resolve_security_policy_for_root(
         for diag in parsed.diagnostics {
             if matches!(
                 diag.level,
-                runtime_core::security_policy::PolicyDiagnosticLevel::Error
+                ::security::security_policy::PolicyDiagnosticLevel::Error
             ) {
                 lines.push(format!("{} at {}: {}", diag.code, diag.path, diag.message));
             }
@@ -61,7 +61,7 @@ pub fn resolve_security_policy_for_root(
         .filter(|diag| {
             matches!(
                 diag.level,
-                runtime_core::security_policy::PolicyDiagnosticLevel::Warning
+                ::security::security_policy::PolicyDiagnosticLevel::Warning
             )
         })
         .map(|diag| format_warning(diag, project_kind))
@@ -116,9 +116,9 @@ fn read_deka_json(root: &Path) -> Result<serde_json::Value, String> {
 fn resolve_phase_aware(
     document: &serde_json::Value,
     root: &Path,
-    phase: runtime_core::permissions::ExecutionPhase,
+    phase: permissions::permissions::ExecutionPhase,
 ) -> Result<Option<ResolvedSecurityPolicy>, String> {
-    use runtime_core::permissions::{ExecutionPhase, parse_permissions};
+    use permissions::permissions::{ExecutionPhase, parse_permissions};
 
     let outcome = parse_permissions(document);
     if outcome.has_errors() {
@@ -126,7 +126,7 @@ fn resolve_phase_aware(
         for diag in &outcome.diagnostics {
             if matches!(
                 diag.level,
-                runtime_core::security_policy::PolicyDiagnosticLevel::Error
+                ::security::security_policy::PolicyDiagnosticLevel::Error
             ) {
                 lines.push(format!("{} at {}: {}", diag.code, diag.path, diag.message));
             }
@@ -181,7 +181,7 @@ pub fn resolve_build_policy_for_root(
     if let Some(resolved) = resolve_phase_aware(
         &document,
         root,
-        runtime_core::permissions::ExecutionPhase::DevBuild,
+        permissions::permissions::ExecutionPhase::DevBuild,
     )? {
         return Ok(resolved);
     }
@@ -218,7 +218,7 @@ pub fn resolve_platform_security_for_root(
 }
 
 fn apply_dev_defaults(
-    policy: &mut runtime_core::security_policy::SecurityPolicy,
+    policy: &mut ::security::security_policy::SecurityPolicy,
     root: &std::path::Path,
 ) {
     if matches!(policy.allow.read, RuleList::None) {
@@ -269,7 +269,7 @@ impl ProjectKind {
 }
 
 fn format_warning(
-    diag: &runtime_core::security_policy::PolicyDiagnostic,
+    diag: &::security::security_policy::PolicyDiagnostic,
     project_kind: ProjectKind,
 ) -> String {
     let mut message = format!("{} at {}: {}", diag.code, diag.path, diag.message);

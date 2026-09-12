@@ -166,7 +166,7 @@ fn permissions_container_from_context(
     // request's context is installed; a missing context fails closed via
     // `None` -> no grants.
     let opts = permissions_options_from_json(
-        runtime_core::security_context::context_policy_json().as_deref(),
+        security::security_context::context_policy_json().as_deref(),
     );
     let perms = Permissions::from_options(parser.as_ref(), &opts).unwrap_or_else(|_| {
         if prompt {

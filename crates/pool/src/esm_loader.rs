@@ -32,7 +32,7 @@ use deno_core::ResolutionKind;
 use deno_core::resolve_import;
 use deno_error::JsErrorBox;
 
-use runtime_core::host_bridge::{self, GrantTable};
+use permissions::host_bridge::{self, GrantTable};
 
 mod catalog_gate;
 mod grants;
@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn dependency_module_kinds_come_from_grant_table_via_lock_digest() {
-        use runtime_core::host_bridge::GrantTable;
+        use permissions::host_bridge::GrantTable;
 
         let root = tempfile::tempdir().expect("temp project");
         let entry = root.path().join("handler.js");

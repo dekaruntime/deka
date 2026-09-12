@@ -4,8 +4,8 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+security = { path = "../security" }
 deno_core = { workspace = true }
 deno_permissions = { workspace = true }
-runtime_core = { path = "../runtime_core" }
 serde_json = { workspace = true }
 sys_traits = { version = "0.1.22", features = ["real"] }

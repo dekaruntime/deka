@@ -311,8 +311,8 @@ impl WorkerThread {
         // and execution alike. Every dispatch path supplies the policy with
         // the request (deka#801); a missing one is an enforcement error,
         // never a silent env or default fallback.
-        let _security_context = runtime_core::security_context::set_security_context(
-            runtime_core::security_context::SecurityContext {
+        let _security_context = security::security_context::set_security_context(
+            security::security_context::SecurityContext {
                 policy_json: Some(request.request_data.security.policy_json.clone()),
                 no_prompt: request.request_data.security.no_prompt,
             },

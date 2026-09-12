@@ -1,7 +1,7 @@
 //! Tests for the net bridge (extracted from `net.rs`, deka#391).
 use super::proto;
 use super::net::{NetState, net_call_proto_impl_with, net_policy_target, tcp_connect_port};
-use runtime_core::security_policy::SecurityPolicy;
+use ::security::security_policy::SecurityPolicy;
 use prost::Message;
 use serde_json::json;
 use std::io::{ErrorKind, Write};
@@ -12,7 +12,7 @@ use std::net::TcpListener;
 /// contexts would race on the executing thread (deka#537).
 fn test_net_policy(allow: &str) -> SecurityPolicy {
     let document = json!({ "security": { "allow": { "net": [allow] } } });
-    runtime_core::security_policy::parse_deka_security_policy(&document).policy
+    ::security::security_policy::parse_deka_security_policy(&document).policy
 }
 
 #[test]

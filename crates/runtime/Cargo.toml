@@ -4,6 +4,8 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+security = { path = "../security" }
+permissions = { path = "../permissions" }
 core = { path = "../core" }
 runtime_core = { path = "../runtime_core" }
 platform = { path = "../platform" }

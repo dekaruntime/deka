@@ -9,7 +9,7 @@
 //! ```
 //!
 //! This module is the single authoritative catalog for that surface, the way
-//! [`crate::host_bridge`] is for `bridge kind.action` (RFD 27). The pinned
+//! `permissions::host_bridge` is for `bridge kind.action` (RFD 27). The pinned
 //! `dsc` compiler performs no catalog validation — it types the ambient
 //! `deka` global as `Infer` and emits plain calls verbatim — so the loader
 //! scans stdlib `.ds` sources against [`DEKA_CATALOG`] before compiling and

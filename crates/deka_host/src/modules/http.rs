@@ -28,7 +28,7 @@
 use futures_util::{SinkExt, StreamExt};
 use reqwest::cookie::Jar;
 use reqwest::{Client, ClientBuilder, Method, Response};
-use runtime_core::security_policy::SecurityPolicy;
+use security::security_policy::SecurityPolicy;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

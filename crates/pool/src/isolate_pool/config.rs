@@ -26,7 +26,7 @@ pub struct PoolConfig {
     /// RFD 27 host grant table for DekaScript-from-disk modules. `None` lets
     /// the ESM loader use the project-installed `deka.grants.json` written by
     /// `deka add` / `deka install` (deka#797).
-    pub host_grants: Option<runtime_core::host_bridge::GrantTable>,
+    pub host_grants: Option<permissions::host_bridge::GrantTable>,
     /// Arguments exposed to a handler. The command dispatcher supplies these;
     /// worker threads never consult process-global state.
     pub deka_args: serde_json::Value,

@@ -23,7 +23,7 @@ fn test_pool() -> IsolatePool {
 /// Pool whose isolates enforce an explicit net policy pinned at extension
 /// build time. Tests pass their own policy so parallel tests stop depending
 /// on the executing thread's security context (deka#537).
-fn net_test_pool(policy: runtime_core::security_policy::SecurityPolicy) -> IsolatePool {
+fn net_test_pool(policy: security::security_policy::SecurityPolicy) -> IsolatePool {
     let config = PoolConfig {
         num_workers: 1,
         max_isolates_per_worker: 2,
@@ -42,11 +42,11 @@ fn net_test_pool(policy: runtime_core::security_policy::SecurityPolicy) -> Isola
     )
 }
 
-fn allow_net_policy(target: &str) -> runtime_core::security_policy::SecurityPolicy {
+fn allow_net_policy(target: &str) -> security::security_policy::SecurityPolicy {
     let document = serde_json::json!({
         "security": { "allow": { "net": [target] } }
     });
-    runtime_core::security_policy::parse_deka_security_policy(&document).policy
+    security::security_policy::parse_deka_security_policy(&document).policy
 }
 
 /// Pool backed by the platform-server (php) extensions with per-request

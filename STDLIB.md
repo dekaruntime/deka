@@ -154,7 +154,7 @@ reality is:
   `DEKA_HOST_GRANTS` environment variable remain as explicit overrides for
   tests and embedded hosts.
 - The runtime catalog is generated from
-  `runtime_core::host_bridge` (`js_catalog_json()`) — the single source of
+  `permissions::host_bridge` (`js_catalog_json()`) — the single source of
   truth (deka#620), injected into each isolate at bootstrap. The **CLI** must
   catalog the same ops.
 
