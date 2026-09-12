@@ -1,4 +1,4 @@
-//! Dev-mode listen banner and compiler cache (`deka` / `serve --dev`).
+//! Dev-mode listen banner and compiler cache (`deka dev` / `serve --dev`).
 
 use std::path::{Path, PathBuf};
 
@@ -56,10 +56,7 @@ mod tests {
     #[test]
     fn print_banner_includes_ascii_url_and_cwd() {
         let url = "http://localhost:9999";
-        let cwd = std::env::current_dir()
-            .expect("cwd")
-            .display()
-            .to_string();
+        let cwd = std::env::current_dir().expect("cwd").display().to_string();
         let art = stdio::ascii("deka");
         assert!(art.contains('░') || art.contains('█') || art.len() > 4);
         assert!(format!("  {url}").contains("http://localhost:9999"));

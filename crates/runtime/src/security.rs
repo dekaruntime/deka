@@ -15,6 +15,16 @@ pub struct ResolvedSecurityPolicy {
 }
 
 pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPolicy, String> {
+    resolve_security_policy_for_serve(context, context.args.flags.contains_key("--dev"))
+}
+
+/// Resolve the request-time policy for a serve-family command. `dev` selects
+/// the `DevRequest` phase (`deka dev` / `serve --dev`); production `deka serve`
+/// passes `false` so the command, not a flag inside serve, picks the profile.
+pub fn resolve_security_policy_for_serve(
+    context: &Context,
+    dev: bool,
+) -> Result<ResolvedSecurityPolicy, String> {
     resolve_security_policy_for_root(
         &context
             .extensions()
@@ -32,7 +42,7 @@ pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPoli
                 .resolved
                 .mode,
         ),
-        context.args.flags.contains_key("--dev"),
+        dev,
     )
 }
 
@@ -534,10 +544,8 @@ mod tests {
             "DEKA_DEV",
             "DEKA_PERMISSIONS",
         ];
-        let saved: Vec<(String, Option<String>)> = keys
-            .iter()
-            .map(|key| (key.to_string(), None))
-            .collect();
+        let saved: Vec<(String, Option<String>)> =
+            keys.iter().map(|key| (key.to_string(), None)).collect();
         for (key, _) in &saved {
             unsafe { std::env::set_var(key, "1") };
         }

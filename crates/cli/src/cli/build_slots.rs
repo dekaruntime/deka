@@ -94,12 +94,12 @@ pub fn attach_observations(
 /// are source files whose own edit may have shifted their build blocks'
 /// compiler spans — their manifest slots are replaced wholesale with what a
 /// fresh plan declares now. An empty request (see
-/// [`runtime::build_watch::BuildSlotRefreshRequest::is_coarse`]) means the
+/// [`dev::build_watch::BuildSlotRefreshRequest::is_coarse`]) means the
 /// watcher could not prove relevance: rematerialize everything planned.
 pub fn make_dev_refresh_callback(
     flags: std::collections::HashMap<String, bool>,
     params: std::collections::HashMap<String, String>,
-) -> runtime::build_watch::BuildSlotRefresh {
+) -> ::dev::build_watch::BuildSlotRefresh {
     Arc::new(move |project_root, request| {
         refresh_dev_build_slots(&flags, &params, project_root, request)
     })
@@ -113,7 +113,7 @@ pub fn refresh_dev_build_slots(
     flags: &std::collections::HashMap<String, bool>,
     params: &std::collections::HashMap<String, String>,
     project_root: &Path,
-    request: runtime::build_watch::BuildSlotRefreshRequest,
+    request: ::dev::build_watch::BuildSlotRefreshRequest,
 ) -> Result<(), String> {
     // Dev artifacts use the explicit dev cache below; no process-global flag
     // selects their location.
@@ -124,8 +124,8 @@ pub fn refresh_dev_build_slots(
         project_root,
         &[app_dir.as_path(), src_dir.as_path(), api_dir.as_path()],
     )?;
-    let manifest_path = runtime_core::dist::compiler_cache_dir_with(project_root, true)
-        .join("build-manifest.json");
+    let manifest_path =
+        runtime_core::dist::compiler_cache_dir_with(project_root, true).join("build-manifest.json");
     let existing_manifest =
         match std::fs::read_to_string(&manifest_path) {
             Ok(raw) => Some(serde_json::from_str::<BuildManifest>(&raw).map_err(|err| {
@@ -280,8 +280,8 @@ fn update_dev_manifest(
     // restored span, duplicate watch event) is NOT swept: its module was just
     // republished.
     let live: BTreeSet<&str> = manifest.slots.iter().map(|slot| slot.id.as_str()).collect();
-    let published = runtime_core::dist::compiler_cache_dir_with(project_root, true)
-        .join("build-values");
+    let published =
+        runtime_core::dist::compiler_cache_dir_with(project_root, true).join("build-values");
     for id in dropped_ids
         .into_iter()
         .filter(|id| !live.contains(id.as_str()))
@@ -310,7 +310,7 @@ pub fn ensure_dev_build_slots(
         flags,
         params,
         &project_root,
-        runtime::build_watch::BuildSlotRefreshRequest::coarse(),
+        ::dev::build_watch::BuildSlotRefreshRequest::coarse(),
     ) {
         stdio::log("dev", &format!("build-slot materialization skipped: {err}"));
     }
