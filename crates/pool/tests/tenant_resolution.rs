@@ -3,9 +3,8 @@
 /// Tests the tenant resolution logic: subdomain extraction, untrusted header
 /// handling, and the handler path resolution pattern used by the platform.
 ///
-/// Redis-dependent paths (actual `resolve_tenant` lookups) are not tested here
-/// because they require a running Redis instance. Only the pure-logic paths
-/// are exercised.
+/// Cloudflare edge routing presents a canonical `shop_*` subdomain; the
+/// resolver accepts that live path without an external shard lookup.
 use pool::tenant::{extract_subdomain, resolve_tenant_from_headers};
 use std::path::PathBuf;
 
@@ -70,12 +69,20 @@ fn x_shop_id_case_insensitive_is_ignored() {
 #[test]
 fn empty_x_shop_id_is_ignored() {
     // Empty X-Shop-ID falls through to Host-based resolution.
-    // With no Redis, Host resolution returns None.
     let headers = vec![
         ("X-Shop-ID".to_string(), String::new()),
         ("Host".to_string(), "localhost:8530".to_string()),
     ];
     assert_eq!(resolve_tenant_from_headers(&headers), None);
+}
+
+#[test]
+fn canonical_shop_subdomain_resolves_without_external_lookup() {
+    let headers = vec![("Host".to_string(), "shop_alpha.tana.gg".to_string())];
+    assert_eq!(
+        resolve_tenant_from_headers(&headers),
+        Some("shop_alpha".to_string())
+    );
 }
 
 // ── Handler path resolution pattern (mirrors platform.rs logic) ─────────

@@ -24,7 +24,6 @@ swc_ecma_ast = { workspace = true }
 swc_ecma_parser = { workspace = true, features = ["typescript"] }
 swc_ecma_visit = { workspace = true }
 
-redis = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 deka-validation = { version = "0.2", features = ["wasm"] }
 # Staged catalog compiles verify rewritten dependency packages against the
