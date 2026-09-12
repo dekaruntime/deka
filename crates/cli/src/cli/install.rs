@@ -919,8 +919,8 @@ mod shop_update_tests {
         assert_eq!(
             specs,
             vec![
-                "@deka/core@0.3.0".to_string(),
                 "@deka/cache@0.1.0".to_string(),
+                "@deka/core@0.3.0".to_string(),
                 "@tana/store@0.2.0".to_string(),
             ]
         );
