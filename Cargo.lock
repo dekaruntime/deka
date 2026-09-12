@@ -901,9 +901,9 @@ dependencies = [
  "compile",
  "core",
  "ctrlc",
+ "deka-lsp",
  "deka_host",
  "deka_ui",
- "dekascript_lsp",
  "deno_task_shell",
  "flate2",
  "glob",
@@ -1448,11 +1448,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "deka-router"
-version = "0.48.1"
+name = "deka-lsp"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd508eb30dc93f04f30130810756fe3985d2747f43ff8c3efe0b69998457c2c"
 dependencies = [
- "axum",
+ "anyhow",
+ "serde",
+ "serde_json",
  "tokio",
+ "tower-lsp",
 ]
 
 [[package]]
@@ -1557,17 +1562,6 @@ dependencies = [
  "deno_core",
  "tempfile",
  "tokio",
-]
-
-[[package]]
-name = "dekascript_lsp"
-version = "0.48.1"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "tokio",
- "tower-lsp",
 ]
 
 [[package]]
