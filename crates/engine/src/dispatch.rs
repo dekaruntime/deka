@@ -6,7 +6,7 @@ use crate::RuntimeState;
 use crate::envelope::{RequestEnvelope, ResponseEnvelope};
 use pool::RequestParts;
 use pool::{ExecutionMode, HandlerKey, RequestData};
-use runtime_core::storefront_envelope::StorefrontResponse;
+use serve::request_envelope::StorefrontResponse;
 
 /// Page, API, and defer entries must not share one isolate.
 /// The serve RuntimeState key is the generated serve-entry filename; fold

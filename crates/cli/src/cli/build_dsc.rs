@@ -1,7 +1,7 @@
 //! Compile/check paths for `deka build` via dsc (rfd#38).
 //!
 //! Lookup is `DEKA_DSC`, then `dsc` next to this `deka` binary, then `PATH`
-//! (`crate::dsc` / `runtime_core::dsc`). Missing dsc is a hard error.
+//! (`crate::dsc` / `compiler::dsc`). Missing dsc is a hard error.
 //!
 //! Project builds prefer default emit (`dsc --outdir <dir>` from the project
 //! root). Published dsc that still lacks that entrypoint falls back to

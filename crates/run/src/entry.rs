@@ -76,10 +76,10 @@ pub fn resolve_entry(project_root: &Path, cli_arg: Option<&str>) -> Result<Resol
     // decision. Do this before source configuration so `deka run` cannot
     // route around a stale or malformed dist/ and recompile `.ds(x)` behind
     // the user's back.
-    if let Some(artifact_root) = crate::dist::resolve_authored_artifact_root(project_root)
+    if let Some(artifact_root) = runtime_core::dist::resolve_authored_artifact_root(project_root)
         .map_err(run_artifact_remedy)?
     {
-        let manifest = crate::dist::ArtifactManifestV2::load_verified(&artifact_root)
+        let manifest = runtime_core::dist::ArtifactManifestV2::load_verified(&artifact_root)
             .and_then(|manifest| {
                 manifest.ensure_native_compat()?;
                 Ok(manifest)
@@ -88,7 +88,7 @@ pub fn resolve_entry(project_root: &Path, cli_arg: Option<&str>) -> Result<Resol
         let entry = artifact_root.join("server/serve-entry.js");
         if !manifest.payloads.iter().any(|payload| {
             payload.path == "server/serve-entry.js"
-                && payload.role == crate::dist::PayloadRole::Server
+                && payload.role == runtime_core::dist::PayloadRole::Server
         }) || !entry.is_file()
         {
             return Err(run_artifact_remedy(

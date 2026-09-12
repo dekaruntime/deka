@@ -33,7 +33,7 @@ use deno_core::{
     OpMetricsFn, RuntimeOptions, serde_v8,
 };
 use nanoid::nanoid;
-use runtime_core::storefront_envelope::StorefrontRequest;
+use serve::request_envelope::StorefrontRequest;
 use tokio::sync::{mpsc, oneshot};
 
 mod support;

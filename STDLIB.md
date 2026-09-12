@@ -15,8 +15,7 @@ For `@deka/<name>`:
    `versions`. A pinned version is used as-is.
 3. Download
    `https://pub-6d81db17678348abba85f93fde4b4400.r2.dev/<name>/<version>/<name>-<version>.tgz`
-4. Extract into the consumer's `php_modules/` (legacy name; `ds_modules/`
-   is equivalent) and record the digest in `deka.lock`.
+4. Extract into the consumer's `ds_modules/` and record the digest in `deka.lock`.
 5. Derive the package's RFD 27 host grant — the catalog kinds the runtime
    assigns to the `@deka/<name>` identity — and record
    `{ name, version, digest, kinds }` in `deka.grants.json` next to

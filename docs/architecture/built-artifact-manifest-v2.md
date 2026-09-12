@@ -429,9 +429,9 @@ divergences. A shape fixture comparing dsc's actual output to deka's parser
 expectations would have caught it. That is the pattern this copies: real bytes on
 both sides, compared by a test.
 
-The data model in `crates/runtime_core/src/seam.rs` remains available; nothing in
-this document removes it. If a future boundary turns out to be wire-shaped, the
-system is there.
+The unused seam data model and contract generators were subsequently removed
+during the runtime-core dissolution (deka#881). Artifact validation continues
+to use the schema and fixture mechanism described here.
 
 ---
 

@@ -1,4 +1,4 @@
-pub use runtime_core::storefront_envelope::StorefrontResponse as ResponseEnvelope;
+pub use serve::request_envelope::StorefrontResponse as ResponseEnvelope;
 
 pub type RequestEnvelope = LegacyRequestEnvelope;
 

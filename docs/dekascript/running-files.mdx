@@ -66,3 +66,7 @@ regenerated).
 A file that has a `deka.json` anywhere above it keeps the project behavior:
 the compile happens inside the project's own cache, no advisory is printed,
 and the user cache is not involved.
+
+Installed dependencies use `ds_modules/`. The installer and module-directory
+resolver do not fall back to a legacy `php_modules/` tree. Reinstall a legacy
+project's declared dependencies with `deka install` to populate `ds_modules/`.

@@ -340,7 +340,9 @@ fn vendored_php_modules_path(entries: &[u8]) -> Option<String> {
         if is_symlink
             || path
                 .split('/')
-                .any(|segment| is_modules_dir_name(segment))
+                .any(|segment| {
+                    is_modules_dir_name(segment) || segment.eq_ignore_ascii_case("php_modules")
+                })
         {
             Some(path.to_string())
         } else {

@@ -18,6 +18,6 @@ pub fn find_dsc() -> Result<Option<PathBuf>, String> {
             path.display()
         ));
     }
-    runtime_core::dsc::find_dsc()
+    compiler::dsc::find_dsc()
 }
 

@@ -11,12 +11,11 @@ use platform::Platform;
 use platform_server::ServerPlatform;
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
-use runtime_core::env::{set_handler_path_with, set_runtime_args_with};
-use runtime_core::handler::{
+use run::handler::{
     handler_input_with, is_deka_entry, is_html_entry, is_js_entry, normalize_handler_path_with,
 };
 use runtime_core::process::parse_exit_code;
-use runtime_core::validation::validate_deka_handler_with;
+use serve::validation::validate_deka_handler_with;
 
 pub fn run(context: &Context) {
     run_with_dsc(context, None);
@@ -58,16 +57,8 @@ async fn run_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), String
         no_prompt: !resolved_security.prompt_enabled,
     };
     let env_get = |key: &str| platform.env().get(key);
-    let (handler_path, extra_args) = handler_input_with(&context.args.positionals, &env_get);
-    let mut env_set = |key: &str, value: &str| {
-        let _ = platform.env().set(key, value);
-    };
-    set_runtime_args_with(&extra_args, &mut env_set, &|| std::env::args().next());
+    let (handler_path, _extra_args) = handler_input_with(&context.args.positionals, &env_get);
 
-    let mut env_set = |key: &str, value: &str| {
-        let _ = platform.env().set(key, value);
-    };
-    set_handler_path_with(&handler_path, &env_get, &mut env_set);
     // The host bridge (security hints, `@/` path resolution) reads the
     // handler location from this explicit install, not the process
     // environment (deka#801).
