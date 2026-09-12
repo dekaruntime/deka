@@ -57,8 +57,11 @@ fn add_fixturefs(project: &Path) -> String {
         },
         ""
     ]);
-    fs::write(&lock_path, serde_json::to_string_pretty(&lock).expect("lock json"))
-        .expect("write deka.lock");
+    fs::write(
+        &lock_path,
+        serde_json::to_string_pretty(&lock).expect("lock json"),
+    )
+    .expect("write deka.lock");
 
     let grants = serde_json::to_string(&serde_json::json!([
         {
@@ -126,10 +129,8 @@ fn manifest_path(project: &Path) -> PathBuf {
 }
 
 fn manifest_json(project: &Path) -> serde_json::Value {
-    serde_json::from_str(
-        &fs::read_to_string(manifest_path(project)).expect("read build manifest"),
-    )
-    .expect("parse build manifest")
+    serde_json::from_str(&fs::read_to_string(manifest_path(project)).expect("read build manifest"))
+        .expect("parse build manifest")
 }
 
 /// Writes deka.json with a security section; keeps the scaffold's shape. The
@@ -487,14 +488,47 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// A [slug] page whose build body derives a marker from both a directory
-/// listing and a file read: `<readdir count>/<picked.txt byte length>`.
-/// Adding/removing files changes the first component; editing the picked
-/// file changes the second. Everything is inlined because dsc plan emission
-/// omits helpers referenced only inside `unsafe` arrows. The bridge calls
-/// live in the granted `@deka/fixturefs` package (RFD 27).
-fn slug_page_count_over_len() -> &'static str {
-    "import { read_file, read_dir } from \"@deka/fixturefs\"\ninterface PageProps { slug: string }\nstruct PostParam { slug: string }\nasync fn slugs() Promise<Result<Array<PostParam>, string>> {\n  const listed = await read_dir(\"data\")\n  const picked = await read_file(\"data/picked.txt\")\n  return match (listed) {\n    Ok(entries) => match (picked) {\n      Ok(bytes) => match (unsafe { String(entries.length) + \"/\" + String(bytes.length) }) {\n        Ok(text) => Ok([PostParam { slug: text }]),\n        Err(e) => Err(\"shape failed\")\n      },\n      Err(e) => Err(e)\n    },\n    Err(e) => Err(e)\n  }\n}\nexport const staticParams: Array<PostParam> = build {\n  return await slugs()\n}\nexport fn Page(props: PageProps) {\n  const marker = match (unsafe { staticParams[0].slug }) {\n    Ok(v) => v,\n    Err(e) => \"?\"\n  }\n  return <article><h1>{marker}</h1></article>;\n}\n"
+/// The build body derives `<directory count>/<picked.txt byte length>`.
+/// Keep real compiler slots and granted bridge reads, and expose the hydrated
+/// value through an explicit HTTP handler instead of the extracted renderer.
+fn write_watch_fixture(project: &Path) {
+    write_slug_page(
+        project,
+        r#"import { read_file, read_dir } from "@deka/fixturefs"
+struct PostParam { slug: string }
+async fn slugs() Promise<Result<Array<PostParam>, string>> {
+  const listed = await read_dir("data")
+  const picked = await read_file("data/picked.txt")
+  return match (listed) {
+    Ok(entries) => match (picked) {
+      Ok(bytes) => match (unsafe { String(entries.length) + "/" + String(bytes.length) }) {
+        Ok(text) => Ok([PostParam { slug: text }]),
+        Err(e) => Err("shape failed")
+      },
+      Err(e) => Err(e)
+    },
+    Err(e) => Err(e)
+  }
+}
+export const staticParams: Array<PostParam> = build {
+  return await slugs()
+}
+export fn marker() string {
+  return match (unsafe { staticParams[0].slug }) { Ok(v) => v, Err(e) => "?" }
+}
+"#,
+    );
+    fs::write(
+        project.join("watch.dsx"),
+        r#"import { marker } from "./app/posts/[slug]/page.dsx";
+unsafe {
+  globalThis.app = {
+    fetch() { return new Response(marker()); }
+  };
+}
+"#,
+    )
+    .expect("write watch handler");
 }
 
 fn get_status(port: u16, path: &str) -> Option<u16> {
@@ -543,7 +577,7 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
         r#"{"allow": {"read": ["./data"]}, "prompt": false}"#,
     );
     let grants = add_fixturefs(project.path());
-    write_slug_page(project.path(), slug_page_count_over_len());
+    write_watch_fixture(project.path());
     let data = project.path().join("data");
     fs::create_dir_all(&data).expect("mkdir data");
     fs::write(data.join("picked.txt"), "hello").expect("write picked");
@@ -553,7 +587,13 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
     let log_path = project.path().join("dev.log");
     let log = fs::File::create(&log_path).expect("dev.log");
     let child = Command::new(cli_bin())
-        .args(["dev", "--port", &port.to_string(), "--no-prompt"])
+        .args([
+            "dev",
+            "./watch.dsx",
+            "--port",
+            &port.to_string(),
+            "--no-prompt",
+        ])
         .current_dir(project.path())
         .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .env("DEKA_HOST_GRANTS", &grants)
@@ -563,44 +603,43 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
         .expect("spawn deka dev");
     let mut child = KillOnDrop(Some(child));
     let dev_log = || fs::read_to_string(&log_path).unwrap_or_default();
-    // Any /posts/<slug> renders dynamically; assert on page content, not
-    // route existence. Initial marker: 2 entries, 5 bytes -> "2/5".
-    let marker_served = |marker: &str| {
-        get_body(port, "/posts/anything").is_some_and(|body| body.contains(marker))
-    };
+    // The handler reads the materialized value on every request. Initial marker: 2 entries, 5 bytes -> "2/5".
+    let marker_served =
+        |marker: &str| get_body(port, "/posts/anything").is_some_and(|body| body == marker);
 
     assert!(
-        wait_until(90, || get_status(port, "/").is_some_and(|status| status == 200)),
+        wait_until(90, || get_status(port, "/")
+            .is_some_and(|status| status == 200)),
         "deka dev did not become ready:\n{}",
         dev_log()
     );
     assert!(
-        wait_until(30, || marker_served(">2/5<")),
-        "initial materialization must render marker 2/5:\n{}",
+        wait_until(30, || marker_served("2/5")),
+        "initial materialization must serve marker 2/5:\n{}",
         dev_log()
     );
 
     // Edit the read input: the slot reruns and the byte-length component moves.
     fs::write(data.join("picked.txt"), "hello!").expect("edit picked");
     assert!(
-        wait_until(60, || marker_served(">2/6<")),
-        "editing data/picked.txt must rematerialize the slot and render 2/6:\n{}",
+        wait_until(60, || marker_served("2/6")),
+        "editing data/picked.txt must rematerialize the slot and serve 2/6:\n{}",
         dev_log()
     );
 
     // Add a listed file: the directory-listing component moves.
     fs::write(data.join("gamma.txt"), "gamma").expect("write gamma");
     assert!(
-        wait_until(60, || marker_served(">3/6<")),
-        "adding data/gamma.txt must rematerialize the slot and render 3/6:\n{}",
+        wait_until(60, || marker_served("3/6")),
+        "adding data/gamma.txt must rematerialize the slot and serve 3/6:\n{}",
         dev_log()
     );
 
     // Remove a listed file: the listing component moves back.
     fs::remove_file(data.join("gamma.txt")).expect("remove gamma");
     assert!(
-        wait_until(60, || marker_served(">2/6<")),
-        "removing data/gamma.txt must rematerialize the slot and render 2/6 again:\n{}",
+        wait_until(60, || marker_served("2/6")),
+        "removing data/gamma.txt must rematerialize the slot and serve 2/6 again:\n{}",
         dev_log()
     );
 
@@ -661,7 +700,7 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
         r#"{"allow": {"read": ["./data"]}, "prompt": false}"#,
     );
     let grants = add_fixturefs(project.path());
-    write_slug_page(project.path(), slug_page_count_over_len());
+    write_watch_fixture(project.path());
     let data = project.path().join("data");
     fs::create_dir_all(&data).expect("mkdir data");
     fs::write(data.join("picked.txt"), "hello").expect("write picked");
@@ -671,7 +710,13 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
     let log_path = project.path().join("dev.log");
     let log = fs::File::create(&log_path).expect("dev.log");
     let child = Command::new(cli_bin())
-        .args(["dev", "--port", &port.to_string(), "--no-prompt"])
+        .args([
+            "dev",
+            "./watch.dsx",
+            "--port",
+            &port.to_string(),
+            "--no-prompt",
+        ])
         .current_dir(project.path())
         .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .env("DEKA_HOST_GRANTS", &grants)
@@ -692,18 +737,18 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
             serde_json::from_str(&fs::read_to_string(&dev_manifest_path).ok()?).ok()?;
         manifest["slots"][0]["id"].as_str().map(str::to_string)
     };
-    let marker_served = |marker: &str| {
-        get_body(port, "/posts/anything").is_some_and(|body| body.contains(marker))
-    };
+    let marker_served =
+        |marker: &str| get_body(port, "/posts/anything").is_some_and(|body| body == marker);
 
     assert!(
-        wait_until(90, || get_status(port, "/").is_some_and(|status| status == 200)),
+        wait_until(90, || get_status(port, "/")
+            .is_some_and(|status| status == 200)),
         "deka dev did not become ready:\n{}",
         dev_log()
     );
     assert!(
-        wait_until(30, || marker_served(">2/5<")),
-        "initial materialization must render marker 2/5:\n{}",
+        wait_until(30, || marker_served("2/5")),
+        "initial materialization must serve marker 2/5:\n{}",
         dev_log()
     );
     let id_before = slot_id().expect("manifest slot id before the edit");
@@ -724,7 +769,8 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
     // replaced wholesale. The pre-fix behavior left the new id unmaterialized
     // and the page unresolved.
     assert!(
-        wait_until(60, || marker_served(">2/5<")),
+        wait_until(60, || slot_id().is_some_and(|id| id != id_before)
+            && marker_served("2/5")),
         "a line inserted above the build block must replan the file and keep serving 2/5:\n{}",
         dev_log()
     );
@@ -738,7 +784,7 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
     // file afterwards invalidates it through the NEW id.
     fs::write(data.join("picked.txt"), "hello!").expect("edit picked");
     assert!(
-        wait_until(60, || marker_served(">2/6<")),
+        wait_until(60, || marker_served("2/6")),
         "the replanned slot must observe data/picked.txt and rematerialize to 2/6:\n{}",
         dev_log()
     );
@@ -781,7 +827,7 @@ fn dev_watch_invalidates_slots_under_phase_aware_permissions() {
         r#"{"dev": {"build": {"read": ["./data"]}}}"#,
     );
     let grants = add_fixturefs(project.path());
-    write_slug_page(project.path(), slug_page_count_over_len());
+    write_watch_fixture(project.path());
     let data = project.path().join("data");
     fs::create_dir_all(&data).expect("mkdir data");
     fs::write(data.join("picked.txt"), "hello").expect("write picked");
@@ -791,7 +837,13 @@ fn dev_watch_invalidates_slots_under_phase_aware_permissions() {
     let log_path = project.path().join("dev.log");
     let log = fs::File::create(&log_path).expect("dev.log");
     let child = Command::new(cli_bin())
-        .args(["dev", "--port", &port.to_string(), "--no-prompt"])
+        .args([
+            "dev",
+            "./watch.dsx",
+            "--port",
+            &port.to_string(),
+            "--no-prompt",
+        ])
         .current_dir(project.path())
         .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .env("DEKA_HOST_GRANTS", &grants)
@@ -802,34 +854,34 @@ fn dev_watch_invalidates_slots_under_phase_aware_permissions() {
     let mut child = KillOnDrop(Some(child));
     let dev_log = || fs::read_to_string(&log_path).unwrap_or_default();
     // Initial marker: 2 entries, 5 bytes -> "2/5".
-    let marker_served = |marker: &str| {
-        get_body(port, "/posts/anything").is_some_and(|body| body.contains(marker))
-    };
+    let marker_served =
+        |marker: &str| get_body(port, "/posts/anything").is_some_and(|body| body == marker);
 
     assert!(
-        wait_until(90, || get_status(port, "/").is_some_and(|status| status == 200)),
+        wait_until(90, || get_status(port, "/")
+            .is_some_and(|status| status == 200)),
         "deka dev did not become ready:\n{}",
         dev_log()
     );
     assert!(
-        wait_until(30, || marker_served(">2/5<")),
-        "initial materialization must render marker 2/5 under permissions.dev.build:\n{}",
+        wait_until(30, || marker_served("2/5")),
+        "initial materialization must serve marker 2/5 under permissions.dev.build:\n{}",
         dev_log()
     );
 
     // Edit the read input: the slot reruns and the byte-length component moves.
     fs::write(data.join("picked.txt"), "hello!").expect("edit picked");
     assert!(
-        wait_until(60, || marker_served(">2/6<")),
-        "editing data/picked.txt must rematerialize the slot and render 2/6:\n{}",
+        wait_until(60, || marker_served("2/6")),
+        "editing data/picked.txt must rematerialize the slot and serve 2/6:\n{}",
         dev_log()
     );
 
     // Add a listed file: the directory-listing component moves.
     fs::write(data.join("gamma.txt"), "gamma").expect("write gamma");
     assert!(
-        wait_until(60, || marker_served(">3/6<")),
-        "adding data/gamma.txt must rematerialize the slot and render 3/6:\n{}",
+        wait_until(60, || marker_served("3/6")),
+        "adding data/gamma.txt must rematerialize the slot and serve 3/6:\n{}",
         dev_log()
     );
 

@@ -27,19 +27,21 @@ fn missing_dsc_without_fallback_is_an_error() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("ok.ds");
     fs::write(&source, "export const answer = 42\n").unwrap();
-    let output = Command::new(cli_bin())
-        .args(["check", source.to_str().unwrap()])
-        .env_remove("DEKA_DSC")
-        .env_remove("DEKA_NO_DSC")
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .expect("run deka");
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("dsc is required"),
-        "unexpected stderr: {stderr}"
-    );
+    // Discovery includes a repository-pinned compiler as well as sibling and
+    // PATH binaries. Disable discovery explicitly instead of depending on the
+    // host installation, and pin the no-fallback contract for the registered compiler exec commands.
+    for command in ["check", "fmt", "transpile"] {
+        let output = Command::new(cli_bin())
+            .args([command, source.to_str().unwrap()])
+            .env_remove("DEKA_DSC")
+            .env("DEKA_NO_DSC", "1")
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .expect("run deka");
+        assert!(!output.status.success(), "{command} must require dsc");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("dsc is required"), "{command}: {stderr}");
+    }
 }
 
 #[test]

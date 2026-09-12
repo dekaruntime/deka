@@ -1,74 +1,19 @@
-//! RFD 24 §11.2 — dev/prod module-boundary conformance.
-//!
-//! Dev (`deka serve --dev`) and production (`deka build`) must be two shapes
-//! of ONE compiler: for the same module, dev and prod emission must agree
-//! module-for-module — same module boundaries, same import graph, same
-//! elimination decisions — differing only in how modules are grouped for
-//! delivery. This is the conformance test the RFD calls for, motivated by
-//! four "two artefacts that must agree" bugs shipped in one week
-//! (deka#582, deka#583, website#117, website#129).
-//!
-//! The fixture project has a small multi-module app:
-//!
-//! ```text
-//! app/layout.dsx, app/page.dsx, app/about/page.dsx   (route modules)
-//! lib/shared.ds  -> imports lib/leaf.ds              (shared non-route module)
-//! lib/leaf.ds                                        (leaf of the graph)
-//! lib/unused.ds                                      (never imported: unreachable)
-//! lib/orphan.ds                                      (imported by page.dsx but
-//!                                                     never used: shaken)
-//! ```
-//!
-//! Dev side: a real `deka serve --dev` is started and both routes are
-//! fetched. Production side: `deka build`. Both compile the same generated
-//! entry (`.cache/dekascript/serve-entry.dsx`) through the same module
-//! graph compiler; the test pins that they agree:
-//!
-//! 1. Entry parity — both modes generate byte-identical serve-entry.dsx,
-//!    so both compile the exact same module graph rooted at the same module.
-//! 2. Module/edge parity — every kept module's body marker appears in both
-//!    modes' rendered output; the `page -> shared -> leaf` import chain is
-//!    proven by a composite marker that can only render if both edges were
-//!    compiled in that mode.
-//! 3. Elimination parity — the shaken-out modules (`unused.ds`, and
-//!    `orphan.ds` whose import is never used and is dropped by graph
-//!    shaking) are absent from BOTH modes' emitted artifacts.
+//! Dev/prod compiler module-boundary parity after framework extraction (#893).
+//! Compile the generated serve entry through the same graph compiler used by
+//! the dev loader, then compare it with the real build's server modules.
+//! Rendering/prerendering belongs to the extracted framework; entry generation,
+//! import edges, module boundaries and graph shaking still belong here.
 
-use reqwest::blocking::Client;
 use std::fs;
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
-/// Renders as "shared-body-marker leaf-body-marker"; can only appear if the
-/// compiled import chain page -> shared -> leaf survived in that mode.
-const COMPOSITE_MARKER: &str = "shared-body-marker leaf-body-marker";
 const ORPHAN_MARKER: &str = "orphan-body-marker";
 const UNUSED_MARKER: &str = "unused-body-marker";
-
-struct KillOnDrop(Option<std::process::Child>);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.0.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-fn free_port() -> u16 {
-    TcpListener::bind(("127.0.0.1", 0))
-        .expect("bind ephemeral")
-        .local_addr()
-        .expect("local addr")
-        .port()
-}
 
 fn init_project(dir: &Path) {
     let output = Command::new(cli_bin())
@@ -130,28 +75,6 @@ fn write_fixture(dir: &Path) {
     .expect("write app/about/page.dsx");
 }
 
-fn client() -> Client {
-    Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(15))
-        .build()
-        .expect("reqwest client")
-}
-
-fn wait_ready(port: u16) {
-    let http = client();
-    let deadline = Instant::now() + Duration::from_secs(45);
-    while Instant::now() < deadline {
-        if let Ok(res) = http.get(format!("http://127.0.0.1:{port}/")).send() {
-            if res.status().as_u16() == 200 {
-                return;
-            }
-        }
-        std::thread::sleep(Duration::from_millis(150));
-    }
-    panic!("deka serve did not become ready on port {port}");
-}
-
 fn run_build(dir: &Path) -> (bool, String) {
     let output = Command::new(cli_bin())
         .arg("build")
@@ -205,130 +128,60 @@ fn dev_and_prod_emit_the_same_modules() {
     let project = tempfile::tempdir().expect("create temp project dir");
     write_fixture(project.path());
 
-    // --- Dev side: a real `deka serve --dev` compiles the app through the
-    // module graph and serves unbundled native ESM. ---
-    let port = free_port();
-    let log_path = project.path().join("serve.log");
-    let log = fs::File::create(&log_path).expect("serve.log");
-    let child = Command::new(cli_bin())
-        .args(["serve", ".", "--port", &port.to_string(), "--no-prompt"])
-        .current_dir(project.path())
-        .env("DEKA_RATE_LIMIT_DISABLED", "1")
-        .stdout(Stdio::from(log.try_clone().expect("clone log")))
-        .stderr(Stdio::from(log))
-        .spawn()
-        .expect("spawn deka serve");
-    let mut child = KillOnDrop(Some(child));
-    let serve_log = || fs::read_to_string(&log_path).unwrap_or_default();
-    wait_ready(port);
-    let http = client();
-    let base = format!("http://127.0.0.1:{port}");
+    let root = project.path().canonicalize().expect("canonical project");
+    let entry = runtime_core::dist::write_app_router_entry(&root).expect("generate dev entry");
+    let dsc = runtime_core::dsc::find_dsc()
+        .expect("resolve dsc")
+        .expect("dsc required");
+    let dev_graph = pool::dsc_compile::compile_graph_with_dsc(&root, &entry, &dsc)
+        .expect("compile dev module graph");
+    let dev_entry = read_serve_entry(&root);
+    assert!(dev_entry.contains("app/about/page.dsx") && dev_entry.contains("app/page.dsx"));
 
-    let dev_home = http
-        .get(format!("{base}/"))
-        .send()
-        .expect("GET /")
-        .text()
-        .expect("dev home html");
-    let dev_about = http
-        .get(format!("{base}/about"))
-        .send()
-        .expect("GET /about")
-        .text()
-        .expect("dev about html");
-
-    // The import chain page -> shared -> leaf must have been compiled in dev:
-    // the composite marker can only render if both edges survived.
-    for (route, body) in [("/", &dev_home), ("/about", &dev_about)] {
-        assert!(
-            body.contains(COMPOSITE_MARKER),
-            "dev render of {route} must include the shared->leaf chain: {body}\nserve.log:\n{}",
-            serve_log()
-        );
-    }
-    // Shaken modules must not leak into dev emission, even when fetched.
-    let dev_bogus = http
-        .get(format!("{base}/no-such-route"))
-        .send()
-        .expect("GET /no-such-route")
-        .text()
-        .expect("dev 404 html");
-    for (name, body) in [
-        ("/", dev_home.as_str()),
-        ("/about", dev_about.as_str()),
-        ("/no-such-route", dev_bogus.as_str()),
-    ] {
-        assert!(
-            !body.contains(ORPHAN_MARKER),
-            "orphan.ds is imported but never used; graph shaking must drop it, \
-             yet its marker leaked into dev render of {name}"
-        );
-        assert!(
-            !body.contains(UNUSED_MARKER),
-            "unused.ds is never imported; its marker must not appear in dev \
-             render of {name}"
-        );
-    }
-
-    // The serve path's entry generation, captured before build overwrites it.
-    let dev_entry = read_serve_entry(project.path());
-    assert!(
-        dev_entry.contains("app/about/page.dsx") && dev_entry.contains("app/page.dsx"),
-        "generated serve-entry should wire both routes: {dev_entry}"
-    );
-
-    if let Some(mut serve_child) = child.0.take() {
-        let _ = serve_child.kill();
-        let _ = serve_child.wait();
-    }
-
-    // --- Production side: `deka build` runs the same graph compiler and
-    // bundles/prerenders for the worker. ---
-    let (success, combined) = run_build(project.path());
+    let (success, combined) = run_build(&root);
     assert!(
         success,
-        "deka build must succeed on a project `deka serve --dev` compiles \
-         (RFD 24 §11.2 parity): {combined}"
+        "build must compile the same graph as dev: {combined}"
     );
-
-    // 1. Entry parity: both modes generate byte-identical serve-entry.dsx,
-    //    so both compile the same module graph from the same root module.
-    let prod_entry = read_serve_entry(project.path());
     assert_eq!(
-        dev_entry, prod_entry,
-        "serve-entry.dsx must be generated identically by `deka serve --dev` \
-         and `deka build`; the two modes drifted in entry generation.\n\
-         --- dev ---\n{dev_entry}\n--- prod ---\n{prod_entry}"
+        dev_entry,
+        read_serve_entry(&root),
+        "dev/build entry generation drifted"
     );
 
-    // 2. Module/edge parity: the prerendered dist HTML went through the same
-    //    graph compile, so the same import chain must be present.
-    let dist_home = fs::read_to_string(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("index.html"),
-    )
-    .expect("read dist/client/index.html");
-    let dist_about = fs::read_to_string(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("about")
-            .join("index.html"),
-    )
-    .expect("read dist/client/about/index.html");
-    for (route, body) in [("/", &dist_home), ("/about", &dist_about)] {
+    // The shared -> leaf edge and both page -> shared edges survive in both
+    // graphs. Compare complete module bodies, including their import specifiers.
+    for rel in [
+        "app/page.dsx",
+        "app/about/page.dsx",
+        "lib/shared.ds",
+        "lib/leaf.ds",
+    ] {
+        let source = root.join(rel);
+        let dev = pool::dsc_compile::lookup_js(&dev_graph, &source).expect("dev module");
+        let prod_path = root
+            .join("dist/server")
+            .join(Path::new(rel).with_extension("js"));
+        let prod = fs::read_to_string(&prod_path).expect("built module");
+        // The loader keeps source extensions; publication rewrites them to JS.
+        let normalized = dev
+            .replace(".dsx\"", ".js\"")
+            .replace(".ds\"", ".js\"")
+            .replace(".dsx'", ".js'")
+            .replace(".ds'", ".js'");
+        assert_eq!(normalized, prod, "dev/prod module drift: {rel}");
+    }
+    for (rel, marker) in [
+        ("lib/shared.ds", "shared-body-marker"),
+        ("lib/leaf.ds", "leaf-body-marker"),
+    ] {
+        let js = pool::dsc_compile::lookup_js(&dev_graph, &root.join(rel)).expect("shared module");
+        assert!(js.contains(marker), "missing live module body: {rel}");
+    }
+    for js in dev_graph.values() {
         assert!(
-            body.contains(COMPOSITE_MARKER),
-            "prod prerender of {route} must include the shared->leaf chain, \
-             exactly as dev did: {body}"
-        );
-        assert!(
-            !body.contains("<!--deka-app-->"),
-            "prod prerender of {route} must fill the app hole: {body}"
+            !js.contains(ORPHAN_MARKER) && !js.contains(UNUSED_MARKER),
+            "unreachable body leaked into dev graph: {js}"
         );
     }
 

@@ -3,11 +3,10 @@
 // missing artifact exits non-zero naming the path; a missing manifest or
 // dist/ exits non-zero with a clear error.
 //
-// The fixture dist/ + artifact manifest are synthesized directly: the
-// manifest's only producer is `deka build`, and the app-router projects that
-// build emits manifests for cannot build while the framework is paused
-// (deka#881). The verify contract under test is identical either way —
-// `deka verify` never reads sources, only the published artifact.
+// The fixture dist/ + artifact manifest are synthesized directly so these
+// checks isolate verification from compiler and renderer behavior. The CLI
+// still requires deka.json to locate the project; it verifies only published
+// payloads and never reads application sources.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -41,12 +40,18 @@ fn manifest_path(project: &Path) -> PathBuf {
 /// manifest, exactly as `deka build` would leave it.
 fn built_project() -> tempfile::TempDir {
     use runtime_core::dist::{
-        ARTIFACT_FORMAT, RUNTIME_ABI, ArtifactClient, ArtifactCompat, ArtifactManifestV2,
-        ArtifactProducer, ArtifactServer,
+        ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactProducer,
+        ArtifactServer, RUNTIME_ABI,
     };
 
     let project = tempfile::tempdir().expect("create temp project dir");
+    fs::write(
+        project.path().join("deka.json"),
+        r#"{"name":"verify-fixture"}"#,
+    )
+    .expect("write project marker");
     let dist = project.path().join("dist");
+    fs::create_dir_all(dist.join("server")).expect("create dist/server");
     fs::create_dir_all(dist.join("client")).expect("create dist/client");
     fs::write(
         dist.join("client").join("index.html"),
@@ -94,14 +99,24 @@ fn built_project() -> tempfile::TempDir {
 fn verify_clean_tree_exits_zero() {
     let project = built_project();
     let (success, combined) = run_verify(project.path());
-    assert!(success, "deka verify must exit 0 on a clean tree: {combined}");
+    assert!(
+        success,
+        "deka verify must exit 0 on a clean tree: {combined}"
+    );
 }
 
 #[test]
 fn verify_tampered_artifact_fails_naming_path() {
     let project = built_project();
-    let tampered = project.path().join("dist").join("client").join("index.html");
-    assert!(tampered.is_file(), "fixture dist publishes client/index.html");
+    let tampered = project
+        .path()
+        .join("dist")
+        .join("client")
+        .join("index.html");
+    assert!(
+        tampered.is_file(),
+        "fixture dist publishes client/index.html"
+    );
     let mut bytes = fs::read(&tampered).expect("read index.html");
     bytes.extend_from_slice(b"TAMPERED");
     fs::write(&tampered, bytes).expect("tamper with index.html");
@@ -120,7 +135,11 @@ fn verify_tampered_artifact_fails_naming_path() {
 #[test]
 fn verify_deleted_artifact_fails_naming_path() {
     let project = built_project();
-    let deleted = project.path().join("dist").join("client").join("index.html");
+    let deleted = project
+        .path()
+        .join("dist")
+        .join("client")
+        .join("index.html");
     fs::remove_file(&deleted).expect("delete index.html");
 
     let (success, combined) = run_verify(project.path());
