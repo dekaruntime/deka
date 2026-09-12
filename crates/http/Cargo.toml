@@ -21,7 +21,6 @@ runtime_core = { path = "../runtime_core" }
 pool = { path = "../pool" }
 serde_json = { workspace = true }
 chrono = { workspace = true }
-neo4rs = { workspace = true }
 deno_core = { workspace = true }
 
 [dev-dependencies]

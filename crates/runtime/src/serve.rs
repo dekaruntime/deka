@@ -73,36 +73,12 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
     let resolved = runtime_config::resolve_handler_path(&context.handler.input)
         .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
 
-    // Load neo4j config from deka.json and install it for host bridge modules via
-    // deka_host's explicit process-wide store — never through the process
-    // environment.
     let config_dir = if resolved.path.is_dir() {
         &resolved.path
     } else {
         resolved.path.parent().unwrap_or(&resolved.path)
     };
-    let db_config = runtime_config::load_database_config(config_dir);
-    deka_host::host_config::install_database_endpoints(deka_host::host_config::DatabaseEndpoints {
-        neo4j_uri: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.uri.clone()),
-        neo4j_user: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.user.clone()),
-        neo4j_password: db_config
-            .neo4j
-            .as_ref()
-            .and_then(|neo4j| neo4j.password.clone()),
-        neo4j_db: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.db.clone()),
-    });
     let http_config = deka_http::HttpConfig {
-        neo4j: db_config
-            .neo4j
-            .map(|neo4j| deka_http::Neo4jConfig {
-                uri: neo4j
-                    .uri
-                    .unwrap_or_else(|| "bolt://localhost:7687".to_string()),
-                user: neo4j.user.unwrap_or_else(|| "neo4j".to_string()),
-                password: neo4j.password.unwrap_or_default(),
-                db: neo4j.db.unwrap_or_else(|| "neo4j".to_string()),
-            })
-            .unwrap_or_default(),
         project_root: Some(config_dir.to_path_buf()),
         ..Default::default()
     };
@@ -676,10 +652,7 @@ async fn serve_listeners(
     pool_workers: usize,
     http_config: deka_http::HttpConfig,
 ) -> Result<(), String> {
-    if let Some(unix) = serve_options
-        .unix
-        .clone()
-    {
+    if let Some(unix) = serve_options.unix.clone() {
         let label = if unix.starts_with('\0') {
             format!("unix:@{}", unix.trim_start_matches('\0'))
         } else {
@@ -696,26 +669,17 @@ async fn serve_listeners(
         .await;
     }
 
-    if let Some(addr) = serve_options
-        .tcp
-        .clone()
-    {
+    if let Some(addr) = serve_options.tcp.clone() {
         stdio_log::log("listen", &format!("tcp://{}", addr));
         return transport::serve(state, transport::ListenConfig::Tcp(TcpOptions { addr })).await;
     }
 
-    if let Some(addr) = serve_options
-        .udp
-        .clone()
-    {
+    if let Some(addr) = serve_options.udp.clone() {
         stdio_log::log("listen", &format!("udp://{}", addr));
         return transport::serve(state, transport::ListenConfig::Udp(UdpOptions { addr })).await;
     }
 
-    if let Some(addr) = serve_options
-        .dns
-        .clone()
-    {
+    if let Some(addr) = serve_options.dns.clone() {
         stdio_log::log("listen", &format!("dns://{}", addr));
         return transport::serve(state, transport::ListenConfig::Dns(DnsOptions { addr })).await;
     }
@@ -725,9 +689,7 @@ async fn serve_listeners(
         return transport::serve(state, transport::ListenConfig::Ws(WsOptions { port })).await;
     }
 
-    let port = serve_options
-        .port
-        .unwrap_or(8530);
+    let port = serve_options.port.unwrap_or(8530);
     ensure_http_port_available(port)?;
     let listeners = pool_workers.max(1);
 

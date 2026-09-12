@@ -12,8 +12,7 @@ pub struct HttpOptions {
     pub listeners: usize,
     pub perf_mode: bool,
     /// Caller-supplied HTTP configuration (deka#801) — replaces the
-    /// `DEKA_RATE_LIMIT_*` / `DEKA_HTTP_DEBUG` /
-    /// `DEKA_NEO4J_*` environment reads.
+    /// `DEKA_RATE_LIMIT_*` / `DEKA_HTTP_DEBUG` environment reads.
     pub http: deka_http::HttpConfig,
 }
 

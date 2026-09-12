@@ -12,7 +12,6 @@ runtime = [
     "dep:postgres",
     "dep:mysql",
     "dep:rusqlite",
-    "dep:neo4rs",
     "dep:reqwest",
     "dep:tokio-tungstenite",
     "dep:tokio-stream",
@@ -53,7 +52,6 @@ bcrypt = { version = "0.15", optional = true }
 hmac = { version = "0.12", optional = true }
 sha3 = { version = "0.10", optional = true }
 blake3 = { version = "1", optional = true }
-neo4rs = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
 # @deka/http — outbound HTTP/1.1, HTTP/2 (ALPN h2), streaming bodies,
