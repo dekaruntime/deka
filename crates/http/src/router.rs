@@ -278,7 +278,7 @@ fn try_public_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response
 /// undeclared client file is never served: the build descriptor is the
 /// authority, and `read_client_payload` verifies the digest on every read.
 fn try_artifact_client_response(
-    manifest: &runtime_core::framework::ArtifactManifestV2,
+    manifest: &runtime_core::dist::ArtifactManifestV2,
     root: &std::path::Path,
     path: &str,
 ) -> Option<Response> {

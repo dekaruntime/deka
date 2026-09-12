@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use runtime_core::framework::{BuildManifest, FsObservation, PlannedSource};
+use runtime_core::dist::{BuildManifest, FsObservation, PlannedSource};
 
 use crate::cli::build_dsc;
 
@@ -124,7 +124,7 @@ pub fn refresh_dev_build_slots(
         project_root,
         &[app_dir.as_path(), src_dir.as_path(), api_dir.as_path()],
     )?;
-    let manifest_path = runtime_core::framework::compiler_cache_dir_with(project_root, true)
+    let manifest_path = runtime_core::dist::compiler_cache_dir_with(project_root, true)
         .join("build-manifest.json");
     let existing_manifest =
         match std::fs::read_to_string(&manifest_path) {
@@ -146,7 +146,7 @@ pub fn refresh_dev_build_slots(
         planned
             .iter()
             .filter(|source| {
-                replan.contains(&runtime_core::framework::project_relative_path(
+                replan.contains(&runtime_core::dist::project_relative_path(
                     project_root,
                     Path::new(&source.file),
                 ))
@@ -210,8 +210,8 @@ fn update_dev_manifest(
     let mut manifest = match existing_manifest {
         Some(manifest) => manifest,
         None => {
-            let app_manifest = runtime_core::framework::scan_app_dir(&project_root.join("app"));
-            let api_entries = runtime_core::framework::scan_api_dir(&project_root.join("api"));
+            let app_manifest = runtime_core::dist::scan_app_dir(&project_root.join("app"));
+            let api_entries = runtime_core::dist::scan_api_dir(&project_root.join("api"));
             BuildManifest::plan(
                 project_root,
                 planned,
@@ -230,7 +230,7 @@ fn update_dev_manifest(
             .slots
             .iter()
             .filter(|slot| {
-                replan.contains(&runtime_core::framework::project_relative_path(
+                replan.contains(&runtime_core::dist::project_relative_path(
                     project_root,
                     Path::new(&slot.file),
                 ))
@@ -238,28 +238,28 @@ fn update_dev_manifest(
             .map(|slot| slot.id.clone())
             .collect();
         manifest.slots.retain(|slot| {
-            !replan.contains(&runtime_core::framework::project_relative_path(
+            !replan.contains(&runtime_core::dist::project_relative_path(
                 project_root,
                 Path::new(&slot.file),
             ))
         });
         for source in planned.iter().filter(|source| {
-            replan.contains(&runtime_core::framework::project_relative_path(
+            replan.contains(&runtime_core::dist::project_relative_path(
                 project_root,
                 Path::new(&source.file),
             ))
         }) {
             for slot in &source.plan.slots {
-                manifest.slots.push(runtime_core::framework::ManifestSlot {
+                manifest.slots.push(runtime_core::dist::ManifestSlot {
                     id: slot.id.clone(),
                     binding: slot.binding.clone(),
                     // Stored project-relative like plan() records them
                     // (deka#738 F2).
-                    file: runtime_core::framework::project_relative_path(
+                    file: runtime_core::dist::project_relative_path(
                         project_root,
                         Path::new(&slot.file),
                     ),
-                    descriptor_digest: runtime_core::framework::sha256_hex(
+                    descriptor_digest: runtime_core::dist::sha256_hex(
                         slot.descriptor.to_string().as_bytes(),
                     ),
                     value_module: format!("deka:dev/{}", slot.id),
@@ -280,7 +280,7 @@ fn update_dev_manifest(
     // restored span, duplicate watch event) is NOT swept: its module was just
     // republished.
     let live: BTreeSet<&str> = manifest.slots.iter().map(|slot| slot.id.as_str()).collect();
-    let published = runtime_core::framework::compiler_cache_dir_with(project_root, true)
+    let published = runtime_core::dist::compiler_cache_dir_with(project_root, true)
         .join("build-values");
     for id in dropped_ids
         .into_iter()
@@ -303,7 +303,7 @@ pub fn ensure_dev_build_slots(
     let Some(project_root) = dev_project_root(handler_input) else {
         return;
     };
-    if !runtime_core::framework::is_source_app_router_project(&project_root) {
+    if !runtime_core::dist::is_source_app_router_project(&project_root) {
         return;
     }
     if let Err(err) = refresh_dev_build_slots(

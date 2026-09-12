@@ -52,7 +52,7 @@ fn reroot_target_maps_entries_and_project_sources() {
 }
 
 #[test]
-fn rewrite_module_specifiers_reroots_relative_dev_and_ui_specs() {
+fn rewrite_module_specifiers_reroots_relative_and_dev_specs() {
     let root = Path::new("/project");
     let entries = root.join(".deka-dist-stage").join("entries");
     let page_source = root.join("app/page.dsx");
@@ -69,18 +69,17 @@ fn rewrite_module_specifiers_reroots_relative_dev_and_ui_specs() {
         "import { hydrate as h } from \"deka:dev/abc123\";\n",
         "import { x } from \"@deka/encoding/json\";\n",
     );
-    let mut ui = BTreeSet::new();
     let rewritten = rewrite_module_specifiers(
         entry_js,
         &entries.join("serve-entry.dsx"),
         &targets,
         root,
         "serve-entry.js",
-        &mut ui,
     )
     .unwrap();
     assert!(rewritten.contains("\"./app/page.js\""), "{rewritten}");
-    assert!(rewritten.contains("\"./.ui/suspense.js\""), "{rewritten}");
+    // Bare ui/* specifiers are paused-framework imports: left unrewritten.
+    assert!(rewritten.contains("\"ui/suspense\""), "{rewritten}");
     assert!(rewritten.contains("\"./.values/abc123.js\""), "{rewritten}");
     // Bare package specifiers stay for the loader's ds_modules resolution.
     assert!(
@@ -88,7 +87,6 @@ fn rewrite_module_specifiers_reroots_relative_dev_and_ui_specs() {
         "{rewritten}"
     );
     assert!(!rewritten.contains("deka:dev/"), "{rewritten}");
-    assert!(ui.contains("suspense.js"), "{ui:?}");
 }
 
 #[test]
@@ -106,7 +104,6 @@ fn rewrite_module_specifiers_fails_on_dangling_relative_import() {
         &targets,
         root,
         "serve-entry.js",
-        &mut BTreeSet::new(),
     )
     .unwrap_err();
     assert!(err.contains("dangling specifier"), "{err}");
@@ -160,41 +157,6 @@ fn rewrite_fails_loudly_on_unmaterialized_specifier() {
     let err = rewrite_build_value_specifiers(&dist, &dist_server, &ids)
         .expect_err("an unknown deka:dev specifier must fail the build");
     assert!(err.contains("not self-contained"), "{err}");
-}
-
-#[test]
-fn ui_rewrite_vendors_embedded_modules_and_updates_specifiers() {
-    let project = tempfile::tempdir().unwrap();
-    let dist_server = project.path().join("dist").join("server");
-    write(
-        &dist_server.join("app"),
-        "page.js",
-        "import { jsx } from \"ui/jsx\";\nexport default function Page() {}\n",
-    );
-    rewrite_ui_specifiers(&dist_server).unwrap();
-    let rewritten = fs::read_to_string(dist_server.join("app/page.js")).unwrap();
-    assert!(rewritten.contains("\"../.ui/jsx.js\""), "{rewritten}");
-    assert!(!rewritten.contains("\"ui/jsx\""), "{rewritten}");
-    // jsx's relative siblings are vendored too, so nothing dangles.
-    let ui_dir = dist_server.join(UI_DIR);
-    assert!(ui_dir.join("jsx.js").is_file());
-    let jsx_source = fs::read_to_string(ui_dir.join("jsx.js")).unwrap();
-    for spec in runtime_core::ds_imports::paths(&jsx_source) {
-        let Some(rel) = spec.strip_prefix("./") else { continue };
-        assert!(ui_dir.join(rel).is_file(), "{spec} not vendored");
-    }
-
-    // The loader wrapper is an emitted entry too. Its UI imports seed the
-    // same graph, so a wrapper dependency cannot be accidentally omitted just
-    // because no application module imports it directly.
-    for file in [
-        "server.js",
-        "suspense.js",
-        "island-marker.js",
-        "router.js",
-    ] {
-        assert!(ui_dir.join(file).is_file(), "wrapper dependency {file} not vendored");
-    }
 }
 
 #[test]

@@ -19,7 +19,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use runtime_core::framework::{FsObservation, FsObservationKind};
+use runtime_core::dist::{FsObservation, FsObservationKind};
 
 struct ActiveSlot {
     slot_id: String,

@@ -127,7 +127,7 @@ pub(super) fn ensure_web_project_layout(project_root: &Path) -> Result<(), Strin
 pub(super) fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
     let json = load_deka_json(project_root)?;
 
-    if runtime_core::framework::is_source_app_router_project(project_root) {
+    if runtime_core::dist::is_source_app_router_project(project_root) {
         let page = project_root.join("app").join("page.dsx");
         let page = if page.is_file() {
             page

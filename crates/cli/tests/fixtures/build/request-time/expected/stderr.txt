@@ -1,7 +1,0 @@
-  routes:
-○ /           static
-ƒ /user/[id]  prerender = false
-[ok] built web project <project>
-  client: <project>/dist/client
-  server: <project>/dist/server
-  hydration: disabled

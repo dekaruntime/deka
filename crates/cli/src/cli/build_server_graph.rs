@@ -19,10 +19,7 @@
 //!    path).
 //! 4. Make build values ordinary modules at `server/.values/<id>.js` (the
 //!    `deka:dev/<id>` virtual scheme is rewritten away everywhere, client
-//!    bundles included, and any survivor fails the build) and vendor the ui
-//!    runtime modules the graph imports at `server/.ui/` so no bare `ui/*`
-//!    specifier leaves the artifact depending on the serving binary's
-//!    embedded copies.
+//!    bundles included, and any survivor fails the build).
 //!
 //! The output is the manifest-v2 layout (§1): every executable module under
 //! `dist/server/`, described with digests in `dist/build-manifest.json`.
@@ -31,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use runtime_core::framework::{
+use runtime_core::dist::{
     PlannedSource, generate_api_entry_source, generate_app_router_entry_source,
     generate_defer_entry_source, resolve_app_router_index_html, scan_api_dir, scan_server_defer,
 };
@@ -104,7 +101,6 @@ pub fn compile_and_reroot_entries(
     }
 
     // Rewrite every specifier between the new locations and write the files.
-    let mut ui_vendored: BTreeSet<String> = BTreeSet::new();
     for (source, js) in &modules {
         let importer_target = targets.get(source).expect("target computed above");
         let rewritten = rewrite_module_specifiers(
@@ -113,7 +109,6 @@ pub fn compile_and_reroot_entries(
             &targets,
             &project_root,
             importer_target,
-            &mut ui_vendored,
         )?;
         let dest = dist_server.join(importer_target);
         if let Some(parent) = dest.parent() {
@@ -124,7 +119,6 @@ pub fn compile_and_reroot_entries(
             .map_err(|err| format!("failed to write {}: {err}", dest.display()))?;
     }
 
-    vendor_ui_modules(dist_server, &ui_vendored)?;
     assert_entry_linkage(dist_server, &emitted)?;
     Ok(emitted)
 }
@@ -147,6 +141,13 @@ fn assert_entry_linkage(dist_server: &Path, emitted: &EmittedEntries) -> Result<
         let js = fs::read_to_string(&entry_path)
             .map_err(|err| format!("failed to read {}: {err}", entry_path.display()))?;
         for (specifier, names) in named_imports(&js) {
+            // Bare specifiers are left for the loader's module resolution
+            // (paused-framework `ui/*` imports among them); only relative
+            // specifiers are part of the merged-graph linkage check, same
+            // jail rule as `assert_server_jail` below.
+            if !(specifier.starts_with("./") || specifier.starts_with("../")) {
+                continue;
+            }
             let resolved = normalize_path(
                 &entry_path
                     .parent()
@@ -364,8 +365,8 @@ fn swap_source_ext(rel: &Path) -> String {
 ///   (the dumped graph may still spell peer sources `.ds`/`.dsx`; the
 ///   artifact only ever spells `.js`);
 /// - `deka:dev/<id>` becomes a relative path into `server/.values/<id>.js`;
-/// - bare `ui/<name>` becomes a relative path into `server/.ui/` and the
-///   module is recorded for vendoring;
+/// - bare `ui/<name>` specifiers are paused-framework imports: left
+///   unrewritten here, and skipped by every resolution check below;
 /// - any other bare specifier is left for the loader's module resolution
 ///   (the artifact ships `server/ds_modules`, which resolves them).
 #[allow(clippy::too_many_arguments)]
@@ -375,7 +376,6 @@ fn rewrite_module_specifiers(
     targets: &BTreeMap<PathBuf, String>,
     project_root: &Path,
     importer_target: &str,
-    ui_vendored: &mut BTreeSet<String>,
 ) -> Result<String, String> {
     let mut out = js.to_string();
     let specs = runtime_core::ds_imports::paths(js);
@@ -411,14 +411,6 @@ fn rewrite_module_specifiers(
                     .unwrap_or_else(|| Path::new(""));
                 Some(relative_specifier(importer_dir, Path::new(&values_target)))
             }
-            SpecKind::Ui(file_name) => {
-                ui_vendored.insert(file_name.clone());
-                let ui_target = format!("{UI_DIR}/{file_name}");
-                let importer_dir = Path::new(importer_target)
-                    .parent()
-                    .unwrap_or_else(|| Path::new(""));
-                Some(relative_specifier(importer_dir, Path::new(&ui_target)))
-            }
             SpecKind::Bare => {
                 let _ = project_root;
                 None
@@ -434,7 +426,6 @@ fn rewrite_module_specifiers(
 enum SpecKind {
     Relative,
     BuildValue(String),
-    Ui(String),
     Bare,
 }
 
@@ -451,11 +442,6 @@ fn classify_specifier(spec: &str) -> SpecKind {
             return SpecKind::BuildValue(id.to_string());
         }
         return SpecKind::Bare;
-    }
-    if spec.starts_with("ui/") {
-        if let Some(file) = deka_ui::file_name_for(spec) {
-            return SpecKind::Ui(file.to_string());
-        }
     }
     SpecKind::Bare
 }
@@ -533,51 +519,13 @@ fn replace_quoted(source: &str, from: &str, to: &str) -> String {
     out
 }
 
-/// Vendor the ui runtime modules the server graph references (plus the
-/// relative siblings they import) out of the embedded `deka_ui` sources, so
-/// the artifact's `ui/*` imports resolve to ordinary payload files.
-fn vendor_ui_modules(dist_server: &Path, referenced: &BTreeSet<String>) -> Result<(), String> {
-    let mut wanted: BTreeSet<String> = referenced.clone();
-    // deka_ui modules import each other relatively; close the set over those
-    // siblings so no vendored file dangles.
-    let mut queue: Vec<String> = wanted.iter().cloned().collect();
-    while let Some(file) = queue.pop() {
-        let source = ui_source_for_file(&file).ok_or_else(|| {
-            format!("embedded deka_ui source for {file} is missing")
-        })?;
-        for spec in runtime_core::ds_imports::paths(source) {
-            let Some(rel) = spec.strip_prefix("./") else { continue };
-            if wanted.insert(rel.to_string()) {
-                queue.push(rel.to_string());
-            }
-        }
-    }
-    if wanted.is_empty() {
-        return Ok(());
-    }
-    let dir = dist_server.join(UI_DIR);
-    fs::create_dir_all(&dir).map_err(|err| format!("failed to create {}: {err}", dir.display()))?;
-    for file in &wanted {
-        let source = ui_source_for_file(file).expect("closure computed above");
-        fs::write(dir.join(file), source.as_bytes())
-            .map_err(|err| format!("failed to write {}: {err}", dir.join(file).display()))?;
-    }
-    Ok(())
-}
-
-fn ui_source_for_file(file: &str) -> Option<&'static str> {
-    deka_ui::SPECIFIERS
-        .iter()
-        .find(|spec| deka_ui::file_name_for(spec) == Some(file))
-        .and_then(|spec| deka_ui::source_for(spec))
-}
-
 /// Copy this build's materialized build-value modules into
 /// `server/.values/`, rewrite every `deka:dev/<id>` specifier across the
 /// whole dist tree (client bundles included) to a relative path into them,
-/// vendor nothing here — ui vendoring happened during entry re-rooting — and
-/// fail the build loudly if any dev-scheme specifier survives: the staged
-/// tree is then not deployable and must not publish.
+/// and fail the build loudly if any dev-scheme specifier survives: the
+/// staged tree is then not deployable and must not publish. Bare `ui/*`
+/// specifiers are paused-framework imports and are intentionally left
+/// unrewritten.
 #[cfg(feature = "native")]
 pub fn publish_build_values(
     project_root: &Path,
@@ -591,13 +539,12 @@ pub fn publish_build_values(
         .collect();
     if !ids.is_empty() {
         copy_build_value_modules(
-            &runtime_core::framework::compiler_cache_dir(project_root).join("build-values"),
+            &runtime_core::dist::compiler_cache_dir(project_root).join("build-values"),
             dist_server,
             &ids,
         )?;
     }
     rewrite_build_value_specifiers(dist_root, dist_server, &ids)?;
-    rewrite_ui_specifiers(dist_server)?;
     assert_server_jail(dist_server)?;
     Ok(())
 }
@@ -668,59 +615,6 @@ fn rewrite_build_value_specifiers(
             .map_err(|err| format!("failed to write {}: {err}", file.display()))?;
     }
     assert_no_dev_specifiers(dist_root)
-}
-
-/// Rewrite bare `ui/<name>` specifiers in every server-tree module to a
-/// relative path into `server/.ui/`. The referenced modules were vendored by
-/// [`compile_and_reroot_entries`]; for graphs that arrived via the plain
-/// staging-tree copy (non-app-router builds) they are vendored on demand.
-fn rewrite_ui_specifiers(dist_server: &Path) -> Result<(), String> {
-    let mut js_files = Vec::new();
-    collect_js_files(dist_server, &mut js_files)?;
-    // The loader wraps every emitted entry before it executes. Seed the UI
-    // graph from that actual wrapper source, not a copy of its imports: adding
-    // a new `ui/*` import to the wrapper (or to one of its UI dependencies)
-    // automatically changes the vendored closure. The artifact must stand on
-    // its own even when .cache/ has been removed.
-    let mut referenced = ui_files_referenced_by(&pool::entry_wrapper_source(
-        "file:///deka-artifact-entry.js",
-    ));
-    for file in &js_files {
-        let source = fs::read_to_string(file)
-            .map_err(|err| format!("failed to read {}: {err}", file.display()))?;
-        let specs = runtime_core::ds_imports::paths(&source);
-        let mut changed = source.clone();
-        let mut touched = false;
-        for spec in specs {
-            if !spec.starts_with("ui/") {
-                continue;
-            }
-            let Some(file_name) = deka_ui::file_name_for(&spec) else {
-                continue;
-            };
-            referenced.insert(file_name.to_string());
-            let importer_dir = file.parent().unwrap_or(dist_server);
-            let target = dist_server.join(UI_DIR).join(file_name);
-            let rewritten = relative_path(importer_dir, &target);
-            changed = replace_quoted(&changed, &spec, &rewritten);
-            touched = true;
-        }
-        if touched {
-            fs::write(file, changed)
-                .map_err(|err| format!("failed to write {}: {err}", file.display()))?;
-        }
-    }
-    vendor_ui_modules(dist_server, &referenced)
-}
-
-/// Map the `ui/*` edges in a module source to their artifact file names.
-/// Callers provide module source, so this stays tied to the emitted module
-/// graph rather than a second list of UI files to keep in sync.
-fn ui_files_referenced_by(source: &str) -> BTreeSet<String> {
-    runtime_core::ds_imports::paths(source)
-        .into_iter()
-        .filter_map(|specifier| deka_ui::file_name_for(&specifier).map(str::to_string))
-        .collect()
 }
 
 /// §4.2 jail: every relative specifier in every server module must resolve,

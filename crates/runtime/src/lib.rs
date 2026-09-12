@@ -7,15 +7,13 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 mod artifact_loader;
+mod asset_urls;
 mod build_values;
-mod css;
 mod dev;
 mod dsc_transpile;
 mod extensions;
-mod islands;
 mod js_pipeline;
 mod platform;
-mod prerender;
 mod run;
 pub mod security;
 mod serve;
@@ -38,18 +36,6 @@ pub fn serve_with_dsc(context: &Context, dsc: Option<std::path::PathBuf>) {
     serve::serve_with_dsc(context, dsc);
 }
 
-pub fn prerender_static_pages(
-    project_root: &std::path::Path,
-    dist_client: &std::path::Path,
-    tasks: &[prerender::StaticRenderTask],
-    policy_json: &str,
-    dsc: Option<std::path::PathBuf>,
-) -> Result<(), String> {
-    prerender::prerender_static_pages(project_root, dist_client, tasks, policy_json, dsc)
-}
-
-pub use prerender::StaticRenderTask;
-
 pub fn materialize_build_values(
     project_root: &std::path::Path,
     entries: Vec<build_values::BuildEntry>,
@@ -63,58 +49,7 @@ pub fn materialize_build_values(
 
 pub use build_values::{BuildEntry, MaterializedBuild};
 
-pub fn write_island_client_assets(
-    assets_dir: &std::path::Path,
-    islands: &[runtime_core::framework::ClientIsland],
-    flavor: islands::ClientAssetFlavor,
-) -> Result<(), String> {
-    islands::write_island_client_assets(assets_dir, islands, flavor)
-}
-
-pub fn write_island_client_assets_with_dsc(
-    assets_dir: &std::path::Path,
-    islands: &[runtime_core::framework::ClientIsland],
-    flavor: islands::ClientAssetFlavor,
-    dsc: &std::path::Path,
-) -> Result<(), String> {
-    islands::write_island_client_assets_with_dsc(assets_dir, islands, flavor, dsc)
-}
-
-pub fn write_island_client_assets_for_project(
-    project_root: &std::path::Path,
-    flavor: islands::ClientAssetFlavor,
-) -> Result<(), String> {
-    islands::write_island_client_assets_for_project(project_root, flavor)
-}
-
-pub fn write_defer_client_assets(
-    assets_dir: &std::path::Path,
-    flavor: islands::ClientAssetFlavor,
-) -> Result<(), String> {
-    islands::write_defer_client_assets(assets_dir, flavor)
-}
-
-pub use islands::ClientAssetFlavor;
-
-pub use islands::collect_hashed_asset_renames;
-pub use islands::inline_importmap_tag;
-
-pub fn rewrite_serve_entry_asset_urls(project_root: &std::path::Path) -> Result<(), String> {
-    islands::rewrite_serve_entry_asset_urls(project_root)
-}
-
-pub fn write_route_css_assets(
-    assets_dir: &std::path::Path,
-    styles: &[runtime_core::framework::RouteStyle],
-) -> Result<(), String> {
-    css::write_route_css_assets(assets_dir, styles)
-}
-
-pub fn write_route_css_assets_for_project(
-    project_root: &std::path::Path,
-) -> Result<(), String> {
-    css::write_route_css_assets_for_project(project_root)
-}
+pub use asset_urls::{collect_hashed_asset_renames, inline_importmap_tag};
 
 pub fn platform(context: &Context) {
     platform::platform(context);

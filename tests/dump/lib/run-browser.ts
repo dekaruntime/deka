@@ -104,23 +104,7 @@ type HarnessRun = {
 }
 
 // Vendored stdlib shims served to the browser harness. Keep in sync with the
-// real packages; io's echo is the console.log shim by design. The ui/*
-// modules are served straight from the deka_ui crate so the harness never
-// drifts from the real UI runtime: jsx/router/form/suspense ship as pinned
-// compiler emit in emit/, the rest are still hand-written js/. Relative
-// imports inside them (`./jsx.js`) are rewritten to the flat `.mjs` names the
-// shim route serves.
-function uiModuleSource(file: string): string {
-  const crateDir = path.join(DUMP_ROOT, '..', '..', 'crates', 'deka_ui')
-  let source: string
-  try {
-    source = fs.readFileSync(path.join(crateDir, 'js', file), 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    source = fs.readFileSync(path.join(crateDir, 'emit', file), 'utf8')
-  }
-  return source.replace(/from\s+['"]\.\/(\w+)\.js['"]/g, 'from "./$1.mjs"')
-}
+// real packages; io's echo is the console.log shim by design.
 const MODULE_SHIMS: Record<string, string> = {
   // Closed compiler module (dsc#142): the compiler normally lowers
   // `import { PI } from "math"` to a local binding, but serve the module too
@@ -144,11 +128,6 @@ const MODULE_SHIMS: Record<string, string> = {
     'export function uuid_v4() {\n' +
     '  return { __case: "Ok", value: uuid_v4_value() }\n' +
     '}\n',
-  'jsx.mjs': uiModuleSource('jsx.js'),
-  'reactive.mjs': uiModuleSource('reactive.js'),
-  'suspense.mjs': uiModuleSource('suspense.js'),
-  'server.mjs': uiModuleSource('server.js'),
-  'island-marker.mjs': uiModuleSource('island-marker.js'),
 }
 
 async function evaluateInFreshPage(

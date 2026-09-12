@@ -46,7 +46,7 @@ pub fn entry_wrapper_path(project_root: &Path) -> PathBuf {
 }
 
 pub fn entry_wrapper_path_with(project_root: &Path, dev_mode: bool) -> PathBuf {
-    runtime_core::framework::compiler_cache_dir_with(project_root, dev_mode)
+    runtime_core::dist::compiler_cache_dir_with(project_root, dev_mode)
         .join("__deka_entry.js")
 }
 

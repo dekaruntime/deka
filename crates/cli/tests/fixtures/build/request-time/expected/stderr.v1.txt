@@ -1,1 +1,0 @@
-[build] route /user/[id] is dynamic but declares neither staticParams nor prerender = false; a dynamic route must pick one (the installed dsc emits plan version 1, which reports no route disposition; upgrade dsc)

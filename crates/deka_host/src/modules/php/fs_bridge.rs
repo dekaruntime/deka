@@ -624,7 +624,7 @@ fn record_observation_for_action(
     payload: &serde_json::Value,
     response: Result<&serde_json::Value, &deno_core::error::CoreError>,
 ) {
-    use runtime_core::framework::FsObservationKind;
+    use runtime_core::dist::FsObservationKind;
     let Some(path) = payload
         .get("path")
         .and_then(|v| v.as_str())

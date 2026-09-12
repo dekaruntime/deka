@@ -114,30 +114,14 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
     // descriptor with the dispatcher so every lazy client read can
     // authenticate its bytes too.
     let artifact = crate::artifact_loader::load_verified(&resolved.path)?;
+    // Source-posture app-router projects serve public/ from the project root;
+    // built artifacts serve the artifact's client root (handled above).
     let app_router_root = if artifact.is_some() {
         None
     } else {
-        crate::islands::find_app_router_root(FsPath::new(&context.handler.input))
-            .or_else(|| crate::islands::find_app_router_root(&resolved.path))
+        crate::asset_urls::find_app_router_root(FsPath::new(&context.handler.input))
+            .or_else(|| crate::asset_urls::find_app_router_root(&resolved.path))
     };
-    if let Some(root) = app_router_root.as_deref() {
-        match dsc.as_deref() {
-            Some(dsc) => crate::islands::write_island_client_assets_for_project_with_dsc(
-                &root,
-                crate::islands::ClientAssetFlavor::Dev,
-                dsc,
-            )?,
-            None => crate::islands::write_island_client_assets_for_project(
-                &root,
-                crate::islands::ClientAssetFlavor::Dev,
-            )?,
-        }
-        crate::css::write_route_css_assets_for_project(&root)?;
-        // The serve-entry was generated inside resolve_handler_path, before
-        // the hashed assets existed; swap its logical /assets URLs for the
-        // hashed names just emitted (mirrors the dist-HTML rewrite in build).
-        crate::islands::rewrite_serve_entry_asset_urls(&root)?;
-    }
 
     let handler_path = resolved.path.to_string_lossy().to_string();
     if handler_path.to_ascii_lowercase().ends_with(".phpx") {
@@ -840,27 +824,16 @@ fn start_watch(
                     }
 
                     if let Some(root) = project_root.as_ref() {
-                        if runtime_core::framework::is_source_app_router_project(root) {
+                        if runtime_core::dist::is_source_app_router_project(root) {
                             if crate::build_watch::on_watch_event(root, &changed, dev_mode) {
                                 let _ = engine.pool().evict_all().await;
                             }
-                            match runtime_core::framework::write_app_router_entry(root) {
-                                Ok(_) => {
-                                    let _ = crate::islands::write_island_client_assets_for_project(
-                                        root,
-                                        crate::islands::ClientAssetFlavor::Dev,
-                                    );
-                                    // The entry was regenerated above with
-                                    // logical /assets URLs; re-point them at
-                                    // the freshly emitted hashed names.
-                                    let _ = crate::islands::rewrite_serve_entry_asset_urls(root);
-                                }
-                                Err(err) => {
-                                    tracing::warn!(
-                                        "failed to regenerate serve-entry after {}: {err}",
-                                        changed.join(", ")
-                                    );
-                                }
+                            if let Err(err) = runtime_core::dist::write_app_router_entry(root)
+                            {
+                                tracing::warn!(
+                                    "failed to regenerate serve-entry after {}: {err}",
+                                    changed.join(", ")
+                                );
                             }
                         }
                     }
@@ -922,7 +895,6 @@ mod tests {
     use super::build_static_handler_code;
     use super::ensure_http_port_available;
     use runtime_core::env::is_truthy;
-    use std::fs;
     use std::net::TcpListener;
 
     /// Verify the static handler template contains the __dekaFs confinement

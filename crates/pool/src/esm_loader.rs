@@ -53,31 +53,6 @@ use grants::{
 use resolver::{parse_module_imports, resolve_phpx_module_spec};
 use transforms::{append_entry_footer, prepend_host_bindings};
 
-/// Write a ui cache file atomically, skipping the write when the content is
-/// already identical. deka#745: concurrent isolate loads read these files with
-/// plain `read_to_string`, so a truncate-then-write `fs::write` could be
-/// observed as an empty module (preamble still parses, exports vanish). Writes
-/// go to a temp file in the same directory followed by `rename`, so a reader
-/// sees either the old or the new complete file, never a truncation.
-/// Returns `true` when a write happened.
-fn write_ui_file_if_changed(path: &Path, source: &str) -> std::io::Result<bool> {
-    if let Ok(existing) = std::fs::read_to_string(path)
-        && existing == source
-    {
-        return Ok(false);
-    }
-    let tmp = path.with_file_name(format!(
-        ".{}.tmp.{}",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("ui"),
-        std::process::id()
-    ));
-    std::fs::write(&tmp, source)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(true)
-}
-
 #[derive(Clone)]
 pub struct PhpxEsmLoader {
     project_root: PathBuf,
@@ -136,7 +111,7 @@ impl PhpxEsmLoader {
         };
         let entry_path = entry_path.canonicalize().unwrap_or(entry_path);
         let artifact_server_root = artifact_server_root(&entry_path)?;
-        let cache_dir = runtime_core::framework::compiler_cache_dir_with(&project_root, dev_mode);
+        let cache_dir = runtime_core::dist::compiler_cache_dir_with(&project_root, dev_mode);
         if artifact_server_root.is_none() {
             std::fs::create_dir_all(&cache_dir).map_err(|err| {
                 JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err))
@@ -268,7 +243,7 @@ impl PhpxEsmLoader {
     }
 
     /// Classify a module path for RFD 27 grant purposes and return the bridge
-    /// kinds it may call. Order matters: the compiler-cache `ui/` dir and
+    /// kinds it may call. Order matters: the compiler-cache and
     /// `ds_modules|php_modules` trees are checked before the generic
     /// "under project root" rule.
     fn kinds_for_path(&self, path: &Path) -> Vec<String> {
@@ -278,14 +253,6 @@ impl PhpxEsmLoader {
         // comparisons so both spellings classify identically.
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let path: &Path = &canonical;
-        // Materialized `ui/*` toolchain modules (crates/deka_ui/js): part of
-        // the deka distribution like the prelude, not userland. deka_ui's
-        // embedded server calls crypto.random_bytes (defer nonces) and the
-        // AES-GCM helpers — crypto is all that's needed (grep deka_ui/js for
-        // `host(`). Grant exactly that.
-        if path.starts_with(self.cache_dir.join("ui")) {
-            return vec!["crypto".to_string()];
-        }
 
         if let Some(package_root) = self.dependency_package_root(path) {
             if let Some(kinds) = self.package_kinds.borrow().get(&package_root) {
@@ -431,33 +398,6 @@ impl PhpxEsmLoader {
         dist_path.is_file().then_some(dist_path)
     }
 
-    /// Write compiler-provided `ui/*` modules into the cache so relative
-    /// imports between them (`./jsx.js`) resolve as real files.
-    fn materialize_ui_module(&self, specifier: &str) -> Option<PathBuf> {
-        let source = deka_ui::source_for(specifier)?;
-        let file_name = deka_ui::file_name_for(specifier)?;
-        let dir = self.cache_dir.join("ui");
-        let path = dir.join(file_name);
-        if let Err(err) = std::fs::create_dir_all(&dir) {
-            tracing::warn!("failed to create {}: {}", dir.display(), err);
-            return None;
-        }
-        if let Err(err) = write_ui_file_if_changed(&path, source) {
-            tracing::warn!("failed to write {}: {}", path.display(), err);
-            return None;
-        }
-        // Ensure siblings exist so `import from "./jsx.js"` works.
-        for spec in deka_ui::SPECIFIERS {
-            if let (Some(src), Some(name)) =
-                (deka_ui::source_for(spec), deka_ui::file_name_for(spec))
-            {
-                let sibling = dir.join(name);
-                let _ = write_ui_file_if_changed(&sibling, src);
-            }
-        }
-        Some(path)
-    }
-
     fn resolve_path(&self, specifier: &str, referrer: &str) -> Result<ModuleSpecifier, JsErrorBox> {
         if let Some(server_root) = &self.artifact_server_root {
             return self.resolve_artifact_path(server_root, specifier, referrer);
@@ -466,10 +406,6 @@ impl PhpxEsmLoader {
             if let Some(path) = self.resolve_build_value_module(specifier) {
                 return ModuleSpecifier::from_file_path(path)
                     .map_err(|_| JsErrorBox::generic("invalid build value module path"));
-            }
-            if let Some(path) = self.materialize_ui_module(specifier) {
-                return ModuleSpecifier::from_file_path(path)
-                    .map_err(|_| JsErrorBox::generic("invalid ui module path"));
             }
             if let Some(path) = self.resolve_phpx_module_spec(specifier) {
                 return ModuleSpecifier::from_file_path(path)
@@ -659,25 +595,7 @@ impl PhpxEsmLoader {
     }
 
     fn wrapper_source(&self) -> String {
-        let mut source = entry_wrapper_source(&self.entry_specifier.to_string());
-        if let Some(server_root) = &self.artifact_server_root {
-            // The normal wrapper imports embedded `ui/*` modules. An artifact
-            // must use its vendored copies instead, otherwise a binary update
-            // could silently change the served graph.
-            for (specifier, file) in [
-                ("ui/jsx", "jsx.js"),
-                ("ui/server", "server.js"),
-                ("ui/reactive", "reactive.js"),
-                ("ui/suspense", "suspense.js"),
-                ("ui/router", "router.js"),
-            ] {
-                let path = server_root.join(".ui").join(file);
-                let url = ModuleSpecifier::from_file_path(path)
-                    .expect("artifact ui path is a valid file URL");
-                source = source.replace(&format!("\"{specifier}\""), &format!("\"{url}\""));
-            }
-        }
-        source
+        entry_wrapper_source(&self.entry_specifier.to_string())
     }
 }
 
@@ -695,7 +613,7 @@ fn artifact_server_root(entry_path: &Path) -> Result<Option<PathBuf>, JsErrorBox
         return Ok(None);
     };
     let dist_root = server_root.parent().expect("server root has dist parent");
-    runtime_core::framework::ArtifactManifestV2::load_verified(dist_root)
+    runtime_core::dist::ArtifactManifestV2::load_verified(dist_root)
         .and_then(|manifest| {
             manifest.ensure_native_compat()?;
             Ok(manifest)
@@ -755,7 +673,7 @@ impl ModuleLoader for PhpxEsmLoader {
 
 #[cfg(test)]
 mod tests {
-    use super::{PhpxEsmLoader, write_ui_file_if_changed};
+    use super::PhpxEsmLoader;
     use std::fs;
 
     #[test]
@@ -772,26 +690,6 @@ mod tests {
         assert!(js.ends_with("main.js.js"));
     }
 
-    #[test]
-    fn materialize_ui_module_writes_embedded_sources() {
-        let root = tempfile::tempdir().expect("temp project");
-        let entry = root.path().join("handler.js");
-        fs::write(&entry, "export default {};\n").expect("write js handler");
-        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false).expect("loader");
-
-        let path = loader
-            .materialize_ui_module("ui/jsx")
-            .expect("ui/jsx materializes");
-
-        // Primary file and every sibling match the embedded deka_ui sources.
-        for spec in deka_ui::SPECIFIERS {
-            let name = deka_ui::file_name_for(spec).expect("file name");
-            let source = deka_ui::source_for(spec).expect("source");
-            let on_disk = fs::read_to_string(path.parent().unwrap().join(name))
-                .expect("sibling materialized");
-            assert_eq!(on_disk, source, "{name} mismatch");
-        }
-    }
 
     #[test]
     fn artifact_loader_accepts_its_synthetic_wrapper_as_the_entrypoint() {
@@ -826,38 +724,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn write_ui_file_if_changed_skips_identical_content() {
-        let root = tempfile::tempdir().expect("temp project");
-        let path = root.path().join("reactive.js");
-        let source = deka_ui::source_for("ui/reactive").expect("source");
-
-        assert!(
-            write_ui_file_if_changed(&path, source).expect("first write"),
-            "first write should happen"
-        );
-        assert_eq!(fs::read_to_string(&path).expect("read"), source);
-
-        assert!(
-            !write_ui_file_if_changed(&path, source).expect("second write"),
-            "identical content must not be rewritten (deka#745)"
-        );
-        assert_eq!(fs::read_to_string(&path).expect("read"), source);
-
-        // No temp file left behind.
-        let leftovers: Vec<_> = fs::read_dir(root.path())
-            .expect("read dir")
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
-            .collect();
-        assert!(
-            leftovers.is_empty(),
-            "temp files left behind: {leftovers:?}"
-        );
-    }
-
-    /// RFD 27: a ds_modules package module resolves its bridge kinds from the
-    /// grant table via the lockfile-pinned fsGraph digest.
     #[test]
     fn dependency_module_kinds_come_from_grant_table_via_lock_digest() {
         use runtime_core::host_bridge::GrantTable;
@@ -904,8 +770,6 @@ mod tests {
     /// (`deka.grants.json`, written by `deka add` / `deka install`).
     #[test]
     fn dependency_module_kinds_come_from_project_grant_table_file() {
-        use runtime_core::host_bridge::GrantTable;
-
         let root = tempfile::tempdir().expect("temp project");
         let entry = root.path().join("handler.js");
         fs::write(&entry, "export default {};\n").expect("write js handler");
@@ -945,8 +809,6 @@ mod tests {
     /// whose digest does not match the lockfile pin unlocks nothing.
     #[test]
     fn project_grant_table_with_mismatched_digest_grants_nothing() {
-        use runtime_core::host_bridge::GrantTable;
-
         let root = tempfile::tempdir().expect("temp project");
         let entry = root.path().join("handler.js");
         fs::write(&entry, "export default {};\n").expect("write js handler");

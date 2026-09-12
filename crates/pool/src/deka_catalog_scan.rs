@@ -808,7 +808,7 @@ mod tests {
 
 
     #[test]
-    fn deka_ui_is_not_a_catalog_kind() {
+    fn ui_specifier_is_not_a_catalog_kind() {
         let result = scan("const f = unsafe { deka.ui.Foo.create() }\n");
         assert!(result.diagnostics.is_empty(), "{:?}", messages(&result));
     }

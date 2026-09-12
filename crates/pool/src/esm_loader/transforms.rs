@@ -7,31 +7,17 @@
 
 use deno_core::ModuleSourceCode;
 
-/// Entry wrapper module source. Imports the `ui/*` toolchain namespaces onto
-/// `globalThis.deka.ui`, dynamically imports the entry, and assigns the best
-/// candidate export (`default`, `app`, `App`, `handler`, or the namespace) to
-/// `globalThis.app`, adapting function/object candidates where a runtime
-/// adapter is present.
-/// Generate the loader-owned entry wrapper. Build emission also reads this
-/// source to seed the artifact's UI dependency graph: the wrapper is executed
-/// for every entry, so its imports are artifact dependencies just as much as
-/// imports written by an app module are.
+/// Entry wrapper module source. Dynamically imports the entry and assigns the
+/// best candidate export (`default`, `app`, `App`, `handler`, or the
+/// namespace) to `globalThis.app`, adapting function/object candidates where a
+/// runtime adapter is present.
+///
+/// The wrapper used to statically import the paused framework's `ui/*`
+/// toolchain namespaces onto `globalThis.deka.ui` (deka#881); those modules
+/// left with the framework extraction, so the wrapper imports nothing.
+/// Generate the loader-owned entry wrapper executed for every entry.
 pub fn entry_wrapper_source(entry_specifier: &str) -> String {
-    let template = "import * as __jsx from \"ui/jsx\";\n\
-import * as __server from \"ui/server\";\n\
-import * as __reactive from \"ui/reactive\";\n\
-import * as __suspense from \"ui/suspense\";\n\
-import * as __router from \"ui/router\";\n\
-globalThis.deka = globalThis.deka || {};\n\
-globalThis.deka.ui = Object.freeze({\n\
-  ...(globalThis.deka.ui || {}),\n\
-  ...__jsx,\n\
-  ...__server,\n\
-  ...__reactive,\n\
-  ...__suspense,\n\
-  ...__router,\n\
-});\n\
-const __dekaMain = await import(\"__ENTRY__\");\n\
+    let template = "const __dekaMain = await import(\"__ENTRY__\");\n\
 globalThis.__dekaStaticRender =\n\
   typeof __dekaMain.StaticRender === \"function\"\n\
     ? __dekaMain.StaticRender\n\
@@ -66,8 +52,8 @@ if (typeof globalThis.app === \"undefined\" && typeof __candidate !== \"undefine
 /// Generate the per-module host-bindings preamble. Every DekaScript module
 /// gets a `__deka_host` closure that carries only its package's granted kinds
 /// — this is the "every bridge site" RFD 27 gate. Local names `__deka_host`
-/// and `__deka_to_result` are part of the dsc emit contract (and the deka_ui
-/// fallback references them), so they must not be renamed.
+/// and `__deka_to_result` are part of the dsc emit contract (the paused
+/// framework's ui fallback references them), so they must not be renamed.
 ///
 /// RFD 21 (deka#754): modules classified as official stdlib additionally get
 /// a module-scoped `deka` binding resolving to the closed catalog object on
@@ -143,7 +129,6 @@ mod tests {
     fn wrapper_accepts_exported_dekascript_app() {
         let source = entry_wrapper_source("file:///main.ds");
         assert!(source.contains("__dekaMain.App"));
-        assert!(source.contains("ui/router"));
         assert!(source.contains("file:///main.ds"));
     }
 

@@ -121,7 +121,7 @@ pub(crate) fn rewrite_server_entry_asset_urls(
             }
         }
         if let Some(tag) = &importmap_tag {
-            let placeholder = runtime_core::framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
+            let placeholder = runtime_core::dist::CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
             if js.contains(placeholder) {
                 js = js.replace(placeholder, tag);
                 changed = true;

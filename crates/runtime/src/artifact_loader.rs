@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use runtime_core::framework::ArtifactManifestV2;
+use runtime_core::dist::ArtifactManifestV2;
 
 pub(crate) struct VerifiedArtifact {
     pub(crate) root: PathBuf,

@@ -287,7 +287,7 @@ fn build_patch_from_snapshot(
                                 let (name, occurrence) = split_island_key(&id);
                                 // Keyed by marker identity, not a selector:
                                 // islands render as comment markers
-                                // (crates/deka_ui/js/server.js) with no
+                                // (the paused ui/server runtime) with no
                                 // wrapper element to select, so the client
                                 // locates the `occurrence`-th start marker
                                 // for `name` and replaces the range between
@@ -434,9 +434,10 @@ fn collect_deka_nodes(container_html: &str) -> HashMap<String, String> {
 
 fn collect_islands(container_html: &str) -> HashMap<String, String> {
     // Islands ship as HTML comment markers. The grammar is defined once in
-    // crates/deka_ui/js/island-marker.js (producer and consumer both derive
-    // from it); this scanner only matches the literal `deka-island start:` /
-    // `deka-island end:` prefixes, so keep ISLAND_MARKER_TAG stable there:
+    // the paused ui runtime's island-marker module (producer and consumer
+    // both derive from it); this scanner only matches the literal
+    // `deka-island start:` / `deka-island end:` prefixes, so keep
+    // ISLAND_MARKER_TAG stable there:
     //   <!--deka-island start:<b64 name> directive:<b64> [props:<b64>] [id:<b64>] ...-->
     //   ...island body...
     //   <!--deka-island end:<b64 name>-->
@@ -789,7 +790,7 @@ mod tests {
         base64::engine::general_purpose::STANDARD.encode(value.as_bytes())
     }
 
-    // Builds an island exactly the way crates/deka_ui/js/server.js:545 emits
+    // Builds an island exactly the way the paused ui/server runtime emits
     // it: comment markers carrying the b64-encoded component name, directive,
     // and props around the server-rendered body.
     fn island(name: &str, directive: &str, props: &str, body: &str) -> String {

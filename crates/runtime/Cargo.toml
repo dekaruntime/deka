@@ -16,16 +16,13 @@ bytes = { workspace = true }
 deka_http = { path = "../http" }
 stdio = "0.4.0"
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
-deka_ui = { path = "../deka_ui" }
 compile = { path = "../compile" }
 axum = { workspace = true }
 base64 = "0.21"
 deno_core = { workspace = true }
-lightningcss = "1.0.0-alpha.68"
 notify = { workspace = true }
 num_cpus = { workspace = true }
 serde_json = { workspace = true }
-sha2 = "0.10"
 tokio = { workspace = true, features = ["full"] }
 tracing = "0.1"
 flate2 = "1.0"
