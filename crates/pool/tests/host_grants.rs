@@ -12,10 +12,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use pool::{
-    ExecutionMode, HandlerKey, IsolatePool, PoolConfig, RequestData, RequestParts,
-};
 use permissions::host_bridge::GrantTable;
+use pool::{ExecutionMode, HandlerKey, IsolatePool, PoolConfig, RequestData, RequestParts};
 
 const EMPTY_DEKA_LOCK: &str = r#"{"lockfileVersion":1,"packages":{}}"#;
 
@@ -113,11 +111,7 @@ fn module_request(entry: &Path, root: &Path) -> RequestData {
 }
 
 fn body_of(response: &pool::IsolateResponse) -> String {
-    assert!(
-        response.success,
-        "execution failed: {:?}",
-        response.error
-    );
+    assert!(response.success, "execution failed: {:?}", response.error);
     response
         .result
         .as_ref()
@@ -288,15 +282,17 @@ fn cryptofix_grant_table(project: &Path) -> GrantTable {
     let digest = value["packages"]["@deka/cryptofix"][2]["fsGraph"]["hash"]
         .as_str()
         .expect("lockfile fsGraph hash");
-    GrantTable::from_json(&serde_json::to_string(&serde_json::json!([
-        {
-            "name": "@deka/cryptofix",
-            "version": "1.0.0",
-            "digest": digest,
-            "kinds": ["crypto"]
-        }
-    ]))
-    .expect("grant json"))
+    GrantTable::from_json(
+        &serde_json::to_string(&serde_json::json!([
+            {
+                "name": "@deka/cryptofix",
+                "version": "1.0.0",
+                "digest": digest,
+                "kinds": ["crypto"]
+            }
+        ]))
+        .expect("grant json"),
+    )
     .expect("grant table")
 }
 
@@ -339,9 +335,7 @@ export fn app(req: string) {
 #[tokio::test]
 async fn ungranted_kind_resolves_to_host_grant_denied_not_a_throw() {
     if !ensure_dsc() {
-        println!(
-            "SKIP ungranted_kind_resolves_to_host_grant_denied_not_a_throw: dsc unavailable"
-        );
+        println!("SKIP ungranted_kind_resolves_to_host_grant_denied_not_a_throw: dsc unavailable");
         return;
     }
     let project = cryptofix_project();
@@ -388,7 +382,11 @@ async fn user_package_manifest_host_kinds_confers_nothing() {
     }
     for declare in [true, false] {
         let project = tempfile::tempdir().expect("tempdir");
-        write(project.path(), "deka.json", r#"{"name":"my-app"}"#);
+        write(
+            project.path(),
+            "deka.json",
+            r#"{"name":"my-app","dependencies":{"@user/evil":"1.0.0"}}"#,
+        );
         let manifest = if declare {
             r#"{"name":"@user/evil","host":{"kinds":["crypto"]}}"#
         } else {
@@ -583,7 +581,6 @@ export async fn app(req: string) Promise<string> {
         "dep-ok|fs-grant-denied",
         "project grant table alone must drive both the grant and the boundary"
     );
-
 }
 
 /// Catalog coverage: every action the browser shim can serve (NativeAndBrowser
@@ -634,8 +631,7 @@ globalThis.app = function(req) {
         )
         .await
         .expect("pool execution");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body_of(&response)).expect("json body");
+    let parsed: serde_json::Value = serde_json::from_str(&body_of(&response)).expect("json body");
     for key in [
         "random_ok",
         "digest_ok",

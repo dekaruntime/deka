@@ -37,7 +37,8 @@ fn build_deka_handler_bundle_in_project(
     })?;
     // dsc refuses to overwrite a file it did not generate. tempfile()
     // creates an empty file, which trips that gate.
-    let tmp = tempfile::tempdir().map_err(|err| format!("failed to create bundle temp dir: {err}"))?;
+    let tmp =
+        tempfile::tempdir().map_err(|err| format!("failed to create bundle temp dir: {err}"))?;
     let out = tmp.path().join("bundle.js");
     let entry = input_path
         .to_str()
@@ -48,7 +49,14 @@ fn build_deka_handler_bundle_in_project(
     let output = Command::new(&dsc)
         .current_dir(&project_root)
         .env("DEKA_MODULE_ROOT", &project_root)
-        .args(["transpile", entry, "--bundle", "--treeshake", "--out", out_str])
+        .args([
+            "transpile",
+            entry,
+            "--bundle",
+            "--treeshake",
+            "--out",
+            out_str,
+        ])
         .output()
         .map_err(|err| format!("failed to exec {}: {err}", dsc.display()))?;
     if !output.status.success() {
@@ -94,6 +102,9 @@ pub fn ensure_project_layout(
     module_root: Option<&Path>,
     imports: &[String],
 ) -> Result<(), String> {
+    // 0.3.0: an external module_root supplies recognized stdlib only. It is
+    // not a whole-gate bypass — third-party and unknown `@deka/*` imports
+    // still need declaration, install, and fsGraph integrity.
     deka_modules::project_gate::validate_project(
         project_root,
         imports,
@@ -108,7 +119,7 @@ pub fn ensure_project_layout(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_deka_handler_bundle, ensure_project_layout, resolve_project_root, MODULES_DIR,
+        MODULES_DIR, build_deka_handler_bundle, ensure_project_layout, resolve_project_root,
     };
     use deka_host::integrity::compute_package_integrity;
     use std::path::Path;
@@ -147,11 +158,7 @@ mod tests {
         std::fs::write(tmp.path().join("deka.json"), "{}").expect("root deka.json");
         std::fs::write(tmp.path().join("deka.lock"), "{}").expect("root deka.lock");
 
-        let package_dir = tmp
-            .path()
-            .join(MODULES_DIR)
-            .join("@deka")
-            .join("payments");
+        let package_dir = tmp.path().join(MODULES_DIR).join("@deka").join("payments");
         std::fs::create_dir_all(&package_dir).expect("package dir");
         std::fs::write(package_dir.join("deka.json"), "{}").expect("package deka.json");
         let input = package_dir.join("index.ds");
@@ -166,11 +173,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         std::fs::write(tmp.path().join("deka.json"), "{}").expect("root deka.json");
 
-        let package_dir = tmp
-            .path()
-            .join(MODULES_DIR)
-            .join("@deka")
-            .join("payments");
+        let package_dir = tmp.path().join(MODULES_DIR).join("@deka").join("payments");
         std::fs::create_dir_all(&package_dir).expect("package dir");
         std::fs::write(package_dir.join("deka.json"), "{}").expect("package deka.json");
         let input = package_dir.join("index.ds");
@@ -193,11 +196,8 @@ mod tests {
         for module in ["http", "crypto", "time"] {
             let dir = tmp.path().join(MODULES_DIR).join(module);
             std::fs::create_dir_all(&dir).expect("module dir");
-            std::fs::write(
-                dir.join("index.ds"),
-                "export fn marker() { return true }\n",
-            )
-            .expect("module index");
+            std::fs::write(dir.join("index.ds"), "export fn marker() { return true }\n")
+                .expect("module index");
         }
 
         let imports = vec![
@@ -211,8 +211,50 @@ mod tests {
                 .all(|spec| deka_modules::project_gate::is_stdlib_module_spec(spec)),
             "scoped stdlib specifiers must be gated"
         );
+        assert!(
+            !deka_modules::project_gate::is_stdlib_module_spec("@deka/not-a-stdlib-package"),
+            "unknown @deka/* is an ordinary package, not stdlib"
+        );
+
+        for module in ["http", "crypto", "time"] {
+            write_locked_package(tmp.path(), &format!("@deka/{module}"), module);
+        }
 
         ensure_project_layout(tmp.path(), Some(tmp.path()), &imports).expect("layout should pass");
+    }
+
+    #[test]
+    fn external_module_root_exempts_stdlib_only() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("deka.json"), r#"{"name":"tenant"}"#).expect("manifest");
+        std::fs::write(tmp.path().join("deka.lock"), "{}").expect("lock");
+        let stdlib = tempfile::tempdir().expect("stdlib root");
+
+        ensure_project_layout(
+            tmp.path(),
+            Some(stdlib.path()),
+            &["@deka/crypto".to_string()],
+        )
+        .expect("external root supplies recognized stdlib");
+
+        let err =
+            ensure_project_layout(tmp.path(), Some(stdlib.path()), &["@acme/tool".to_string()])
+                .expect_err("external root must not waive third-party declaration");
+        assert!(
+            err.contains("not declared"),
+            "third-party import must fail closed: {err}"
+        );
+
+        let err = ensure_project_layout(
+            tmp.path(),
+            Some(stdlib.path()),
+            &["@deka/not-a-stdlib-package".to_string()],
+        )
+        .expect_err("unknown @deka/* is not stdlib and is not exempt");
+        assert!(
+            err.contains("not declared"),
+            "unknown @deka/* must fail closed: {err}"
+        );
     }
 
     #[test]
@@ -279,11 +321,8 @@ mod tests {
         }
 
         let tenant_a_handler = tenant_a_root.join("main.ds");
-        std::fs::write(
-            &tenant_a_handler,
-            "export fn App() string { return\n",
-        )
-        .expect("tenant A handler");
+        std::fs::write(&tenant_a_handler, "export fn App() string { return\n")
+            .expect("tenant A handler");
 
         let tenant_b_handler = tenant_b_root.join("main.ds");
         std::fs::write(
@@ -292,9 +331,11 @@ mod tests {
         )
         .expect("tenant B handler");
 
-        let tenant_a =
-            build_deka_handler_bundle(tenant_a_handler.to_str().expect("utf-8 handler"));
-        assert!(tenant_a.is_err(), "tenant A must fail to bundle invalid source");
+        let tenant_a = build_deka_handler_bundle(tenant_a_handler.to_str().expect("utf-8 handler"));
+        assert!(
+            tenant_a.is_err(),
+            "tenant A must fail to bundle invalid source"
+        );
 
         let tenant_b_bundle =
             build_deka_handler_bundle(tenant_b_handler.to_str().expect("utf-8 handler"));
