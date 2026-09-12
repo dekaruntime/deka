@@ -28,7 +28,8 @@ pub(super) struct NetHandle {
 
 pub(super) struct NetListenerHandle {
     listener: NetListener,
-    // Capability target derived from the bind address. Accept actions reuse
+    accept_timeout: Option<Duration>,
+    // Capability target derived from the bind address. Listener actions reuse
     // this target so the listener grant covers inbound connections.
     target: String,
 }
@@ -37,11 +38,10 @@ pub(super) struct NetListenerHandle {
 /// never in a process-global static: a numeric handle is only meaningful in
 /// the isolate that created it.
 ///
-/// Connections and listeners live in separate maps with separate counters to
-/// avoid handle collisions and keep the lookup logic simple.
+/// Connections and listeners share one handle counter: handle-only actions
+/// must identify exactly one socket and its capability target across both maps.
 pub(super) struct NetState {
-    next_conn_handle: u64,
-    next_listener_handle: u64,
+    next_handle: u64,
     handles: HashMap<u64, NetHandle>,
     listeners: HashMap<u64, NetListenerHandle>,
     /// Fixed policy for this isolate's net bridge. `None` (the
@@ -56,8 +56,7 @@ pub(super) struct NetState {
 impl NetState {
     pub(super) fn new() -> Self {
         Self {
-            next_conn_handle: 1,
-            next_listener_handle: 1,
+            next_handle: 1,
             handles: HashMap::new(),
             listeners: HashMap::new(),
             policy: None,
@@ -121,6 +120,49 @@ fn listener_target(state: &NetState, handle: u64) -> Result<String, deno_core::e
         .get(&handle)
         .map(|handle| handle.target.clone())
         .ok_or_else(|| core_err(format!("net: unknown listener handle {handle}")))
+}
+
+// Shared actions may use either socket kind; stream-only actions must continue
+// to use handle_target so a listener never authorizes a connection operation.
+fn socket_target(state: &NetState, handle: u64) -> Result<String, deno_core::error::CoreError> {
+    state
+        .handles
+        .get(&handle)
+        .map(|entry| &entry.target)
+        .or_else(|| state.listeners.get(&handle).map(|entry| &entry.target))
+        .cloned()
+        .ok_or_else(|| core_err(format!("net: unknown handle {handle}")))
+}
+
+fn accept_with_timeout(
+    listener: &TcpListener,
+    timeout: Option<Duration>,
+) -> std::io::Result<(TcpStream, std::net::SocketAddr)> {
+    let Some(timeout) = timeout else {
+        return listener.accept();
+    };
+    let started = Instant::now();
+    loop {
+        match listener.accept() {
+            Ok((stream, peer)) => {
+                // Some platforms inherit the listener's nonblocking flag.
+                stream.set_nonblocking(false)?;
+                return Ok((stream, peer));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                let remaining = timeout.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "accept timed out",
+                    ));
+                }
+                std::thread::sleep(remaining.min(Duration::from_millis(1)));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn client_tls_config(
@@ -217,8 +259,8 @@ pub(super) fn net_call_impl(
                 .ok_or_else(|| err("connect: no resolved address".to_string()))?;
             let stream = TcpStream::connect_timeout(&target, Duration::from_millis(timeout_ms))
                 .map_err(|e| err(format!("connect: {}", e)))?;
-            let handle = state.next_conn_handle;
-            state.next_conn_handle += 1;
+            let handle = state.next_handle;
+            state.next_handle += 1;
             state.handles.insert(
                 handle,
                 NetHandle {
@@ -283,8 +325,8 @@ pub(super) fn net_call_impl(
                 .complete_io(&mut stream.sock)
                 .map(|_| ())
                 .map_err(|e| err(format!("connect_tls: handshake failed: {e}")))?;
-            let handle = state.next_conn_handle;
-            state.next_conn_handle += 1;
+            let handle = state.next_handle;
+            state.next_handle += 1;
             state.handles.insert(
                 handle,
                 NetHandle {
@@ -317,12 +359,13 @@ pub(super) fn net_call_impl(
             listener
                 .set_nonblocking(false)
                 .map_err(|e| err(format!("listen: set blocking failed: {e}")))?;
-            let handle = state.next_listener_handle;
-            state.next_listener_handle += 1;
+            let handle = state.next_handle;
+            state.next_handle += 1;
             state.listeners.insert(
                 handle,
                 NetListenerHandle {
                     listener: NetListener::Tcp(listener),
+                    accept_timeout: None,
                     target: capability_target,
                 },
             );
@@ -359,12 +402,13 @@ pub(super) fn net_call_impl(
             // `backlog` is accepted for API parity but Rust's std::net::TcpListener
             // does not expose a way to set the listen backlog after binding.
             let _ = backlog;
-            let handle = state.next_listener_handle;
-            state.next_listener_handle += 1;
+            let handle = state.next_handle;
+            state.next_handle += 1;
             state.listeners.insert(
                 handle,
                 NetListenerHandle {
                     listener: NetListener::Tls(listener, config),
+                    accept_timeout: None,
                     target: capability_target,
                 },
             );
@@ -383,11 +427,11 @@ pub(super) fn net_call_impl(
             let target = listener_handle.target.clone();
             match &mut listener_handle.listener {
                 NetListener::Tcp(listener) => {
-                    let (stream, peer_addr) = listener
-                        .accept()
-                        .map_err(|e| err(format!("accept: {}", e)))?;
-                    let conn_handle = state.next_conn_handle;
-                    state.next_conn_handle += 1;
+                    let (stream, peer_addr) =
+                        accept_with_timeout(listener, listener_handle.accept_timeout)
+                            .map_err(|e| err(format!("accept: {}", e)))?;
+                    let conn_handle = state.next_handle;
+                    state.next_handle += 1;
                     state.handles.insert(
                         conn_handle,
                         NetHandle {
@@ -402,9 +446,9 @@ pub(super) fn net_call_impl(
                     }))
                 }
                 NetListener::Tls(listener, config) => {
-                    let (tcp, peer_addr) = listener
-                        .accept()
-                        .map_err(|e| err(format!("accept: {}", e)))?;
+                    let (tcp, peer_addr) =
+                        accept_with_timeout(listener, listener_handle.accept_timeout)
+                            .map_err(|e| err(format!("accept: {}", e)))?;
                     let conn = rustls::ServerConnection::new(config.clone())
                         .map_err(|e| err(format!("accept: tls init failed: {e}")))?;
                     let mut stream = rustls::StreamOwned::new(conn, tcp);
@@ -413,8 +457,8 @@ pub(super) fn net_call_impl(
                         .complete_io(&mut stream.sock)
                         .map(|_| ())
                         .map_err(|e| err(format!("accept: handshake failed: {e}")))?;
-                    let conn_handle = state.next_conn_handle;
-                    state.next_conn_handle += 1;
+                    let conn_handle = state.next_handle;
+                    state.next_handle += 1;
                     state.handles.insert(
                         conn_handle,
                         NetHandle {
@@ -441,6 +485,18 @@ pub(super) fn net_call_impl(
             } else {
                 Some(Duration::from_millis(millis))
             };
+            if let Some(entry) = state.listeners.get_mut(&handle) {
+                let listener = match &entry.listener {
+                    NetListener::Tcp(listener) | NetListener::Tls(listener, _) => listener,
+                };
+                // std listeners have no accept timeout; poll a nonblocking
+                // listener only while a timeout is enabled. Zero restores blocking.
+                listener
+                    .set_nonblocking(timeout.is_some())
+                    .map_err(|e| err(format!("set_deadline: {e}")))?;
+                entry.accept_timeout = timeout;
+                return Ok(serde_json::json!({ "ok": true }));
+            }
             let Some(conn) = state.handles.get_mut(&handle) else {
                 return Ok(
                     serde_json::json!({ "ok": false, "error": format!("set_deadline: unknown handle {}", handle) }),
@@ -604,8 +660,8 @@ pub(super) fn net_call_impl(
             let tcp = match conn.conn {
                 NetConn::Tcp(stream) => stream,
                 NetConn::TlsClient(stream) => {
-                    let new_handle = state.next_conn_handle;
-                    state.next_conn_handle += 1;
+                    let new_handle = state.next_handle;
+                    state.next_handle += 1;
                     state.handles.insert(
                         new_handle,
                         NetHandle {
@@ -618,8 +674,8 @@ pub(super) fn net_call_impl(
                     );
                 }
                 NetConn::TlsServer(stream) => {
-                    let new_handle = state.next_conn_handle;
-                    state.next_conn_handle += 1;
+                    let new_handle = state.next_handle;
+                    state.next_handle += 1;
                     state.handles.insert(
                         new_handle,
                         NetHandle {
@@ -643,8 +699,8 @@ pub(super) fn net_call_impl(
                 .complete_io(&mut stream.sock)
                 .map(|_| ())
                 .map_err(|e| err(format!("connect_tls: handshake failed: {e}")))?;
-            let new_handle = state.next_conn_handle;
-            state.next_conn_handle += 1;
+            let new_handle = state.next_handle;
+            state.next_handle += 1;
             state.handles.insert(
                 new_handle,
                 NetHandle {
@@ -659,7 +715,8 @@ pub(super) fn net_call_impl(
                 .get("handle")
                 .and_then(|v| v.as_u64())
                 .ok_or_else(|| err("close: missing handle".to_string()))?;
-            if state.handles.remove(&handle).is_none() {
+            if state.handles.remove(&handle).is_none() && state.listeners.remove(&handle).is_none()
+            {
                 return Ok(
                     serde_json::json!({ "ok": false, "error": format!("close: unknown handle {}", handle) }),
                 );
@@ -1090,12 +1147,17 @@ pub(super) fn net_call_proto_impl_with(
                 .ok_or_else(|| core_err(format!("{action}: missing handle")))?;
             listener_target(state, handle)?
         }
-        NetProtoActionKind::SetDeadline
-        | NetProtoActionKind::Read
+        NetProtoActionKind::SetDeadline | NetProtoActionKind::Close => {
+            let handle = payload
+                .get("handle")
+                .and_then(|value| value.as_u64())
+                .ok_or_else(|| core_err(format!("{action}: missing handle")))?;
+            socket_target(state, handle)?
+        }
+        NetProtoActionKind::Read
         | NetProtoActionKind::ReadUntil
         | NetProtoActionKind::Write
-        | NetProtoActionKind::TlsUpgrade
-        | NetProtoActionKind::Close => {
+        | NetProtoActionKind::TlsUpgrade => {
             let handle = payload
                 .get("handle")
                 .and_then(|value| value.as_u64())
@@ -1126,7 +1188,9 @@ fn validate_tcp_connect_port(
     Ok(())
 }
 
-pub(super) fn tcp_connect_port(payload: &serde_json::Value) -> Result<u16, deno_core::error::CoreError> {
+pub(super) fn tcp_connect_port(
+    payload: &serde_json::Value,
+) -> Result<u16, deno_core::error::CoreError> {
     let port = payload
         .get("port")
         .and_then(|value| value.as_u64())

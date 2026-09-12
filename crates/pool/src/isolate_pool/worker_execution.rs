@@ -1627,6 +1627,57 @@ mod tests {
     };
     use std::sync::Arc;
 
+    #[tokio::test]
+    async fn listener_close_and_deadline_through_host_ops() {
+        let pool = IsolatePool::new(
+            PoolConfig {
+                num_workers: 1,
+                enable_code_cache: false,
+                ..PoolConfig::default()
+            },
+            Arc::new(platform_server::extensions_for_php_server),
+        );
+        let response = pool.execute(
+            HandlerKey::new("listener_close_and_deadline_through_host_ops"),
+            RequestData {
+                handler_code: r#"
+                    globalThis.app = function() {
+                        const listen = () => __deka_host('net', 'listen', ['127.0.0.1', 0], ['net']);
+                        const first = listen();
+                        const close = __deka_host('net', 'close', [first.handle], ['net']);
+                        const second = listen();
+                        const deadline = __deka_host('net', 'set_deadline', [second.handle, 0], ['net']);
+                        const cleanup = __deka_host('net', 'close', [second.handle], ['net']);
+                        const stale = __deka_host('net', 'set_deadline', [second.handle, 0], ['net']);
+                        return { status: 200, headers: {}, body: JSON.stringify({first, close, second, deadline, cleanup, stale}) };
+                    };
+                "#.to_string(),
+                handler_entry: None,
+                module_root: None,
+                request_value: serde_json::Value::Null,
+                request_parts: None,
+                mode: ExecutionMode::Request,
+                security: ExecutionSecurity {
+                    policy_json: r#"{"security":{"allow":{"net":["127.0.0.1:0"]},"prompt":false}}"#.to_string(),
+                    no_prompt: true,
+                },
+            },
+        ).await.expect("pool execution");
+        assert!(
+            response.success,
+            "host exception escaped: {:?}",
+            response.error
+        );
+        let result = response.result.expect("response result");
+        let body: serde_json::Value =
+            serde_json::from_str(result["body"].as_str().unwrap()).unwrap();
+        for action in ["first", "close", "second", "deadline", "cleanup"] {
+            assert_eq!(body[action]["ok"], true, "{action}: {body}");
+        }
+        assert_ne!(body["first"]["handle"], body["second"]["handle"]);
+        assert_eq!(body["stale"]["ok"], false, "{body}");
+    }
+
     // Run the production bootstrap and real Rust host ops. Assert in Rust after
     // execution: a JS throw must fail the test, not skip an unreachable check.
     #[tokio::test]

@@ -29,6 +29,21 @@ Kinds with no host implementation yet (neo4j, vault) are deliberately
 absent — the catalog lists only genuinely host-implemented actions, zero
 stubs.
 
+## Network handles
+
+`net.close` and `net.set_deadline` accept both connection and listener handles,
+including TLS listeners. Closing a listener releases its bound socket without
+closing connections already accepted from it. Handles are unique within an
+isolate and cannot be used by another isolate or after they are closed.
+
+`net.set_deadline(handle, millis)` sets a relative timeout: connections use it
+for reads and writes, and listeners use it for each wait for an incoming
+connection in `accept`. Zero clears the timeout. A listener timeout does not
+bound the subsequent TLS handshake. Handle operations check the original
+connect or bind target against the current network policy; accepted connections
+retain the listener's bind target. Read, write, read-until, and TLS upgrade
+require a connection handle.
+
 ## Sync vs async
 
 Exactly `fs.read_file`, `fs.write_file`, `fs.read_dir`, and `fs.mkdirs` are
