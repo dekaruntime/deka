@@ -3,7 +3,7 @@
 //! so a 3xx from an allowlisted host to a non-allowlisted one cannot
 //! carry Authorization / Cookie headers across origins.
 
-use runtime_core::security_policy::SecurityPolicy;
+use security::security_policy::SecurityPolicy;
 use url::Url;
 
 /// Returns the host portion of the URL in lowercase, with no port.

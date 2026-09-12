@@ -2,8 +2,8 @@ use deno_core::{JsRuntime, ModuleCodeString, RuntimeOptions};
 
 #[test]
 fn tenant_cannot_enable_privileged_filesystem_access() {
-    let _policy = runtime_core::security_context::set_security_context(
-        runtime_core::security_context::SecurityContext {
+    let _policy = security::security_context::set_security_context(
+        security::security_context::SecurityContext {
             policy_json: Some(r#"{"security":{"allow":{"read":[]},"prompt":false}}"#.to_string()),
             no_prompt: true,
         },

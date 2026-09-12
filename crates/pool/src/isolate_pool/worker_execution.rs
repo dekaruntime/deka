@@ -20,7 +20,7 @@ fn bootstrap_source(template: &str) -> String {
         .replace("__DEKA_TO_RESULT__", &crate::prelude::to_result_helper())
         .replace(
             "/*__DEKA_HOST_CATALOG__*/",
-            &runtime_core::host_bridge::js_catalog_json(),
+            &permissions::host_bridge::js_catalog_json(),
         )
         .replace(
             "/*__DEKA_CATALOG__*/",
@@ -28,7 +28,7 @@ fn bootstrap_source(template: &str) -> String {
         )
         .replace(
             "__DEKA_PERMISSION_DENIED_MARKER__",
-            runtime_core::host_bridge::PERMISSION_DENIED_MARKER,
+            permissions::host_bridge::PERMISSION_DENIED_MARKER,
         )
         .replace("/*__DEKA_WINTERTC__*/", include_str!("../wintertc.js"));
     // assert!, not debug_assert!: release is what ships, and a marker that
@@ -675,7 +675,7 @@ impl WorkerThread {
                     // DS `bridge kind.action(args)` emit (RFD 27). Positional args;
                     // PHPX __bridge still takes a payload object.
                     // The catalog allowlist is injected at bootstrap from
-                    // runtime_core::host_bridge::js_catalog_json() — the
+                    // permissions::host_bridge::js_catalog_json() — the
                     // authoritative Rust catalog, never a hand-maintained JS
                     // list (deka#620 drift). The `async` flags in it MUST match
                     // the pinned dsc emit (dsc 0.8.1): catalog-async actions
@@ -825,7 +825,7 @@ impl WorkerThread {
                                 if (k === 'db' && a === 'exec') return { handle: list[0], sql: list[1], params: Array.isArray(list[2]) ? list[2] : [] };
                                 if (k === 'db' && a === 'close') return { handle: list[0] };
                                 if (k === 'db' && a === 'stats') return { handle: list[0] };
-                                // concurrency is PHPX-only (see runtime_core::host_bridge::PHPX_ONLY_ACTIONS).
+                                // concurrency is PHPX-only (see permissions::host_bridge::PHPX_ONLY_ACTIONS).
                                 if (k === 'time' && a === 'sleep_ms') return { milliseconds: list[0] };
                                 if (k === 'net' && a === 'connect') return { host: list[0], port: list[1] };
                                 if (k === 'net' && a === 'listen') return { host: list[0], port: list[1] };

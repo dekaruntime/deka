@@ -10,8 +10,8 @@ use deno_core::{JsRuntime, ModuleCodeString, RuntimeOptions};
 /// `PermissionDenied::decode` to the exact capability+target.
 #[test]
 fn denied_fs_read_op_throws_permission_denied_wire_message() {
-    let _policy = runtime_core::security_context::set_security_context(
-        runtime_core::security_context::SecurityContext {
+    let _policy = security::security_context::set_security_context(
+        security::security_context::SecurityContext {
             policy_json: Some(
                 r#"{"security":{"allow":{"read":[]},"deny":{},"prompt":false}}"#.to_string(),
             ),
@@ -55,10 +55,10 @@ fn denied_fs_read_op_throws_permission_denied_wire_message() {
     let message = message.expect("the denied op must throw a catchable error");
 
     assert!(
-        message.starts_with(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+        message.starts_with(permissions::host_bridge::PERMISSION_DENIED_MARKER),
         "thrown message must carry the denial marker: {message}"
     );
-    let denial = runtime_core::host_bridge::PermissionDenied::decode(&message)
+    let denial = permissions::host_bridge::PermissionDenied::decode(&message)
         .unwrap_or_else(|| panic!("thrown message must decode as PermissionDenied: {message}"));
     assert_eq!(denial.capability, "read");
     assert_eq!(

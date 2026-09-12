@@ -21,7 +21,7 @@ use std::time::Duration;
 /// process-global and cargo runs tests as threads in one process, so the
 /// previous PolicyGuard form raced every parallel reader of the variable
 /// (deka#537).
-fn allow_net_policy(hosts: &[&str]) -> runtime_core::security_policy::SecurityPolicy {
+fn allow_net_policy(hosts: &[&str]) -> security::security_policy::SecurityPolicy {
     let allow_list: Vec<serde_json::Value> = hosts
         .iter()
         .map(|h| serde_json::Value::String(h.to_string()))
@@ -29,7 +29,7 @@ fn allow_net_policy(hosts: &[&str]) -> runtime_core::security_policy::SecurityPo
     let document = serde_json::json!({
         "security": { "allow": { "net": allow_list } }
     });
-    runtime_core::security_policy::parse_deka_security_policy(&document).policy
+    security::security_policy::parse_deka_security_policy(&document).policy
 }
 
 #[test]

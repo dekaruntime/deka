@@ -1,5 +1,5 @@
 use core::{CommandSpec, Context, FlagSpec, Registry};
-use runtime_core::security_policy::{
+use security::security_policy::{
     RuleList, SecurityCliOverrides, merge_policy_with_cli_manifest_net_env,
     parse_deka_security_policy,
 };
@@ -309,7 +309,7 @@ fn enforce_subprocess_policy(
         for diag in parsed.diagnostics {
             if matches!(
                 diag.level,
-                runtime_core::security_policy::PolicyDiagnosticLevel::Error
+                security::security_policy::PolicyDiagnosticLevel::Error
             ) {
                 lines.push(format!("{} at {}: {}", diag.code, diag.path, diag.message));
             }

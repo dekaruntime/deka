@@ -5,7 +5,7 @@
 //! - Try to use Cloudflare Workers APIs (this is Deka!)
 //! - Import unknown deka/* modules
 //! - Don't export a default handler
-use runtime_core::security_policy::parse_deka_security_policy;
+use security::security_policy::parse_deka_security_policy;
 use swc_common::{FileName, SourceMap, Span, Spanned, sync::Lrc};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax, error::SyntaxError, lexer::Lexer};
@@ -174,7 +174,7 @@ pub fn validate_dynamic_code_from_security_context(
     source_code: &str,
     file_path: &str,
 ) -> Result<(), String> {
-    let Some(raw) = runtime_core::security_context::context_policy_json() else {
+    let Some(raw) = security::security_context::context_policy_json() else {
         return Err(
             "security context missing: the dispatch path failed to install a resolved security policy; refusing dynamic code"
                 .to_string(),
@@ -204,7 +204,7 @@ pub fn validate_dynamic_code_with_policy(
                     .filter(|diagnostic| {
                         matches!(
                             diagnostic.level,
-                            runtime_core::security_policy::PolicyDiagnosticLevel::Error
+                            security::security_policy::PolicyDiagnosticLevel::Error
                         )
                     })
                     .map(|diagnostic| {

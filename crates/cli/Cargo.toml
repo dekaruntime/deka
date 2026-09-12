@@ -21,6 +21,7 @@ native = [
 lsp = ["dep:deka-lsp"]
 
 [dependencies]
+security = { path = "../security" }
 runtime = { path = "../runtime", optional = true }
 pool = { path = "../pool", optional = true }
 runtime_core = { path = "../runtime_core" }
@@ -50,6 +51,7 @@ flate2 = "1.0"
 tar = "0.4"
 
 [dev-dependencies]
+permissions = { path = "../permissions" }
 tempfile = "3.23.0"
 flate2 = "1.0"
 base64 = "0.22"

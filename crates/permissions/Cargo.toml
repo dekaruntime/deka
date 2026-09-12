@@ -1,0 +1,9 @@
+[package]
+name = "permissions"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+serde_json = { workspace = true }
+serde = { workspace = true }
+security = { path = "../security" }

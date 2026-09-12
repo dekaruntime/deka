@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use super::PhpxEsmLoader;
 use super::{dependency_package_name, read_manifest_name};
-use runtime_core::host_bridge;
+use permissions::host_bridge;
 
 impl PhpxEsmLoader {
     /// Whether a module may bind the closed `deka.*` catalog through the

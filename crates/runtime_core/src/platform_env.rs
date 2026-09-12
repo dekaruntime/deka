@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::security_policy::{RuleList, SecurityPolicy};
+use security::security_policy::{RuleList, SecurityPolicy};
 use crate::seam::{SeamBoundary, SeamContract, SeamDefinition, SeamRecord, SeamType};
 use crate::storefront_envelope::ToSeam;
 
@@ -49,7 +49,7 @@ where
 }
 
 /// Snapshot env vars for the current execution, resolving the policy from
-/// the installed [`crate::security_context`]. A missing or malformed context
+/// the installed [`security::security_context`]. A missing or malformed context
 /// fails closed: no policy means no names are allowed, so the snapshot is
 /// empty (deka#801 — the process env is not a policy transport).
 pub fn snapshot_env_from_process() -> Vec<(String, String)> {
@@ -128,7 +128,7 @@ fn record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security_policy::parse_deka_security_policy;
+    use security::security_policy::parse_deka_security_policy;
     use std::collections::HashMap;
 
     fn getter(map: HashMap<&'static str, &'static str>) -> impl Fn(&str) -> Option<String> {
@@ -206,8 +206,8 @@ mod tests {
             "without a security context the snapshot must be empty (deka#801)"
         );
 
-        let _guard = crate::security_context::set_security_context(
-            crate::security_context::SecurityContext {
+        let _guard = security::security_context::set_security_context(
+            security::security_context::SecurityContext {
                 policy_json: Some(
                     r#"{"security":{"allow":{"env":["PUBLIC"]},"deny":{}}}"#.to_string(),
                 ),

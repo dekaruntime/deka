@@ -750,10 +750,10 @@ pub(super) fn op_php_fs_call_proto(
 pub(super) async fn op_php_fs_call_proto_async(
     #[buffer(copy)] request: Vec<u8>,
 ) -> Result<Vec<u8>, deno_core::error::CoreError> {
-    let security_context = runtime_core::security_context::current_security_context();
+    let security_context = ::security::security_context::current_security_context();
     tokio::task::spawn_blocking(move || {
         let _security_context = security_context
-            .map(runtime_core::security_context::set_security_context);
+            .map(::security::security_context::set_security_context);
         fs_call_proto_impl(&request)
     })
     .await

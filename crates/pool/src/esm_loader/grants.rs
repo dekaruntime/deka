@@ -3,14 +3,14 @@
 //!
 //! Everything here answers "which published identity does this directory on
 //! disk correspond to, and what did the user record about it?" The grant
-//! *decisions* themselves live in `runtime_core::host_bridge`; this module
+//! *decisions* themselves live in `permissions::host_bridge`; this module
 //! only feeds them the project-root manifest fields and lockfile-pinned
 //! fsGraph digests they key off.
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use runtime_core::host_bridge::GrantTable;
+use permissions::host_bridge::GrantTable;
 
 /// Read `<root>/deka.json` and return its `(host.kinds, name)`. Both absent
 /// manifest and absent fields yield empty values.

@@ -5,14 +5,14 @@ use super::security_hint::{
 use super::*;
 
 /// Reads the effective security policy for the current call: the
-/// per-execution [`runtime_core::security_context`] installed by the
+/// per-execution [`::security::security_context`] installed by the
 /// dispatch path (deka#725). Since deka#801 the context is the ONLY
 /// channel: a missing one is an error naming the dispatch path that failed
 /// to supply it — never a silent fall back to the process environment or to
 /// a default policy (a default would be an invisible policy). Malformed
 /// context JSON fails closed the same way.
 pub fn security_policy_from_context() -> Result<SecurityPolicy, deno_core::error::CoreError> {
-    let Some(raw) = runtime_core::security_context::context_policy_json() else {
+    let Some(raw) = ::security::security_context::context_policy_json() else {
         return Err(core_err(
             "security policy missing: no per-execution security context is installed; \
              the dispatch path failed to supply the resolved deka.json policy",
@@ -35,7 +35,7 @@ fn security_policy_from_json_str(raw: &str) -> Result<SecurityPolicy, deno_core:
             .filter(|diagnostic| {
                 matches!(
                     diagnostic.level,
-                    runtime_core::security_policy::PolicyDiagnosticLevel::Error
+                    ::security::security_policy::PolicyDiagnosticLevel::Error
                 )
             })
             .map(|diagnostic| {
@@ -306,7 +306,7 @@ mod security_rule_tests {
     }
 }
 
-/// Builds the wire-form denial error: [`runtime_core::host_bridge`]'s marker +
+/// Builds the wire-form denial error: [`permissions::host_bridge`]'s marker +
 /// compact JSON payload, exactly what `PermissionDenied::decode` reads back on
 /// the JS side (RFD 27). The payload is exactly capability+target; origin and
 /// config-hint detail stay on stderr so the wire format round-trips.
@@ -314,7 +314,7 @@ fn permission_denied_err(
     capability: &str,
     target: Option<&str>,
 ) -> deno_core::error::CoreError {
-    let denial = runtime_core::host_bridge::PermissionDenied {
+    let denial = permissions::host_bridge::PermissionDenied {
         capability: capability.to_string(),
         target: target.unwrap_or("*").to_string(),
     };
@@ -359,7 +359,7 @@ fn prompt_enabled() -> bool {
     // Per-execution suppression (build slots) never grants capabilities.
     // The per-execution SecurityContext is the only no-prompt channel
     // (deka#820); the process environment is not consulted (deka#801).
-    if runtime_core::security_context::context_no_prompt() {
+    if ::security::security_context::context_no_prompt() {
         return false;
     }
     std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
@@ -636,8 +636,8 @@ mod path_normalization_tests {
 #[cfg(test)]
 mod permission_denied_tests {
     use super::enforce_scope;
-    use runtime_core::host_bridge::{PERMISSION_DENIED_MARKER, PermissionDenied};
-    use runtime_core::security_policy::{RuleList, SecurityScope};
+    use permissions::host_bridge::{PERMISSION_DENIED_MARKER, PermissionDenied};
+    use ::security::security_policy::{RuleList, SecurityScope};
 
     fn scope(read: RuleList) -> SecurityScope {
         SecurityScope {
@@ -654,9 +654,9 @@ mod permission_denied_tests {
 
     /// Never let a denial reach the interactive prompt: a developer running
     /// `cargo test` from a terminal would otherwise block on read_line.
-    fn no_prompt_guard() -> runtime_core::security_context::SecurityContextGuard {
-        runtime_core::security_context::set_security_context(
-            runtime_core::security_context::SecurityContext {
+    fn no_prompt_guard() -> ::security::security_context::SecurityContextGuard {
+        ::security::security_context::set_security_context(
+            ::security::security_context::SecurityContext {
                 policy_json: None,
                 no_prompt: true,
             },

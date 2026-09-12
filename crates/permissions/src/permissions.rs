@@ -18,7 +18,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::security_policy::{
+use security::security_policy::{
     PolicyDiagnostic, PolicyDiagnosticLevel, RuleList, SecurityPolicy, SecurityScope,
 };
 

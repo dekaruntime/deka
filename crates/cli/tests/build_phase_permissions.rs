@@ -179,7 +179,7 @@ fn denied_fs_read_in_build_fails_with_source_linked_diagnostic() {
         "deka build must fail when the build body reads a file the policy denies: {combined}"
     );
     assert!(
-        combined.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+        combined.contains(permissions::host_bridge::PERMISSION_DENIED_MARKER),
         "failure must carry the machine-readable permission diagnostic (RFD 27): {combined}"
     );
     assert!(
@@ -266,7 +266,7 @@ fn network_and_db_inputs_record_no_filesystem_observations() {
         "deka build must fail when the policy denies the build body's read: {combined}"
     );
     assert!(
-        combined.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+        combined.contains(permissions::host_bridge::PERMISSION_DENIED_MARKER),
         "failure must carry the machine-readable permission diagnostic (RFD 27): {combined}"
     );
     assert!(
@@ -353,7 +353,7 @@ fn build_body_cannot_inherit_request_time_dev_grants() {
         "deka build must fail when only request-time dev holds the read grant: {combined}"
     );
     assert!(
-        combined.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+        combined.contains(permissions::host_bridge::PERMISSION_DENIED_MARKER),
         "failure must carry the machine-readable permission diagnostic (RFD 27): {combined}"
     );
     assert!(
@@ -381,7 +381,7 @@ fn build_body_cannot_inherit_request_time_dev_grants() {
         "explicit build:false must deny the build body just like an omitted key: {combined}"
     );
     assert!(
-        combined.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+        combined.contains(permissions::host_bridge::PERMISSION_DENIED_MARKER),
         "explicit build:false denial must stay machine-readable: {combined}"
     );
 }

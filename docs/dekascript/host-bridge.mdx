@@ -11,7 +11,7 @@ way in.
 ## The catalog
 
 The runtime ships a single authoritative catalog of kinds and actions
-(`runtime_core::host_bridge`). The pinned `dsc` compiler (0.8.1) performs no
+(`permissions::host_bridge`). The pinned `dsc` compiler (0.8.1) performs no
 catalog validation — it typechecks unknown kinds/actions as
 `Result<infer, infer>` and emits the host call — so every gate decision at
 runtime comes from this one catalog, never from a hand-maintained list.

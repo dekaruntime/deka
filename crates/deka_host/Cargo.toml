@@ -29,6 +29,8 @@ runtime = [
 ]
 
 [dependencies]
+security = { path = "../security" }
+permissions = { path = "../permissions" }
 deno_core = { workspace = true, optional = true }
 bumpalo = "3"
 bytes = "1"

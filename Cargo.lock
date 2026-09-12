@@ -826,6 +826,7 @@ dependencies = [
  "glob",
  "introspect",
  "libc",
+ "permissions",
  "pm",
  "pool",
  "postgres",
@@ -833,6 +834,7 @@ dependencies = [
  "runtime",
  "runtime_core",
  "rusqlite",
+ "security",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1347,6 +1349,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "mysql",
+ "permissions",
  "postgres",
  "prost",
  "prost-build",
@@ -1357,6 +1360,7 @@ dependencies = [
  "rusqlite",
  "rustls",
  "rustls-pemfile",
+ "security",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4277,7 +4281,7 @@ version = "0.48.1"
 dependencies = [
  "deno_core",
  "deno_permissions",
- "runtime_core",
+ "security",
  "serde_json",
  "sys_traits",
 ]
@@ -4922,6 +4926,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "permissions"
+version = "0.48.1"
+dependencies = [
+ "security",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "petgraph"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5119,6 +5132,7 @@ dependencies = [
  "dirs",
  "json5",
  "libc",
+ "permissions",
  "reqwest",
  "runtime_core",
  "semver",
@@ -5154,9 +5168,11 @@ dependencies = [
  "mach2",
  "nanoid",
  "num_cpus",
+ "permissions",
  "platform_server",
  "reqwest",
  "runtime_core",
+ "security",
  "serde",
  "serde_json",
  "stdio",
@@ -5860,11 +5876,13 @@ dependencies = [
  "flate2",
  "notify",
  "num_cpus",
+ "permissions",
  "platform",
  "platform_server",
  "pool",
  "reqwest",
  "runtime_core",
+ "security",
  "serde_json",
  "stdio",
  "tempfile",
@@ -5877,6 +5895,7 @@ dependencies = [
 name = "runtime_core"
 version = "0.48.1"
 dependencies = [
+ "security",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -6174,6 +6193,13 @@ dependencies = [
  "hybrid-array",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "security"
+version = "0.48.1"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

@@ -273,7 +273,7 @@ fn validate_slot_id(id: &str) -> Result<(), String> {
 /// permission guidance (deka#758).
 fn permission_denial_from_error(
     error: &serde_json::Value,
-) -> Option<runtime_core::host_bridge::PermissionDenied> {
+) -> Option<permissions::host_bridge::PermissionDenied> {
     let map = error.as_object()?;
     let payload = if map.get("name").and_then(serde_json::Value::as_str) == Some("PermissionDenied")
         && map.contains_key("capability")
@@ -287,7 +287,7 @@ fn permission_denial_from_error(
     } else {
         return None;
     };
-    Some(runtime_core::host_bridge::PermissionDenied {
+    Some(permissions::host_bridge::PermissionDenied {
         capability: payload.get("capability")?.as_str()?.to_string(),
         target: payload.get("target")?.as_str()?.to_string(),
     })
@@ -643,7 +643,7 @@ mod tests {
         });
         let message = unwrap_result(&denial, &entry).unwrap_err();
         assert!(
-            message.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+            message.contains(permissions::host_bridge::PERMISSION_DENIED_MARKER),
             "marker missing: {message}"
         );
         assert!(
@@ -665,7 +665,7 @@ mod tests {
         });
         let fs_message = unwrap_result(&fs_denial, &entry).unwrap_err();
         assert!(
-            fs_message.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+            fs_message.contains(permissions::host_bridge::PERMISSION_DENIED_MARKER),
             "FsError denial marker missing: {fs_message}"
         );
         // Non-denial objects keep the generic message.
