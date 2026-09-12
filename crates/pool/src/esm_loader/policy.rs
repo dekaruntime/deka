@@ -82,10 +82,10 @@ pub fn ensure_project_layout(
     // ordinary run, so the early return always fired (deka#229, deka#430).
     // Comparing against the project root preserves what #220 actually needed
     // and drops the accidental blanket bypass.
-    runtime_core::project_gate::validate_project(
+    deka_modules::project_gate::validate_project(
         project_root,
         imports,
-        &runtime_core::project_gate::GateOptions {
+        &deka_modules::project_gate::GateOptions {
             module_root,
             require_lockfile: true,
             context: "deka runtime",

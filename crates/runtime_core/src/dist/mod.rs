@@ -16,7 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::modules::MODULES_DIR;
+use deka_modules::modules::MODULES_DIR;
 
 mod artifact_manifest;
 mod build_invalidation;

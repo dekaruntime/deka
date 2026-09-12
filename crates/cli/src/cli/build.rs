@@ -1,5 +1,5 @@
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use runtime_core::modules::MODULES_DIR;
+use deka_modules::modules::MODULES_DIR;
 
 use crate::cli::build_dsc;
 use crate::cli::build_publish;
@@ -593,7 +593,7 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
     let entry = runtime_core::dist::write_worker_router_entry(project_root)?;
     let entry_source = fs::read_to_string(&entry)
         .map_err(|err| format!("failed to read {}: {err}", entry.display()))?;
-    let graph_imports = runtime_core::ds_imports::paths(&entry_source);
+    let graph_imports = deka_modules::ds_imports::paths(&entry_source);
     project::ensure_project_layout(project_root, None, &graph_imports)?;
     let bundled = build_dsc::transpile_bundle(project_root, &entry, false)?;
     let public_files = runtime_core::dist::collect_public_rel_paths(project_root);

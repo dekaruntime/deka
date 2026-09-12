@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use crate::integrity::compute_package_integrity;
 use serde_json::Value;
 
-use runtime_core::module_spec::{
+use deka_modules::module_spec::{
     closed_stdlib_module_exports, closed_stdlib_module_id, ds_module_id_from_rel,
     ds_source_candidates, is_ds_source_path, module_spec_aliases,
 };
-use runtime_core::modules::{
+use deka_modules::modules::{
     MODULES_DIR, existing_modules_dirs, is_modules_dir_name, links_path, read_linked_modules,
 };
 

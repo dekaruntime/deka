@@ -4,7 +4,7 @@ use ::security::security_policy::{
 };
 use ::serve::config::ServeMode;
 use core::Context;
-use runtime_core::modules::MODULES_DIR;
+use deka_modules::modules::MODULES_DIR;
 use std::path::Path;
 
 pub struct ResolvedSecurityPolicy {

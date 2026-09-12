@@ -821,6 +821,7 @@ dependencies = [
  "core",
  "ctrlc",
  "deka-lsp",
+ "deka-modules",
  "deka_host",
  "deno_task_shell",
  "flate2",
@@ -1317,6 +1318,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka-modules"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b8bb715c1bb11510df786b3a9f6a592fa7994404b4648c26bc4ceba78094875"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "deka-validation"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1354,6 +1365,7 @@ dependencies = [
  "bumpalo",
  "bytes",
  "chrono",
+ "deka-modules",
  "deka-validation",
  "deno_core",
  "futures-util",
@@ -5132,13 +5144,13 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.21.7",
+ "deka-modules",
  "deka_host",
  "dirs",
  "json5",
  "libc",
  "permissions",
  "reqwest",
- "runtime_core",
  "semver",
  "serde",
  "serde_json",
@@ -5165,6 +5177,7 @@ version = "0.48.1"
 dependencies = [
  "compiler",
  "core_affinity",
+ "deka-modules",
  "deka-validation",
  "deka_host",
  "deno_core",
@@ -5886,6 +5899,7 @@ dependencies = [
  "compile",
  "compiler",
  "core",
+ "deka-modules",
  "deka_host",
  "deka_http",
  "deno_core",
@@ -5914,6 +5928,7 @@ dependencies = [
 name = "runtime_core"
 version = "0.48.1"
 dependencies = [
+ "deka-modules",
  "security",
  "serde",
  "serde_json",
