@@ -1,5 +1,4 @@
 pub mod data_envelope;
-pub mod deka_catalog;
 pub mod ds_tla;
 pub mod dist;
 pub mod platform_env;

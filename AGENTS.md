@@ -64,8 +64,8 @@ runtime contracts are not available from this slice.
 Stdlib packages (`@deka/*`) additionally reach the closed `deka.*` catalog
 through `safe { deka.kind.method(...) }` (non-throwing, declared type) and
 `unsafe { deka.kind.method(...) }` (`Result<T, string>`); application code
-may not. The catalog is validated and lowered by the loader before dsc
-compiles — see `docs/dekascript/runtime-bridge.mdx`.
+may not. The catalog is validated and lowered by dsc at compile time, with helper
+implementations bundled into emitted JavaScript — see `docs/dekascript/runtime-bridge.mdx`.
 
 ## Service Ports (deka-cli defaults)
 - `postgres`: 5432

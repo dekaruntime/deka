@@ -54,38 +54,20 @@ if (typeof globalThis.app === \"undefined\" && typeof __candidate !== \"undefine
 /// — this is the "every bridge site" RFD 27 gate. Local names `__deka_host`
 /// and `__deka_to_result` are part of the dsc emit contract (the paused
 /// framework's ui fallback references them), so they must not be renamed.
-///
-/// RFD 21 (deka#754): modules classified as official stdlib additionally get
-/// a module-scoped `deka` binding resolving to the closed catalog object on
-/// the realm-private internal surface. Non-stdlib modules get no binding, so
-/// their `deka` references keep resolving through the global scope (today's
-/// `deka.ui` behavior) and the compiled-JS gate refuses catalog kinds.
-fn host_bindings_preamble(kinds: &[String], catalog: bool) -> String {
+fn host_bindings_preamble(kinds: &[String]) -> String {
     let grants_json = serde_json::to_string(kinds).unwrap_or_else(|_| "[]".to_string());
-    let mut preamble = format!(
+    format!(
         "const __dekaHostBindings = globalThis[Symbol.for('deka.host.internal')];\n\
          const __dekaModuleGrants = Object.freeze({grants_json});\n\
          const __deka_host = __dekaHostBindings && ((k, a, args) => __dekaHostBindings.host(k, a, args, __dekaModuleGrants));\n\
          const __deka_to_result = __dekaHostBindings && __dekaHostBindings.toResult;\n"
-    );
-    if catalog {
-        preamble.push_str(
-            "const deka = __dekaHostBindings && __dekaHostBindings.moduleDeka\n\
-               ? __dekaHostBindings.moduleDeka(true)\n\
-               : globalThis.deka;\n",
-        );
-    }
-    preamble
+    )
 }
 
-pub(crate) fn prepend_host_bindings(
-    code: ModuleSourceCode,
-    kinds: &[String],
-    catalog: bool,
-) -> ModuleSourceCode {
+pub(crate) fn prepend_host_bindings(code: ModuleSourceCode, kinds: &[String]) -> ModuleSourceCode {
     match code {
         ModuleSourceCode::String(source) => {
-            let preamble = host_bindings_preamble(kinds, catalog);
+            let preamble = host_bindings_preamble(kinds);
             let mut text = String::with_capacity(preamble.len() + source.len());
             text.push_str(&preamble);
             text.push_str(&source);
@@ -133,24 +115,18 @@ mod tests {
     }
 
     #[test]
-    fn catalog_binding_is_injected_only_for_stdlib_modules() {
-        let make = || ModuleSourceCode::String("export const n = 1".to_string().into());
-        let stdlib = prepend_host_bindings(make(), &["crypto".to_string()], true);
-        let user = prepend_host_bindings(make(), &[], false);
-        let ModuleSourceCode::String(stdlib) = stdlib else {
+    fn host_bindings_preserve_compiler_emitted_catalog() {
+        let code = ModuleSourceCode::String(
+            "const __dsc_catalog = Object.freeze({});"
+                .to_string()
+                .into(),
+        );
+        let ModuleSourceCode::String(source) = prepend_host_bindings(code, &["crypto".to_string()])
+        else {
             panic!("string in, string out")
         };
-        let ModuleSourceCode::String(user) = user else {
-            panic!("string in, string out")
-        };
-        // Stdlib modules get the module-scoped `deka` catalog binding, routed
-        // through the realm-private internal surface.
-        assert!(stdlib.contains("const deka = __dekaHostBindings && __dekaHostBindings.moduleDeka"));
-        assert!(stdlib.contains("moduleDeka(true)"));
-        // User modules get no `deka` binding at all: their references keep
-        // resolving through the global scope (today's deka.ui behavior) and
-        // the loader's compiled-JS gate refuses catalog kinds.
-        assert!(!user.contains("moduleDeka"));
-        assert!(!user.contains("const deka ="));
+        assert!(source.contains("Object.freeze([\"crypto\"])"));
+        assert_eq!(source.matches("const __dsc_catalog =").count(), 1);
+        assert!(!source.contains("moduleDeka"));
     }
 }
