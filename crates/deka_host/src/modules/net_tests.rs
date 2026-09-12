@@ -1,6 +1,6 @@
 //! Tests for the net bridge (extracted from `net.rs`, deka#391).
-use super::proto;
 use super::net::{NetState, net_call_proto_impl_with, net_policy_target, tcp_connect_port};
+use super::proto;
 use ::security::security_policy::SecurityPolicy;
 use prost::Message;
 use serde_json::json;
@@ -90,6 +90,15 @@ fn tcp_handle_operations_retain_the_allowed_connect_target() {
     });
     let allowed = format!("127.0.0.1:{}", address.port());
     let allowed_policy = test_net_policy(&allowed);
+    let bind_policy = test_net_policy("127.0.0.1:0");
+    let bound = call_net(
+        &mut state,
+        &bind_policy,
+        "listen",
+        json!({"host": "127.0.0.1", "port": 0}),
+    )
+    .unwrap();
+    let listener_handle = bound["handle"].as_u64().unwrap();
 
     let connect = super::net::net_action_payload_to_proto_request(
         "connect",
@@ -106,6 +115,48 @@ fn tcp_handle_operations_retain_the_allowed_connect_target() {
         other => panic!("unexpected connect response: {other:?}"),
     };
 
+    assert_ne!(listener_handle, handle);
+    for action in ["set_deadline", "close"] {
+        assert!(
+            call_net(
+                &mut state,
+                &allowed_policy,
+                action,
+                json!({"handle": listener_handle, "millis": 0})
+            )
+            .is_err()
+        );
+        assert!(
+            call_net(
+                &mut state,
+                &bind_policy,
+                action,
+                json!({"handle": handle, "millis": 0})
+            )
+            .is_err()
+        );
+        assert_eq!(
+            call_net(
+                &mut state,
+                &bind_policy,
+                action,
+                json!({"handle": listener_handle, "millis": 0})
+            )
+            .unwrap()["ok"],
+            true
+        );
+    }
+    assert_eq!(
+        call_net(
+            &mut state,
+            &allowed_policy,
+            "set_deadline",
+            json!({"handle": handle, "millis": 5000})
+        )
+        .unwrap()["ok"],
+        true
+    );
+
     for (action, payload) in [
         ("write", json!({ "handle": handle, "data": "ping" })),
         ("read", json!({ "handle": handle, "max_bytes": 4 })),
@@ -113,8 +164,7 @@ fn tcp_handle_operations_retain_the_allowed_connect_target() {
         let request = super::net::net_action_payload_to_proto_request(action, &payload)
             .expect("encode handle operation");
         assert!(
-            net_call_proto_impl_with(&mut state, &allowed_policy, &request.encode_to_vec())
-                .is_ok(),
+            net_call_proto_impl_with(&mut state, &allowed_policy, &request.encode_to_vec()).is_ok(),
             "{action} must use the allowed connect target"
         );
     }
@@ -143,9 +193,7 @@ fn tcp_handle_operations_retain_the_allowed_connect_target() {
     let close =
         super::net::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
             .expect("encode close");
-    assert!(
-        net_call_proto_impl_with(&mut state, &allowed_policy, &close.encode_to_vec()).is_ok()
-    );
+    assert!(net_call_proto_impl_with(&mut state, &allowed_policy, &close.encode_to_vec()).is_ok());
     server.join().expect("server join");
 }
 
@@ -174,8 +222,7 @@ fn tcp_proto_binary_roundtrip_preserves_non_utf8_bytes() {
     )
     .expect("encode connect");
     let connect_response =
-        net_call_proto_impl_with(&mut state, &policy, &connect.encode_to_vec())
-            .expect("connect");
+        net_call_proto_impl_with(&mut state, &policy, &connect.encode_to_vec()).expect("connect");
     let connect_response = proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
         .expect("decode connect response");
     let handle = match connect_response.action.expect("connect action") {
@@ -256,6 +303,19 @@ fn tcp_listen_accept_roundtrip() {
         other => panic!("unexpected listen response: {other:?}"),
     };
 
+    for millis in [10, 0, 5000] {
+        assert_eq!(
+            call_net(
+                &mut state,
+                &policy,
+                "set_deadline",
+                json!({"handle": listen_handle, "millis": millis})
+            )
+            .unwrap()["ok"],
+            true
+        );
+    }
+
     let client = std::thread::spawn(move || {
         let mut stream = std::net::TcpStream::connect(addr).expect("client connect");
         stream.write_all(b"ping").expect("client write");
@@ -277,6 +337,31 @@ fn tcp_listen_accept_roundtrip() {
         proto::bridge_v1::net_response::Action::Accept(response) => response.handle,
         other => panic!("unexpected accept response: {other:?}"),
     };
+
+    assert_ne!(
+        listen_handle, conn_handle,
+        "listener and accepted stream must be distinct"
+    );
+    assert_eq!(
+        call_net(
+            &mut state,
+            &policy,
+            "set_deadline",
+            json!({"handle": listen_handle, "millis": 0})
+        )
+        .unwrap()["ok"],
+        true
+    );
+    assert_eq!(
+        call_net(
+            &mut state,
+            &policy,
+            "close",
+            json!({"handle": listen_handle})
+        )
+        .unwrap()["ok"],
+        true
+    );
 
     let read = super::net::net_action_payload_to_proto_request(
         "read",
@@ -333,8 +418,7 @@ fn tls_listen_accept_and_connect_tls_roundtrip() {
     )
     .expect("encode listen_tls");
     let listen_response =
-        net_call_proto_impl_with(&mut state, &policy, &listen.encode_to_vec())
-            .expect("listen_tls");
+        net_call_proto_impl_with(&mut state, &policy, &listen.encode_to_vec()).expect("listen_tls");
     let listen_response = proto::bridge_v1::NetResponse::decode(listen_response.as_slice())
         .expect("decode listen response");
     let listen_handle = match listen_response.action.expect("listen action") {
@@ -363,9 +447,8 @@ fn tls_listen_accept_and_connect_tls_roundtrip() {
             &connect_tls.encode_to_vec(),
         )
         .expect("connect_tls");
-        let connect_response =
-            proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
-                .expect("decode connect response");
+        let connect_response = proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
+            .expect("decode connect response");
         let handle = match connect_response.action.expect("connect action") {
             proto::bridge_v1::net_response::Action::ConnectTls(response) => response.handle,
             other => panic!("unexpected connect response: {other:?}"),
@@ -422,6 +505,31 @@ fn tls_listen_accept_and_connect_tls_roundtrip() {
     };
     assert!(!peer_addr.is_empty());
 
+    assert_ne!(
+        listen_handle, conn_handle,
+        "listener and accepted stream must be distinct"
+    );
+    assert_eq!(
+        call_net(
+            &mut state,
+            &policy,
+            "set_deadline",
+            json!({"handle": listen_handle, "millis": 0})
+        )
+        .unwrap()["ok"],
+        true
+    );
+    assert_eq!(
+        call_net(
+            &mut state,
+            &policy,
+            "close",
+            json!({"handle": listen_handle})
+        )
+        .unwrap()["ok"],
+        true
+    );
+
     let read = super::net::net_action_payload_to_proto_request(
         "read",
         &json!({ "handle": conn_handle, "max_bytes": 4 }),
@@ -469,8 +577,7 @@ fn tcp_proto_read_until_finds_delimiter_and_eof() {
     )
     .expect("encode connect");
     let connect_response =
-        net_call_proto_impl_with(&mut state, &policy, &connect.encode_to_vec())
-            .expect("connect");
+        net_call_proto_impl_with(&mut state, &policy, &connect.encode_to_vec()).expect("connect");
     let connect_response = proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
         .expect("decode connect response");
     let handle = match connect_response.action.expect("connect action") {
@@ -487,9 +594,8 @@ fn tcp_proto_read_until_finds_delimiter_and_eof() {
         }),
     )
     .expect("encode read_until");
-    let read_response =
-        net_call_proto_impl_with(&mut state, &policy, &read_until.encode_to_vec())
-            .expect("read_until");
+    let read_response = net_call_proto_impl_with(&mut state, &policy, &read_until.encode_to_vec())
+        .expect("read_until");
     let read_response = proto::bridge_v1::NetResponse::decode(read_response.as_slice())
         .expect("decode read_until response");
     let (data, found, eof) = match read_response.action.expect("read_until action") {
@@ -505,4 +611,109 @@ fn tcp_proto_read_until_finds_delimiter_and_eof() {
             .expect("encode close");
     net_call_proto_impl_with(&mut state, &policy, &close.encode_to_vec()).expect("close");
     server.join().expect("server join");
+}
+
+fn call_net(
+    state: &mut NetState,
+    policy: &SecurityPolicy,
+    action: &str,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, deno_core::error::CoreError> {
+    let request = super::net::net_action_payload_to_proto_request(action, &payload)?;
+    let response = net_call_proto_impl_with(state, policy, &request.encode_to_vec())?;
+    let response = proto::bridge_v1::NetResponse::decode(response.as_slice()).unwrap();
+    Ok(super::net::net_proto_response_to_json(&response))
+}
+
+#[test]
+fn listener_close_and_deadline_retain_bind_capability() {
+    let mut state = NetState::new();
+    let policy = test_net_policy("127.0.0.1:0");
+    let denied = test_net_policy("127.0.0.1:1");
+    let listener = call_net(
+        &mut state,
+        &policy,
+        "listen",
+        json!({"host": "127.0.0.1", "port": 0}),
+    )
+    .unwrap();
+    assert_eq!(listener["ok"], true);
+    let handle = listener["handle"].as_u64().unwrap();
+    for action in ["close", "set_deadline"] {
+        let error = call_net(
+            &mut state,
+            &denied,
+            action,
+            json!({"handle": handle, "millis": 0}),
+        )
+        .unwrap_err();
+        assert!(!error.to_string().contains("unknown handle"), "{error}");
+    }
+    for action in ["read", "write", "read_until", "tls_upgrade"] {
+        assert!(
+            call_net(&mut state, &policy, action, json!({"handle": handle}))
+                .unwrap_err()
+                .to_string()
+                .contains("unknown handle")
+        );
+    }
+    assert_eq!(
+        call_net(
+            &mut state,
+            &policy,
+            "set_deadline",
+            json!({"handle": handle, "millis": 0})
+        )
+        .unwrap()["ok"],
+        true
+    );
+    assert_eq!(
+        call_net(&mut state, &policy, "close", json!({"handle": handle})).unwrap()["ok"],
+        true
+    );
+    for action in ["close", "set_deadline", "accept"] {
+        assert!(call_net(&mut state, &policy, action, json!({"handle": handle})).is_err());
+    }
+}
+
+#[test]
+fn listener_accept_timeout_can_be_cleared() {
+    let mut state = NetState::new();
+    let policy = test_net_policy("127.0.0.1:0");
+    let listener = call_net(
+        &mut state,
+        &policy,
+        "listen",
+        json!({"host": "127.0.0.1", "port": 0}),
+    )
+    .unwrap();
+    let handle = listener["handle"].as_u64().unwrap();
+    assert_eq!(
+        call_net(
+            &mut state,
+            &policy,
+            "set_deadline",
+            json!({"handle": handle, "millis": 10})
+        )
+        .unwrap()["ok"],
+        true
+    );
+    let started = std::time::Instant::now();
+    let error = call_net(&mut state, &policy, "accept", json!({"handle": handle})).unwrap_err();
+    assert!(error.to_string().contains("accept timed out"), "{error}");
+    assert!(started.elapsed() >= std::time::Duration::from_millis(10));
+    assert_eq!(
+        call_net(
+            &mut state,
+            &policy,
+            "set_deadline",
+            json!({"handle": handle, "millis": 0})
+        )
+        .unwrap()["ok"],
+        true
+    );
+    assert_eq!(
+        call_net(&mut state, &policy, "close", json!({"handle": handle})).unwrap()["ok"],
+        true
+    );
 }
