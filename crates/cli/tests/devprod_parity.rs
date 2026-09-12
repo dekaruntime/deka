@@ -15,6 +15,21 @@ fn cli_bin() -> &'static str {
 const ORPHAN_MARKER: &str = "orphan-body-marker";
 const UNUSED_MARKER: &str = "unused-body-marker";
 
+fn test_dsc() -> PathBuf {
+    // CI installs the pinned compiler in .ci/dsc and exports DEKA_DSC.
+    // runtime_core intentionally ignores the environment: compiler selection
+    // belongs to the caller, just as it does at the CLI build boundary.
+    let dsc = match std::env::var_os("DEKA_DSC") {
+        Some(path) => PathBuf::from(path),
+        None => runtime_core::dsc::find_dsc()
+            .expect("resolve sibling/repository dsc")
+            .expect("parity tests require dsc: set DEKA_DSC to the pinned compiler"),
+    };
+    assert!(dsc.is_file(), "parity compiler is not a file: {}", dsc.display());
+    dsc.canonicalize()
+        .unwrap_or_else(|error| panic!("invalid parity compiler {}: {error}", dsc.display()))
+}
+
 fn init_project(dir: &Path) {
     let output = Command::new(cli_bin())
         .args(["init", "."])
@@ -75,9 +90,10 @@ fn write_fixture(dir: &Path) {
     .expect("write app/about/page.dsx");
 }
 
-fn run_build(dir: &Path) -> (bool, String) {
+fn run_build(dir: &Path, dsc: &Path) -> (bool, String) {
     let output = Command::new(cli_bin())
         .arg("build")
+        .env("DEKA_DSC", dsc)
         .current_dir(dir)
         .output()
         .expect("run deka build");
@@ -130,18 +146,17 @@ fn dev_and_prod_emit_the_same_modules() {
 
     let root = project.path().canonicalize().expect("canonical project");
     let entry = runtime_core::dist::write_app_router_entry(&root).expect("generate dev entry");
-    let dsc = runtime_core::dsc::find_dsc()
-        .expect("resolve dsc")
-        .expect("dsc required");
+    let dsc = test_dsc();
     let dev_graph = pool::dsc_compile::compile_graph_with_dsc(&root, &entry, &dsc)
-        .expect("compile dev module graph");
+        .unwrap_or_else(|error| panic!("compile dev graph with {}: {error}", dsc.display()));
     let dev_entry = read_serve_entry(&root);
     assert!(dev_entry.contains("app/about/page.dsx") && dev_entry.contains("app/page.dsx"));
 
-    let (success, combined) = run_build(&root);
+    let (success, combined) = run_build(&root, &dsc);
     assert!(
         success,
-        "build must compile the same graph as dev: {combined}"
+        "build must compile the same graph as dev with {}: {combined}",
+        dsc.display()
     );
     assert_eq!(
         dev_entry,
@@ -245,7 +260,7 @@ fn build_still_fails_closed_on_invalid_source() {
         "export function f(): int { return\n",
     )
     .expect("write broken.dsx");
-    let (success, combined) = run_build(project.path());
+    let (success, combined) = run_build(project.path(), &test_dsc());
     assert!(
         !success,
         "deka build must exit non-zero on invalid source under app/: {combined}"
@@ -275,7 +290,7 @@ fn build_still_fails_closed_on_invalid_importing_source() {
         "import { shared_message } from \"../lib/shared.ds\"\nexport fn Broken() {\n    return <main>{shared_message()}</main>;\n",
     )
     .expect("write broken-import.dsx");
-    let (success, combined) = run_build(project.path());
+    let (success, combined) = run_build(project.path(), &test_dsc());
     assert!(
         !success,
         "deka build must exit non-zero on a graph-invalid importing source: {combined}"
