@@ -1,0 +1,18 @@
+---
+title: Running conformance tests
+description: Fetch and run the conformance corpus pinned to your CLI.
+---
+
+Fetch the corpus matching your CLI, then run its tests:
+
+```sh
+deka self fetch testsuite
+deka self test suite
+```
+
+The fetch command downloads the revision embedded in the CLI and verifies
+the archive's SHA-256 before replacing the local `testsuite/` directory.
+Release builds use a corpus version tag. Development builds validating a
+paired runtime and corpus change may use a full immutable commit SHA;
+branch names and abbreviated SHAs are rejected. The final release pin is
+the next corpus tag published with the lockstep release.

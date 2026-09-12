@@ -14,7 +14,8 @@
 //! this CLI was verified against, and it moves in the same PR that changes
 //! the code (RFD 59 workflow step 4). Until the RFD 59 lockstep tags exist
 //! (deka#835), the pin records the latest published content ref — a
-//! `corpus-v*` tag for testsuite, a full commit SHA for tour — validated by
+//! `corpus-v*` tag for testsuite, a full commit SHA for tour (or paired
+//! testsuite PR proof before release) — validated by
 //! [`validate_ref`]. Once lockstep lands, the refs become plain version tags
 //! equal to `CARGO_PKG_VERSION` (deka 0.46.0 pairs with testsuite 0.46.0);
 //! the pin file then holds that tag and this code path is unchanged. The
@@ -110,7 +111,12 @@ impl Pin {
 
 /// Enforce the ref shape the lockstep rule expects (see module docs).
 fn validate_ref(target: &ContentTarget, reference: &str) -> Result<(), String> {
-    let valid = if target.name == "testsuite" {
+    // Paired corpus PRs use an immutable commit for CI proof before the
+    // release owner publishes the final lockstep corpus tag.
+    let full_sha = reference.len() == 40 && reference.chars().all(|c| c.is_ascii_hexdigit());
+    let valid = if full_sha {
+        true
+    } else if target.name == "testsuite" {
         // Pre-lockstep the corpus publishes `corpus-v*` tags; under lockstep
         // (deka#835) this becomes a plain `vX.Y.Z` version tag and the shape
         // check moves with the pin — the resolution code is unchanged. Both
@@ -127,7 +133,7 @@ fn validate_ref(target: &ContentTarget, reference: &str) -> Result<(), String> {
     } else {
         // Tour has no release tags yet (deka#832 pinned by commit SHA); a
         // full SHA is immutable by construction, unlike a tag.
-        reference.len() == 40 && reference.chars().all(|c| c.is_ascii_hexdigit())
+        false
     };
     if valid {
         Ok(())
@@ -166,10 +172,6 @@ mod tests {
                     || pin.reference.len() == 40
             );
         }
-        assert_eq!(
-            Pin::parse(&TESTSUITE).expect("testsuite pin").reference,
-            "corpus-v0.1.1"
-        );
     }
 
     #[test]
@@ -203,9 +205,27 @@ mod tests {
             ..TESTSUITE
         };
         assert_eq!(
-            Pin::parse(&lockstep).expect("lockstep v-tag parses").reference,
+            Pin::parse(&lockstep)
+                .expect("lockstep v-tag parses")
+                .reference,
             "v0.47.0"
         );
+    }
+
+    #[test]
+    fn testsuite_companion_requires_full_immutable_sha() {
+        let companion = ContentTarget {
+            pin: "34722c8a75a15a627781b0011c285fd4f26474d3\n0000000000000000000000000000000000000000000000000000000000000000\n",
+            ..TESTSUITE
+        };
+        assert!(Pin::parse(&companion).is_ok());
+        for reference in [
+            "34722c8",
+            "retire/framework-fixtures-893",
+            "zz722c8a75a15a627781b0011c285fd4f26474d3",
+        ] {
+            assert!(validate_ref(&TESTSUITE, reference).is_err());
+        }
     }
 
     #[test]
