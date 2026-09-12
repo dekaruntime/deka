@@ -18,7 +18,7 @@ native = [
   "dep:deno_task_shell",
   "dep:ctrlc",
 ]
-lsp = ["dep:dekascript_lsp"]
+lsp = ["dep:deka-lsp"]
 
 [dependencies]
 runtime = { path = "../runtime", optional = true }
@@ -36,7 +36,7 @@ serde_json = "1.0"
 reqwest = { version = "0.13", features = ["blocking", "form", "json"] }
 tokio = { version = "1.35", features = ["rt-multi-thread", "net", "io-util"], optional = true }
 postgres = { version = "0.19", optional = true }
-dekascript_lsp = { path = "../deka_lsp", optional = true }
+deka-lsp = { version = "0.1.0", optional = true }
 deka_host = { path = "../deka_host", optional = true, default-features = false, features = ["runtime"] }
 rusqlite = { version = "0.32", optional = true }
 sha2 = "0.10"

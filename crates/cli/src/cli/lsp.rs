@@ -30,7 +30,7 @@ pub fn cmd(_context: &Context) {
         }
     };
 
-    let status = runtime.block_on(async { dekascript_lsp::run_stdio().await });
+    let status = runtime.block_on(async { deka_lsp::run_stdio().await });
     if let Err(err) = status {
         stdio::error("cli", &format!("failed to start DekaScript lsp: {}", err));
         std::process::exit(1);
