@@ -53,6 +53,9 @@ pub(super) fn ensure_project_layout(
     module_root: Option<&Path>,
     imports: &[String],
 ) -> Result<(), String> {
+    // Callers pass None: `deka build` has no external stdlib root. If one
+    // is supplied, 0.3.0 exempts recognized stdlib only — not a whole-gate
+    // bypass (dsc#167).
     deka_modules::project_gate::validate_project(
         project_root,
         imports,
@@ -180,4 +183,45 @@ pub(super) fn is_deka_source_path(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()),
         Some("ds") | Some("dsx")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_project_layout;
+    use std::fs;
+
+    #[test]
+    fn build_passes_no_external_module_root_and_gates_third_party() {
+        let project = tempfile::tempdir().expect("project");
+        fs::write(project.path().join("deka.json"), r#"{"name":"app"}"#).expect("manifest");
+        fs::write(project.path().join("deka.lock"), "{}").expect("lock");
+
+        ensure_project_layout(project.path(), None, &[]).expect("no imports");
+
+        let err = ensure_project_layout(project.path(), None, &["@acme/tool".to_string()])
+            .expect_err("undeclared third-party must fail");
+        assert!(
+            err.contains("not declared"),
+            "build gate must reject undeclared third-party: {err}"
+        );
+
+        let stdlib = tempfile::tempdir().expect("stdlib");
+        let err = ensure_project_layout(
+            project.path(),
+            Some(stdlib.path()),
+            &["@acme/tool".to_string()],
+        )
+        .expect_err("external root is not a whole-gate bypass");
+        assert!(
+            err.contains("not declared"),
+            "build gate must still reject third-party under external root: {err}"
+        );
+
+        ensure_project_layout(
+            project.path(),
+            Some(stdlib.path()),
+            &["@deka/crypto".to_string()],
+        )
+        .expect("external root still supplies recognized stdlib");
+    }
 }

@@ -83,11 +83,92 @@ fn run_entry(project: &Path) -> (bool, String) {
 
 #[test]
 fn runtime_rejects_an_installed_stdlib_import_without_a_lock_entry() {
-    let project = project_with_installed_module("{\"name\":\"gate\"}\n");
+    let project = project_with_installed_module(
+        "{\"name\":\"gate\",\"dependencies\":{\"@deka/io\":\"*\"}}\n",
+    );
     let (success, combined) = run_entry(project.path());
     assert!(
         !success && combined.contains("has no deka.lock entry"),
         "installed import without a lock entry must be rejected: {combined}"
+    );
+}
+
+#[test]
+fn runtime_rejects_integrity_mismatch() {
+    let project = project_with_installed_module(
+        "{\"name\":\"gate\",\"dependencies\":{\"@deka/io\":\"*\"}}\n",
+    );
+    lock_installed_module(project.path());
+    fs::write(
+        project
+            .path()
+            .join("ds_modules")
+            .join("@deka")
+            .join("io")
+            .join("index.ds"),
+        "export fn echo(value: string) string {\n    return \"tampered\"\n}\n",
+    )
+    .expect("tamper package");
+    let (success, combined) = run_entry(project.path());
+    let lower = combined.to_ascii_lowercase();
+    assert!(
+        !success
+            && (lower.contains("integrity mismatch") || lower.contains("does not match deka.lock")),
+        "tampered package tree must fail fsGraph integrity: {combined}"
+    );
+}
+
+#[test]
+fn runtime_rejects_undeclared_third_party_bare_import() {
+    let project = tempfile::tempdir().expect("create project");
+    fs::write(project.path().join("deka.json"), "{\"name\":\"gate\"}\n").expect("manifest");
+    fs::write(project.path().join("deka.lock"), EMPTY_DEKA_LOCK).expect("lockfile");
+    let module_dir = project.path().join("ds_modules").join("@acme").join("tool");
+    fs::create_dir_all(&module_dir).expect("module dir");
+    fs::write(
+        module_dir.join("index.ds"),
+        "export fn ping() string {\n    return \"ok\"\n}\n",
+    )
+    .expect("module source");
+    fs::write(
+        project.path().join("main.ds"),
+        "import { ping } from \"@acme/tool\"\n\nexport fn handler() string {\n    return ping()\n}\n",
+    )
+    .expect("entry");
+    let (success, combined) = run_entry(project.path());
+    let lower = combined.to_ascii_lowercase();
+    assert!(
+        !success && (lower.contains("not declared") || lower.contains("missing from deka.lock")),
+        "undeclared third-party import must fail closed: {combined}"
+    );
+}
+
+#[test]
+fn runtime_rejects_undeclared_unknown_deka_scope_import() {
+    let project = tempfile::tempdir().expect("create project");
+    fs::write(project.path().join("deka.json"), "{\"name\":\"gate\"}\n").expect("manifest");
+    fs::write(project.path().join("deka.lock"), EMPTY_DEKA_LOCK).expect("lockfile");
+    let module_dir = project
+        .path()
+        .join("ds_modules")
+        .join("@deka")
+        .join("not-a-stdlib-package");
+    fs::create_dir_all(&module_dir).expect("module dir");
+    fs::write(
+        module_dir.join("index.ds"),
+        "export fn ping() string {\n    return \"ok\"\n}\n",
+    )
+    .expect("module source");
+    fs::write(
+        project.path().join("main.ds"),
+        "import { ping } from \"@deka/not-a-stdlib-package\"\n\nexport fn handler() string {\n    return ping()\n}\n",
+    )
+    .expect("entry");
+    let (success, combined) = run_entry(project.path());
+    let lower = combined.to_ascii_lowercase();
+    assert!(
+        !success && (lower.contains("not declared") || lower.contains("missing from deka.lock")),
+        "unknown @deka/* is not stdlib and must be declared: {combined}"
     );
 }
 

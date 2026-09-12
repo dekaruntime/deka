@@ -70,3 +70,11 @@ and the user cache is not involved.
 Installed dependencies use `ds_modules/`. The installer and module-directory
 resolver do not fall back to a legacy `php_modules/` tree. Reinstall a legacy
 project's declared dependencies with `deka install` to populate `ds_modules/`.
+
+Bare package imports must be declared in `deka.json` and present in
+`deka.lock`, including third-party scopes and unknown `@deka/*` names.
+Stdlib membership is a closed vocabulary (named modules plus the
+`component/`, `deka/`, `encoding/`, and `db/` families) — the `@deka/`
+scope is an alias, not a wildcard. An external `moduleRoot` supplies
+those recognized stdlib modules only; it does not waive declaration,
+installation, or fsGraph integrity for anything else.
