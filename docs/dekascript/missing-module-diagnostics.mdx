@@ -1,0 +1,50 @@
+---
+title: Missing-module diagnostics
+description: Two host-truthful error strings for an unresolvable non-relative import — native filesystem search vs wasm single-file typeck.
+---
+
+An unresolvable non-relative import is rejected on every host. Given
+
+```ds
+import { foo } from "bar"
+```
+
+when `bar` cannot be resolved, the diagnostic string depends on the
+host, because the hosts do different work. Both strings are truthful
+for what that host actually attempted.
+
+## Native filesystem resolver
+
+The native host resolves non-relative specifiers on the filesystem. It
+searches the project's `ds_modules/` tree and the other roots the
+resolver walks. A miss reports:
+
+```text
+Missing module 'bar' (imported from ...). Attempted roots: ...
+```
+
+The attempted-roots list is a record of directories native searched.
+
+## Wasm single-file typeck
+
+The wasm compiler typechecks one file at a time. Known bare specifiers
+(stdlib shims) are supplied through an import map (`moduleBase`); there
+is no filesystem walk of `ds_modules/`. When `"bar"` is absent from
+that map, dsc typeck reports:
+
+```text
+cannot resolve imported name `foo` from `bar`
+```
+
+Wasm cannot honestly emit attempted-roots. It did not search those
+roots, so claiming it did would describe work the host never performed.
+The typeck string is the truthful wasm answer: the imported name is
+unresolved because the module was never in the map.
+
+## Corpus fixtures keep the native string
+
+The conformance corpus fixture `modules-import-non-relative-001`
+asserts the native `Missing module 'bar'` diagnostic. That assertion
+is not weakened to a token both hosts happen to share. Wasm's
+different wording is a documented per-host difference (deka#904), not
+a compiler or language mismatch.
