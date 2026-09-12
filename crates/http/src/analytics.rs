@@ -50,15 +50,12 @@ const DAILY_TTL_SECS: u64 = 90 * 24 * 60 * 60;
 /// A single page-view event produced by the request path.
 ///
 /// We carry the full request header set rather than a resolved `shop_id` so
-/// that the `subdomain → shop_id` Redis lookup happens on the worker thread,
-/// not the hot async request path. The worker already owns a Redis
-/// connection so resolution is essentially free alongside the INCR pipeline.
+/// the worker can resolve the canonical storefront host before writing its
+/// counter.
 #[derive(Debug, Clone)]
 pub struct PageviewEvent {
     /// Exactly the `(name, value)` header pairs that were presented to the
-    /// runtime — only the server-routed `Host` entry is read, but we keep
-    /// the vec shape so the existing `pool::tenant::resolve_tenant_from_headers`
-    /// can be called directly.
+    /// runtime — only the server-routed `Host` entry is read.
     pub headers: Vec<(String, String)>,
     /// `YYYY-MM-DD` in UTC, computed at emit time so late draining cannot
     /// mis-bucket a burst that crosses midnight.
@@ -146,7 +143,7 @@ fn header_name_is_content_type(key: &str) -> bool {
 /// Cheap and non-blocking: filters on `status` + `response_headers`, and if
 /// eligible captures the request headers (needed for tenant resolution) and
 /// pushes one event onto an in-memory channel. No Redis I/O happens on the
-/// request path — the worker thread handles subdomain → shop_id resolution
+/// request path — the worker thread handles host → shop_id resolution
 /// and the counter writes.
 ///
 /// Returns `true` if the event was queued, `false` if it was filtered or
@@ -197,18 +194,14 @@ fn run_worker(rx: mpsc::Receiver<PageviewEvent>, redis_url: String) {
     let mut conn: Option<redis::Connection> = None;
 
     while let Ok(event) = rx.recv() {
-        // Resolve subdomain → shop_id. The pool's tenant resolver keeps a
-        // thread-local Redis connection cache — on this dedicated worker
-        // thread the first call establishes it and subsequent calls reuse.
-        let shop_id =
-            match pool::tenant::resolve_tenant_from_host_with_redis_url(&event.headers, &redis_url)
-            {
-                Some(id) if !id.is_empty() => id,
-                _ => {
-                    // No tenant — not a storefront request. Drop silently.
-                    continue;
-                }
-            };
+        // Resolve the canonical storefront host to its shop ID.
+        let shop_id = match pool::tenant::resolve_tenant_from_host(&event.headers) {
+            Some(id) if !id.is_empty() => id,
+            _ => {
+                // No tenant — not a storefront request. Drop silently.
+                continue;
+            }
+        };
 
         if conn.is_none() {
             conn = connect(&redis_url);
@@ -393,12 +386,9 @@ mod tests {
     }
 
     // End-to-end integration test: requires the dev Docker Redis at
-    // localhost:6380 (same pattern as pool's redis_lookup_integration).
+    // localhost:6380.
     // Skips silently if not reachable so CI stays clean.
     //
-    // Seeds a `subdomain:{name}` → `{shop_id}` key in Redis so the
-    // Host-based resolver can find it (analytics now uses
-    // `resolve_tenant_from_host` which ignores X-Shop-ID).
     #[test]
     fn end_to_end_redis_integration() {
         let url = "redis://localhost:6380".to_string();
@@ -412,18 +402,10 @@ mod tests {
         };
 
         let pid = std::process::id();
-        let subdomain = format!("pvtest{}", pid);
         let shop = format!("shop_pvtest_{}", pid);
-        let subdomain_key = format!("subdomain:{}", subdomain);
         let total = format!("analytics:{}:pageviews:total", shop);
         let daily = format!("analytics:{}:pageviews:{}", shop, today_utc());
 
-        // Seed the subdomain → shop_id mapping
-        let _: () = redis::cmd("SET")
-            .arg(&subdomain_key)
-            .arg(&shop)
-            .query(&mut probe)
-            .unwrap();
         let _: () = redis::cmd("DEL")
             .arg(&total)
             .arg(&daily)
@@ -431,7 +413,7 @@ mod tests {
             .unwrap();
 
         let request_headers: Vec<(String, String)> =
-            vec![("Host".to_string(), format!("{}.tana.gg", subdomain))];
+            vec![("Host".to_string(), format!("{}.tana.gg", shop))];
         let (sender, receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
         let worker = std::thread::spawn({
             let url = url.clone();
@@ -460,7 +442,6 @@ mod tests {
         let _: () = redis::cmd("DEL")
             .arg(&total)
             .arg(&daily)
-            .arg(&subdomain_key)
             .query(&mut probe)
             .unwrap();
     }

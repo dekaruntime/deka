@@ -5571,7 +5571,6 @@ dependencies = [
  "nanoid",
  "num_cpus",
  "platform_server",
- "redis",
  "reqwest",
  "runtime_core",
  "serde",

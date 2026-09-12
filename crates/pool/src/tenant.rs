@@ -1,12 +1,3 @@
-use redis::{Client, Commands, Connection};
-use std::cell::RefCell;
-
-/// Raw shop mapping returned by a subdomain lookup.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SubdomainRecord {
-    pub shop_id: String,
-}
-
 /// Result of tenant resolution, optionally carrying a preview commit hash.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TenantInfo {
@@ -24,10 +15,6 @@ impl TenantInfo {
             None => self.shop_id.clone(),
         }
     }
-}
-
-thread_local! {
-    static TENANT_REDIS: RefCell<Option<Connection>> = RefCell::new(None);
 }
 
 /// Extract the subdomain from a Host header value.
@@ -90,18 +77,10 @@ pub fn parse_preview_host(host: &str) -> Option<(String, String)> {
     None
 }
 
-/// Resolve a subdomain to a shop ID via Redis.
-///
-/// Returns `None` if not found or Redis is unavailable.
-pub fn resolve_tenant(subdomain: &str) -> Option<String> {
-    let _ = subdomain;
-    None
-}
-
 /// Return true when a subdomain is already a canonical shop_id.
 ///
-/// Shop IDs are accepted directly so shard-local storefront requests like
-/// `shop_alpha.tana.gg` do not need a `subdomain:*` routing lookup.
+/// Cloudflare edge routing forwards storefront requests with this canonical
+/// hostname, so no shard-local routing lookup is needed.
 pub fn is_shop_id_subdomain(subdomain: &str) -> bool {
     subdomain.strip_prefix("shop_").is_some_and(|rest| {
         !rest.is_empty()
@@ -111,68 +90,8 @@ pub fn is_shop_id_subdomain(subdomain: &str) -> bool {
     })
 }
 
-/// Resolve a subdomain to a `SubdomainRecord` via Redis.
-///
-/// Accepts both the JSON format (`{"shop_id":...}`) and the legacy
-/// plain-string format (just the shop_id). Extra JSON fields are ignored.
-///
-/// The caller supplies the Redis URL from its resolved configuration.
-
-fn resolve_tenant_record_with_redis_url(
-    subdomain: &str,
-    redis_url: &str,
-) -> Option<SubdomainRecord> {
-    let raw: Option<String> = TENANT_REDIS.with(|cell: &RefCell<Option<Connection>>| {
-        let mut conn = cell.borrow_mut();
-        if conn.is_none() {
-            if let Ok(client) = Client::open(redis_url) {
-                // Use a short timeout to avoid blocking the worker thread
-                if let Ok(c) =
-                    client.get_connection_with_timeout(std::time::Duration::from_millis(500))
-                {
-                    *conn = Some(c);
-                }
-            }
-        }
-
-        if let Some(ref mut c) = *conn {
-            let key = format!("subdomain:{}", subdomain);
-            c.get::<_, Option<String>>(&key).ok().flatten()
-        } else {
-            None
-        }
-    });
-
-    raw.map(|s| parse_subdomain_value(&s))
-}
-
-/// Parse a `subdomain:*` value into a `SubdomainRecord`.
-///
-/// Accepts either:
-///   - JSON: `{"shop_id": "..."}`
-///   - Plain string: `"shop_foo"` (legacy format)
-pub fn parse_subdomain_value(raw: &str) -> SubdomainRecord {
-    let trimmed = raw.trim();
-    if trimmed.starts_with('{') {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            let shop_id = v
-                .get("shop_id")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string();
-            if !shop_id.is_empty() {
-                return SubdomainRecord { shop_id };
-            }
-        }
-    }
-    SubdomainRecord {
-        shop_id: trimmed.to_string(),
-    }
-}
-
 /// Resolve tenant from request headers.
-/// Extracts Host header → subdomain → Zega lookup → shop_id.
-/// Falls back to `DEKA_SHOP_ID` env var for dev/testing.
+/// Extracts Host header → canonical shop ID.
 pub fn resolve_tenant_from_headers(headers: &[(String, String)]) -> Option<String> {
     resolve_tenant_from_host(headers)
 }
@@ -183,18 +102,6 @@ pub fn resolve_tenant_from_headers(headers: &[(String, String)]) -> Option<Strin
 /// tenant routing or analytics attribution.
 pub fn resolve_tenant_from_host(headers: &[(String, String)]) -> Option<String> {
     resolve_tenant_info_from_host(headers).map(|info| info.shop_id)
-}
-
-/// Resolve a tenant from the Host header using an explicit Redis URL.
-///
-/// This variant is useful for callers that already own their configuration,
-/// such as isolated workers and tests, and therefore must not read process
-/// environment state.
-pub fn resolve_tenant_from_host_with_redis_url(
-    headers: &[(String, String)],
-    redis_url: &str,
-) -> Option<String> {
-    resolve_tenant_info_from_host_strict_with_redis_url(headers, redis_url).map(|info| info.shop_id)
 }
 
 /// Like `resolve_tenant_from_host` but also returns preview ref info.
@@ -208,14 +115,6 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
 /// not fall back to process env. Use it in platform multi-tenant request paths
 /// before injecting `SHOP_ID`, `$_ENV`, or vault-backed secrets.
 pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Option<TenantInfo> {
-    resolve_tenant_info_from_host_strict_with_redis_url(headers, "")
-}
-
-/// Resolve tenant info from the Host header using an explicit Redis URL.
-pub fn resolve_tenant_info_from_host_strict_with_redis_url(
-    headers: &[(String, String)],
-    redis_url: &str,
-) -> Option<TenantInfo> {
     let host = headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("host"))
@@ -230,13 +129,6 @@ pub fn resolve_tenant_info_from_host_strict_with_redis_url(
                 preview_ref: Some(hash),
             });
         }
-
-        if let Some(rec) = resolve_tenant_record_with_redis_url(&shop_subdomain, redis_url) {
-            return Some(TenantInfo {
-                shop_id: rec.shop_id,
-                preview_ref: Some(hash),
-            });
-        }
     }
 
     // Normal subdomain resolution
@@ -244,13 +136,6 @@ pub fn resolve_tenant_info_from_host_strict_with_redis_url(
         if is_shop_id_subdomain(&subdomain) {
             return Some(TenantInfo {
                 shop_id: subdomain,
-                preview_ref: None,
-            });
-        }
-
-        if let Some(rec) = resolve_tenant_record_with_redis_url(&subdomain, redis_url) {
-            return Some(TenantInfo {
-                shop_id: rec.shop_id,
                 preview_ref: None,
             });
         }
@@ -262,7 +147,6 @@ pub fn resolve_tenant_info_from_host_strict_with_redis_url(
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn extract_subdomain_from_host() {
@@ -458,100 +342,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_subdomain_value_json_ignores_legacy_account_id() {
-        let rec = parse_subdomain_value(
-            r#"{"shop_id":"shop_beta","account_id":"2789d397-a96a-44ba-9073-24c711d007ff"}"#,
-        );
-        assert_eq!(rec.shop_id, "shop_beta");
-    }
-
-    #[test]
-    fn parse_subdomain_value_legacy_plain_string() {
-        let rec = parse_subdomain_value("shop_beta");
-        assert_eq!(rec.shop_id, "shop_beta");
-    }
-
-    #[test]
-    fn parse_subdomain_value_json_format() {
-        let rec = parse_subdomain_value(r#"{"shop_id":"shop_beta"}"#);
-        assert_eq!(rec.shop_id, "shop_beta");
-    }
-
-    #[test]
-    fn parse_subdomain_value_json_ignores_empty_legacy_account_id() {
-        let rec = parse_subdomain_value(r#"{"shop_id":"shop_beta","account_id":""}"#);
-        assert_eq!(rec.shop_id, "shop_beta");
-    }
-
-    #[test]
-    fn parse_subdomain_value_bogus_json_falls_back() {
-        // Non-JSON-looking string is treated as the legacy plain-string shop_id.
-        let rec = parse_subdomain_value("weird_value");
-        assert_eq!(rec.shop_id, "weird_value");
-    }
-
-    #[test]
-    fn redis_fallback_values_fail_point_of_use_validation() {
-        // deka#870: the Redis `subdomain:*` fallback returns whatever string
-        // is stored under the key, with no validation of the stored value.
-        // The point-of-use guard in platform.rs re-applies this same charset
-        // rule, so every malicious fallback value below must fail it — the
-        // rule is shared, not reimplemented.
-        let malicious = [
-            r#"{"shop_id":"../escape"}"#,
-            r#"{"shop_id":"/abs/path"}"#,
-            r#"{"shop_id":"shop_αβγ"}"#,
-            r#"{"shop_id":"shop_ok/../../etc/passwd"}"#,
-            r#"{"shop_id":""}"#, // empty JSON shop_id falls back to the raw text
-            "../escape",
-            "%2e%2e/escape",
-            " ",
-        ];
-        for raw in malicious {
-            let rec = parse_subdomain_value(raw);
-            assert!(
-                !is_shop_id_subdomain(&rec.shop_id),
-                "fallback value {raw:?} (shop_id {:?}) must fail point-of-use validation",
-                rec.shop_id
-            );
-        }
-
-        let valid = parse_subdomain_value(r#"{"shop_id":"shop_alpha-1_beta"}"#);
-        assert!(is_shop_id_subdomain(&valid.shop_id));
-    }
-
-    #[test]
     fn tenant_info_cache_key_preview() {
         let info = TenantInfo {
             shop_id: "shop_beta".to_string(),
             preview_ref: Some("a1b2c3d".to_string()),
         };
         assert_eq!(info.cache_key(), "shop_beta:a1b2c3d");
-    }
-
-    #[test]
-    fn redis_lookup_integration() {
-        // This test requires Redis at localhost:6380 (the dev Docker Redis port).
-        // DEKA_REDIS_URL is set explicitly so the resolver uses the correct port
-        // regardless of whether a shards.json is present in the test environment.
-        let redis_url = "redis://localhost:6380";
-        let client = match Client::open(redis_url) {
-            Ok(c) => c,
-            Err(_) => return, // Skip if no Redis
-        };
-        let mut conn = match client.get_connection() {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-
-        // Seed test data
-        let _: () = conn.set("subdomain:test-shop", "shop_test_001").unwrap();
-
-        let result = resolve_tenant_record_with_redis_url("test-shop", redis_url)
-            .map(|record| record.shop_id);
-        assert_eq!(result, Some("shop_test_001".to_string()));
-
-        // Clean up
-        let _: () = conn.del("subdomain:test-shop").unwrap();
     }
 }

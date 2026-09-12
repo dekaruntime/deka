@@ -25,7 +25,6 @@ use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 use crate::js_pipeline::build_deka_handler_bundle;
 use crate::security::resolve_platform_security_for_root;
 
-
 pub fn platform(context: &Context) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -68,12 +67,8 @@ const CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Resolve the on-disk handler path for a tenant.
 ///
-/// `shop_id` arrives from tenant resolution, whose fast path already applies
-/// the shop_id charset rule — but the Redis `subdomain:*` fallback
-/// (`parse_subdomain_value`) returns whatever string is stored under the
-/// key, with no validation on the stored value. Re-validate at the point of
-/// use with the same `is_shop_id_subdomain` rule (deka#870): a failing value
-/// is a hard error and must never reach a path join.
+/// `shop_id` arrives from canonical tenant resolution. Re-validate it before
+/// using it in a path join.
 fn resolve_handler_path(root: &std::path::Path, shop_id: &str) -> Result<PathBuf, String> {
     if shop_id.is_empty() {
         return Ok(root.join("default").join("main.ds"));
@@ -241,7 +236,6 @@ impl PlatformState {
 }
 
 async fn platform_async(context: &Context) {
-
     let input = &context.handler.input;
     let root = PathBuf::from(if input.is_empty() { "." } else { input });
     let root = std::fs::canonicalize(&root).unwrap_or(root);
