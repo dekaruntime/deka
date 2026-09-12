@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub use runtime_core::framework::{BuildPlan, BuildPlanSlot, PlannedSource};
+pub use runtime_core::dist::{BuildPlan, BuildPlanSlot, PlannedSource};
 
 const MISSING_DSC: &str = "dsc is required for deka build. Install dsc (https://deka.gg/install), set DEKA_DSC, or put dsc next to deka / on PATH.";
 

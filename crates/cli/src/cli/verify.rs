@@ -3,8 +3,8 @@
 //! its `.sha256` sidecar). This is the check to run before a deploy —
 //! `dist/client` is what a static host serves, so a CDN would serve tampered
 //! bytes without it. Thin wrapper over
-//! [`runtime_core::framework::ArtifactManifestV2::load_verified`] and
-//! [`runtime_core::framework::ArtifactManifestV2::verify`]; exits non-zero and
+//! [`runtime_core::dist::ArtifactManifestV2::load_verified`] and
+//! [`runtime_core::dist::ArtifactManifestV2::verify`]; exits non-zero and
 //! names every mismatched path when anything disagrees. Source `.ds(x)` files
 //! are never read — the artifact is the unit of verification (deka#743).
 
@@ -56,7 +56,7 @@ fn run(context: &Context) -> Result<(), String> {
         ));
     }
 
-    let manifest = runtime_core::framework::ArtifactManifestV2::load_verified(&dist)?;
+    let manifest = runtime_core::dist::ArtifactManifestV2::load_verified(&dist)?;
 
     let problems = manifest.verify(&dist);
     if !problems.is_empty() {

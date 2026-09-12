@@ -10,12 +10,11 @@
 //! of the next build. `DEKA_TEST_PUBLISH_PAUSE_MS` widens the window between
 //! the two renames so tests can kill a real build inside the transaction.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use runtime_core::framework::{BuildManifest, DeferredIsland, RouteMode};
+use runtime_core::dist::BuildManifest;
 
 /// A fully written staging tree, ready to replace `dist/`.
 pub struct StagedDist {
@@ -132,14 +131,14 @@ pub fn finalize(
     project_root: &Path,
     staged: &StagedDist,
     manifest: Option<&mut BuildManifest>,
-    artifact: Option<runtime_core::framework::ArtifactManifestV2>,
+    artifact: Option<runtime_core::dist::ArtifactManifestV2>,
 ) -> Result<(), String> {
     let mut manifest = manifest;
     let staged_dist = staged.root.join("dist");
     if let Some(manifest) = manifest.as_deref_mut() {
         manifest.record_artifacts(&staged_dist)?;
         manifest.write(
-            &runtime_core::framework::compiler_cache_dir(project_root).join("build-manifest.json"),
+            &runtime_core::dist::compiler_cache_dir(project_root).join("build-manifest.json"),
         )?;
     }
     if let Some(mut artifact) = artifact {
@@ -169,10 +168,10 @@ pub fn build_artifact_manifest(
     dist_root: &Path,
     worker_emitted: bool,
     trailing_slash: bool,
-    app: &runtime_core::framework::FrameworkManifest,
-    api: &[runtime_core::framework::FrameworkEntry],
-) -> Result<runtime_core::framework::ArtifactManifestV2, String> {
-    use runtime_core::framework::{
+    app: &runtime_core::dist::FrameworkManifest,
+    api: &[runtime_core::dist::FrameworkEntry],
+) -> Result<runtime_core::dist::ArtifactManifestV2, String> {
+    use runtime_core::dist::{
         ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactProducer,
         ArtifactRoute, ArtifactServer, ArtifactSlot, ArtifactWorker, MODULE_FORMAT, RUNTIME_ABI,
         RouteMode, client_output_path, server_entries,
@@ -330,93 +329,10 @@ pub fn recover_interrupted_publish(project_root: &Path) {
     }
 }
 
-/// One static render per planned static output: plain `○` rows render their
-/// template, `●` rows render each concrete instance with its literal params.
-/// `ƒ`/`λ` rows publish no static HTML.
-pub fn render_tasks(manifest: &BuildManifest) -> Vec<runtime::StaticRenderTask> {
-    let mut tasks = Vec::new();
-    for route in &manifest.routes {
-        match route.mode {
-            RouteMode::Static => tasks.push(runtime::StaticRenderTask {
-                template: route.template.clone(),
-                route: route.template.clone(),
-                params: BTreeMap::new(),
-            }),
-            RouteMode::StaticParams => {
-                // The manifest stores one entry per template (deka#738 F6);
-                // each recorded instance is its own render task.
-                for instance in &route.instances {
-                    tasks.push(runtime::StaticRenderTask {
-                        template: route.template.clone(),
-                        route: instance.clone(),
-                        params: params_for_instance(&route.template, instance),
-                    });
-                }
-            }
-            RouteMode::RequestTime | RouteMode::Api => {}
-        }
-    }
-    tasks
-}
-
-/// Re-derive an instance's parameter values from its template: each `[name]`
-/// template segment pairs with the same-position instance segment.
-pub fn params_for_instance(
-    template: &str,
-    instance: &str,
-) -> BTreeMap<String, String> {
-    let mut params = BTreeMap::new();
-    let template_segments: Vec<&str> = template.trim_matches('/').split('/').collect();
-    let instance_segments: Vec<&str> = instance.trim_matches('/').split('/').collect();
-    for (index, segment) in template_segments.iter().enumerate() {
-        if let Some(name) = segment
-            .strip_prefix('[')
-            .and_then(|inner| inner.strip_suffix(']'))
-        {
-            if let Some(value) = instance_segments.get(index) {
-                params.insert(name.to_string(), (*value).to_string());
-            }
-        }
-    }
-    params
-}
-
-/// Record `server:defer` component names on each manifest route whose source
-/// file declares them (deka#718's `◐` classification input; not consumed yet).
-pub fn apply_deferred(
-    manifest: &mut BuildManifest,
-    deferred: &[DeferredIsland],
-    project_root: &Path,
-) {
-    if deferred.is_empty() {
-        return;
-    }
-    for route in &mut manifest.routes {
-        let names: Vec<String> = deferred
-            .iter()
-            .filter(|item| same_source_file(project_root, &item.file, &route.source_file))
-            .map(|item| item.component.clone())
-            .collect();
-        if !names.is_empty() {
-            route.deferred = names;
-        }
-    }
-}
-
-/// Deferred scans and manifest scans both walk `project_root/app`, but one
-/// side may spell the root relatively; compare project-relative.
-fn same_source_file(project_root: &Path, a: &str, b: &str) -> bool {
-    let normalize = |path: &str| {
-        let path = Path::new(path);
-        let rel = path.strip_prefix(project_root).unwrap_or(path);
-        rel.to_string_lossy().replace('\\', "/")
-    };
-    normalize(a) == normalize(b)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     fn write(dir: &Path, rel: &str, body: &str) {
         let path = dir.join(rel);
@@ -560,10 +476,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn params_for_instance_pairs_bracket_segments() {
-        let params = params_for_instance("/posts/[slug]", "/posts/hello");
-        assert_eq!(params.get("slug").map(String::as_str), Some("hello"));
-        assert!(params_for_instance("/about", "/about").is_empty());
-    }
 }

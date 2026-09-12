@@ -1,6 +1,0 @@
-  routes:
-○ /  static
-[ok] built web project <project>
-  client: <project>/dist/client
-  server: <project>/dist/server
-  hydration: disabled

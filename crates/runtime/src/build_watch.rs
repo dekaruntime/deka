@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use runtime_core::framework::{
+use runtime_core::dist::{
     BuildManifest, SlotInvalidation, affected_slots, compiler_cache_dir_with,
 };
 

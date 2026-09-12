@@ -1,6 +1,0 @@
-interface LayoutProps {
-  children: Component;
-}
-export fn Layout(props: LayoutProps) {
-  return <main>{props.children}</main>
-}

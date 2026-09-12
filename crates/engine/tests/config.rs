@@ -1,5 +1,5 @@
 use engine::config::resolve_handler_path;
-use runtime_core::framework::{
+use runtime_core::dist::{
     ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactProducer,
     ArtifactServer, MODULE_FORMAT, RUNTIME_ABI,
 };
@@ -46,7 +46,7 @@ fn directory_with_app_subdir_without_index_html_falls_back_to_static() {
     // The legacy "app/ folder exists → PHP mode" convention was removed with
     // the PHPX runtime pocket (RFD 24 §12). A directory is only an app-router
     // project when it has deka.json + app/page.ds(x) (see
-    // runtime_core::framework::is_source_app_router_project — the root
+    // runtime_core::dist::is_source_app_router_project — the root
     // index.html is a build output, not a source requirement, deka#762);
     // anything else without an index file falls back to static directory
     // serving.

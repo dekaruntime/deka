@@ -71,41 +71,16 @@ pub fn cmd(context: &Context) {
             return;
         }
     }
+    if let Err(err) = std::fs::create_dir_all(target.join("public")) {
+        stdio_error("init", &format!("failed to create public/: {}", err));
+        return;
+    }
     if let Err(err) = ensure_file(
-        &target.join("index.html"),
+        &target.join("public").join("index.html"),
         default_index_html().to_string(),
         &mut touched,
     ) {
         stdio_error("init", &err);
-        return;
-    }
-    if let Err(err) = ensure_file(
-        &target.join("app").join("page.dsx"),
-        default_app_page_dsx().to_string(),
-        &mut touched,
-    ) {
-        stdio_error("init", &err);
-        return;
-    }
-    if let Err(err) = ensure_file(
-        &target.join("app").join("layout.dsx"),
-        default_app_layout_dsx().to_string(),
-        &mut touched,
-    ) {
-        stdio_error("init", &err);
-        return;
-    }
-    if let Err(err) = ensure_file(
-        &target.join("app").join("not-found.dsx"),
-        default_not_found_dsx().to_string(),
-        &mut touched,
-    ) {
-        stdio_error("init", &err);
-        return;
-    }
-
-    if let Err(err) = std::fs::create_dir_all(target.join("public")) {
-        stdio_error("init", &format!("failed to create public/: {}", err));
         return;
     }
     if let Err(err) = ensure_file(
@@ -163,7 +138,7 @@ fn path_display(path: &Path) -> String {
 
 fn default_deka_json(name: &str) -> String {
     format!(
-        "{{\n  \"name\": \"{}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"mode\": \"ds\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"security\": {{\n    \"allow\": {{}},\n    \"deny\": {{}},\n    \"prompt\": true\n  }}\n}}\n",
+        "{{\n  \"name\": \"{}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"mode\": \"static\", \"entry\": \"public\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"security\": {{\n    \"allow\": {{}},\n    \"deny\": {{}},\n    \"prompt\": true\n  }}\n}}\n",
         name
     )
 }
@@ -172,20 +147,8 @@ fn default_deka_lock_json() -> String {
     "{\n  \"lockfileVersion\": 1,\n  \"packages\": {}\n}\n".to_string()
 }
 
-fn default_app_page_dsx() -> &'static str {
-    "export fn Page() {\n  return <section><h1>Deka App</h1><p>Project initialized.</p></section>\n}\n"
-}
-
-fn default_app_layout_dsx() -> &'static str {
-    "interface LayoutProps {\n  children: Component;\n}\nexport fn Layout(props: LayoutProps) {\n  return <main>{props.children}</main>\n}\n"
-}
-
-fn default_not_found_dsx() -> &'static str {
-    "export fn Page() {\n  return <section><h1>Not found</h1></section>\n}\n"
-}
-
 fn default_index_html() -> &'static str {
-    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Deka</title>\n    <link rel=\"stylesheet\" href=\"/style.css\" />\n    <!--deka-head-->\n  </head>\n  <body>\n    <div id=\"app\"><!--deka-app--></div>\n    <!--deka-scripts-->\n  </body>\n</html>\n"
+    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Deka</title>\n    <link rel=\"stylesheet\" href=\"/style.css\" />\n  </head>\n  <body>\n    <main><h1>Deka App</h1><p>Project initialized.</p></main>\n  </body>\n</html>\n"
 }
 
 fn default_public_style_css() -> &'static str {
@@ -194,30 +157,16 @@ fn default_public_style_css() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        default_app_layout_dsx, default_app_page_dsx, default_deka_json, default_index_html,
-        default_not_found_dsx,
-    };
+    use super::{default_deka_json, default_index_html};
 
     #[test]
-    fn default_scaffold_is_the_rfd_document() {
-        let json = default_deka_json("demo");
-        assert!(!json.contains("serve.entry"));
-        assert!(!json.contains("app/main.ds"));
-        let page = default_app_page_dsx();
-        assert!(page.contains("export fn Page()"));
-        assert!(page.contains("<section>"));
-        assert!(!page.contains("string {"));
+    fn default_scaffold_serves_public_html() {
+        let json: serde_json::Value = serde_json::from_str(&default_deka_json("demo")).unwrap();
+        assert_eq!(json["serve"]["mode"], "static");
+        assert_eq!(json["serve"]["entry"], "public");
         let index = default_index_html();
-        assert!(index.contains("<!--deka-head-->"));
-        assert!(index.contains("<!--deka-app-->"));
-        assert!(index.contains("<!--deka-scripts-->"));
-        assert!(index.contains("id=\"app\""));
-
-        for template in [page, default_app_layout_dsx(), default_not_found_dsx()] {
-            assert!(!template.contains("    "));
-            assert!(!template.contains("</section>;"));
-            assert!(!template.contains("</main>;"));
-        }
+        assert!(index.contains("<h1>Deka App</h1>"));
+        assert!(index.contains("href=\"/style.css\""));
+        assert!(!index.contains("<!--deka-"));
     }
 }

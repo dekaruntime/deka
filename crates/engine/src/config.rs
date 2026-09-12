@@ -195,8 +195,8 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
         });
     }
 
-    if runtime_core::framework::is_source_app_router_project(&handler_dir) {
-        let entry_path = runtime_core::framework::write_app_router_entry(&handler_dir)?;
+    if runtime_core::dist::is_source_app_router_project(&handler_dir) {
+        let entry_path = runtime_core::dist::write_app_router_entry(&handler_dir)?;
         return Ok(ResolvedHandler {
             path: entry_path,
             mode: serve_config.mode.clone().unwrap_or(ServeMode::Php),
@@ -249,19 +249,19 @@ fn built_artifact_handler(
     handler_dir: &std::path::Path,
     serve_config: &ServeConfig,
 ) -> Result<Option<ResolvedHandler>, String> {
-    let Some(artifact_root) = runtime_core::framework::resolve_authored_artifact_root(handler_dir)
+    let Some(artifact_root) = runtime_core::dist::resolve_authored_artifact_root(handler_dir)
         .map_err(artifact_remedy)?
     else {
         return Ok(None);
     };
     let manifest_path = artifact_root.join("build-manifest.json");
-    let manifest = runtime_core::framework::ArtifactManifestV2::load_verified(&artifact_root)
+    let manifest = runtime_core::dist::ArtifactManifestV2::load_verified(&artifact_root)
         .map_err(artifact_remedy)?;
     manifest.ensure_native_compat().map_err(artifact_remedy)?;
     let entry = artifact_root.join("server").join("serve-entry.js");
     if !manifest.payloads.iter().any(|payload| {
         payload.path == "server/serve-entry.js"
-            && payload.role == runtime_core::framework::PayloadRole::Server
+            && payload.role == runtime_core::dist::PayloadRole::Server
     }) {
         return Err(artifact_remedy(
             "incomplete artifact: server/serve-entry.js is not declared in build-manifest.json"

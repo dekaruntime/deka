@@ -5,7 +5,7 @@ pub mod ds_tla;
 pub mod dsc;
 pub mod entry;
 pub mod env;
-pub mod framework;
+pub mod dist;
 pub mod handler;
 pub mod host_bridge;
 pub mod module_spec;

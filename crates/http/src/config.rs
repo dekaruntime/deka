@@ -19,6 +19,8 @@ pub struct HttpConfig {
     /// `None` keeps the built-in defaults. Replaces `DEKA_PROJECT_ROOT`
     /// (deka#801).
     pub project_root: Option<PathBuf>,
+    /// Explicit static file or directory, served without executing a handler.
+    pub static_entry: Option<PathBuf>,
 }
 
 impl Default for HttpConfig {
@@ -27,6 +29,7 @@ impl Default for HttpConfig {
             rate_limit: RateLimitConfig::default(),
             debug: false,
             project_root: None,
+            static_entry: None,
         }
     }
 }

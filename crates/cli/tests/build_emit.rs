@@ -8,19 +8,9 @@ fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
-fn init_project(dir: &Path) {
-    let output = Command::new(cli_bin())
-        .args(["init", "."])
-        .current_dir(dir)
-        .output()
-        .expect("run deka init");
-    assert!(
-        output.status.success(),
-        "deka init failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+#[path = "support/app_router.rs"]
+mod app_router;
+use app_router::init_project;
 
 fn run_build(dir: &Path) -> (bool, String) {
     let output = Command::new(cli_bin())
@@ -52,18 +42,53 @@ fn build_help_does_not_build() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.status.success(), "deka build --help must exit 0: {combined}");
-    assert!(combined.contains("build"), "help must mention build: {combined}");
+    assert!(
+        output.status.success(),
+        "deka build --help must exit 0: {combined}"
+    );
+    assert!(
+        combined.contains("build"),
+        "help must mention build: {combined}"
+    );
     assert!(
         !project.path().join("dist").exists(),
         "deka build --help must not write dist"
     );
 }
 
+/// Scaffold a minimal non-app-router web project (`serve.entry` style): the
+/// `deka init` scaffold is an app-router project, and app-router builds are
+/// paused with the framework (deka#881), so this test scaffolds the plain
+/// serve-entry form directly.
+fn scaffold_serve_entry_project(dir: &Path) {
+    fs::write(
+        dir.join("deka.json"),
+        "{\n  \"name\": \"emit-src\",\n  \"type\": \"serve\",\n  \"serve\": { \"mode\": \"ds\", \"entry\": \"app/main.ds\" },\n  \"security\": { \"allow\": {}, \"deny\": {}, \"prompt\": true }\n}\n",
+    )
+    .expect("write deka.json");
+    fs::write(
+        dir.join("deka.lock"),
+        "{\n  \"lockfileVersion\": 1,\n  \"packages\": {}\n}\n",
+    )
+    .expect("write deka.lock");
+    fs::create_dir_all(dir.join("app")).expect("mkdir app");
+    fs::write(
+        dir.join("app").join("main.ds"),
+        "export fn handle() string {\n  return \"hello\"\n}\n",
+    )
+    .expect("write app/main.ds");
+    fs::create_dir_all(dir.join("public")).expect("mkdir public");
+    fs::write(
+        dir.join("index.html"),
+        "<!doctype html>\n<html><head></head><body><div id=\"app\"></div></body></html>\n",
+    )
+    .expect("write index.html");
+}
+
 #[test]
 fn build_emits_src_one_to_one() {
     let project = tempfile::tempdir().expect("create temp project dir");
-    init_project(project.path());
+    scaffold_serve_entry_project(project.path());
     let src = project.path().join("src");
     fs::create_dir_all(src.join("nested")).expect("mkdir src/nested");
     fs::write(src.join("util.ds"), "export const n = 1;\n").expect("write src/util.ds");
@@ -137,97 +162,6 @@ fn build_missing_dsc_is_hard_error() {
 }
 
 #[test]
-fn build_materializes_build_block_values_before_prerendering() {
-    let project = tempfile::tempdir().expect("create temp project dir");
-    init_project(project.path());
-    fs::write(
-        project.path().join("app/types.dsx"),
-        r#"struct User { name: string }
-
-export { User }
-"#,
-    )
-    .expect("write build types");
-    fs::write(
-        project.path().join("app/page.dsx"),
-        r#"import { User } from "./types.dsx"
-
-enum Shape { Empty, Rect(number) }
-type Cents number
-
-const user: User = build {
-  return Ok(User { name: "Ada" })
-}
-const shape: Shape = build {
-  return Ok(Shape.Rect(3))
-}
-const note: Option<string> = build {
-  return Ok(Some("ready"))
-}
-const cents: Cents = build {
-  return Ok(Cents(12))
-}
-
-export fn Page() {
-  const kind = match (shape) {
-    Shape.Rect(size) => "rect " + string(size),
-    Shape.Empty => "empty",
-  }
-  const subtitle = match (note) {
-    Some(value) => value,
-    None => "missing",
-  }
-  return <section><h1>{user.name}</h1><p>{kind} {subtitle} {string(unboxNumber(cents))}</p></section>
-}
-"#,
-    )
-    .expect("write build page");
-
-    let (success, combined) = run_build(project.path());
-    assert!(
-        success,
-        "deka build should execute build blocks: {combined}"
-    );
-
-    let html = fs::read_to_string(project.path().join("dist/client/index.html"))
-        .expect("read prerendered HTML");
-    for expected in ["Ada", "rect 3", "ready", "12"] {
-        assert!(
-            html.contains(expected),
-            "build value `{expected}` was not prerendered: {html}"
-        );
-    }
-
-    let values = project.path().join(".cache/dekascript/build-values");
-    let materialized = fs::read_dir(values)
-        .expect("read materialized values")
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "js"))
-        .count();
-    assert_eq!(materialized, 4, "one virtual module per build binding");
-
-    let runtime_js = fs::read_to_string(project.path().join("dist/server/app/page.js"))
-        .expect("read emitted runtime module");
-    assert!(
-        !runtime_js.contains("Ada") && !runtime_js.contains("build {"),
-        "runtime output must not retain the build body: {runtime_js}"
-    );
-    let generated_entries = fs::read_dir(project.path().join("dist/server/app"))
-        .expect("read emitted app")
-        .filter_map(Result::ok)
-        .any(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".__deka_build_")
-        });
-    assert!(
-        !generated_entries,
-        "generated build entries must not be promoted to dist"
-    );
-}
-
-#[test]
 fn build_stops_when_a_build_block_returns_err() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
@@ -254,204 +188,5 @@ export fn Page() {
     assert!(
         !project.path().join("dist").exists(),
         "failed build entries must not promote dist output"
-    );
-}
-
-
-#[test]
-fn build_prerenders_island_props_into_initial_html() {
-    // deka#746 F3: an island rendered during prerender receives its props
-    // in-process, so the prop values must land in the initial HTML — blank
-    // spans that only fill after hydration are the silent default this
-    // guards against.
-    let project = tempfile::tempdir().expect("create temp project dir");
-    init_project(project.path());
-    fs::write(
-        project.path().join("app").join("page.dsx"),
-        "import { signal } from \"ui/reactive\"\n\nstruct User { name: string; age: number }\nstruct CardProps { user: User }\n\nexport fn Card(props: CardProps) {\n    const c = signal(0)\n    return <div><span id=\"nm\">{props.user.name}</span><span id=\"ag\">{props.user.age}</span><span id=\"c\">{c[0]()}</span></div>\n}\n\nexport fn Page() {\n    const u = User { name: \"Ada\", age: 36 }\n    return <section><Card user={u} client:load /></section>\n}\n",
-    )
-    .expect("write island props page");
-    let (success, combined) = run_build(project.path());
-    assert!(
-        success,
-        "deka build should succeed with the issue's Card fixture: {combined}"
-    );
-    let index = fs::read_to_string(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("index.html"),
-    )
-    .expect("read prerendered html");
-    assert!(
-        index.contains("<span data-deka-id=\"page:Card/i0/i0\" id=\"nm\">Ada</span>"),
-        "user.name must prerender into the initial HTML: {index}"
-    );
-    assert!(
-        index.contains("<span data-deka-id=\"page:Card/i0/i1\" id=\"ag\">36</span>"),
-        "user.age must prerender into the initial HTML: {index}"
-    );
-    assert!(
-        index.contains("id=\"c\">0</span>"),
-        "the island's local signal must still render: {index}"
-    );
-}
-
-#[test]
-fn build_fails_loudly_when_island_prop_is_absent_at_prerender() {
-    // deka#746 F3: reading a field of an absent prop throws inside the
-    // island's live() expression. That must fail the build with the actual
-    // error — not ship blank spans that only fill after hydration. (A
-    // typed prop can be absent at runtime here because the out-of-bounds
-    // index is typed Array<User> but yields undefined.)
-    let project = tempfile::tempdir().expect("create temp project dir");
-    init_project(project.path());
-    fs::write(
-        project.path().join("app").join("page.dsx"),
-        "struct User { name: string; age: number }\nstruct CardProps { user: User }\n\nexport fn Card(props: CardProps) {\n    return <div><span id=\"nm\">{props.user.name}</span></div>\n}\n\nexport fn Page() {\n    const users: Array<User> = []\n    return <section><Card user={users[0]} client:load /></section>\n}\n",
-    )
-    .expect("write absent-prop island page");
-    let (success, combined) = run_build(project.path());
-    assert!(
-        !success,
-        "deka build must fail when an island prop is absent at prerender, got success. output: {combined}"
-    );
-    assert!(
-        combined.contains("Cannot read properties of undefined"),
-        "the build error must name the actual failure, not a generic message: {combined}"
-    );
-    assert!(
-        !project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("index.html")
-            .exists(),
-        "a failed prerender must not publish dist HTML: {combined}"
-    );
-}
-
-#[test]
-fn build_fails_loudly_when_live_expression_throws_in_page_render() {
-    // deka#744 F2: the reporter's exact scenario — `signal()` returns a
-    // tuple, and calling it as a function is a runtime TypeError inside the
-    // compiler's live() wrapper during prerender. The silent failure shipped
-    // an empty <p id="sig"></p> next to working static content; it must
-    // instead fail the build with the error and its source location.
-    let project = tempfile::tempdir().expect("create temp project dir");
-    init_project(project.path());
-    fs::write(
-        project.path().join("app").join("page.dsx"),
-        "import { signal } from \"ui/reactive\"\n\nexport fn Page() {\n    const count = signal(7)\n    return <section><p id=\"sig\">{count()}</p><p id=\"static\">ok</p></section>\n}\n",
-    )
-    .expect("write throwing live page");
-    let (success, combined) = run_build(project.path());
-    assert!(
-        !success,
-        "deka build must fail when a live() expression throws at prerender, got success. output: {combined}"
-    );
-    assert!(
-        combined.contains("count is not a function"),
-        "the build error must name the actual failure, not a generic message: {combined}"
-    );
-    assert!(
-        combined.contains("page.dsx"),
-        "the build error must carry the source location: {combined}"
-    );
-    assert!(
-        !project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("index.html")
-            .exists(),
-        "a failed prerender must not publish dist HTML: {combined}"
-    );
-}
-
-/// The installed dsc's version, resolved the way CI runs these tests
-/// (`DEKA_DSC`, then `dsc` on PATH). `deka build` additionally accepts a
-/// sibling of the binary; the tests don't need that fallback.
-fn dsc_version() -> Option<(u64, u64, u64)> {
-    let output = match std::env::var_os("DEKA_DSC") {
-        Some(bin) => Command::new(bin).arg("--version").output(),
-        None => Command::new("dsc").arg("--version").output(),
-    }
-    .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    // dsc --version prints to stderr.
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let digits: Vec<u64> = text
-        .split(|c: char| !c.is_ascii_digit())
-        .filter(|part| !part.is_empty())
-        .filter_map(|part| part.parse().ok())
-        .collect();
-    match digits.as_slice() {
-        [major, minor, patch, ..] => Some((*major, *minor, *patch)),
-        _ => None,
-    }
-}
-
-#[test]
-fn build_accepts_explicit_imports_of_compiler_injected_names() {
-    // deka#744 F3: the transpiler injects `live` (ui/reactive) and
-    // `jsx, jsxs, Fragment` (ui/jsx) for JSX. Importing any of them
-    // explicitly used to duplicate the declaration — a SyntaxError at module
-    // load during prerender. The compiler fix lives in dsc; this pins the
-    // end-to-end contract here.
-    //
-    // The fix is not in a released dsc yet (the pin in scripts/dsc-version
-    // still points at 0.8.2, and bumping it is its own PR), so skip while the
-    // installed compiler predates it. The pin-bump PR re-activates this test.
-    match dsc_version() {
-        Some(version) if version > (0, 8, 2) => {}
-        Some(version) => {
-            eprintln!("SKIP: installed dsc {version:?} predates the deka#744 F3 fix");
-            return;
-        }
-        None => {
-            eprintln!("SKIP: dsc version is not resolvable");
-            return;
-        }
-    }
-
-    let project = tempfile::tempdir().expect("create temp project dir");
-    init_project(project.path());
-    // Every injected name is imported AND referenced, so the user's import
-    // survives graph shaking — that is the collision case. `bound` only pins
-    // the `live` binding (a bare live value renders empty server-side, which
-    // is ui/reactive semantics, not what this test exercises).
-    fs::write(
-        project.path().join("app").join("page.dsx"),
-        "import { signal, live } from \"ui/reactive\"\nimport { jsx, jsxs, Fragment } from \"ui/jsx\"\n\nexport fn Page() {\n    const s = signal(7)\n    const bound = live(fn() { return s[0]() })\n    const b = jsx(\"b\", {}, \"!\")\n    const i = jsxs(\"i\", {}, [\"2\", \"3\"])\n    const f = jsx(Fragment, {}, \"~\")\n    return <section><p id=\"sig\">{s[0]()}</p>{bound}{b}{i}{f}</section>\n}\n",
-    )
-    .expect("write explicit-import page");
-    let (success, combined) = run_build(project.path());
-    assert!(
-        success,
-        "deka build must accept explicit imports of live/jsx/jsxs/Fragment: {combined}"
-    );
-    let index = fs::read_to_string(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("index.html"),
-    )
-    .expect("read prerendered html");
-    assert!(
-        index.contains("id=\"sig\">7</p>"),
-        "the signal value must prerender into the initial HTML: {index}"
-    );
-    assert!(
-        index.contains("<b>!</b>") && index.contains("<i>23</i>"),
-        "explicitly-imported jsx/jsxs/Fragment factories must render: {index}"
     );
 }

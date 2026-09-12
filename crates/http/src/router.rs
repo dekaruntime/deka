@@ -25,6 +25,7 @@ use crate::rate_limit::{RateLimiter, middleware as rate_limit_middleware};
 struct HttpExtensions {
     debug: bool,
     utility_css: UtilityCssConfig,
+    static_files: Option<StaticFiles>,
 }
 
 pub fn app_router(state: Arc<RuntimeState>, config: HttpConfig) -> Router {
@@ -41,6 +42,7 @@ pub fn app_router_with_rate_limiter(
     set_hmr_runtime_state(Arc::clone(&state));
     let extensions = HttpExtensions {
         debug: config.debug,
+        static_files: config.static_entry.as_deref().map(StaticFiles::new),
         utility_css: crate::utility_css::load_config(config.project_root.as_deref()),
     };
     Router::new()
@@ -78,6 +80,9 @@ async fn handle_request(
             .status(426)
             .body(axum::body::Body::from("WebSocket upgrade required"))
             .unwrap();
+    }
+    if let Some(files) = &extensions.static_files {
+        return static_response(files, &path, &method);
     }
     if extensions.debug {
         tracing::info!("[http] request {} {}", method, uri);
@@ -209,6 +214,70 @@ fn handler_failure_body(detail: &str, dev_mode: bool) -> String {
     }
 }
 
+#[derive(Clone)]
+struct StaticFiles {
+    root: std::path::PathBuf,
+    index: std::path::PathBuf,
+}
+
+impl StaticFiles {
+    fn new(entry: &std::path::Path) -> Self {
+        // Resolve the serving boundary once. Removing a directory later must
+        // not reclassify it as a file and expose its parent directory.
+        if entry.is_dir() {
+            Self {
+                root: entry.to_path_buf(),
+                index: "index.html".into(),
+            }
+        } else {
+            Self {
+                root: entry.parent().unwrap_or(entry).to_path_buf(),
+                index: entry.file_name().unwrap_or_default().into(),
+            }
+        }
+    }
+}
+
+/// Static serving shares the public-file reader's canonical-path confinement.
+/// Missing files stay HTTP 404; they never fall through to an empty V8 handler.
+fn static_response(files: &StaticFiles, path: &str, method: &str) -> Response {
+    if method != "GET" && method != "HEAD" {
+        return Response::builder()
+            .status(405)
+            .header("allow", "GET, HEAD")
+            .body(axum::body::Body::empty())
+            .unwrap();
+    }
+    let rel = path.strip_prefix('/').unwrap_or(path);
+    let rel = if rel.is_empty() {
+        files.index.clone()
+    } else {
+        std::path::PathBuf::from(rel)
+    };
+    let file = read_static_file(&files.root, &rel)
+        .or_else(|| read_static_file(&files.root, &rel.join("index.html")));
+    match file {
+        Some((bytes, ctype)) => Response::builder()
+            .status(200)
+            .header("content-type", ctype)
+            .header("content-length", bytes.len())
+            .body(if method == "HEAD" {
+                axum::body::Body::empty()
+            } else {
+                axum::body::Body::from(bytes)
+            })
+            .unwrap(),
+        None => Response::builder()
+            .status(404)
+            .body(if method == "HEAD" {
+                axum::body::Body::empty()
+            } else {
+                axum::body::Body::from("Not Found")
+            })
+            .unwrap(),
+    }
+}
+
 fn try_asset_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response> {
     if !path.starts_with("/assets/") {
         return None;
@@ -257,7 +326,7 @@ fn try_public_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response
 /// undeclared client file is never served: the build descriptor is the
 /// authority, and `read_client_payload` verifies the digest on every read.
 fn try_artifact_client_response(
-    manifest: &runtime_core::framework::ArtifactManifestV2,
+    manifest: &runtime_core::dist::ArtifactManifestV2,
     root: &std::path::Path,
     path: &str,
 ) -> Option<Response> {
@@ -396,7 +465,12 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("deka_public_asset_{nonce}"));
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "deka_public_asset_{}_{nonce}_{id}",
+            std::process::id()
+        ));
         fs::create_dir_all(&path).expect("create temp project");
         path
     }
@@ -425,6 +499,71 @@ mod tests {
         assert!(out.contains("querySelectorAll(\"input,textarea,select\")"));
         assert!(out.contains("data-deka-id"));
         assert!(out.contains("setSelectionRange"));
+    }
+
+    #[test]
+    fn static_routes_support_indexes_head_and_confine_symlinks() {
+        let project = temp_project_dir();
+        let public = project.join("public");
+        fs::create_dir_all(public.join("nested")).unwrap();
+        fs::write(public.join("index.html"), "home").unwrap();
+        fs::write(public.join("nested/index.html"), "nested").unwrap();
+        fs::write(project.join("private.txt"), "secret").unwrap();
+        let files = super::StaticFiles::new(&public);
+        for path in ["/", "/nested", "/nested/", "/index.html"] {
+            let response = super::static_response(&files, path, "GET");
+            assert_eq!(response.status(), 200, "{path}");
+            assert_eq!(
+                response.headers()["content-type"],
+                "text/html; charset=utf-8"
+            );
+        }
+        let response = super::static_response(&files, "/", "HEAD");
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["content-length"], "4");
+        let response = super::static_response(&files, "/", "POST");
+        assert_eq!(response.status(), 405);
+        assert_eq!(response.headers()["allow"], "GET, HEAD");
+        for path in [
+            "/missing",
+            "/../private.txt",
+            "//etc/passwd",
+            "/%2e%2e/private.txt",
+        ] {
+            assert_eq!(
+                super::static_response(&files, path, "GET").status(),
+                404,
+                "{path}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(project.join("private.txt"), public.join("leak.txt"))
+                .unwrap();
+            std::os::unix::fs::symlink(&project, public.join("outside")).unwrap();
+            for path in ["/leak.txt", "/outside/private.txt"] {
+                assert_eq!(
+                    super::static_response(&files, path, "GET").status(),
+                    404,
+                    "{path}"
+                );
+            }
+        }
+        assert_eq!(
+            super::static_response(
+                &super::StaticFiles::new(&public.join("index.html")),
+                "/",
+                "GET"
+            )
+            .status(),
+            200
+        );
+        fs::remove_dir_all(&public).unwrap();
+        assert_eq!(
+            super::static_response(&files, "/private.txt", "GET").status(),
+            404
+        );
+        fs::remove_dir_all(project).unwrap();
     }
 
     #[test]

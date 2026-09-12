@@ -1,6 +1,6 @@
 // PR-CI smoke for the dump harness. Runs a handful of fixtures that cover the
-// browser execution path end to end — plain DS, the io.mjs shim, and the
-// ui/jsx.mjs shim — so harness breakage (bad shim paths, import-transform
+// browser execution path end to end — plain DS and the io.mjs shim — so
+// harness breakage (bad shim paths, import-transform
 // regressions, playwright wiring) fails on the PR instead of at release time.
 //
 // Env: DEKA_NATIVE is this tree's CLI; DEKA_WASM is the published dsc

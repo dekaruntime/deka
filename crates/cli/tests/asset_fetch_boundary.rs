@@ -1,25 +1,11 @@
-//! Asset-fetch boundary test for RFD 24 §10.7 content-hashed client assets
-//! (deka#604 serve-side follow-up).
+//! Asset-fetch boundary coverage for the surviving public asset pipeline.
 //!
-//! Client assets are content-addressed (`<stem>.<sha256-10>.js|css`), so every
-//! URL a document or chunk references must agree with the name the writer
-//! emitted on disk. This test pins the three URL-agreement pairs at once by
-//! fetching, over real HTTP against `deka serve`, every reference found in:
-//!
-//! 1. the served route HTML — every `<script src>` and `<link href>` under
-//!    `/assets/` plus every URL in the inline import map (router.rs output ↔
-//!    islands.rs/css.rs writers),
-//! 2. `assets/importmap.json` — every URL it maps a specifier to
-//!    (importmap ↔ writers; the on-disk copy the inline tag is built from),
-//! 3. the served/emitted JS chunks themselves — every relative import target
-//!    (`./ui/jsx.<hash>.js`, `./island-load-0.<hash>.js`, ...) resolved
-//!    against the importing chunk's URL (chunks ↔ writers).
-//!
-//! Every reference must return 200 with a non-empty body; a single 404 fails
-//! the test. A second half builds the same fixture with `deka build` and
-//! asserts every reference in the dist HTML exists on disk — and that the
-//! dev-mode (serve) and prod-mode (build) URL sets are identical for the
-//! same source (dev/prod parity).
+//! The framework extraction (deka#893) removes app-router prerendering,
+//! island chunks, and generated utility CSS. Public assets still pass through
+//! source `deka serve` and `deka build`. Keep real HTTP/disk closure checks and
+//! serve/build URL parity for that path, including content-hashed nested JS,
+//! stylesheets, and inline/on-disk import maps. The web-bootstrap prefix test
+//! below separately covers the compiler-emitted import map.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -72,50 +58,61 @@ fn client() -> Client {
         .expect("reqwest client")
 }
 
-fn init_project(dir: &Path) {
-    let output = Command::new(cli_bin())
-        .args(["init", "."])
-        .current_dir(dir)
-        .output()
-        .expect("deka init");
-    assert!(
-        output.status.success(),
-        "deka init failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+#[path = "support/app_router.rs"]
+mod app_router;
+use app_router::init_project;
 
-/// App-router fixture with a client island (hashed JS chunks + importmap)
-/// and shared/unique utility classes on two routes (hashed CSS). Same source
-/// feeds both the serve and the build half so URL sets must match exactly.
-///
-/// The island imports `ui/form` and `ui/suspense` so the rewrite's targets
-/// are in the live HTTP closure — deka#622 finding E. A 404 here is the
-/// original bug (Form / Suspense inside an island never ran).
+/// Supply public documents so these tests do not require the paused JSX
+/// renderer. Asset names are real content hashes, and nested imports ensure
+/// the fetch walk checks more than the document's direct references.
 fn write_boundary_fixture(dir: &Path) {
     init_project(dir);
-    fs::write(
-        dir.join("app").join("page.dsx"),
-        concat!(
-            "import { Form } from \"ui/form\"\n",
-            "import { Suspense } from \"ui/suspense\"\n",
-            "export fn Counter() {\n",
-            "    return <Suspense fallback={<span>0</span>}><Form action={\"/\"} method={\"post\"}><button class=\"p-4 text-lg\">0</button></Form></Suspense>;\n",
-            "}\n",
-            "export fn Page() {\n",
-            "    return <main><Counter client:load count={1} /></main>;\n",
-            "}\n",
+    let public = dir.join("public");
+    let assets = public.join("assets");
+    fs::create_dir_all(assets.join("chunks")).expect("mkdir chunks");
+    fs::create_dir_all(assets.join("css")).expect("mkdir css");
+    fs::create_dir_all(public.join("about")).expect("mkdir about");
+
+    let value = write_hashed_asset(&assets, "chunks/value.js", "export const value = 42;\n");
+    let widget = write_hashed_asset(
+        &assets,
+        "chunks/widget.js",
+        &format!(
+            "import {{ value }} from \"./{}\";\nexport {{ value }};\n",
+            value.rsplit('/').next().unwrap()
         ),
-    )
-    .expect("write island page");
-    let about = dir.join("app").join("about");
-    fs::create_dir_all(&about).expect("mkdir about");
-    fs::write(
-        about.join("page.dsx"),
-        "export fn Page() {\n    return <section class=\"p-4 text-sm\">About</section>;\n}\n",
-    )
-    .expect("write about page");
+    );
+    let main = write_hashed_asset(
+        &assets,
+        "main.js",
+        &format!("import {{ value }} from \"./{widget}\";\nconsole.log(value);\n"),
+    );
+    let common = write_hashed_asset(&assets, "css/common.css", "body { margin: 0; }\n");
+    let mapped = write_hashed_asset(&assets, "mapped.js", "export const mapped = true;\n");
+    let map = serde_json::json!({"imports": {
+        "boundary/main": format!("/assets/{main}"),
+        "boundary/mapped": format!("/assets/{mapped}")
+    }});
+    fs::write(assets.join("importmap.json"), map.to_string()).expect("write importmap");
+    for (doc, route) in [("boundary.html", "root"), ("about/boundary.html", "about")] {
+        let css = write_hashed_asset(
+            &assets,
+            &format!("css/{route}.css"),
+            &format!(".{route} {{ padding: 4px; }}\n"),
+        );
+        fs::write(public.join(doc), format!(
+            r#"<!doctype html><html><head><link rel="stylesheet" href="/assets/{common}"><link rel="stylesheet" href="/assets/{css}"><script type="importmap">{map}</script></head><body class="{route}"><script type="module" src="/assets/{main}"></script></body></html>"#,
+        )).expect("write public document");
+    }
+}
+
+fn write_hashed_asset(assets: &Path, logical: &str, body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let (stem, ext) = logical.rsplit_once('.').expect("asset extension");
+    let hash = format!("{:x}", Sha256::digest(body.as_bytes()));
+    let name = format!("{stem}.{}.{ext}", &hash[..10]);
+    fs::write(assets.join(&name), body).expect("write hashed asset");
+    name
 }
 
 fn spawn_serve() -> Serve {
@@ -141,7 +138,10 @@ fn wait_ready(port: u16, serve: &Serve) {
     let http = client();
     let deadline = Instant::now() + Duration::from_secs(45);
     while Instant::now() < deadline {
-        if let Ok(res) = http.get(format!("http://127.0.0.1:{port}/")).send() {
+        if let Ok(res) = http
+            .get(format!("http://127.0.0.1:{port}/boundary.html"))
+            .send()
+        {
             if res.status().as_u16() == 200 {
                 return;
             }
@@ -286,19 +286,19 @@ fn collect_disk_refs(doc_root: &Path, html: &str) -> BTreeSet<String> {
 }
 
 /// The unhashed logical names must never survive into a served or built
-/// document — the .cache/dist assets are hashed-only, so these would 404.
+/// document — the fixture supplies hashed files only, so these would 404.
 fn assert_no_unhashed_refs(html: &str, context: &str) {
     for logical in [
-        "/assets/islands-load.js",
-        "/assets/islands-idle.js",
-        "/assets/islands-visible.js",
-        "/assets/islands-defer.js",
-        "/assets/css/common.css",
-        "/assets/css/route-root.css",
-        "/assets/css/route-about.css",
+        "main.js",
+        "mapped.js",
+        "chunks/widget.js",
+        "chunks/value.js",
+        "css/common.css",
+        "css/root.css",
+        "css/about.css",
     ] {
         assert!(
-            !html.contains(logical),
+            !html.contains(&format!("/assets/{logical}")),
             "document must not reference unhashed {logical}\n{context}"
         );
     }
@@ -320,79 +320,49 @@ fn serve_asset_references_all_resolve() {
     let base = format!("http://127.0.0.1:{}", serve.port);
     let context = format!("serve.log:\n{}", serve.log());
 
-    let html = http
-        .get(format!("{base}/"))
-        .send()
-        .expect("GET /")
-        .text()
-        .expect("read / html");
-
-    assert_no_unhashed_refs(&html, &context);
-    let imports = inline_importmap(&html, &context);
-    // The dev HMR client (crates/http/src/router.rs) imports the LOGICAL
-    // specifier "ui/client"; that specifier must be a key in this map,
-    // mapped to the hashed chunk, or the dev client's dynamic import fails
-    // silently and islands stop re-hydrating (deka#596 follow-up).
-    let ui_client = imports["ui/client"]
-        .as_str()
-        .expect("ui/client must be a key in the inline import map");
-    assert!(
-        ui_client.starts_with("/assets/ui/client.") && ui_client.ends_with(".js"),
-        "ui/client must map to its hashed chunk: {ui_client}"
-    );
-    let res = http
-        .get(format!("{base}{ui_client}"))
-        .send()
-        .unwrap_or_else(|err| panic!("GET {ui_client} failed: {err}\n{context}"));
-    assert_eq!(
-        res.status().as_u16(),
-        200,
-        "the ui/client chunk the dev client resolves to must be served: {ui_client}\n{context}"
-    );
-    for stem in ["islands-load", "css/common", "css/route-root"] {
-        assert!(
-            hashed_name_present(&html, stem),
-            "served document must reference the hashed {stem} asset: {html}\n{context}"
+    for (doc, route) in [("boundary.html", "root"), ("about/boundary.html", "about")] {
+        let html = http
+            .get(format!("{base}/{doc}"))
+            .send()
+            .expect("GET document")
+            .error_for_status()
+            .expect("document must resolve")
+            .text()
+            .expect("read document");
+        assert_no_unhashed_refs(&html, &context);
+        let imports = inline_importmap(&html, &context);
+        let main = imports["boundary/main"]
+            .as_str()
+            .expect("entry in import map");
+        assert!(main.starts_with("/assets/main.") && main.ends_with(".js"));
+        for stem in ["main", "css/common", &format!("css/{route}")] {
+            assert!(hashed_name_present(&html, stem), "missing {stem}: {html}");
+        }
+        let refs = collect_live_refs(&http, &base, &html, &context);
+        assert_surviving_refs(&refs, route);
+        let map = http
+            .get(format!("{base}/assets/importmap.json"))
+            .send()
+            .expect("GET importmap")
+            .error_for_status()
+            .expect("importmap must resolve")
+            .bytes()
+            .expect("read importmap");
+        let disk: serde_json::Value = serde_json::from_slice(&map).expect("parse importmap");
+        assert_eq!(
+            &inline_importmap(&html, &context),
+            disk["imports"].as_object().unwrap()
         );
     }
-
-    let refs = collect_live_refs(&http, &base, &html, &context);
-    assert!(
-        refs.len() >= 6,
-        "expected the full asset closure (islands chunk, island module, ui chunks, css, importmap), got {refs:?}\n{context}"
-    );
-    // deka#622 finding E: Form / Suspense inside an island must resolve.
-    // collect_live_refs already 404s a missing URL; these asserts pin that
-    // the island's rewritten imports actually entered the closure.
-    for stem in ["ui/form", "ui/suspense"] {
-        assert!(
-            refs.iter()
-                .any(|url| url.contains(&format!("/{stem}.")) && url.ends_with(".js")),
-            "island import of {stem} must resolve to a hashed chunk: {refs:?}\n{context}"
-        );
-    }
-    // The second route contributes its own per-route stylesheet.
-    let about = http
-        .get(format!("{base}/about"))
-        .send()
-        .expect("GET /about")
-        .text()
-        .expect("read /about html");
-    assert_no_unhashed_refs(&about, &context);
-    let about_refs = collect_live_refs(&http, &base, &about, &context);
-    assert!(
-        about_refs.iter().any(|url| url.contains("route-about.")),
-        "/about must reference its hashed route stylesheet: {about_refs:?}\n{context}"
-    );
 }
 
-/// Content-hash stripper: `/assets/ui/client.<10-hex>.js` →
-/// `/assets/ui/client.js`. Client assets are content-hashed; while dist
-/// optimization is paused (deka#881 DECIDE-1) dist and dev emit identical
-/// bytes, but the stripper keeps the comparison correct when the deka#750
-/// dist flavor (minified/tree-shaken) is restored through dsc.
+/// Normalize fixture hashes only to assert the expected logical closure.
+/// Serve/build parity below compares the full URLs, including hashes.
 fn strip_asset_hash(url: &str) -> String {
-    let Some(base) = url.strip_suffix(".js") else {
+    let Some((base, ext)) = url
+        .rsplit_once('.')
+        .filter(|(_, ext)| matches!(*ext, "js" | "css"))
+    else {
         return url.to_string();
     };
     let Some((stem, hash)) = base.rsplit_once('.') else {
@@ -403,52 +373,42 @@ fn strip_asset_hash(url: &str) -> String {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
     if is_hash {
-        format!("{stem}.js")
+        format!("{stem}.{ext}")
     } else {
         url.to_string()
     }
+}
+
+fn assert_surviving_refs(refs: &BTreeSet<String>, route: &str) {
+    let expected = [
+        "main.js",
+        "mapped.js",
+        "chunks/widget.js",
+        "chunks/value.js",
+        "css/common.css",
+        &format!("css/{route}.css"),
+    ]
+    .into_iter()
+    .map(|name| format!("/assets/{name}"))
+    .collect();
+    assert_eq!(
+        strip_ref_set(refs),
+        expected,
+        "complete surviving asset closure"
+    );
 }
 
 fn strip_ref_set(refs: &BTreeSet<String>) -> BTreeSet<String> {
     refs.iter().map(|url| strip_asset_hash(url)).collect()
 }
 
-fn strip_importmap_hashes(
-    map: &serde_json::Map<String, serde_json::Value>,
-) -> serde_json::Map<String, serde_json::Value> {
-    map.iter()
-        .map(|(key, value)| {
-            let stripped = value
-                .as_str()
-                .map(strip_asset_hash)
-                .map(|url| serde_json::Value::String(url))
-                .unwrap_or_else(|| value.clone());
-            (key.clone(), stripped)
-        })
-        .collect()
-}
-
 #[test]
 fn serve_and_build_resolve_identical_asset_urls() {
-    // Same fixture source, two tempdirs: one served, one built. The resolved
-    // /assets URL stems must be identical — dev/prod parity by construction.
-    // (Client assets are content-hashed; the hashes themselves may differ
-    // between flavors whenever dist optimization is active (deka#750), so
-    // only the stripped stems are compared. While the framework is paused
-    // (deka#881 DECIDE-1) the flavors emit identical bytes and the hashes
-    // match too.)
+    // Public files are copied unchanged, so even the hashes must match.
     let serve = spawn_serve();
     let http = client();
     let base = format!("http://127.0.0.1:{}", serve.port);
     let live_context = format!("serve.log:\n{}", serve.log());
-    let served_html = http
-        .get(format!("{base}/"))
-        .send()
-        .expect("GET /")
-        .text()
-        .expect("read served html");
-    let live_refs = collect_live_refs(&http, &base, &served_html, &live_context);
-
     let project = tempfile::tempdir().expect("tempdir");
     write_boundary_fixture(project.path());
     let output = Command::new(cli_bin())
@@ -463,23 +423,30 @@ fn serve_and_build_resolve_identical_asset_urls() {
         String::from_utf8_lossy(&output.stderr)
     );
     let dist_client = project.path().join("dist").join("client");
-    let dist_html = fs::read_to_string(dist_client.join("index.html")).expect("read dist html");
-    let disk_refs = collect_disk_refs(&dist_client, &dist_html);
-
-    // The map the browser consults (inline, not the on-disk copy) must be
-    // identical in dev and prod, up to content hashes (deka#750).
-    let live_imports = strip_importmap_hashes(&inline_importmap(&served_html, &live_context));
-    let dist_imports = strip_importmap_hashes(&inline_importmap(&dist_html, "dist index.html"));
-    assert_eq!(
-        live_imports, dist_imports,
-        "dev (serve) and prod (build) must inline the same import map.\n{live_context}"
-    );
-
-    assert_eq!(
-        strip_ref_set(&live_refs),
-        strip_ref_set(&disk_refs),
-        "dev (serve) and prod (build) must resolve the same source to the same /assets URL stems.\nlive: {live_refs:?}\ndist:  {disk_refs:?}\n{live_context}"
-    );
+    for (doc, route) in [("boundary.html", "root"), ("about/boundary.html", "about")] {
+        let served_html = http
+            .get(format!("{base}/{doc}"))
+            .send()
+            .expect("GET document")
+            .error_for_status()
+            .expect("document must resolve")
+            .text()
+            .expect("read document");
+        let dist_html = fs::read_to_string(dist_client.join(doc)).expect("read dist html");
+        let live_refs = collect_live_refs(&http, &base, &served_html, &live_context);
+        let disk_refs = collect_disk_refs(&dist_client, &dist_html);
+        assert_surviving_refs(&live_refs, route);
+        assert_surviving_refs(&disk_refs, route);
+        assert_eq!(
+            inline_importmap(&served_html, &live_context),
+            inline_importmap(&dist_html, doc),
+            "serve and build must inline the same import map for {doc}"
+        );
+        assert_eq!(
+            live_refs, disk_refs,
+            "serve and build must resolve identical asset URLs for {doc}\n{live_context}"
+        );
+    }
 }
 
 #[test]
@@ -498,14 +465,11 @@ fn dist_asset_references_exist_on_disk() {
         String::from_utf8_lossy(&output.stderr)
     );
     let dist_client = project.path().join("dist").join("client");
-    for doc in ["index.html", "about/index.html"] {
+    for (doc, route) in [("boundary.html", "root"), ("about/boundary.html", "about")] {
         let html = fs::read_to_string(dist_client.join(doc)).expect("read dist html");
         assert_no_unhashed_refs(&html, doc);
         let refs = collect_disk_refs(&dist_client, &html);
-        assert!(
-            !refs.is_empty(),
-            "{doc} must reference at least one hashed asset"
-        );
+        assert_surviving_refs(&refs, route);
     }
     // The import map the browser loads must agree with the chunks on disk.
     let importmap = fs::read(dist_client.join("assets").join("importmap.json"))
@@ -520,8 +484,8 @@ fn dist_asset_references_exist_on_disk() {
     }
     // The map inlined into the document is what the browser consults; it must
     // agree with the on-disk copy and carry no `src` reference.
-    let index_html = fs::read_to_string(dist_client.join("index.html")).expect("read dist html");
-    let inline = inline_importmap(&index_html, "dist index.html");
+    let index_html = fs::read_to_string(dist_client.join("boundary.html")).expect("read dist html");
+    let inline = inline_importmap(&index_html, "dist boundary.html");
     let disk: serde_json::Value = serde_json::from_slice(&importmap).expect("parse importmap.json");
     let disk_imports = disk
         .get("imports")

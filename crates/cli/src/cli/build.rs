@@ -6,8 +6,6 @@ use crate::cli::build_publish;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use runtime::ClientAssetFlavor;
-
 mod project;
 mod single_file;
 
@@ -143,10 +141,10 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // (deka#719).
     #[cfg(feature = "native")]
     let app_scans =
-        if runtime_core::framework::is_source_app_router_project(&project_root) {
+        if runtime_core::dist::is_source_app_router_project(&project_root) {
             Some((
-                runtime_core::framework::scan_app_dir(&app_dir),
-                runtime_core::framework::scan_api_dir(&api_dir),
+                runtime_core::dist::scan_app_dir(&app_dir),
+                runtime_core::dist::scan_api_dir(&api_dir),
             ))
         } else {
             None
@@ -155,7 +153,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     let mut manifest = app_scans
         .as_ref()
         .map(|(app_manifest, api_entries)| {
-            runtime_core::framework::BuildManifest::plan(
+            runtime_core::dist::BuildManifest::plan(
                 &project_root,
                 &planned,
                 build_dsc::dsc_identity(),
@@ -189,11 +187,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         crate::cli::build_slots::attach_observations(manifest, &materialized.observations);
         manifest.expand_static_params(&values)?;
     }
-    #[cfg(feature = "native")]
-    let render_tasks: Vec<runtime::StaticRenderTask> = manifest
-        .as_ref()
-        .map(build_publish::render_tasks)
-        .unwrap_or_default();
 
     // Everything below writes into the staged dist tree that atomically
     // replaces dist/ only after every step succeeds (deka#719).
@@ -225,30 +218,10 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     copy_dir_recursive(&public_dir, &dist_client)?;
 
     let client_index = dist_client.join("index.html");
-    if runtime_core::framework::is_source_app_router_project(&project_root) {
-        // With a manifest, an empty task list means every route is
-        // request-time (`prerender = false`): publish no static HTML rather
-        // than fabricating a root render. Without a manifest there is
-        // nothing to plan from, so keep the minimal-project `/` fallback.
-        #[cfg(feature = "native")]
-        if manifest.is_none() || !render_tasks.is_empty() {
-            // Static renders execute under the same resolved build policy as
-            // the build slots (deka.json + CLI overrides); the policy travels
-            // per execution, never through the environment (deka#801).
-            let render_policy = crate::cli::build_slots::resolve_build_policy(
-                &context.args.flags,
-                &context.args.params,
-                &project_root,
-                false,
-            )?;
-            runtime::prerender_static_pages(
-                &project_root,
-                &dist_client,
-                &render_tasks,
-                &render_policy.policy_json,
-                Some(dsc.clone()),
-            )?;
-        }
+    if runtime_core::dist::is_source_app_router_project(&project_root) {
+        // Static prerendering (deka build → dist HTML) is paused with the
+        // framework (deka#881); the native branch no longer renders. The
+        // non-native fallback still copies a hand-written index.html.
         #[cfg(not(feature = "native"))]
         {
             let index_src = project_root.join("index.html");
@@ -345,7 +318,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     }
 
     let want_trailing = read_trailing_slash(&project_root);
-    let redirects = runtime_core::framework::cloudflare_redirects(want_trailing);
+    let redirects = runtime_core::dist::cloudflare_redirects(want_trailing);
     fs::write(dist_root.join("_redirects"), redirects.as_bytes()).map_err(|err| {
         format!(
             "failed to write {}: {err}",
@@ -359,7 +332,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         )
     })?;
 
-    let needs_worker = runtime_core::framework::project_needs_worker(&project_root);
+    let needs_worker = runtime_core::dist::project_needs_worker(&project_root);
     let mut worker_emitted = false;
     match read_serve_kind(&project_root)? {
         Some(ServeKind::Static) if needs_worker => {
@@ -379,84 +352,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         _ => {}
     }
 
-    let islands = runtime_core::framework::scan_client_islands(&app_dir);
-    let deferred = runtime_core::framework::scan_server_defer(&app_dir);
-    if deferred.iter().any(|item| !item.has_fallback) {
-        let names: Vec<&str> = deferred
-            .iter()
-            .filter(|item| !item.has_fallback)
-            .map(|item| item.component.as_str())
-            .collect();
-        return Err(format!(
-            "server:defer requires a child with slot=\"fallback\" ({})",
-            names.join(", ")
-        ));
-    }
-    if !islands.is_empty() {
-        #[cfg(feature = "native")]
-        {
-            runtime::write_island_client_assets_with_dsc(
-                &dist_client.join("assets"),
-                &islands,
-                ClientAssetFlavor::Dist,
-                &dsc,
-            )?;
-            let cache_assets = project_root
-                .join(".cache")
-                .join("dekascript")
-                .join("assets");
-            runtime::write_island_client_assets_with_dsc(
-                &cache_assets,
-                &islands,
-                ClientAssetFlavor::Dev,
-                &dsc,
-            )?;
-        }
-        inject_island_scripts(&dist_client, &islands)?;
-    }
-    if !deferred.is_empty() {
-        #[cfg(feature = "native")]
-        {
-            runtime::write_defer_client_assets(
-                &dist_client.join("assets"),
-                ClientAssetFlavor::Dist,
-            )?;
-            let cache_assets = project_root
-                .join(".cache")
-                .join("dekascript")
-                .join("assets");
-            runtime::write_defer_client_assets(&cache_assets, ClientAssetFlavor::Dev)?;
-        }
-        inject_defer_script(&dist_client)?;
-    }
-
-    // server:defer provenance for deka#718's ◐ classification (not consumed
-    // yet); recorded before the manifest is written.
-    #[cfg(feature = "native")]
-    if let Some(manifest) = manifest.as_mut() {
-        build_publish::apply_deferred(manifest, &deferred, &project_root);
-    }
-
-    let styles = runtime_core::framework::collect_route_styles(
-        &runtime_core::framework::scan_app_dir(&app_dir),
-    );
-    if styles
-        .iter()
-        .any(|style| !style.classes.is_empty() || !style.files.is_empty())
-    {
-        #[cfg(feature = "native")]
-        {
-            runtime::write_route_css_assets(&dist_client.join("assets"), &styles)?;
-            runtime::write_route_css_assets(
-                &project_root
-                    .join(".cache")
-                    .join("dekascript")
-                    .join("assets"),
-                &styles,
-            )?;
-        }
-    }
-
     // RFD 24 §10.7: dist HTML references the content-hashed asset names and
     // inlines the client import map (assets/importmap.json) when one was emitted.
     // Inlining is not app-router-only: the web-bootstrap path used to inject a
@@ -470,9 +365,10 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
 
     // dist/ must be deployable without .cache/ (deka#738 F7): ship the
     // materialized build-value modules in dist and rewrite deka:dev/
-    // specifiers to relative paths (fails the build if one survives). Also
-    // rewrites bare ui/* specifiers to the vendored server/.ui modules and
-    // verifies every server-module specifier resolves inside dist/server.
+    // specifiers to relative paths (fails the build if one survives), and
+    // verify every server-module relative specifier resolves inside
+    // dist/server. Bare ui/* specifiers are paused-framework imports: they
+    // are intentionally left unrewritten here.
     #[cfg(feature = "native")]
     crate::cli::build_server_graph::publish_build_values(
         &project_root,
@@ -513,21 +409,13 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     let dist_client = dist_root.join("client");
     let dist_server = dist_root.join("server");
 
-    let mut report = format!(
+    let report = format!(
         "built web project {}\n  client: {}\n  server: {}\n  hydration: {}",
         project_root.display(),
         dist_client.display(),
         dist_server.display(),
-        if hydration_enabled || !islands.is_empty() {
-            "enabled"
-        } else {
-            "disabled"
-        }
+        if hydration_enabled { "enabled" } else { "disabled" }
     );
-    for line in island_report_lines(&islands) {
-        report.push('\n');
-        report.push_str(&line);
-    }
     stdio::success(&report);
     Ok(())
 }
@@ -593,7 +481,7 @@ fn inject_web_bootstrap_tags(
     // spellings so a missed swap cannot ship the invalid tag.
     let stale_import_maps = [
         r#"<script type="importmap" src="/importmap.json"></script>"#,
-        runtime_core::framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG,
+        runtime_core::dist::CLIENT_IMPORTMAP_PLACEHOLDER_TAG,
     ];
     let module_tag = r#"<script type="module" src="/assets/main.js"></script>"#;
 
@@ -700,43 +588,14 @@ fn read_serve_object(project_root: &Path) -> Result<Option<serde_json::Value>, S
     Ok(value.get("serve").cloned())
 }
 
-fn write_ui_modules_for_worker(project_root: &Path) -> Result<(), String> {
-    let ui_dir = project_root.join(".cache").join("dekascript").join("ui");
-    fs::create_dir_all(&ui_dir)
-        .map_err(|err| format!("failed to create {}: {err}", ui_dir.display()))?;
-    for (name, source) in [
-        ("jsx.js", deka_ui::JSX),
-        ("reactive.js", deka_ui::REACTIVE),
-        ("server.js", deka_ui::SERVER),
-        ("suspense.js", deka_ui::SUSPENSE),
-        ("client.js", deka_ui::CLIENT),
-        ("island-marker.js", deka_ui::ISLAND_MARKER),
-        ("form.js", deka_ui::FORM),
-        ("router.js", deka_ui::ROUTER),
-    ] {
-        fs::write(ui_dir.join(name), source.as_bytes())
-            .map_err(|err| format!("failed to write {}: {err}", ui_dir.join(name).display()))?;
-    }
-    Ok(())
-}
-
 fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), String> {
-    write_ui_modules_for_worker(project_root)?;
-    let entry = runtime_core::framework::write_worker_router_entry(project_root)?;
+    let entry = runtime_core::dist::write_worker_router_entry(project_root)?;
     let entry_source = fs::read_to_string(&entry)
         .map_err(|err| format!("failed to read {}: {err}", entry.display()))?;
     let graph_imports = runtime_core::ds_imports::paths(&entry_source);
     project::ensure_project_layout(project_root, None, &graph_imports)?;
     let bundled = build_dsc::transpile_bundle(project_root, &entry, false)?;
-    let mut defer_bundle = String::new();
-    let has_defer =
-        !runtime_core::framework::scan_server_defer(&project_root.join("app")).is_empty();
-    if has_defer {
-        let defer_entry = runtime_core::framework::write_defer_router_entry(project_root)?;
-        let raw = build_dsc::transpile_bundle(project_root, &defer_entry, false)?;
-        defer_bundle = retarget_app_export(&raw, "DeferApp");
-    }
-    let public_files = runtime_core::framework::collect_public_rel_paths(project_root);
+    let public_files = runtime_core::dist::collect_public_rel_paths(project_root);
     let public_json = serde_json::to_string(&public_files)
         .map_err(|err| format!("failed to encode public paths: {err}"))?;
     let want_trailing = if read_trailing_slash(project_root) {
@@ -747,7 +606,6 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
     let source = format!(
         r#"// Generated by deka build. Worker in front of static assets (api/ and defer).
 {bundled}
-{defer_bundle}
 
 const PUBLIC_FILES = new Set({public_json});
 const WANT_TRAILING = {want_trailing};
@@ -830,69 +688,12 @@ export default {{
     Ok(())
 }
 
-fn retarget_app_export(js: &str, name: &str) -> String {
-    js.replace(
-        "export async function App",
-        &format!("async function {name}"),
-    )
-    .replace("export function App", &format!("function {name}"))
-    .replace("export { App }", &format!("var {name} = App"))
-    .replace("export { App as App }", &format!("var {name} = App"))
-}
-
-fn inject_defer_script(dist_client: &Path) -> Result<(), String> {
-    let tags = runtime_core::framework::defer_script_tag(true);
-    inject_before_body_close_walk(dist_client, &tags)
-}
-
-fn inject_island_scripts(
-    dist_client: &Path,
-    islands: &[runtime_core::framework::ClientIsland],
-) -> Result<(), String> {
-    let tags = runtime_core::framework::island_script_tags(islands);
-    if tags.is_empty() {
-        return Ok(());
-    }
-    inject_before_body_close_walk(dist_client, &tags)
-}
-
-fn inject_before_body_close_walk(dir: &Path, tags: &str) -> Result<(), String> {
-    let Ok(reader) = fs::read_dir(dir) else {
-        return Ok(());
-    };
-    for entry in reader.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            inject_before_body_close_walk(&path, tags)?;
-            continue;
-        }
-        if path.extension().and_then(|e| e.to_str()) != Some("html") {
-            continue;
-        }
-        let mut html = fs::read_to_string(&path)
-            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-        if html.contains("islands-load.js")
-            || html.contains("islands-idle.js")
-            || html.contains("islands-defer.js")
-        {
-            continue;
-        }
-        if let Some(idx) = html.rfind("</body>") {
-            html.insert_str(idx, tags);
-        } else {
-            html.push_str(tags);
-        }
-        fs::write(&path, html.as_bytes())
-            .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
-    }
-    Ok(())
-}
 
 /// Rewrite unhashed `/assets/...` URLs in every dist HTML file to the
 /// content-hashed names emitted next to them, and wire the client import map
 /// into documents that load hashed chunks.
-/// Renames come from the shared collector in `runtime::islands` — the same
-/// source the serve-entry rewrite uses, so dev and prod agree by construction.
+/// Renames come from the shared collector in `runtime::asset_urls` — the same
+/// source the server-entry rewrite uses, so dev and prod agree by construction.
 /// The map is inlined: browsers reject the `src` form of the element, so
 /// `assets/importmap.json` stays on disk as the tooling/test copy and the
 /// document carries the JSON body. App-router and web-bootstrap share this
@@ -940,7 +741,7 @@ fn rewrite_html_asset_urls(
             // A prerendered app-router document carries the generation-time
             // placeholder (a `src` reference browsers reject); swap it for the
             // inline map rather than treating it as an existing import map.
-            let placeholder = runtime_core::framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
+            let placeholder = runtime_core::dist::CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
             if html.contains(placeholder) {
                 html = html.replace(placeholder, tag);
                 changed = true;
@@ -962,21 +763,3 @@ fn rewrite_html_asset_urls(
     Ok(())
 }
 
-fn island_report_lines(islands: &[runtime_core::framework::ClientIsland]) -> Vec<String> {
-    islands
-        .iter()
-        .map(|island| {
-            let props = if island.props.is_empty() {
-                "(none)".to_string()
-            } else {
-                island.props.join(", ")
-            };
-            format!(
-                "  island {}: {} props — {}",
-                island.component,
-                island.props.len(),
-                props
-            )
-        })
-        .collect()
-}

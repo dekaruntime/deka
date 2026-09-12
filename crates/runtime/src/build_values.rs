@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use engine::{RuntimeEngine, config as runtime_config};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData};
-use runtime_core::framework::compiler_cache_dir_with;
+use runtime_core::dist::compiler_cache_dir_with;
 
 use crate::extensions::extensions_for_mode;
 
@@ -30,7 +30,7 @@ pub struct BuildEntry {
 #[derive(Debug, Default)]
 pub struct MaterializedBuild {
     pub values: BTreeMap<String, serde_json::Value>,
-    pub observations: BTreeMap<String, Vec<runtime_core::framework::FsObservation>>,
+    pub observations: BTreeMap<String, Vec<runtime_core::dist::FsObservation>>,
 }
 
 /// Execute every generated build entry and atomically replace the project's
@@ -75,7 +75,7 @@ async fn materialize_build_values_async(
     dsc: Option<PathBuf>,
     dev_mode: bool,
 ) -> Result<MaterializedBuild, String> {
-    use runtime_core::framework::FsObservation;
+    use runtime_core::dist::FsObservation;
 
     let cache_dir = compiler_cache_dir_with(project_root, dev_mode);
     std::fs::create_dir_all(&cache_dir)

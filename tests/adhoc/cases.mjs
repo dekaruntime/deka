@@ -91,28 +91,25 @@ async function scenarioInit(cli) {
   const commands = [
     `cd ${dir}`,
     `${cli} init`,
-    `${cli} check ./app/page.dsx`,
+    `cat deka.json public/index.html public/style.css`,
   ];
   try {
     const init = runCli(cli, ["init"], dir);
-    const check = runCli(cli, ["check", "./app/page.dsx"], dir);
-    const stdout = ["# deka init", init.stdout, init.stderr, "# deka check ./app/page.dsx", check.stdout, check.stderr]
-      .filter((s) => s && s.length)
-      .join("\n");
-    const ok = init.status === 0 && check.status === 0;
+    const config = JSON.parse(readFileSync(join(dir, "deka.json"), "utf-8"));
+    const html = readFileSync(join(dir, "public/index.html"), "utf-8");
+    const css = readFileSync(join(dir, "public/style.css"), "utf-8");
+    const stdout = ["# deka init", init.stdout, init.stderr, JSON.stringify(config), html, css].join("\n");
+    const ok = init.status === 0 && config.serve.mode === "static" &&
+      config.serve.entry === "public" && html.includes("<h1>Deka App</h1>") && css.length > 0;
     return {
       name: "deka-init",
-      title: "deka init writes a project v2 can compile",
+      title: "deka init writes a static project ready to serve",
       commands,
       ok,
       skipped: false,
       stdout,
-      stderr: check.stderr || init.stderr,
-      error: ok
-        ? undefined
-        : check.error ||
-          init.error ||
-          (check.status !== 0 ? `deka check exited ${check.status}` : `deka init exited ${init.status}`),
+      stderr: init.stderr,
+      error: ok ? undefined : init.error || "init did not create the static starter project",
     };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -127,6 +124,8 @@ async function scenarioServe(cli) {
     `${cli} init`,
     `${cli} serve --port ${port}`,
     `curl -fsS http://127.0.0.1:${port}/`,
+    `curl -fsS http://127.0.0.1:${port}/style.css`,
+    `curl -i http://127.0.0.1:${port}/deka.json`,
   ];
   let child = null;
   try {
@@ -156,8 +155,11 @@ async function scenarioServe(cli) {
       serveOut += chunk.toString();
     });
     const http = await waitForHttp(`http://127.0.0.1:${port}/`, 15000);
-    const ok = http.status === 200;
-    const stdout = ["# deka init", init.stdout, `# GET http://127.0.0.1:${port}/`, `HTTP ${http.status}`, http.body, "# serve log", serveOut].join(
+    const css = await waitForHttp(`http://127.0.0.1:${port}/style.css`, 5000);
+    const privateFile = await waitForHttp(`http://127.0.0.1:${port}/deka.json`, 5000);
+    const ok = http.status === 200 && http.body.includes("<h1>Deka App</h1>") &&
+      css.status === 200 && css.body.includes("font-family") && privateFile.status === 404;
+    const stdout = ["# deka init", init.stdout, `# GET http://127.0.0.1:${port}/`, `HTTP ${http.status}`, http.body, `# GET /style.css: HTTP ${css.status}`, css.body, `# GET /deka.json: HTTP ${privateFile.status}`, "# serve log", serveOut].join(
       "\n"
     );
     return {
@@ -168,7 +170,7 @@ async function scenarioServe(cli) {
       skipped: false,
       stdout,
       stderr: serveOut,
-      error: ok ? undefined : `expected HTTP 200, got ${http.status}`,
+      error: ok ? undefined : `expected starter HTML + CSS (200) and private config (404), got ${http.status}/${css.status}/${privateFile.status}`,
     };
   } catch (err) {
     return {
@@ -273,7 +275,7 @@ export async function runAdhocScenarios(options = {}) {
 
   const results = [];
   if (wanted("deka-init")) {
-    results.push(cli ? await scenarioInit(cli) : skippedResult("deka-init", "deka init writes a project v2 can compile", "no CLI"));
+    results.push(cli ? await scenarioInit(cli) : skippedResult("deka-init", "deka init writes a static project ready to serve", "no CLI"));
   }
   if (wanted("deka-serve")) {
     results.push(cli ? await scenarioServe(cli) : skippedResult("deka-serve", "deka init && deka serve answers HTTP 200", "no CLI"));

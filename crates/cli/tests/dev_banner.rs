@@ -41,18 +41,11 @@ fn client() -> Client {
         .expect("reqwest client")
 }
 
+#[path = "support/app_router.rs"]
+mod app_router;
 fn init_project(dir: &Path) {
-    let output = Command::new(cli_bin())
-        .args(["init", "."])
-        .current_dir(dir)
-        .output()
-        .expect("deka init");
-    assert!(
-        output.status.success(),
-        "deka init failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    app_router::init_project(dir);
+    fs::write(dir.join("public/ready.txt"), "source-project-ready").unwrap();
 }
 
 fn serve_source_project(command: &str, root: &Path) {
@@ -77,10 +70,13 @@ fn serve_source_project(command: &str, root: &Path) {
     let deadline = Instant::now() + Duration::from_secs(45);
     let mut last = String::new();
     while Instant::now() < deadline {
-        if let Ok(response) = http.get(format!("http://127.0.0.1:{port}/")).send() {
+        if let Ok(response) = http
+            .get(format!("http://127.0.0.1:{port}/ready.txt"))
+            .send()
+        {
             let status = response.status().as_u16();
             let body = response.text().unwrap_or_default();
-            if status == 200 && body.contains("Deka App") {
+            if status == 200 && body == "source-project-ready" {
                 if let Some(mut server) = child.0.take() {
                     let _ = server.kill();
                     let _ = server.wait();
@@ -111,7 +107,8 @@ fn help_lists_dev_command() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        text.lines().any(|line| line.split_whitespace().next() == Some("dev")),
+        text.lines()
+            .any(|line| line.split_whitespace().next() == Some("dev")),
         "deka --help should list `dev`; output:\n{text}"
     );
 }
@@ -145,7 +142,10 @@ fn deka_dev_prints_banner_serves_http_and_hmr() {
     let port = free_port();
     let log_path = root.path().join("dev.log");
     let log = fs::File::create(&log_path).expect("dev.log");
-    let cwd = root.path().canonicalize().unwrap_or_else(|_| root.path().to_path_buf());
+    let cwd = root
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| root.path().to_path_buf());
 
     let mut cmd = Command::new(cli_bin());
     cmd.args(["dev", ".", "--port", &port.to_string(), "--no-prompt"])
@@ -167,7 +167,10 @@ fn deka_dev_prints_banner_serves_http_and_hmr() {
     let mut last_status = None;
     let mut last_body = String::new();
     while Instant::now() < deadline {
-        if let Ok(res) = http.get(format!("http://127.0.0.1:{port}/")).send() {
+        if let Ok(res) = http
+            .get(format!("http://127.0.0.1:{port}/ready.txt"))
+            .send()
+        {
             let status = res.status().as_u16();
             last_status = Some(status);
             if status == 200 {
@@ -206,11 +209,19 @@ fn deka_dev_prints_banner_serves_http_and_hmr() {
         "expected cwd in banner/log (cwd={cwd_display}):\n{log_text}"
     );
 
-    let home = http
-        .get(format!("http://127.0.0.1:{port}/"))
+    let ready_asset = http
+        .get(format!("http://127.0.0.1:{port}/ready.txt"))
         .send()
-        .expect("GET /");
-    assert_eq!(home.status().as_u16(), 200, "GET / should be 200");
+        .expect("GET /ready.txt");
+    assert_eq!(
+        ready_asset.status().as_u16(),
+        200,
+        "readiness asset should be 200"
+    );
+    assert_eq!(
+        ready_asset.text().expect("read readiness asset"),
+        "source-project-ready"
+    );
 
     let stylesheet = http
         .get(format!("http://127.0.0.1:{port}/style.css"))

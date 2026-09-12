@@ -1,9 +1,9 @@
 # `deka build` artifact fixtures (deka#720)
 
-Each fixture pins `deka build` output as a deterministic contract: expected
-stderr (route table + diagnostics), the published `dist/` file tree, and the
-exact bytes of every declared output. Fixtures run a real Dsc + Deka build in
-a tempdir — nothing inspects a Rust AST or snapshots internal codegen.
+Each fixture pins `deka build` failure output as a deterministic contract:
+expected stderr (diagnostics) and the guarantee that no `dist/` is published.
+Fixtures run a real Dsc + Deka build in a tempdir — nothing inspects a Rust
+AST or snapshots internal codegen.
 
 ## Layout
 
@@ -12,48 +12,13 @@ a tempdir — nothing inspects a Rust AST or snapshots internal codegen.
   project/             deka project source; copied to a tempdir and built
   expected/
     stderr.txt         expected stderr after path normalization (the tempdir
-                       path is replaced with `<project>`); includes the route
-                       table and any diagnostics
-    stderr.v1.txt      optional: expected stderr when dsc emits build plan
-                       version 1 (dsc 0.6.x); selected automatically on v1
-    fail               optional marker: the build must fail and must not
-                       publish dist/
-    v1-fail            optional marker: under plan v1 the build must fail
-                       (pairs with stderr.v1.txt; used by request-time,
-                       whose prerender = false needs plan v2 / dsc#54)
-    tree.txt           canonical sorted dist/ relative paths (success only)
-    files/             mirror of dist/ holding the expected BYTES of every
-                       path in tree.txt (success only)
+                       path is replaced with `<project>`)
+    fail               marker: the build must fail and must not publish dist/
 ```
 
 The harness (`crates/cli/tests/build_fixture_harness.rs`, driven by
-`crates/cli/tests/build_artifacts.rs`) compares:
-
-1. **stderr** — full normalized text; the route table's row ordering is part
-   of the contract (the table derives from the build manifest only).
-2. **file tree** — `tree.txt` vs the built `dist/`; a mismatch lists missing
-   and unexpected paths.
-3. **bytes** — every path in `tree.txt` is compared against the `files/`
-   mirror; text files get a unified diff, binary files a size note. One
-   deliberate exception (deka#849): the `build-manifest.json` mirror stores
-   `producer.deka` normalized to `<workspace-version>` and the
-   `build-manifest.sha256` mirror anchors the normalized bytes, so a
-   workspace version bump does not change the blessed bytes. The field is
-   still verified on every run: the published manifest's `producer.deka`
-   must equal the workspace version, checked separately from the bytes.
-
-For successful fixtures it additionally asserts, from the published v2
-`dist/build-manifest.json`: the manifest parses, its routes match the printed
-table exactly (glyph + path, in order), its payload table covers exactly the
-published tree, and **every payload digest and byte count is recomputed from
-the published bytes**. It also verifies the canonical `payload_root`, the
-`build-manifest.sha256` anchor, and invokes the production v2 verifier. A
-manifest with correct paths but wrong digests fails, naming the mismatched
-path. Then the fixture builds twice more: a
-**same-root rerun** (dist tree, full stderr, and the manifest must be
-byte-identical across runs) and a **cross-root build** (the same project
-from a second temporary root must produce RAW, byte-identical dist
-artifacts).
+`crates/cli/tests/build_artifacts.rs`) compares the normalized stderr text
+and asserts the build failed closed (non-zero exit, no `dist/`).
 
 ## Blessing (refreshing expected output)
 
@@ -64,94 +29,18 @@ DEKA_BLESS=1 cargo test -p cli --test build_artifacts
 ```
 
 Blessing is an explicit local refresh step; normal test runs never rewrite
-expectations. It rewrites `stderr.txt` (or `stderr.v1.txt`, matching the
-installed dsc) and, for successful fixtures, `tree.txt` and the `files/`
-mirror. It refuses to bless when the build's success/failure disagrees with
-the fixture's markers. A fixture with both `stderr.txt` and `stderr.v1.txt`
-must be blessed once per dsc plan generation (the pinned dsc in
-`scripts/dsc-version` currently emits v2; 0.6.x emitted v1).
+expectations. It refuses to bless when the build succeeds.
 
-The mirror holds **raw** bytes, blessed with a relative-slot-id dsc
-(dsc PR #62): slot ids are project-relative, so raw bytes are stable across
-build roots. The single exception is `build-manifest.json` (and its
-`build-manifest.sha256` sidecar), blessed with `producer.deka` normalized to
-`<workspace-version>` (deka#849) — see "bytes" above. `DEKA_BLESS=1` writes
-that normalized form automatically.
+## History
 
-## dsc capability gate (deka#728)
-
-The checks that depend on relative slot ids are gated, so the suite stays
-green on any dsc while running in full wherever a dsc ≥ PR #62 exists. CI
-installs the pinned dsc (`scripts/dsc-version` via
-`scripts/ci-install-dsc.sh`, currently 0.8.0), which is ≥ PR #62, so the
-gated checks run in full in CI. The harness probes once per process
-(`dsc_relative_slot_ids`): it plans the same staticParams probe page from
-two different temporary roots with the same relative argument — identical
-slot ids prove relative derivation, since absolute-path hashing makes them
-differ by root.
-
-On a dsc that predates dsc PR #62:
-
-- the **file-tree comparison** normalizes `app/.build-values/<id>.js` to
-  `app/.build-values/<slot>.js` on both sides — the slot module's filename
-  IS the slot id, which an absolute-path hash can never match — and every
-  other path still compares exactly;
-- the byte comparison of files whose blessed content embeds a slot id (the
-  historical `deka:dev/<id>` specifier; since deka#738 F7 the rewritten
-  `.build-values/<id>.js` path) **skips** with
-  `skipping byte comparison of <path>: installed dsc predates relative slot
-  ids (dsc#62)` — the committed id can never match an absolute-path hash.
-  The slot module itself skips too: its content is id-free, but its blessed
-  mirror path carries the id;
-- the **cross-root raw-byte comparison** for any fixture whose build output
-  embeds slot ids **skips** with a similar eprintln (its stderr comparison
-  still runs — stderr carries no ids).
-
-Everything else runs on every dsc: file tree, byte comparison of non-slot
-files, manifest digest verification, the same-root determinism rerun, and
-all coverage assertions. CI's pinned dsc (see `scripts/dsc-version`) is ≥
-PR #62, so the gated checks run in full there with no further change.
-
-## Coverage
-
-| fixture | issue item | dsc plan |
-|---|---|---|
-| `static-site` | concrete static page + layout emit expected HTML | v1 |
-| `static-params` | staticParams expands ● concrete paths | v1 |
-| `request-time` | prerender = false → no static HTML, stays a ƒ route | v2 (v1 asserts the fail-closed upgrade-dsc diagnostic) |
-| `collision-duplicate-slug` | duplicate slug fails pre-publish | v1 |
-| `collision-concrete-page` | instance vs concrete page collision fails | v1 |
-
-Deferred on purpose:
-
-- **`server:defer` ◐ classification** waits for deka#718 phase A; the route
-  table has no partial mode yet. When it lands, note that the defer secret
-  (`.cache/dekascript/defer.key`) is per-project persistent: commit one into
-  the fixture's `project/` so encrypted-props bytes stay stable across
-  machines (gitignore only accepts it when explicitly added with `git add -f`
-  — `.cache/` is a repo-wide ignore pattern).
-- **failed renderer** is not reachable in the current compiler slice: a
-  render-time throw is either rejected by dsc as a type error (build fails
-  before render) or tree-shaken before prerender runs.
-
-## Determinism notes (verified, not assumed)
-
-- Content-hashed asset names are stable across runs when inputs are stable
-  (the rerun and cross-root builds in every successful fixture would catch
-  rotation).
-- **dsc build-slot ids are project-relative since dsc PR #62** (deka#728);
-  previously they hashed the source file's absolute path, which made the
-  `deka:dev/<id>` import embedded in emitted JS a function of the build
-  root. The harness compares **raw bytes** with no normalization: every
-  successful fixture builds from a second temporary root and the dist trees
-  must match byte-for-byte (gated to dsc ≥ PR #62, see "dsc capability
-  gate" above). If that check ever fails, investigate which bytes embed the
-  root before considering any normalization — and if one is truly
-  unavoidable, narrow it to that specific case with a comment here.
-- The build manifest embeds absolute paths (slot files, route sources), so
-  it is byte-compared only across same-root rebuilds; across roots the
-  artifacts' bytes are the contract, plus per-root manifest verification.
-- No volatile file needed exclusion from byte comparison; the whole `dist/`
-  tree is mirrored in `files/`. If a future fixture needs an exclusion
-  (e.g. timestamps), encode it as an explicit rule in the harness and
-  document it here — never exclude ad hoc.
+Successful-build fixtures (`static-site`, `static-params`, `request-time`)
+pinned JSX-rendered prerender HTML, route tables, dist tree bytes, and the
+artifact manifest digests. They were removed with the paused-framework
+teardown (deka#881): they pinned JSX-rendered prerender HTML, island assets,
+and route CSS, none of which `deka build` emits anymore. App-router projects
+still build and publish dist/ + manifests — the generated serve entry keeps
+its paused `ui/*` imports, which the loader cannot resolve until the
+framework returns in dsc (RFD 60) — so serving a built JSX page awaits that
+return. What remains pins the pre-publication failure boundary (route
+collisions). If the framework unpauses, restore the success-fixture
+machinery from git history rather than recreating it.
