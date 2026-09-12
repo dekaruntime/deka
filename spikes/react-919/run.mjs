@@ -1,0 +1,55 @@
+import {registerHooks} from 'node:module';
+import * as loader from './loader.mjs';
+import {performance} from 'node:perf_hooks';
+import {Writable} from 'node:stream';
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const start = performance.now();
+registerHooks(loader);
+globalThis.__react919Host = {};
+for(const name of JSON.parse(fs.readFileSync(new URL('host-builtins.json',import.meta.url)))) globalThis.__react919Host[name] = await import(`node:${name}`);
+const React = (await import('@js/react')).default;
+const {Greeting} = await import('./evidence/Component.mjs');
+const {setVocabulary} = await import('./jsx-adapter.mjs');
+const mode = process.argv[2] ?? 'ssr';
+const first = React.createElement(Greeting,{message:'One vocabulary, two renderers'});
+const metrics = {mode, react:React.version};
+if(mode === 'ssr') {
+  const {renderToString} = await import('@js/react-dom-server');
+  setVocabulary({stack:'section',text:'span'});
+  metrics.importMs = performance.now()-start;
+  const t = performance.now();
+  const html = renderToString(first);
+  metrics.firstRenderMs = performance.now()-t;
+  assert.match(html, /Hello from DekaScript/);
+  assert.match(html, /One vocabulary, two renderers/);
+  assert.match(html, /^<section/);
+  process.stdout.write(html+'\n');
+  const warm = performance.now();
+  for(let i=0;i<100;i++) renderToString(first);
+  metrics.warmRenderMeanMs = (performance.now()-warm)/100;
+} else if(mode === 'ink') {
+  const {Box,Text,render} = await import('@js/ink');
+  function Stack({children}) {return React.createElement(Box,{flexDirection:'column'},children);}
+  function Label({children}) {return React.createElement(Text,{},children);}
+  setVocabulary({stack:Stack,text:Label});
+  metrics.importMs = performance.now()-start;
+  let output = '';
+  const stdout = new Writable({write(chunk,encoding,callback){output += chunk.toString(); process.stdout.write(chunk); callback();}});
+  stdout.columns = 80; stdout.rows = 24; stdout.isTTY = false;
+  const t = performance.now();
+  const app = render(first,{stdout,stderr:process.stderr,stdin:process.stdin,debug:true,exitOnCtrlC:false,patchConsole:false});
+  await new Promise(resolve => setImmediate(resolve));
+  metrics.firstRenderMs = performance.now()-t;
+  assert.match(output,/Hello from DekaScript/);
+  assert.match(output,/One vocabulary, two renderers/);
+  const update = performance.now();
+  app.rerender(React.createElement(Greeting,{message:'Updated through React reconciliation'}));
+  await new Promise(resolve => setImmediate(resolve));
+  metrics.updateMs = performance.now()-update;
+  assert.match(output,/Updated through React reconciliation/);
+  const exited = app.waitUntilExit();
+  app.unmount(); await exited;
+} else throw Error(`Unknown renderer ${mode}`);
+metrics.totalMs = performance.now()-start;
+process.stderr.write(JSON.stringify(metrics)+'\n');

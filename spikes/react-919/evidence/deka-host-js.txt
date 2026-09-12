@@ -1,0 +1,3 @@
+[security] default-deny; allow(run=all, dynamic=true, wasm=all) deny(run=none, dynamic=false, net=none) prompt=true
+Run failed: Module event loop failed: TypeError: unable to resolve module 'node:module'; check ds_modules
+    at async file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/dekascript/__deka_entry.js:1:20

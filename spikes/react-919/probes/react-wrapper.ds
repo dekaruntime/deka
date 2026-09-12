@@ -1,0 +1,4 @@
+opaque type ReactNode
+summon {
+  createText(text: string): Exception<ReactNode, JsError>
+} from "./react-wrapper.mjs"

@@ -1,0 +1,7 @@
+struct GreetingProps {
+  message: string
+}
+
+export fn Greeting(props: GreetingProps) Component {
+  return <><stack><text>Hello from DekaScript</text><text>{props.message}</text></stack></>;
+}

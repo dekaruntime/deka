@@ -1,0 +1,26 @@
+// Spike host capability bridge. Supplied before module loading.
+const ns = globalThis.__react919Host["os"];
+export default ns.default;
+export const EOL = ns.EOL;
+export const arch = ns.arch;
+export const availableParallelism = ns.availableParallelism;
+export const constants = ns.constants;
+export const cpus = ns.cpus;
+export const devNull = ns.devNull;
+export const endianness = ns.endianness;
+export const freemem = ns.freemem;
+export const getPriority = ns.getPriority;
+export const homedir = ns.homedir;
+export const hostname = ns.hostname;
+export const loadavg = ns.loadavg;
+export const machine = ns.machine;
+export const networkInterfaces = ns.networkInterfaces;
+export const platform = ns.platform;
+export const release = ns.release;
+export const setPriority = ns.setPriority;
+export const tmpdir = ns.tmpdir;
+export const totalmem = ns.totalmem;
+export const type = ns.type;
+export const uptime = ns.uptime;
+export const userInfo = ns.userInfo;
+export const version = ns.version;

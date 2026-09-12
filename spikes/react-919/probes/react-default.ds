@@ -1,0 +1,4 @@
+opaque type ReactNamespace
+summon {
+  default(): Exception<ReactNamespace, JsError>
+} from "../js_modules/react/index.mjs"

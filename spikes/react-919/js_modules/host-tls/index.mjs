@@ -1,0 +1,21 @@
+// Spike host capability bridge. Supplied before module loading.
+const ns = globalThis.__react919Host["tls"];
+export default ns.default;
+export const CLIENT_RENEG_LIMIT = ns.CLIENT_RENEG_LIMIT;
+export const CLIENT_RENEG_WINDOW = ns.CLIENT_RENEG_WINDOW;
+export const DEFAULT_CIPHERS = ns.DEFAULT_CIPHERS;
+export const DEFAULT_ECDH_CURVE = ns.DEFAULT_ECDH_CURVE;
+export const DEFAULT_MAX_VERSION = ns.DEFAULT_MAX_VERSION;
+export const DEFAULT_MIN_VERSION = ns.DEFAULT_MIN_VERSION;
+export const SecureContext = ns.SecureContext;
+export const Server = ns.Server;
+export const TLSSocket = ns.TLSSocket;
+export const checkServerIdentity = ns.checkServerIdentity;
+export const connect = ns.connect;
+export const convertALPNProtocols = ns.convertALPNProtocols;
+export const createSecureContext = ns.createSecureContext;
+export const createServer = ns.createServer;
+export const getCACertificates = ns.getCACertificates;
+export const getCiphers = ns.getCiphers;
+export const rootCertificates = ns.rootCertificates;
+export const setDefaultCACertificates = ns.setDefaultCACertificates;

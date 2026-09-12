@@ -1,0 +1,12 @@
+// DRAFT — review before committing
+//
+// Rule: `total` is emitted only where visible analysis of this module proves
+// there are no throw sites and no calls into unseen code. Uncaught `throw`,
+// known-throwing intrinsics (JSON.parse, decodeURI*), and calls the walker
+// cannot see all force the pessimistic default Exception<T, JsError>.
+// `total` is a claim the author must own; the draft never emits it silently.
+//
+// skipped (not a statically verifiable function): Children, Component, Fragment, Profiler, PureComponent, StrictMode, Suspense, __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, __COMPILER_RUNTIME, cache, cloneElement, createContext, createElement, createRef, default, forwardRef, isValidElement, lazy, memo, startTransition, unstable_useCacheRefresh, use, useActionState, useCallback, useContext, useDebugValue, useDeferredValue, useEffect, useId, useImperativeHandle, useInsertionEffect, useLayoutEffect, useMemo, useOptimistic, useReducer, useRef, useState, useSyncExternalStore, useTransition, version
+
+summon {
+} from "./js_modules/react/index.mjs"

@@ -1,0 +1,25 @@
+[ok] summoned @js/host-assert (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-async_hooks (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-buffer (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-crypto (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-events (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-fs (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-http (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-https (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-module (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-net (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-os (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-process (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-stream (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-tls (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-tty (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-url (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-util (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/host-zlib (vendored and SHA-256 locked); write your summon block
+[ok] summoned @js/devtools-disabled (vendored and SHA-256 locked); write your summon block
+warning: minified distribution detected; prefer a readable ES module build for review
+[ok] summoned @js/react (vendored and SHA-256 locked); write your summon block
+warning: minified distribution detected; prefer a readable ES module build for review
+[ok] summoned @js/react-dom-server (vendored and SHA-256 locked); write your summon block
+warning: minified distribution detected; prefer a readable ES module build for review
+[ok] summoned @js/ink (vendored and SHA-256 locked); write your summon block

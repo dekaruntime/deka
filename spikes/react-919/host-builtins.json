@@ -1,0 +1,20 @@
+[
+  "assert",
+  "async_hooks",
+  "buffer",
+  "crypto",
+  "events",
+  "fs",
+  "http",
+  "https",
+  "module",
+  "net",
+  "os",
+  "process",
+  "stream",
+  "tls",
+  "tty",
+  "url",
+  "util",
+  "zlib"
+]

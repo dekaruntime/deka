@@ -1,0 +1,4 @@
+^DHello from DekaScript
+One vocabulary, two renderersHello from DekaScript
+Updated through React reconciliationHello from DekaScript
+Updated through React reconciliation{"mode":"ink","react":"19.1.1","importMs":252.615866,"firstRenderMs":22.809946000000025,"updateMs":2.745874000000015,"totalMs":282.20052499999997}

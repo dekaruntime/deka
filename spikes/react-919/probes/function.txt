@@ -1,0 +1,2 @@
+[transpile] 1:8: expected `const`, `fn`, `async fn`, `{` or `default` after `export`, found ``function``
+1:68: expected expression, found ``}``

@@ -1,0 +1,291 @@
+{
+  "lockfileVersion": 1,
+  "packages": {
+    "@js/devtools-disabled": [
+      "@js/devtools-disabled",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/devtools-disabled.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-L6TLld7pA+26r9mKa3CtGVdGXPIGzPs05HHz5FyoRZQ=",
+        "files": {
+          "index.mjs": "sha256-L6TLld7pA+26r9mKa3CtGVdGXPIGzPs05HHz5FyoRZQ="
+        }
+      },
+      "sha256-L6TLld7pA+26r9mKa3CtGVdGXPIGzPs05HHz5FyoRZQ="
+    ],
+    "@js/host-assert": [
+      "@js/host-assert",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-assert.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-g53aVjCllcBOQF+bGJI4kEFwnn6MjgJDqltVx0AAswg=",
+        "files": {
+          "index.mjs": "sha256-g53aVjCllcBOQF+bGJI4kEFwnn6MjgJDqltVx0AAswg="
+        }
+      },
+      "sha256-g53aVjCllcBOQF+bGJI4kEFwnn6MjgJDqltVx0AAswg="
+    ],
+    "@js/host-async_hooks": [
+      "@js/host-async_hooks",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-async_hooks.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-QfcxqCMpuopPRK7cY5BOvOMGF24xANySmtYpE+a/3Pc=",
+        "files": {
+          "index.mjs": "sha256-QfcxqCMpuopPRK7cY5BOvOMGF24xANySmtYpE+a/3Pc="
+        }
+      },
+      "sha256-QfcxqCMpuopPRK7cY5BOvOMGF24xANySmtYpE+a/3Pc="
+    ],
+    "@js/host-buffer": [
+      "@js/host-buffer",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-buffer.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-6THu3YSsYPx6qzXaCY+nfySe/z7s0WCznkWTO7MFAYo=",
+        "files": {
+          "index.mjs": "sha256-6THu3YSsYPx6qzXaCY+nfySe/z7s0WCznkWTO7MFAYo="
+        }
+      },
+      "sha256-6THu3YSsYPx6qzXaCY+nfySe/z7s0WCznkWTO7MFAYo="
+    ],
+    "@js/host-crypto": [
+      "@js/host-crypto",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-crypto.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-KGqGbW3qURTn9/iFDaAbCc5kcWjudR+sTlaSE3i4XAo=",
+        "files": {
+          "index.mjs": "sha256-KGqGbW3qURTn9/iFDaAbCc5kcWjudR+sTlaSE3i4XAo="
+        }
+      },
+      "sha256-KGqGbW3qURTn9/iFDaAbCc5kcWjudR+sTlaSE3i4XAo="
+    ],
+    "@js/host-events": [
+      "@js/host-events",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-events.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-o4G5FzKEqFANhSLNZhGQ2qTcO+VB6bouLrvz4sPQAYk=",
+        "files": {
+          "index.mjs": "sha256-o4G5FzKEqFANhSLNZhGQ2qTcO+VB6bouLrvz4sPQAYk="
+        }
+      },
+      "sha256-o4G5FzKEqFANhSLNZhGQ2qTcO+VB6bouLrvz4sPQAYk="
+    ],
+    "@js/host-fs": [
+      "@js/host-fs",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-fs.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-vhEKFK1ZCoEobkllNI3yNCRIKtFVt8XA8cgdb+GOQFw=",
+        "files": {
+          "index.mjs": "sha256-vhEKFK1ZCoEobkllNI3yNCRIKtFVt8XA8cgdb+GOQFw="
+        }
+      },
+      "sha256-vhEKFK1ZCoEobkllNI3yNCRIKtFVt8XA8cgdb+GOQFw="
+    ],
+    "@js/host-http": [
+      "@js/host-http",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-http.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-RQg2WyfLjP0i9G+I0DS3hA4qZWYKX8ihgmS4r5YIr30=",
+        "files": {
+          "index.mjs": "sha256-RQg2WyfLjP0i9G+I0DS3hA4qZWYKX8ihgmS4r5YIr30="
+        }
+      },
+      "sha256-RQg2WyfLjP0i9G+I0DS3hA4qZWYKX8ihgmS4r5YIr30="
+    ],
+    "@js/host-https": [
+      "@js/host-https",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-https.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-vcboFn1AQzoQZy0zdEW+/GuykvcWuQ7FT8Cx/wjZIW4=",
+        "files": {
+          "index.mjs": "sha256-vcboFn1AQzoQZy0zdEW+/GuykvcWuQ7FT8Cx/wjZIW4="
+        }
+      },
+      "sha256-vcboFn1AQzoQZy0zdEW+/GuykvcWuQ7FT8Cx/wjZIW4="
+    ],
+    "@js/host-module": [
+      "@js/host-module",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-module.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-CPqMLhYtw1kcsH/skJ0JdHblQ4YnVyaeblm+85Ic68s=",
+        "files": {
+          "index.mjs": "sha256-CPqMLhYtw1kcsH/skJ0JdHblQ4YnVyaeblm+85Ic68s="
+        }
+      },
+      "sha256-CPqMLhYtw1kcsH/skJ0JdHblQ4YnVyaeblm+85Ic68s="
+    ],
+    "@js/host-net": [
+      "@js/host-net",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-net.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-PxbzIUvv0qvcyHHsMCAQBhFbe3Qz0lp33ulzMQzqbNg=",
+        "files": {
+          "index.mjs": "sha256-PxbzIUvv0qvcyHHsMCAQBhFbe3Qz0lp33ulzMQzqbNg="
+        }
+      },
+      "sha256-PxbzIUvv0qvcyHHsMCAQBhFbe3Qz0lp33ulzMQzqbNg="
+    ],
+    "@js/host-os": [
+      "@js/host-os",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-os.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-gQ2XKEEPNc50vaN4PjE/D50xmzGNzvr+//Ba0O4sTZQ=",
+        "files": {
+          "index.mjs": "sha256-gQ2XKEEPNc50vaN4PjE/D50xmzGNzvr+//Ba0O4sTZQ="
+        }
+      },
+      "sha256-gQ2XKEEPNc50vaN4PjE/D50xmzGNzvr+//Ba0O4sTZQ="
+    ],
+    "@js/host-process": [
+      "@js/host-process",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-process.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-H26GtwPlqqk73V84/3SwgTjnm4slB4XSfutpLi8iUQc=",
+        "files": {
+          "index.mjs": "sha256-H26GtwPlqqk73V84/3SwgTjnm4slB4XSfutpLi8iUQc="
+        }
+      },
+      "sha256-H26GtwPlqqk73V84/3SwgTjnm4slB4XSfutpLi8iUQc="
+    ],
+    "@js/host-stream": [
+      "@js/host-stream",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-stream.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-GJxkEIYGnUNl0+pRJRZ/JbIoiDc+ZAzElGxJxwd6R/Q=",
+        "files": {
+          "index.mjs": "sha256-GJxkEIYGnUNl0+pRJRZ/JbIoiDc+ZAzElGxJxwd6R/Q="
+        }
+      },
+      "sha256-GJxkEIYGnUNl0+pRJRZ/JbIoiDc+ZAzElGxJxwd6R/Q="
+    ],
+    "@js/host-tls": [
+      "@js/host-tls",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-tls.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-Aq9oUMoQsIDOafgy257k5eMXBLXQyBMLuDromJUW08I=",
+        "files": {
+          "index.mjs": "sha256-Aq9oUMoQsIDOafgy257k5eMXBLXQyBMLuDromJUW08I="
+        }
+      },
+      "sha256-Aq9oUMoQsIDOafgy257k5eMXBLXQyBMLuDromJUW08I="
+    ],
+    "@js/host-tty": [
+      "@js/host-tty",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-tty.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-cE3/opj8TErnn3Dwm8l2Nbr7b+MdK2cT1FSx8S9r3xE=",
+        "files": {
+          "index.mjs": "sha256-cE3/opj8TErnn3Dwm8l2Nbr7b+MdK2cT1FSx8S9r3xE="
+        }
+      },
+      "sha256-cE3/opj8TErnn3Dwm8l2Nbr7b+MdK2cT1FSx8S9r3xE="
+    ],
+    "@js/host-url": [
+      "@js/host-url",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-url.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-gPW8y0QH7fPTgOABll8ILoFgA9T6psP44p5JnzZvRDk=",
+        "files": {
+          "index.mjs": "sha256-gPW8y0QH7fPTgOABll8ILoFgA9T6psP44p5JnzZvRDk="
+        }
+      },
+      "sha256-gPW8y0QH7fPTgOABll8ILoFgA9T6psP44p5JnzZvRDk="
+    ],
+    "@js/host-util": [
+      "@js/host-util",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-util.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-Z/CElR1A1Vpv9L2IO7Y+3n2AovvI4vHwkkOfQFArHGs=",
+        "files": {
+          "index.mjs": "sha256-Z/CElR1A1Vpv9L2IO7Y+3n2AovvI4vHwkkOfQFArHGs="
+        }
+      },
+      "sha256-Z/CElR1A1Vpv9L2IO7Y+3n2AovvI4vHwkkOfQFArHGs="
+    ],
+    "@js/host-zlib": [
+      "@js/host-zlib",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-zlib.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-T2DB62pM6LJ3bFw+L0a4kfA4uQ4PmS9bZPSVriqvQww=",
+        "files": {
+          "index.mjs": "sha256-T2DB62pM6LJ3bFw+L0a4kfA4uQ4PmS9bZPSVriqvQww="
+        }
+      },
+      "sha256-T2DB62pM6LJ3bFw+L0a4kfA4uQ4PmS9bZPSVriqvQww="
+    ],
+    "@js/ink": [
+      "@js/ink",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/ink.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-w6cuEGWX8zh/szF6wTTYnBBN+XqjPGelQByQofeW7ng=",
+        "files": {
+          "index.mjs": "sha256-w6cuEGWX8zh/szF6wTTYnBBN+XqjPGelQByQofeW7ng="
+        }
+      },
+      "sha256-w6cuEGWX8zh/szF6wTTYnBBN+XqjPGelQByQofeW7ng="
+    ],
+    "@js/react": [
+      "@js/react",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/react.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-B1H01dAOizLVWK1PwCplJo2V4R3V4+yJu3u8QUw8Jpc=",
+        "files": {
+          "index.mjs": "sha256-B1H01dAOizLVWK1PwCplJo2V4R3V4+yJu3u8QUw8Jpc="
+        }
+      },
+      "sha256-B1H01dAOizLVWK1PwCplJo2V4R3V4+yJu3u8QUw8Jpc="
+    ],
+    "@js/react-dom-server": [
+      "@js/react-dom-server",
+      "file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/react-dom-server.mjs",
+      {
+        "source": "url",
+        "provenance": {},
+        "integrity": "sha256-3NHbB/JcVz8cNNbFgMhqQvHWGUnOHfQEcCVH4MqMK9E=",
+        "files": {
+          "index.mjs": "sha256-3NHbB/JcVz8cNNbFgMhqQvHWGUnOHfQEcCVH4MqMK9E="
+        }
+      },
+      "sha256-3NHbB/JcVz8cNNbFgMhqQvHWGUnOHfQEcCVH4MqMK9E="
+    ]
+  }
+}

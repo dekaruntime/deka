@@ -1,0 +1,20 @@
+[summon] no transitive fetching: unresolved inner imports (summon each explicitly, then reference its @js/<name> in a vetted module):
+  /react-devtools-core@^6.1.2?target=node
+  node:assert
+  node:buffer
+  node:crypto
+  node:events
+  node:fs
+  node:http
+  node:https
+  node:module
+  node:net
+  node:os
+  node:process
+  node:stream
+  node:tls
+  node:tty
+  node:url
+  node:util
+  node:zlib
+  react

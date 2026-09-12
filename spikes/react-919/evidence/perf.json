@@ -1,0 +1,266 @@
+{
+  "host": {
+    "platform": "darwin",
+    "release": "25.6.0",
+    "arch": "x64",
+    "cpu": "Intel(R) Core(TM) i9-10910 CPU @ 3.60GHz",
+    "node": "v26.3.1"
+  },
+  "method": "10 sequential fresh Node processes per renderer, warm OS file cache, NODE_ENV=production; imports include spike loader and host bridge; render includes first commit/output; wall includes process launch/shutdown. Not a Deka runtime or Electron benchmark.",
+  "bytes": {
+    "react": {
+      "raw": 11701,
+      "gzip": 4447
+    },
+    "react-dom-server": {
+      "raw": 181209,
+      "gzip": 54910
+    },
+    "ink": {
+      "raw": 383530,
+      "gzip": 130989
+    }
+  },
+  "summary": {
+    "ssr": {
+      "importMs": {
+        "median": 64.0214045,
+        "min": 59.569675000000004,
+        "max": 70.69373399999999
+      },
+      "firstRenderMs": {
+        "median": 3.2314944999999966,
+        "min": 3.168646999999993,
+        "max": 5.3581939999999975
+      },
+      "warmRenderMeanMs": {
+        "median": 0.02742552500000002,
+        "min": 0.02634414000000021,
+        "max": 0.05473510000000004
+      },
+      "totalMs": {
+        "median": 70.5789755,
+        "min": 65.974383,
+        "max": 82.59620299999999
+      },
+      "processWallMs": {
+        "median": 199.71790199999998,
+        "min": 188.21237500000007,
+        "max": 253.49074100000007
+      }
+    },
+    "ink": {
+      "importMs": {
+        "median": 145.957888,
+        "min": 105.90334999999999,
+        "max": 201.71128199999998
+      },
+      "firstRenderMs": {
+        "median": 20.21528000000002,
+        "min": 13.22077200000001,
+        "max": 29.035393
+      },
+      "updateMs": {
+        "median": 2.1991720000000043,
+        "min": 1.6192360000000008,
+        "max": 4.963921000000028
+      },
+      "totalMs": {
+        "median": 172.2681675,
+        "min": 124.324004,
+        "max": 235.406697
+      },
+      "processWallMs": {
+        "median": 349.2361635000002,
+        "min": 255.77797400000009,
+        "max": 452.70316900000034
+      }
+    }
+  },
+  "samples": {
+    "ssr": [
+      {
+        "mode": "ssr",
+        "react": "19.1.1",
+        "importMs": 61.24590500000001,
+        "firstRenderMs": 3.168646999999993,
+        "warmRenderMeanMs": 0.02634414000000021,
+        "totalMs": 67.601986,
+        "processWallMs": 192.393914
+      },
+      {
+        "mode": "ssr",
+        "react": "19.1.1",
+        "importMs": 63.665603000000004,
+        "firstRenderMs": 3.2079420000000027,
+        "warmRenderMeanMs": 0.02791279000000003,
+        "totalMs": 70.22691,
+        "processWallMs": 194.21989099999996
+      },
+      {
+        "mode": "ssr",
+        "react": "19.1.1",
+        "importMs": 59.569675000000004,
+        "firstRenderMs": 3.1864479999999844,
+        "warmRenderMeanMs": 0.026577430000000107,
+        "totalMs": 65.974383,
+        "processWallMs": 188.21237500000007
+      },
+      {
+        "mode": "ssr",
+        "react": "19.1.1",
+        "importMs": 60.14308200000001,
+        "firstRenderMs": 3.254259999999988,
+        "warmRenderMeanMs": 0.02917067000000003,
+        "totalMs": 66.87783,
+        "processWallMs": 194.53581899999995
+      },
+      {
+        "mode": "ssr",
+        "react": "19.1.1",
+        "importMs": 70.69373399999999,
+        "firstRenderMs": 5.3581939999999975,
+        "warmRenderMeanMs": 0.05473510000000004,
+        "totalMs": 82.59620299999999,
+        "processWallMs": 212.32924700000012
+      },
+      {
+        "mode": "ssr",
+        "react": "19.1.1",
+        "importMs": 68.624492,
+        "firstRenderMs": 3.2539040000000057,
+        "warmRenderMeanMs": 0.027629909999999994,
+        "totalMs": 75.208067,
+        "processWallMs": 253.49074100000007
+      },
+      {
+        "mode": "ssr",
+        "react": "19.1.1",
+        "importMs": 62.52785700000001,
+        "firstRenderMs": 3.2225870000000043,
+        "warmRenderMeanMs": 0.026786610000000054,
+        "totalMs": 68.993673,
+        "processWallMs": 202.85375799999997
+      },
+      {
+        "mode": "ssr",
+        "react": "19.1.1",
+        "importMs": 67.253664,
+        "firstRenderMs": 3.240401999999989,
+        "warmRenderMeanMs": 0.027449939999999912,
+        "totalMs": 73.811033,
+        "processWallMs": 205.88402900000006
+      },
+      {
+        "mode": "ssr",
+        "react": "19.1.1",
+        "importMs": 64.804136,
+        "firstRenderMs": 3.173211000000009,
+        "warmRenderMeanMs": 0.026874190000000055,
+        "totalMs": 71.219963,
+        "processWallMs": 199.54610000000002
+      },
+      {
+        "mode": "ssr",
+        "react": "19.1.1",
+        "importMs": 64.377206,
+        "firstRenderMs": 3.241591999999997,
+        "warmRenderMeanMs": 0.02740111000000013,
+        "totalMs": 70.931041,
+        "processWallMs": 199.88970399999994
+      }
+    ],
+    "ink": [
+      {
+        "mode": "ink",
+        "react": "19.1.1",
+        "importMs": 111.41406500000001,
+        "firstRenderMs": 15.402355,
+        "updateMs": 2.00178600000001,
+        "totalMs": 131.958936,
+        "processWallMs": 261.213037
+      },
+      {
+        "mode": "ink",
+        "react": "19.1.1",
+        "importMs": 105.90334999999999,
+        "firstRenderMs": 13.532828999999992,
+        "updateMs": 2.136839000000009,
+        "totalMs": 124.324004,
+        "processWallMs": 255.77797400000009
+      },
+      {
+        "mode": "ink",
+        "react": "19.1.1",
+        "importMs": 108.98873300000001,
+        "firstRenderMs": 13.22077200000001,
+        "updateMs": 2.094329000000016,
+        "totalMs": 126.91642599999999,
+        "processWallMs": 257.311639
+      },
+      {
+        "mode": "ink",
+        "react": "19.1.1",
+        "importMs": 142.97818,
+        "firstRenderMs": 22.98672000000002,
+        "updateMs": 3.110303999999985,
+        "totalMs": 172.33383,
+        "processWallMs": 318.52921300000025
+      },
+      {
+        "mode": "ink",
+        "react": "19.1.1",
+        "importMs": 175.99122999999997,
+        "firstRenderMs": 24.60973199999995,
+        "updateMs": 3.06935900000002,
+        "totalMs": 207.92519599999997,
+        "processWallMs": 403.8451249999998
+      },
+      {
+        "mode": "ink",
+        "react": "19.1.1",
+        "importMs": 148.93759599999998,
+        "firstRenderMs": 17.443840000000023,
+        "updateMs": 2.121643000000006,
+        "totalMs": 172.20250499999997,
+        "processWallMs": 379.94311400000015
+      },
+      {
+        "mode": "ink",
+        "react": "19.1.1",
+        "importMs": 125.938127,
+        "firstRenderMs": 14.871740999999986,
+        "updateMs": 1.6192360000000008,
+        "totalMs": 145.245808,
+        "processWallMs": 305.2499410000005
+      },
+      {
+        "mode": "ink",
+        "react": "19.1.1",
+        "importMs": 201.71128199999998,
+        "firstRenderMs": 24.46757500000001,
+        "updateMs": 4.963921000000028,
+        "totalMs": 235.406697,
+        "processWallMs": 410.20953499999996
+      },
+      {
+        "mode": "ink",
+        "react": "19.1.1",
+        "importMs": 191.623043,
+        "firstRenderMs": 29.035393,
+        "updateMs": 3.499190999999996,
+        "totalMs": 228.37809600000003,
+        "processWallMs": 452.70316900000034
+      },
+      {
+        "mode": "ink",
+        "react": "19.1.1",
+        "importMs": 180.69776099999999,
+        "firstRenderMs": 23.973104000000035,
+        "updateMs": 2.2615049999999997,
+        "totalMs": 210.25121599999997,
+        "processWallMs": 440.3006490000007
+      }
+    ]
+  }
+}

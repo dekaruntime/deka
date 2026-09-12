@@ -1,0 +1,1 @@
+[run] Run mode supports .ds/.dsx/.js entrypoints: /Volumes/Projects/codex/react-919/deka/spikes/react-919/run.mjs

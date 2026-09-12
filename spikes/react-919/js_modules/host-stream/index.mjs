@@ -1,0 +1,26 @@
+// Spike host capability bridge. Supplied before module loading.
+const ns = globalThis.__react919Host["stream"];
+export default ns.default;
+export const Duplex = ns.Duplex;
+export const PassThrough = ns.PassThrough;
+export const Readable = ns.Readable;
+export const Stream = ns.Stream;
+export const Transform = ns.Transform;
+export const Writable = ns.Writable;
+export const _isArrayBufferView = ns._isArrayBufferView;
+export const _isUint8Array = ns._isUint8Array;
+export const _uint8ArrayToBuffer = ns._uint8ArrayToBuffer;
+export const addAbortSignal = ns.addAbortSignal;
+export const compose = ns.compose;
+export const destroy = ns.destroy;
+export const duplexPair = ns.duplexPair;
+export const finished = ns.finished;
+export const getDefaultHighWaterMark = ns.getDefaultHighWaterMark;
+export const isDestroyed = ns.isDestroyed;
+export const isDisturbed = ns.isDisturbed;
+export const isErrored = ns.isErrored;
+export const isReadable = ns.isReadable;
+export const isWritable = ns.isWritable;
+export const pipeline = ns.pipeline;
+export const promises = ns.promises;
+export const setDefaultHighWaterMark = ns.setDefaultHighWaterMark;

@@ -1,0 +1,20 @@
+// Spike host capability bridge. Supplied before module loading.
+const ns = globalThis.__react919Host["net"];
+export default ns.default;
+export const BlockList = ns.BlockList;
+export const Server = ns.Server;
+export const Socket = ns.Socket;
+export const SocketAddress = ns.SocketAddress;
+export const Stream = ns.Stream;
+export const _createServerHandle = ns._createServerHandle;
+export const _normalizeArgs = ns._normalizeArgs;
+export const connect = ns.connect;
+export const createConnection = ns.createConnection;
+export const createServer = ns.createServer;
+export const getDefaultAutoSelectFamily = ns.getDefaultAutoSelectFamily;
+export const getDefaultAutoSelectFamilyAttemptTimeout = ns.getDefaultAutoSelectFamilyAttemptTimeout;
+export const isIP = ns.isIP;
+export const isIPv4 = ns.isIPv4;
+export const isIPv6 = ns.isIPv6;
+export const setDefaultAutoSelectFamily = ns.setDefaultAutoSelectFamily;
+export const setDefaultAutoSelectFamilyAttemptTimeout = ns.setDefaultAutoSelectFamilyAttemptTimeout;

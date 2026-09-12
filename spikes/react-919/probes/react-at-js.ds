@@ -1,0 +1,4 @@
+opaque type ReactNode
+summon {
+  createElement(tag: string): Exception<ReactNode, JsError>
+} from "@js/react"

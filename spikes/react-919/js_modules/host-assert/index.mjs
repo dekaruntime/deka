@@ -1,0 +1,24 @@
+// Spike host capability bridge. Supplied before module loading.
+const ns = globalThis.__react919Host["assert"];
+export default ns.default;
+export const Assert = ns.Assert;
+export const AssertionError = ns.AssertionError;
+export const deepEqual = ns.deepEqual;
+export const deepStrictEqual = ns.deepStrictEqual;
+export const doesNotMatch = ns.doesNotMatch;
+export const doesNotReject = ns.doesNotReject;
+export const doesNotThrow = ns.doesNotThrow;
+export const equal = ns.equal;
+export const fail = ns.fail;
+export const ifError = ns.ifError;
+export const match = ns.match;
+export const notDeepEqual = ns.notDeepEqual;
+export const notDeepStrictEqual = ns.notDeepStrictEqual;
+export const notEqual = ns.notEqual;
+export const notStrictEqual = ns.notStrictEqual;
+export const ok = ns.ok;
+export const partialDeepStrictEqual = ns.partialDeepStrictEqual;
+export const rejects = ns.rejects;
+export const strict = ns.strict;
+export const strictEqual = ns.strictEqual;
+export const throws = ns.throws;

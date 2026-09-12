@@ -1,0 +1,1 @@
+[ok] bundled /Volumes/Projects/codex/react-919/deka/spikes/react-919/Component.dsx -> .cache/component-bundle.js

@@ -1,0 +1,16 @@
+dsc [version 0.50.0]
+
+deka [version 0.50.0]
+
+to check for updates run: deka --update
+
+ 22 packages installed [85ms]
+[ok] checked Component.dsx
+[ok] transpiled /Volumes/Projects/codex/react-919/deka/spikes/react-919/Component.dsx -> .cache/Component.mjs
+[ok] checked probes/react-wrapper.ds
+<section data-deka-id="Component:Greeting/i0/i0"><span data-deka-id="Component:Greeting/i0/i0/i0">Hello from DekaScript</span><span data-deka-id="Component:Greeting/i0/i0/i1">One vocabulary, two renderers</span></section>
+{"mode":"ssr","react":"19.1.1","importMs":69.56651500000001,"firstRenderMs":4.320688999999987,"warmRenderMeanMs":0.033079600000000084,"totalMs":78.922494}
+Hello from DekaScript
+One vocabulary, two renderersHello from DekaScript
+Updated through React reconciliationHello from DekaScript
+Updated through React reconciliation{"mode":"ink","react":"19.1.1","importMs":114.27723599999999,"firstRenderMs":13.384990999999985,"updateMs":1.591003999999998,"totalMs":131.218748}

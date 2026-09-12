@@ -1,0 +1,1 @@
+[transpile] 1:1: JSX is only allowed in `.dsx` files; rename this file from `.ds` to `.dsx`

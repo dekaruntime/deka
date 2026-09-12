@@ -1,0 +1,18 @@
+{
+  "react.mjs": {
+    "url": "https://cdn.jsdelivr.net/npm/react@19.1.1/+esm",
+    "sha256": "0751f4d5d00e8b32d558ad4fc02a65268d95e11dd5e3ec89bb7bbc414c3c2697"
+  },
+  "ink.mjs": {
+    "url": "https://esm.sh/ink@6.3.1/X-ZXJlYWN0/node/ink.bundle.mjs",
+    "sha256": "7c18523755953e6f8a3d5fa05fbc77ca4bbecf34fc108e44a4d9f69f1d37f035"
+  },
+  "react-dom-server.mjs": {
+    "url": "https://esm.sh/react-dom@19.1.1/node/server.bundle.mjs?external=react",
+    "sha256": "15fccc1cfd4c868964cfec8c1c402d76d9c347d3d1e981e668a3e24496c6571f"
+  },
+  "ink.bundle.mjs.map": {
+    "url": "https://esm.sh/ink@6.3.1/X-ZXJlYWN0/node/ink.bundle.mjs.map",
+    "sha256": "cf797b6c9dfa4eaf7ee4062afb1af2fd53bbc0a19c7e6f2f588c0eca9d8edcdd"
+  }
+}

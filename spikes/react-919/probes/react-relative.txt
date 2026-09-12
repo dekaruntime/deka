@@ -1,0 +1,1 @@
+[check] 3:3: /Volumes/Projects/codex/react-919/deka/spikes/react-919/probes/react-relative.ds: summoned module `../js_modules/react/index.mjs`, export `createElement`: export is not a statically verifiable function

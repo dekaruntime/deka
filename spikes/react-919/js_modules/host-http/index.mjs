@@ -1,0 +1,24 @@
+// Spike host capability bridge. Supplied before module loading.
+const ns = globalThis.__react919Host["http"];
+export default ns.default;
+export const Agent = ns.Agent;
+export const ClientRequest = ns.ClientRequest;
+export const CloseEvent = ns.CloseEvent;
+export const IncomingMessage = ns.IncomingMessage;
+export const METHODS = ns.METHODS;
+export const MessageEvent = ns.MessageEvent;
+export const OutgoingMessage = ns.OutgoingMessage;
+export const STATUS_CODES = ns.STATUS_CODES;
+export const Server = ns.Server;
+export const ServerResponse = ns.ServerResponse;
+export const WebSocket = ns.WebSocket;
+export const _connectionListener = ns._connectionListener;
+export const createServer = ns.createServer;
+export const get = ns.get;
+export const globalAgent = ns.globalAgent;
+export const maxHeaderSize = ns.maxHeaderSize;
+export const request = ns.request;
+export const setGlobalProxyFromEnv = ns.setGlobalProxyFromEnv;
+export const setMaxIdleHTTPParsers = ns.setMaxIdleHTTPParsers;
+export const validateHeaderName = ns.validateHeaderName;
+export const validateHeaderValue = ns.validateHeaderValue;

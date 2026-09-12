@@ -1,0 +1,6 @@
+installed dsc v0.50.0 -> /Volumes/Projects/codex/react-919/deka/spikes/react-919/.toolchain/bin/dsc
+dsc [version 0.50.0]
+
+deka [version 0.50.0]
+
+to check for updates run: deka --update

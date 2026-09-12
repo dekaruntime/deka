@@ -1,0 +1,1 @@
+[check] 2:1: /Volumes/Projects/codex/react-919/deka/spikes/react-919/probes/react-at-js.ds: cannot verify summoned module `@js/react`: summon requires a literal relative .mjs module path

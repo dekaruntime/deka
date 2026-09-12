@@ -1,0 +1,4 @@
+Hello from DekaScript
+One vocabulary, two renderersHello from DekaScript
+Updated through React reconciliationHello from DekaScript
+Updated through React reconciliation

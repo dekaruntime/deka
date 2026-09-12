@@ -1,0 +1,1 @@
+export function Greeting(): Component { return <text>Hello</text>; }

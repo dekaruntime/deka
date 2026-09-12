@@ -1,0 +1,28 @@
+{
+  "name": "react-919-spike",
+  "version": "0.0.0",
+  "dependencies": {
+    "@js/host-assert": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-assert.mjs",
+    "@js/host-async_hooks": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-async_hooks.mjs",
+    "@js/host-buffer": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-buffer.mjs",
+    "@js/host-crypto": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-crypto.mjs",
+    "@js/host-events": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-events.mjs",
+    "@js/host-fs": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-fs.mjs",
+    "@js/host-http": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-http.mjs",
+    "@js/host-https": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-https.mjs",
+    "@js/host-module": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-module.mjs",
+    "@js/host-net": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-net.mjs",
+    "@js/host-os": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-os.mjs",
+    "@js/host-process": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-process.mjs",
+    "@js/host-stream": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-stream.mjs",
+    "@js/host-tls": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-tls.mjs",
+    "@js/host-tty": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-tty.mjs",
+    "@js/host-url": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-url.mjs",
+    "@js/host-util": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-util.mjs",
+    "@js/host-zlib": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/host-zlib.mjs",
+    "@js/devtools-disabled": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/devtools-disabled.mjs",
+    "@js/react": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/react.mjs",
+    "@js/react-dom-server": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/react-dom-server.mjs",
+    "@js/ink": "url:file:///Volumes/Projects/codex/react-919/deka/spikes/react-919/.cache/prepared/ink.mjs"
+  }
+}
