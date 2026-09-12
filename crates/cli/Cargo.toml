@@ -9,6 +9,7 @@ native = [
   "dep:compile",
   "dep:pm",
   "dep:runtime",
+  "dep:dev",
   "dep:pool",
   "dep:introspect",
   "dep:tokio",
@@ -27,6 +28,7 @@ compiler = { path = "../compiler" }
 run = { path = "../run" }
 security = { path = "../security" }
 runtime = { path = "../runtime", optional = true }
+dev = { path = "../dev", optional = true }
 pool = { path = "../pool", optional = true }
 runtime_core = { path = "../runtime_core" }
 compile = { path = "../compile", optional = true }

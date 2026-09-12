@@ -1,10 +1,10 @@
 //! `deka dev` build-slot invalidation wiring (deka#725).
 //!
-//! The notify watcher in `serve` reports local filesystem changes here; this
+//! The notify watcher in this crate reports local filesystem changes here; this
 //! module maps them onto the build manifest's recorded observations and asks
 //! the registered refresh callback to rematerialize exactly the affected
-//! slots. The callback lives in `cli`, which owns the dsc orchestration; the
-//! runtime only decides *which* slots changed and logs the decision.
+//! slots. The callback lives in `cli`, which owns the dsc orchestration; this
+//! crate only decides *which* slots changed and logs the decision.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};

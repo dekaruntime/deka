@@ -5,7 +5,7 @@ use std::time::Duration;
 use std::{io, net::TcpListener};
 
 use crate::extensions::extensions_for_mode;
-use crate::security::resolve_security_policy;
+use crate::security::{ResolvedSecurityPolicy, resolve_security_policy_for_serve};
 use core::Context;
 use deka_host::validation::{format_validation_error, modules::validate_module_resolution};
 use engine::{RuntimeEngine, RuntimeState, config as runtime_config, set_engine};
@@ -17,9 +17,16 @@ use serve::validation::validate_deka_handler_with;
 use stdio as stdio_log;
 use transport::{DnsOptions, HttpOptions, TcpOptions, UdpOptions, UnixOptions, WsOptions};
 
-mod watch;
-
-use watch::start_watch;
+/// Shared HTTP session constructed by production `deka serve` and by the
+/// `dev` crate. `dev_mode` on the resulting state comes from `pool_config`.
+pub struct PreparedServe {
+    pub state: Arc<RuntimeState>,
+    pub handler_path: String,
+    pub serve_options: pool::validation::ServeOptions,
+    pub http_config: deka_http::HttpConfig,
+    pub perf_mode: bool,
+    pub pool_workers: usize,
+}
 
 pub fn serve(context: &Context) {
     serve_with_dsc(context, None);
@@ -38,8 +45,21 @@ pub fn serve_with_dsc(context: &Context, dsc: Option<PathBuf>) {
 }
 
 async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), String> {
+    let resolved_security = resolve_security_policy_for_serve(context, false)?;
+    let mut serve_options = pool::validation::ServeOptions::default();
+    apply_cli_serve_overrides(context, &mut serve_options);
+    let pool_config = configure_pool(&serve_options, dsc);
+    let prepared = prepare_http_session(context, resolved_security, pool_config, serve_options)?;
+    bind_and_listen(prepared, None).await
+}
+
+pub fn prepare_http_session(
+    context: &Context,
+    resolved_security: ResolvedSecurityPolicy,
+    pool_config: PoolConfig,
+    serve_options: pool::validation::ServeOptions,
+) -> Result<PreparedServe, String> {
     let platform = ServerPlatform::default();
-    let resolved_security = resolve_security_policy(context)?;
     for warning in resolved_security.warnings {
         stdio_log::warn_simple(&format!("[security] {}", warning));
     }
@@ -60,17 +80,9 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
         policy_json: resolved_security.policy_json.clone(),
         no_prompt: !resolved_security.prompt_enabled,
     };
+    let dev_mode = pool_config.dev_mode;
+    let pool_workers = pool_config.num_workers;
 
-    let dev_mode = dev_enabled(context);
-    let watch_enabled = watch_enabled(context) || dev_mode;
-    crate::dev::prepare(
-        dev_mode,
-        &context
-            .extensions()
-            .get::<::run::handler::HandlerSnapshot>()
-            .expect("handler snapshot populated before dispatch")
-            .input,
-    )?;
     let resolved = runtime_config::resolve_handler_path(
         &context
             .extensions()
@@ -143,15 +155,6 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
     });
 
     stdio_log::log("handler", &format!("loaded {}", handler_path));
-    if dev_mode {
-        stdio_log::log("dev", "enabled");
-    }
-
-    let mut serve_options = pool::validation::ServeOptions::default();
-    apply_cli_serve_overrides(context, &mut serve_options);
-
-    let pool_config = configure_pool(&serve_options, watch_enabled, dsc, dev_mode);
-    let pool_workers = pool_config.num_workers;
 
     let serve_mode = resolved.mode.clone();
     let extensions_provider = Arc::new(move || extensions_for_mode(&serve_mode));
@@ -163,12 +166,6 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
         extensions_provider,
     ));
     let _ = set_engine(Arc::clone(&engine));
-
-    if watch_enabled {
-        if let Err(err) = start_watch(&handler_path, Arc::clone(&engine), dev_mode) {
-            tracing::warn!("watch mode failed: {}", err);
-        }
-    }
 
     let handler_key = HandlerKey::new(
         FsPath::new(&handler_path)
@@ -218,10 +215,17 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
 
     spawn_archive_task(&state, engine.archive());
 
-    serve_listeners(state, &serve_options, perf_mode, pool_workers, http_config).await
+    Ok(PreparedServe {
+        state,
+        handler_path,
+        serve_options,
+        http_config,
+        perf_mode,
+        pool_workers,
+    })
 }
 
-fn apply_cli_serve_overrides(
+pub fn apply_cli_serve_overrides(
     context: &Context,
     serve_options: &mut pool::validation::ServeOptions,
 ) {
@@ -244,28 +248,17 @@ fn validate_deka_modules(handler_path: &str) -> Result<(), String> {
     )
 }
 
-fn watch_enabled(context: &Context) -> bool {
-    context.args.flags.contains_key("--watch") || context.args.flags.contains_key("-W")
-}
-
-fn dev_enabled(context: &Context) -> bool {
-    context.args.flags.contains_key("--dev")
-}
-
 fn perf_mode_enabled() -> bool {
     false
 }
 
-fn configure_pool(
+pub fn configure_pool(
     serve_options: &pool::validation::ServeOptions,
-    watch_enabled: bool,
     dsc: Option<PathBuf>,
-    dev_mode: bool,
 ) -> PoolConfig {
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let mut pool_config = PoolConfig::default();
     pool_config.dsc = dsc;
-    pool_config.dev_mode = dev_mode;
 
     if let Some(workers) = serve_options.workers.clone() {
         pool_config.num_workers = match workers {
@@ -285,11 +278,6 @@ fn configure_pool(
 
     if let Some(enabled) = runtime_cfg.code_cache_enabled() {
         pool_config.enable_code_cache = enabled;
-    }
-
-    if watch_enabled {
-        pool_config.enable_code_cache = false;
-        pool_config.introspect_profiling = true;
     }
 
     pool_config.introspect_profiling = runtime_cfg.introspect_profiling_enabled();
@@ -640,13 +628,19 @@ globalThis.app = app;
         .replace("__LISTING__", listing)
 }
 
-async fn serve_listeners(
-    state: Arc<RuntimeState>,
-    serve_options: &pool::validation::ServeOptions,
-    perf_mode: bool,
-    pool_workers: usize,
-    http_config: deka_http::HttpConfig,
+pub async fn bind_and_listen(
+    prepared: PreparedServe,
+    on_http_listen: Option<fn(&str)>,
 ) -> Result<(), String> {
+    let PreparedServe {
+        state,
+        serve_options,
+        http_config,
+        perf_mode,
+        pool_workers,
+        ..
+    } = prepared;
+    let serve_options = &serve_options;
     if let Some(unix) = serve_options.unix.clone() {
         let label = if unix.starts_with('\0') {
             format!("unix:@{}", unix.trim_start_matches('\0'))
@@ -688,7 +682,11 @@ async fn serve_listeners(
     ensure_http_port_available(port)?;
     let listeners = pool_workers.max(1);
 
-    crate::dev::announce_listen(state.dev_mode, port);
+    let url = format!("http://localhost:{port}");
+    if let Some(announce) = on_http_listen {
+        announce(&url);
+    }
+    stdio_log::log("listen", &url);
     transport::serve(
         state,
         transport::ListenConfig::Http(HttpOptions {

@@ -7,6 +7,7 @@ members = [
     "crates/runtime_core",
     "crates/run",
     "crates/serve",
+    "crates/dev",
     "crates/compiler",
     "crates/security",
     "crates/permissions",

@@ -1,0 +1,18 @@
+[package]
+name = "dev"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+core = { path = "../core" }
+engine = { path = "../engine" }
+notify = { workspace = true }
+pool = { path = "../pool" }
+run = { path = "../run" }
+runtime = { path = "../runtime" }
+runtime_core = { path = "../runtime_core" }
+serde_json = { workspace = true }
+stdio = "0.4.0"
+tokio = { workspace = true, features = ["full"] }
+tracing = "0.1"
+transport = { path = "../transport" }

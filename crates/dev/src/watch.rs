@@ -8,7 +8,7 @@ use stdio as stdio_log;
 
 static WATCHER_GUARDS: OnceLock<Mutex<Vec<notify::RecommendedWatcher>>> = OnceLock::new();
 
-pub(super) fn start_watch(
+pub(crate) fn start_watch(
     handler_path: &str,
     engine: Arc<RuntimeEngine>,
     dev_mode: bool,

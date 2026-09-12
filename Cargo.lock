@@ -824,6 +824,7 @@ dependencies = [
  "deka-modules",
  "deka_host",
  "deno_task_shell",
+ "dev",
  "flate2",
  "glob",
  "introspect",
@@ -2363,6 +2364,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
 dependencies = [
  "cipher",
+]
+
+[[package]]
+name = "dev"
+version = "0.49.0"
+dependencies = [
+ "core",
+ "engine",
+ "notify",
+ "pool",
+ "run",
+ "runtime",
+ "runtime_core",
+ "serde_json",
+ "stdio",
+ "tokio",
+ "tracing",
+ "transport",
 ]
 
 [[package]]
@@ -5905,7 +5924,6 @@ dependencies = [
  "deno_core",
  "engine",
  "flate2",
- "notify",
  "num_cpus",
  "permissions",
  "platform",

@@ -9,7 +9,6 @@ use std::sync::OnceLock;
 mod artifact_loader;
 mod asset_urls;
 mod build_values;
-mod dev;
 mod dsc_transpile;
 mod extensions;
 mod js_pipeline;
@@ -17,8 +16,6 @@ mod platform;
 mod run;
 pub mod security;
 mod serve;
-
-pub mod build_watch;
 
 pub fn run(context: &Context) {
     run::run(context);
@@ -35,6 +32,10 @@ pub fn serve(context: &Context) {
 pub fn serve_with_dsc(context: &Context, dsc: Option<std::path::PathBuf>) {
     serve::serve_with_dsc(context, dsc);
 }
+
+pub use serve::{
+    PreparedServe, apply_cli_serve_overrides, bind_and_listen, configure_pool, prepare_http_session,
+};
 
 pub fn materialize_build_values(
     project_root: &std::path::Path,
