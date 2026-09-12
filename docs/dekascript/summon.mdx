@@ -1,6 +1,6 @@
 ---
 title: Summoning JavaScript
-description: Vendor and lock a JavaScript URL for an explicitly typed foreign boundary.
+description: Vendor and lock JavaScript URLs or JSR source packages for an explicitly typed foreign boundary.
 ---
 
 `deka summon <url>` downloads a JavaScript module once, vendors it under
@@ -25,8 +25,7 @@ compressed input and expanded contents are each limited to 64 MiB.
 The name comes from `package.json` when present; otherwise it comes from the
 URL basename with the source/archive extension removed and punctuation
 converted to `-`. Vendor names contain letters, digits, `-`, and `_`.
-Scoped package names and `@js/` subpath imports are not supported in this
-stage. The external module resolver selects `package.json`'s `module` before
+Scoped names in URL archives and `@js/` subpath imports are not supported. The external module resolver selects `package.json`'s `module` before
 `main`, then falls back to `index.mjs` when neither field exists. A declared
 entry that is missing or escapes its package is an error.
 
@@ -72,6 +71,60 @@ function signatures.
 verify their vendored files without contacting their source URLs. Missing or
 changed files fail verification; restore the committed vetted bytes.
 
-This stage supports JavaScript URL sources. `jsr:` support is the next stage;
-TypeScript ingestion and `deka summon infer` declaration scaffolding are not
-implemented here.
+## JSR TypeScript packages
+
+```sh
+deka summon jsr:@scope/name
+deka summon jsr:@scope/name@1.2.3
+```
+
+The first form selects the highest stable, non-yanked version; the second
+requires that exact semantic version and refuses yanked versions. Version
+ranges and package subpaths are not supported. Both forms pin the resolved
+`jsr:@scope/name@version` in `deka.json`. The vendor name is the package's
+unscoped name (`@js/name`); the same conflict prompt applies across scopes.
+
+Summon reads JSR's [public registry metadata](https://jsr.io/docs/api), then
+fetches each file in that version's manifest once, checking its advertised
+size and SHA-256 checksum. It never requests dependencies from another
+package. Total metadata and source downloads are limited to 64 MiB, and
+redirects are refused. `DEKA_JSR_REGISTRY` can select a compatible HTTP(S)
+registry, including a local fixture server; its URL is recorded in the lock.
+
+TypeScript erasure runs through SWC at vendor time. The runtime loads only
+JavaScript. For a root export `./mod.ts` importing `./lib/add.ts`, the layout is:
+
+```text
+js_modules/name/
+  package.json          # generated module entry: js/mod.mjs
+  js/
+    mod.mjs             # stripped runnable JavaScript
+    lib/add.mjs
+  src-ts/
+    mod.ts              # exact original bytes
+    lib/add.ts
+    ...                 # all other original package files, including licenses
+```
+
+`.ts` and `.mts` modules become `.mjs`; `.js` and `.mjs` keep their extensions.
+Static imports, re-exports, and literal dynamic imports of relative TS modules
+are rewritten to the emitted paths. A package must have a root `.` export.
+JSX/TSX and CommonJS `.cts`/`.cjs` files are refused. Source paths must use
+ASCII letters, digits, `/`, `.`, `_`, `-`, or `@`, without traversal segments.
+No tsconfig, import-map, or dependency aliases are applied.
+
+Every package module is vetted, including modules unreachable from the root
+export. External imports, missing relative modules, and computed imports are
+listed and refused before installation. This includes type-only dependencies
+in original TypeScript, so erasure cannot hide a dependency. Prepare a
+self-contained package to resolve these refusals.
+
+`deka.lock` records JSR provenance (requested source, registry, package,
+resolved version, and version metadata), a SHA-256 pin of the version metadata,
+and hashes of every original and emitted file. Ordinary installs verify these
+vendored files offline using the same machinery as URL sources. Commit the
+entire vendor directory, manifest, and lock together.
+
+Original types are retained for the future infer stage. `deka summon infer`
+declaration scaffolding remains unimplemented; write and vet the boundary
+manually.

@@ -6,7 +6,7 @@ pub fn register(registry: &mut Registry) {
         owner: "pm",
         name: "summon",
         category: "package",
-        summary: "fetch, vet and lock a foreign JavaScript URL (jsr: is next stage)",
+        summary: "fetch, vet and lock a JavaScript URL or JSR package",
         aliases: &[],
         subcommands: &[],
         handler: cmd,
@@ -17,7 +17,7 @@ fn cmd(context: &Context) {
     let result = (|| {
         let [source] = context.args.positionals.as_slice() else {
             anyhow::bail!(
-                "usage: deka summon <url> (JavaScript or .tgz; jsr: and infer are later stages)"
+                "usage: deka summon <url|jsr:@scope/name[@version]> (JavaScript, .tgz or JSR; infer is a later stage)"
             );
         };
         let cwd = std::env::current_dir()?;
