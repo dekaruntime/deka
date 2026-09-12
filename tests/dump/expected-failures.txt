@@ -1,9 +1,9 @@
-# Shared-host diagnostic divergences observed against the v0.45.0 pack.
+# Shared-host divergences reconciled with testsuite#80 (dsc 0.49.0).
 #
 # This is a ratchet, not a suppression list: a listed divergence that stops
 # diverging is a hard error and must be removed. An unlisted divergence is a
 # hard error and must be triaged before the dump can be green. The diagnostic
-# comparison remains visible in hats-results.json either way.
+# and behavior comparisons remain visible in hats-results.json either way.
 #
 # These remain known full-list differences for the pinned testsuite corpus.
 # They were removed in deka#835 after a release dump loaded an empty corpus;
@@ -25,7 +25,6 @@ data-types-enum-duplicate-case-fail
 data-types-struct-embed-missing-field-fail
 data-types-struct-missing-field-fail
 error-globals-array-splice-frozen-fail
-error-globals-crypto-random-uuid
 error-globals-object-field-reassign-fail
 error-globals-reassign-const-fail
 error-globals-type-mismatch-fail
@@ -63,7 +62,6 @@ types-object-literal-for-struct-return
 types-string-arg-to-number-param
 
 # WASM emits an additional diagnostic for these cases.
-functions-exported-const-in-function-body
 modules-import-parse-error-001
 
 # Same count, but the messages are not the same. These are host/runtime wrapper
@@ -71,13 +69,35 @@ modules-import-parse-error-001
 basics-redeclare-const-fail
 basics-redeclare-let-as-const-fail
 data-types-array-reduce-empty-no-initial-fail
-error-globals-math-constant-called-fail
 error-globals-panic-runtime-fail
 error-globals-string-index-assign-fail
 functions-duplicate-module-const-in-body-fail
 functions-duplicate-parameter-fail
 functions-method-name-conflicts-with-field-fail
-modules-import-non-relative-001
 modules-import-syntax-no-braces-001
 modules-relative-import-missing-export-001
 modules-relative-import-missing-module-001
+
+# c5: needs adjudication — preserved native-correct assertions (testsuite#80; deka#904).
+# needs adjudication — preserved native-correct assertions: Raw JSON values are wrapped twice by browser globals and emitted unsafe code.
+data-types-json-static-roundtrip
+# needs adjudication — preserved native-correct assertions: Browser JSON.parse returns a Result where emitted code expects a raw value.
+error-globals-json-parse
+# needs adjudication — preserved native-correct assertions: Browser TextDecoder wrapper changes the raw constructor/value contract.
+unsafe-textdecoder-roundtrip
+# needs adjudication — preserved native-correct assertions: Browser TextEncoder wrapper leaves no callable encode method.
+unsafe-textencoder-encode
+# needs adjudication — preserved native-correct assertions: Browser JSON errors are wrapped twice instead of reaching the expected Err.
+unsafe-unsafe-json-parse-err
+# needs adjudication — preserved native-correct assertions: Browser JSON success is wrapped twice instead of returning the parsed value.
+unsafe-unsafe-json-parse-ok
+# needs adjudication — preserved native-correct assertions: Browser URL wrapper changes the raw constructor/value contract.
+unsafe-unsafe-url-ok
+# needs adjudication — preserved native-correct assertions: Browser export stripping drops a binding and adds a missing-name diagnostic.
+functions-exported-const-in-function-body
+# needs adjudication — preserved native-correct assertions: Browser export stripping removes program statements and loses stdout.
+modules-export-async-fn
+# needs adjudication — preserved native-correct assertions: Browser exposes process.cwd where native correctly reports not-installed.
+error-globals-process-cwd-no-env-grant
+# needs adjudication — preserved native-correct assertions: WASM missing-import wording differs from the precise native module diagnostic.
+modules-import-non-relative-001

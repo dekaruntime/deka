@@ -23,3 +23,14 @@ Writes `dist/conformance/hats-results.json`. `scripts/pack-conformance.sh`
 bundles that with the pinned tour checkout (`./tour`, from
 `deka self fetch tour`) and the pinned testsuite corpus (`./testsuite`) for
 R2.
+
+The native package cache stores installed modules, `deka.lock`, and the optional
+`deka.grants.json` together under `.cache/deka-packages/with-grants-v1/`.
+Older cache entries are bypassed because they omitted installer-issued grants.
+A grant-free install may legitimately have no grants file.
+
+`expected-failures.txt` ratchets all shared-host divergences: full diagnostic
+lists, formatter output, and per-host expectation results. Listed cases remain
+visibly divergent in the dump; unlisted divergences and stale entries fail the
+ratchet. The c5 entries preserve native-correct assertions pending adjudication;
+they do not turn browser bugs into passing expectations.

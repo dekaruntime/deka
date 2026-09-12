@@ -25,7 +25,7 @@ const webIdeKitVersion = resolveWebIdeKitVersion();
 const { nativeAvailable, browserAvailable, version, wasmSourceCommit, categories } =
   await loadAndRunAllTests()
 
-function loadExpectedDiagnosticDivergences() {
+function loadExpectedDivergences() {
   const file = path.join(repoRoot, 'tests', 'dump', 'expected-failures.txt')
   if (!fs.existsSync(file)) return new Set()
   return new Set(
@@ -37,37 +37,37 @@ function loadExpectedDiagnosticDivergences() {
   )
 }
 
-const expectedDiagnosticDivergences = loadExpectedDiagnosticDivergences()
-const actualDiagnosticDivergences = new Set(
+const expectedDivergences = loadExpectedDivergences()
+const actualDivergences = new Set(
   categories
     .flatMap((category) => category.tests)
     .filter(
       (test) =>
         test.hosts.includes('native') &&
         test.hosts.includes('browser') &&
-        test.diagnosticsAgree === false,
+        test.overallStatus === 'divergent',
     )
     .map((test) => test.slug),
 )
-const unexpectedDiagnosticDivergences = [...actualDiagnosticDivergences].filter(
-  (slug) => !expectedDiagnosticDivergences.has(slug),
+const unexpectedDivergences = [...actualDivergences].filter(
+  (slug) => !expectedDivergences.has(slug),
 )
-const staleDiagnosticDivergences = [...expectedDiagnosticDivergences].filter(
-  (slug) => !actualDiagnosticDivergences.has(slug),
+const staleDivergences = [...expectedDivergences].filter(
+  (slug) => !actualDivergences.has(slug),
 )
 
-// Keep the diagnostic ratchet separate from the per-host fixture expectation:
+// Keep the divergence ratchet separate from the per-host fixture expectation:
 // a known divergence remains a divergent cell in the published result, but it
 // does not make the dump unreviewably red. Both directions are enforced so a
 // listed case that starts agreeing cannot hide a repaired compiler path.
-if (unexpectedDiagnosticDivergences.length > 0 || staleDiagnosticDivergences.length > 0) {
-  if (unexpectedDiagnosticDivergences.length > 0) {
-    console.error('Unlisted full-diagnostic divergences:')
-    for (const slug of unexpectedDiagnosticDivergences) console.error(`  ${slug}`)
+if (unexpectedDivergences.length > 0 || staleDivergences.length > 0) {
+  if (unexpectedDivergences.length > 0) {
+    console.error('Unlisted host divergences:')
+    for (const slug of unexpectedDivergences) console.error(`  ${slug}`)
   }
-  if (staleDiagnosticDivergences.length > 0) {
-    console.error('Listed diagnostic divergences that now agree (remove them):')
-    for (const slug of staleDiagnosticDivergences) console.error(`  ${slug}`)
+  if (staleDivergences.length > 0) {
+    console.error('Listed host divergences that now agree (remove them):')
+    for (const slug of staleDivergences) console.error(`  ${slug}`)
   }
   process.exitCode = 1
 }
