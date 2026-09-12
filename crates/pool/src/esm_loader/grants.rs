@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use deka_modules::modules::MODULES_DIR;
 use permissions::host_bridge::GrantTable;
 
 /// Read `<root>/deka.json` and return its `(host.kinds, name)`. Both absent
@@ -106,12 +107,37 @@ pub(crate) fn read_project_grant_table(project_root: &Path) -> Option<GrantTable
 
 /// Package name from a dependency package root: the path relative to the
 /// modules dir, with scoped names (`@deka/crypto`) kept as two segments.
+/// Only `ds_modules/` is a modules dir; a sibling `php_modules/` tree is
+/// not stripped as a package-name prefix.
 pub(crate) fn dependency_package_name(package_root: &Path, project_root: &Path) -> String {
-    for dir in ["ds_modules", "php_modules"] {
-        let modules_dir = project_root.join(dir);
-        if let Ok(rel) = package_root.strip_prefix(&modules_dir) {
-            return rel.to_string_lossy().replace('\\', "/");
-        }
+    let modules_dir = project_root.join(MODULES_DIR);
+    if let Ok(rel) = package_root.strip_prefix(&modules_dir) {
+        return rel.to_string_lossy().replace('\\', "/");
     }
     package_root.to_string_lossy().replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dependency_package_name;
+    use deka_modules::modules::MODULES_DIR;
+
+    #[test]
+    fn legacy_tree_is_not_a_package_name_fallback() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path();
+        let legacy = root.join("php_modules").join("@deka").join("crypto");
+        std::fs::create_dir_all(&legacy).unwrap();
+        let name = dependency_package_name(&legacy, root);
+        assert_ne!(name, "@deka/crypto");
+        assert!(
+            name.contains("php_modules"),
+            "legacy tree must not be stripped as a modules prefix: {name}"
+        );
+
+        let modern = root.join(MODULES_DIR).join("@deka").join("crypto");
+        std::fs::create_dir_all(&modern).unwrap();
+        assert_eq!(dependency_package_name(&modern, root), "@deka/crypto");
+        assert_ne!(dependency_package_name(&legacy, root), "@deka/crypto");
+    }
 }
