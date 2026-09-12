@@ -396,7 +396,7 @@ fn tls_listen_accept_and_connect_tls_roundtrip() {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
         .expect("generate self-signed cert");
     let cert_pem = cert.cert.pem().into_bytes();
-    let key_pem = cert.key_pair.serialize_pem().into_bytes();
+    let key_pem = cert.signing_key.serialize_pem().into_bytes();
 
     let mut state = NetState::new();
 
