@@ -5112,15 +5112,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "platform_browser"
-version = "0.48.1"
-dependencies = [
- "anyhow",
- "platform",
- "rand 0.8.5",
-]
-
-[[package]]
 name = "platform_server"
 version = "0.48.1"
 dependencies = [

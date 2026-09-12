@@ -15,7 +15,6 @@ members = [
     "crates/introspect",
     "crates/platform",
     "crates/platform_server",
-    "crates/platform_browser",
     "crates/transport",
     "crates/pool",
     "crates/engine",
