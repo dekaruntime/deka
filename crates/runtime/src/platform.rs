@@ -241,8 +241,7 @@ async fn platform_async(context: &Context) {
     let root = std::fs::canonicalize(&root).unwrap_or(root);
 
     // Load database config from platform-level deka.json. The parsed values
-    // thread into the pageview tracker explicitly (deka#801) and into the
-    // host bridge modules via deka_host's explicit process-wide store —
+    // thread into host bridge modules via deka_host's explicit process-wide store —
     // never through the process environment.
     let db_config = runtime_config::load_database_config(&root);
     deka_host::host_config::install_database_endpoints(deka_host::host_config::DatabaseEndpoints {
@@ -253,14 +252,7 @@ async fn platform_async(context: &Context) {
             .as_ref()
             .and_then(|neo4j| neo4j.password.clone()),
         neo4j_db: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.db.clone()),
-        redis_url: db_config.redis_url.clone(),
     });
-    deka_http::analytics::init(
-        db_config
-            .redis_url
-            .as_deref()
-            .unwrap_or("redis://localhost:6379"),
-    );
 
     // Validate directory structure
     let default_dir = root.join("default");
@@ -588,12 +580,8 @@ async fn handle_platform_request(
     // Strip X-Shop-ID from untrusted external requests — in platform
     // (multi-tenant) mode only the Host header determines the tenant.
     // This prevents spoofed X-Shop-ID from influencing handler routing,
-    // $_SERVER['SHOP_ID'] injection, and analytics attribution.
+    // $_SERVER['SHOP_ID'] injection.
     headers.retain(|(k, _)| !k.eq_ignore_ascii_case("x-shop-id"));
-
-    // Keep a lightweight clone of the request headers for the pageview
-    // tracker — it needs them to resolve the shop_id on the worker thread.
-    let request_headers_for_analytics = headers.clone();
 
     // Resolve tenant from server-routed Host/subdomain data only
     // (preview-aware). Do not use the dev `DEKA_SHOP_ID` fallback in the
@@ -691,16 +679,6 @@ async fn handle_platform_request(
             match pool_response.result {
                 Some(result) => match engine::ResponseEnvelope::from_value(result) {
                     Ok(envelope) => {
-                        // Fire-and-forget pageview tracking. Filters to
-                        // 2xx + text/html inside `track_pageview`, resolves
-                        // shop_id on a dedicated worker thread, writes to
-                        // Redis out-of-band. Never blocks or fails the
-                        // request path.
-                        deka_http::analytics::track_pageview(
-                            &request_headers_for_analytics,
-                            envelope.status,
-                            &envelope.headers,
-                        );
                         let mut response = Response::builder().status(envelope.status);
                         for (key, value) in &envelope.headers {
                             response = response.header(key.as_str(), value.as_str());

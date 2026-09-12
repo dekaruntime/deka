@@ -1,9 +1,6 @@
 use anyhow::Result;
 use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
-use pm::{
-    InstallPayload,
-    run_install,
-};
+use pm::{InstallPayload, run_install};
 use runtime_core::module_spec::canonical_php_package_spec;
 use runtime_core::modules::MODULES_DIR;
 use std::path::{Path, PathBuf};
@@ -233,11 +230,14 @@ fn run_shop_update(context: &Context, project_dir: &std::path::Path) -> Result<(
         &format!("shop-mode: bumping deps for {}", shop_id),
     );
 
-    Err("shop-mode update depends on the legacy linkhash/harar registry, which has been removed".to_string())
+    Err(
+        "shop-mode update depends on the legacy linkhash/harar registry, which has been removed"
+            .to_string(),
+    )
 }
 
 /// Read the current package version map from deka.lock in `dir`.
-/// Returns `{ "@deka/redis": "0.1.0", ... }`.
+/// Returns `{ "@deka/cache": "0.1.0", ... }`.
 fn read_php_lock_versions(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
     let mut out = std::collections::BTreeMap::new();
     let path = dir.join("deka.lock");
@@ -282,7 +282,7 @@ fn diff_versions(
 }
 
 /// Render a version diff as a single-line summary, e.g.
-/// `@deka/redis 0.1.0 -> 0.2.0, @tana/store 0.1.0 -> 0.2.0`.
+/// `@deka/cache 0.1.0 -> 0.2.0, @tana/store 0.1.0 -> 0.2.0`.
 fn format_diff_line(diff: &[(String, Option<String>, String)]) -> String {
     diff.iter()
         .map(|(name, before, after)| match before {
@@ -770,13 +770,13 @@ mod shop_update_tests {
         let tmp = tempfile::tempdir().expect("tmp");
         std::fs::write(
             tmp.path().join("deka.lock"),
-            lock_with(&[("@deka/redis", "0.1.0"), ("@tana/store", "0.2.3")]),
+            lock_with(&[("@deka/cache", "0.1.0"), ("@tana/store", "0.2.3")]),
         )
         .expect("write");
 
         let versions = read_php_lock_versions(tmp.path());
         assert_eq!(
-            versions.get("@deka/redis").map(String::as_str),
+            versions.get("@deka/cache").map(String::as_str),
             Some("0.1.0")
         );
         assert_eq!(
@@ -795,9 +795,9 @@ mod shop_update_tests {
                 "node": { "packages": {} },
                 "php": {
                     "packages": {
-                        "@deka/redis": [
+                        "@deka/cache": [
                             "0.1.0",
-                            "linkhash:@deka/redis",
+                            "linkhash:@deka/cache",
                             {},
                             ""
                         ]
@@ -810,7 +810,7 @@ mod shop_update_tests {
 
         let versions = read_php_lock_versions(tmp.path());
         assert_eq!(
-            versions.get("@deka/redis").map(String::as_str),
+            versions.get("@deka/cache").map(String::as_str),
             Some("0.1.0")
         );
     }
@@ -825,18 +825,18 @@ mod shop_update_tests {
     #[test]
     fn diff_versions_reports_bumps_and_adds_only() {
         let mut before: BTreeMap<String, String> = BTreeMap::new();
-        before.insert("@deka/redis".into(), "0.1.0".into());
+        before.insert("@deka/cache".into(), "0.1.0".into());
         before.insert("@deka/core".into(), "0.1.0".into());
 
         let mut after: BTreeMap<String, String> = BTreeMap::new();
-        after.insert("@deka/redis".into(), "0.2.0".into()); // bumped
+        after.insert("@deka/cache".into(), "0.2.0".into()); // bumped
         after.insert("@deka/core".into(), "0.1.0".into()); // unchanged
         after.insert("@tana/store".into(), "0.5.0".into()); // added
 
         let diff = diff_versions(&before, &after);
         assert_eq!(diff.len(), 2);
         let (name, old, new) = &diff[0];
-        assert_eq!(name, "@deka/redis");
+        assert_eq!(name, "@deka/cache");
         assert_eq!(old.as_deref(), Some("0.1.0"));
         assert_eq!(new, "0.2.0");
         let (name, old, new) = &diff[1];
@@ -848,13 +848,13 @@ mod shop_update_tests {
     #[test]
     fn format_diff_line_is_parseable_for_broadcast() {
         let diff = vec![
-            ("@deka/redis".into(), Some("1.2.0".into()), "1.3.0".into()),
+            ("@deka/cache".into(), Some("1.2.0".into()), "1.3.0".into()),
             ("@tana/store".into(), Some("0.4.1".into()), "0.5.0".into()),
         ];
         let line = format_diff_line(&diff);
         assert_eq!(
             line,
-            "@deka/redis 1.2.0 -> 1.3.0, @tana/store 0.4.1 -> 0.5.0"
+            "@deka/cache 1.2.0 -> 1.3.0, @tana/store 0.4.1 -> 0.5.0"
         );
     }
 
@@ -911,7 +911,7 @@ mod shop_update_tests {
         let tmp = tempfile::tempdir().expect("tmp");
         std::fs::write(
             tmp.path().join("deka.json"),
-            r#"{"dependencies":{"@deka/redis":"^0.1.0","@tana/store":"~0.2.0","@deka/core":">=0.3.0"}}"#,
+            r#"{"dependencies":{"@deka/cache":"^0.1.0","@tana/store":"~0.2.0","@deka/core":">=0.3.0"}}"#,
         )
         .expect("write");
         let mut specs = collect_deka_json_deps_in(tmp.path());
@@ -920,7 +920,7 @@ mod shop_update_tests {
             specs,
             vec![
                 "@deka/core@0.3.0".to_string(),
-                "@deka/redis@0.1.0".to_string(),
+                "@deka/cache@0.1.0".to_string(),
                 "@tana/store@0.2.0".to_string(),
             ]
         );

@@ -18,9 +18,7 @@ use pool::{HandlerKey, PoolConfig};
 use runtime_core::env::{set_dev_flag_with, set_handler_path_with};
 use runtime_core::validation::validate_deka_handler_with;
 use stdio as stdio_log;
-use transport::{
-    DnsOptions, HttpOptions, RedisOptions, TcpOptions, UdpOptions, UnixOptions, WsOptions,
-};
+use transport::{DnsOptions, HttpOptions, TcpOptions, UdpOptions, UnixOptions, WsOptions};
 
 static WATCHER_GUARDS: OnceLock<Mutex<Vec<notify::RecommendedWatcher>>> = OnceLock::new();
 
@@ -75,8 +73,7 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
     let resolved = runtime_config::resolve_handler_path(&context.handler.input)
         .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
 
-    // Load neo4j/redis config from deka.json; the values thread into the
-    // HTTP layer explicitly (deka#801) and into the host bridge modules via
+    // Load neo4j config from deka.json and install it for host bridge modules via
     // deka_host's explicit process-wide store — never through the process
     // environment.
     let config_dir = if resolved.path.is_dir() {
@@ -93,7 +90,6 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
             .as_ref()
             .and_then(|neo4j| neo4j.password.clone()),
         neo4j_db: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.db.clone()),
-        redis_url: db_config.redis_url.clone(),
     });
     let http_config = deka_http::HttpConfig {
         neo4j: db_config
@@ -107,9 +103,6 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
                 db: neo4j.db.unwrap_or_else(|| "neo4j".to_string()),
             })
             .unwrap_or_default(),
-        redis_url: db_config
-            .redis_url
-            .unwrap_or_else(|| "redis://localhost:6379".to_string()),
         project_root: Some(config_dir.to_path_buf()),
         ..Default::default()
     };
@@ -730,15 +723,6 @@ async fn serve_listeners(
     if let Some(port) = serve_options.ws {
         stdio_log::log("listen", &format!("ws://localhost:{}", port));
         return transport::serve(state, transport::ListenConfig::Ws(WsOptions { port })).await;
-    }
-
-    if let Some(addr) = serve_options
-        .redis
-        .clone()
-    {
-        stdio_log::log("listen", &format!("redis://{}", addr));
-        return transport::serve(state, transport::ListenConfig::Redis(RedisOptions { addr }))
-            .await;
     }
 
     let port = serve_options

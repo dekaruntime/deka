@@ -81,7 +81,6 @@ deno_core::extension!(
         fs_ops::op_php_path_resolve,
         fs_ops::op_php_read_dir,
         compat::op_neo4j_call,
-        compat::op_redis_call,
         compat::op_shard_for,
         compat::op_deka_http_call,
         concurrency::op_php_concurrency_lock_acquire,

@@ -93,11 +93,10 @@ pub(crate) fn has_configured_cluster() -> bool {
 }
 
 /// Heuristic: does `url` look like a single-machine dev default?
-/// We treat bolt / neo4j / redis / http URLs pointing at `localhost`
+/// We treat bolt / neo4j / http URLs pointing at `localhost`
 /// or `127.0.0.1` as dev defaults worth replacing with the
 /// shard-routed URL in a configured cluster. This covers tenant
-/// handlers that still hardcode `bolt://localhost:7688` /
-/// `redis://localhost:6380` instead of calling the no-arg
+/// handlers that still hardcode `bolt://localhost:7688` instead of calling the no-arg
 /// auto-routing form.
 pub(crate) fn should_override_dev_default(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
@@ -438,8 +437,6 @@ mod tests {
         assert!(should_override_dev_default("bolt://localhost:7687"));
         assert!(should_override_dev_default("bolt://127.0.0.1:7687"));
         assert!(should_override_dev_default("BOLT://LOCALHOST:7688"));
-        assert!(should_override_dev_default("redis://localhost:6380"));
-        assert!(should_override_dev_default("redis://localhost"));
         assert!(should_override_dev_default("bolt://127.0.0.1/db"));
     }
 

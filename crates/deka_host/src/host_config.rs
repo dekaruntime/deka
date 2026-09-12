@@ -9,7 +9,7 @@
 use std::sync::OnceLock;
 
 /// Database connection endpoints resolved from deka.json by the dispatch
-/// layer. Replaces the `DEKA_NEO4J_*` / `DEKA_REDIS_URL` process-environment
+/// layer. Replaces the `DEKA_NEO4J_*` process-environment
 /// reads (deka#801); each consumer falls back to its hardcoded default when
 /// a field is `None` or nothing has been installed.
 #[derive(Debug, Clone, Default)]
@@ -18,7 +18,6 @@ pub struct DatabaseEndpoints {
     pub neo4j_user: Option<String>,
     pub neo4j_password: Option<String>,
     pub neo4j_db: Option<String>,
-    pub redis_url: Option<String>,
 }
 
 static DATABASE_ENDPOINTS: OnceLock<DatabaseEndpoints> = OnceLock::new();

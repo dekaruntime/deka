@@ -12,7 +12,7 @@
 //! + `match_rule_item` in `crates/deka_host/src/modules/php/mod.rs`),
 //! with one extension: wildcard DNS labels like `*.squareup.com` are
 //! accepted in the `net.allow` list. That extension lives next to the
-//! existing matcher so TCP / DNS / Redis clients pick it up too.
+//! existing matcher so TCP and DNS clients pick it up too.
 //!
 //! The PHPX side of the module lives in
 //! `deka/runtime/php_modules/http/`. Everything here is the Rust
@@ -58,7 +58,7 @@ fn http_handle() -> &'static Handle {
             .expect("failed to create @deka/http tokio runtime");
         let handle = rt.handle().clone();
         // Leak the runtime — it lives for the process lifetime. Same
-        // pattern as neo4j.rs and redis_mod.rs.
+        // pattern as neo4j.rs.
         std::mem::forget(rt);
         handle
     })

@@ -69,7 +69,6 @@ compiles — see `docs/dekascript/runtime-bridge.mdx`.
 
 ## Service Ports (deka-cli defaults)
 - `postgres`: 5432
-- `redis`: 6379
 - `edge` (runtime): 8506
 - `t4`: 8507
 - `gild-vcs`: 8508
@@ -86,7 +85,7 @@ the owning runtime/stdlib lanes define and validate one.
 - JS/TS module loader + SWC transforms.
 - User-land router (`deka/router`) + `serve()` API.
 - Introspection endpoints exposed via `serve({ introspect: true })` (default prefix `/_introspect`).
-- Built-in modules: `deka/postgres`, `deka/sqlite`, `deka/docker`, `deka/t4`, `deka/redis`, `deka/jsx-runtime`, etc.
+- Built-in modules: `deka/postgres`, `deka/sqlite`, `deka/docker`, `deka/t4`, `deka/jsx-runtime`, etc.
 - Node `ws` compatibility: `globalThis.__dekaWs` now re-exports the vendored [`ws`](deka-runtime/src-ts/runtime/vendor/ws) package so framework HMR servers (Vite, etc.) can run without bundling their own `ws`.
 
 ## Testing

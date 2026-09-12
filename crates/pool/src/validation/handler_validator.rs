@@ -5,11 +5,11 @@
 //! - Try to use Cloudflare Workers APIs (this is Deka!)
 //! - Import unknown deka/* modules
 //! - Don't export a default handler
+use runtime_core::security_policy::parse_deka_security_policy;
 use swc_common::{FileName, SourceMap, Span, Spanned, sync::Lrc};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax, error::SyntaxError, lexer::Lexer};
 use swc_ecma_visit::{Visit, VisitWith};
-use runtime_core::security_policy::parse_deka_security_policy;
 
 use super::error_formatter::format_validation_error;
 
@@ -431,7 +431,6 @@ pub struct ServeOptions {
     pub udp: Option<String>,
     pub dns: Option<String>,
     pub ws: Option<u16>,
-    pub redis: Option<String>,
     pub workers: Option<PoolWorkers>,
     pub isolates_per_worker: Option<usize>,
 }
@@ -627,12 +626,6 @@ impl ServeOptionsExtractor {
                 if self.options.ws.is_none() {
                     if let Some(port) = extract_u16_literal(value) {
                         self.options.ws = Some(port);
-                    }
-                }
-            } else if key == "redis" {
-                if self.options.redis.is_none() {
-                    if let Some(addr) = extract_string_literal(value) {
-                        self.options.redis = Some(addr);
                     }
                 }
             } else if key == "workers" {

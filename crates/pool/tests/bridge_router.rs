@@ -436,74 +436,6 @@ globalThis.app = function(req) {{
 }
 
 #[tokio::test]
-async fn bridge_redis_flush_is_blocked_before_native_dispatch() {
-    let pool = test_pool();
-    let code = r#"
-globalThis.app = function(req) {
-  const flush = __bridge('redis', 'flush', { handle: 1 });
-  const flushdb = __bridge('redis', 'FLUSHDB', { handle: 1 });
-  const flushall = __bridge('redis', 'flushall', { handle: 1 });
-  return { status: 200, headers: {}, body: JSON.stringify({ flush, flushdb, flushall }) };
-};
-"#;
-    let res = pool
-        .execute(
-            HandlerKey::new("bridge_redis_flush_blocked"),
-            tenant_request(code, "shop_flush_guard"),
-        )
-        .await;
-    let response = res.expect("pool execution should succeed");
-    assert!(response.success, "execution failed: {:?}", response.error);
-    let result = response.result.expect("should have result");
-    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
-    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
-    for action in ["flush", "flushdb", "flushall"] {
-        assert_eq!(
-            parsed[action],
-            serde_json::json!({
-                "ok": false,
-                "error": "redis admin action blocked for tenant code"
-            }),
-            "{action} should be rejected before FLUSHDB/FLUSHALL can reach Redis"
-        );
-    }
-}
-
-#[tokio::test]
-async fn bridge_redis_unscoped_enumeration_verbs_are_blocked() {
-    let pool = test_pool();
-    let code = r#"
-globalThis.app = function(req) {
-  const scan = __bridge('redis', 'scan', { handle: 1 });
-  const config = __bridge('redis', 'CONFIG', { handle: 1 });
-  const randomkey = __bridge('redis', 'randomkey', { handle: 1 });
-  return { status: 200, headers: {}, body: JSON.stringify({ scan, config, randomkey }) };
-};
-"#;
-    let res = pool
-        .execute(
-            HandlerKey::new("bridge_redis_unscoped_blocked"),
-            tenant_request(code, "shop_unscoped_guard"),
-        )
-        .await;
-    let response = res.expect("pool execution should succeed");
-    assert!(response.success, "execution failed: {:?}", response.error);
-    let result = response.result.expect("should have result");
-    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
-    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
-    for action in ["scan", "config", "randomkey"] {
-        assert_eq!(
-            parsed[action],
-            serde_json::json!({
-                "ok": false,
-                "error": "redis unscoped action blocked for tenant code"
-            }),
-            "{action} should be rejected before native Redis dispatch"
-        );
-    }
-}
-
-#[tokio::test]
 async fn bridge_crypto_bcrypt_verify_resolves_to_op() {
     let pool = php_pool();
     let code = r#"
@@ -554,11 +486,9 @@ async fn deka_host_catalog_denies_unknown_kinds_and_actions() {
     let pool = php_pool();
     let code = r#"
 globalThis.app = function(req) {
-  // redis is a PHPX-only kind: absent from the injected host catalog.
-  const redis = __deka_host('redis', 'get', []);
-  // db is catalogued, but 'bogus' is not a db action.
-  const bogus = __deka_host('db', 'bogus', []);
-  return { status: 200, headers: {}, body: JSON.stringify({ redis, bogus }) };
+    // db is catalogued, but 'bogus' is not a db action.
+    const bogus = __deka_host('db', 'bogus', []);
+  return { status: 200, headers: {}, body: JSON.stringify({ bogus }) };
 };
 "#;
     let res = pool
@@ -572,7 +502,7 @@ globalThis.app = function(req) {
     let result = response.result.expect("should have result");
     let body = result.get("body").and_then(|v| v.as_str()).expect("body");
     let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
-    for key in ["redis", "bogus"] {
+    for key in ["bogus"] {
         assert_eq!(
             parsed[key].get("ok").and_then(|v| v.as_bool()),
             Some(false),
@@ -608,10 +538,7 @@ globalThis.app = function(req) {
 };
 "#;
     let res = pool
-        .execute(
-            HandlerKey::new("deka_host_grant_gate"),
-            test_request(code),
-        )
+        .execute(HandlerKey::new("deka_host_grant_gate"), test_request(code))
         .await;
     let response = res.expect("pool execution should succeed");
     assert!(response.success, "execution failed: {:?}", response.error);

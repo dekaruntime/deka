@@ -41,8 +41,6 @@ pub struct HttpConfig {
     /// `DEKA_PLATFORM_API` (deka#801).
     pub platform_api: bool,
     pub neo4j: Neo4jConfig,
-    /// Redis URL for the pageview tracker. Replaces `DEKA_REDIS_URL` (deka#801).
-    pub redis_url: String,
     /// Project root used to discover `deka.css.json` for utility CSS.
     /// `None` keeps the built-in defaults. Replaces `DEKA_PROJECT_ROOT`
     /// (deka#801).
@@ -56,7 +54,6 @@ impl Default for HttpConfig {
             debug: false,
             platform_api: false,
             neo4j: Neo4jConfig::default(),
-            redis_url: "redis://localhost:6379".to_string(),
             project_root: None,
         }
     }

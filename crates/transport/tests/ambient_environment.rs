@@ -51,7 +51,6 @@ fn listen_config_ignores_contradictory_ambient_environment() {
         ("DEKA_RATE_LIMIT_REQUESTS_PER_MINUTE", "1"),
         ("DEKA_RATE_LIMIT_BURST", "1"),
         ("DEKA_PROJECT_ROOT", "/not/a/project"),
-        ("DEKA_REDIS_URL", "redis://127.0.0.1:1"),
         ("DEKA_NEO4J_URI", "bolt://127.0.0.1:1"),
     ];
     let contradictions_b = [
@@ -61,7 +60,6 @@ fn listen_config_ignores_contradictory_ambient_environment() {
         ("DEKA_RATE_LIMIT_REQUESTS_PER_MINUTE", "99999"),
         ("DEKA_RATE_LIMIT_BURST", "99999"),
         ("DEKA_PROJECT_ROOT", "/also/not/a/project"),
-        ("DEKA_REDIS_URL", "redis://example.invalid:9999/1"),
         ("DEKA_NEO4J_URI", "bolt://example.invalid:9999"),
     ];
     assert_eq!(run(&contradictions_a), run(&contradictions_b));
@@ -94,34 +92,43 @@ fn ambient_environment_child() {
     let dns = transport::ListenConfig::Dns(transport::DnsOptions {
         addr: "127.0.0.1:53".to_string(),
     });
-    let redis = transport::ListenConfig::Redis(transport::RedisOptions {
-        addr: "127.0.0.1:6379".to_string(),
-    });
 
     if let transport::ListenConfig::Http(options) = &http {
         println!("ambient-proof:http-port={}", options.port);
         println!("ambient-proof:http-listeners={}", options.listeners);
         println!("ambient-proof:http-perf={}", options.perf_mode);
         println!("ambient-proof:http-debug={}", options.http.debug);
-        println!("ambient-proof:http-platform-api={}", options.http.platform_api);
-        println!("ambient-proof:http-rate-disabled={}", options.http.rate_limit.disabled);
+        println!(
+            "ambient-proof:http-platform-api={}",
+            options.http.platform_api
+        );
+        println!(
+            "ambient-proof:http-rate-disabled={}",
+            options.http.rate_limit.disabled
+        );
         println!(
             "ambient-proof:http-rate-rpm={}",
             options.http.rate_limit.requests_per_minute
         );
-        println!("ambient-proof:http-rate-burst={}", options.http.rate_limit.burst);
-        println!("ambient-proof:http-redis-url={}", options.http.redis_url);
+        println!(
+            "ambient-proof:http-rate-burst={}",
+            options.http.rate_limit.burst
+        );
         println!("ambient-proof:http-neo4j-uri={}", options.http.neo4j.uri);
         println!("ambient-proof:http-neo4j-user={}", options.http.neo4j.user);
         println!(
             "ambient-proof:http-project-root={}",
-            options.http.project_root.as_deref().map(|p| p.display().to_string()).unwrap_or_default()
+            options
+                .http
+                .project_root
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
         );
     }
     if let transport::ListenConfig::Unix(options) = &unix {
         println!("ambient-proof:unix-path={}", options.path);
         println!("ambient-proof:unix-debug={}", options.http.debug);
-        println!("ambient-proof:unix-redis-url={}", options.http.redis_url);
     }
     if let transport::ListenConfig::Ws(options) = &ws {
         println!("ambient-proof:ws-port={}", options.port);
@@ -134,8 +141,5 @@ fn ambient_environment_child() {
     }
     if let transport::ListenConfig::Dns(options) = &dns {
         println!("ambient-proof:dns-addr={}", options.addr);
-    }
-    if let transport::ListenConfig::Redis(options) = &redis {
-        println!("ambient-proof:redis-addr={}", options.addr);
     }
 }

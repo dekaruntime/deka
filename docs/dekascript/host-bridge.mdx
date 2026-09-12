@@ -25,7 +25,7 @@ runtime comes from this one catalog, never from a hand-maintained list.
 | `time` | `@deka/time` | — | sleep_ms |
 | `db` | `@deka/db` | db | open, query, exec, close, stats |
 
-Kinds with no host implementation yet (redis, neo4j, vault) are deliberately
+Kinds with no host implementation yet (neo4j, vault) are deliberately
 absent — the catalog lists only genuinely host-implemented actions, zero
 stubs.
 
@@ -126,7 +126,7 @@ match r {
 
 ## Deferred surface
 
-- **redis / neo4j / vault DS actions** — no host implementation exists yet;
+- **neo4j / vault DS actions** — no host implementation exists yet;
   the catalog lists no stubs.
 - **`from "host"`** — no module import surface for the bridge; `bridge`
   syntax is the only entry point.
