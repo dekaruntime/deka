@@ -34,7 +34,6 @@ cargo test -p deka_host -p php-rs -p runtime
 Cargo.toml              # workspace root
 crates/
   cli/                  # native CLI (`deka run`, `deka build`, `deka transpile`)
-  deka_lsp/             # native LSP
 
 
   deka_host/          # parser + validation (shared PHPX/DS parser)

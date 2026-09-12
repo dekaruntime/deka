@@ -42,7 +42,7 @@ pub mod init;
 pub mod install;
 #[cfg(feature = "native")]
 pub mod link;
-#[cfg(feature = "lsp")]
+#[cfg(feature = "native")]
 pub mod lsp;
 #[cfg(feature = "native")]
 pub mod pipeline_yaml;

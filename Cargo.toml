@@ -20,8 +20,6 @@ members = [
     "crates/wasm_guest_macros",
     "crates/wasm_cli",
     "crates/pm",
-    "crates/deka_lsp",
-    "crates/deka-router",
     "crates/deka_ui",
 ]
 
