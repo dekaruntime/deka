@@ -41,7 +41,7 @@ serde_json = { workspace = true }
 prost = "0.13"
 sha2 = "0.10"
 postgres = { version = "0.19", features = ["with-chrono-0_4"], optional = true }
-mysql = { version = "27", optional = true }
+mysql = { version = "28", optional = true }
 rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 deka-validation = { version = "0.2", default-features = false }
 runtime_core = { path = "../runtime_core" }
