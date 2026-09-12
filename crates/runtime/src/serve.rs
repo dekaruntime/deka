@@ -63,9 +63,22 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
 
     let dev_mode = dev_enabled(context);
     let watch_enabled = watch_enabled(context) || dev_mode;
-    crate::dev::prepare(dev_mode, &context.handler.input)?;
-    let resolved = runtime_config::resolve_handler_path(&context.handler.input)
-        .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
+    crate::dev::prepare(
+        dev_mode,
+        &context
+            .extensions()
+            .get::<::run::handler::HandlerSnapshot>()
+            .expect("handler snapshot populated before dispatch")
+            .input,
+    )?;
+    let resolved = runtime_config::resolve_handler_path(
+        &context
+            .extensions()
+            .get::<::run::handler::HandlerSnapshot>()
+            .expect("handler snapshot populated before dispatch")
+            .input,
+    )
+    .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
 
     let config_dir = if resolved.path.is_dir() {
         &resolved.path
@@ -91,8 +104,14 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
     let app_router_root = if artifact.is_some() {
         None
     } else {
-        crate::asset_urls::find_app_router_root(FsPath::new(&context.handler.input))
-            .or_else(|| crate::asset_urls::find_app_router_root(&resolved.path))
+        crate::asset_urls::find_app_router_root(FsPath::new(
+            &context
+                .extensions()
+                .get::<::run::handler::HandlerSnapshot>()
+                .expect("handler snapshot populated before dispatch")
+                .input,
+        ))
+        .or_else(|| crate::asset_urls::find_app_router_root(&resolved.path))
     };
 
     let handler_path = resolved.path.to_string_lossy().to_string();

@@ -840,6 +840,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "serve",
  "sha2 0.10.9",
  "stdio",
  "tar",
@@ -976,10 +977,6 @@ dependencies = [
 [[package]]
 name = "core"
 version = "0.48.1"
-dependencies = [
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "core-foundation"
@@ -5875,6 +5872,7 @@ version = "0.48.1"
 dependencies = [
  "runtime_core",
  "serde_json",
+ "serve",
  "tempfile",
 ]
 
@@ -8277,6 +8275,7 @@ name = "wasm_cli"
 version = "0.48.1"
 dependencies = [
  "core",
+ "run",
  "serde_json",
  "stdio",
 ]

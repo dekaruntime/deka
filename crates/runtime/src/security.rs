@@ -1,10 +1,10 @@
-use core::Context;
-use core::ServeMode;
-use runtime_core::modules::MODULES_DIR;
 use ::security::security_policy::{
     RuleList, SecurityCliOverrides, merge_policy_with_cli_manifest_net_env,
     parse_deka_security_policy, policy_to_json,
 };
+use ::serve::config::ServeMode;
+use core::Context;
+use runtime_core::modules::MODULES_DIR;
 use std::path::Path;
 
 pub struct ResolvedSecurityPolicy {
@@ -16,10 +16,22 @@ pub struct ResolvedSecurityPolicy {
 
 pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPolicy, String> {
     resolve_security_policy_for_root(
-        &context.handler.resolved.directory,
+        &context
+            .extensions()
+            .get::<::run::handler::HandlerSnapshot>()
+            .expect("handler snapshot populated before dispatch")
+            .resolved
+            .directory,
         &context.args.flags,
         &context.args.params,
-        ProjectKind::from_mode(&context.handler.resolved.mode),
+        ProjectKind::from_mode(
+            &context
+                .extensions()
+                .get::<::run::handler::HandlerSnapshot>()
+                .expect("handler snapshot populated before dispatch")
+                .resolved
+                .mode,
+        ),
         context.args.flags.contains_key("--dev"),
     )
 }

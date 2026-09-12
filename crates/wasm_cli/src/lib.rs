@@ -246,7 +246,13 @@ fn project_root(context: &Context) -> PathBuf {
     if let Some(root) = context.args.params.get("--folder") {
         return PathBuf::from(root);
     }
-    context.handler.resolved.directory.clone()
+    context
+        .extensions()
+        .get::<::run::handler::HandlerSnapshot>()
+        .expect("handler snapshot populated before dispatch")
+        .resolved
+        .directory
+        .clone()
 }
 
 struct ModuleSpec {

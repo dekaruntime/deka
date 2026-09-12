@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use core::{Context, FlagSpec, ParamSpec, ParseError, ParseErrorKind, Registry};
+use core::{FlagSpec, ParamSpec, ParseError, ParseErrorKind, Registry};
 use stdio::{ascii, error as stdio_error, raw};
 
 // define & export cli's submodules
@@ -365,14 +365,14 @@ pub fn execute(registry: &Registry) -> i32 {
         }
     }
 
-    let context = match Context::from_env(registry) {
+    let context = match crate::context::from_env(registry) {
         Ok(context) => context,
-        Err(core::ContextError::Parse(errors)) => {
+        Err(crate::context::ContextError::Parse(errors)) => {
             let message = format_parse_errors(&errors);
             error(Some(message.as_str()));
             return 2;
         }
-        Err(core::ContextError::HandlerResolve(message)) => {
+        Err(crate::context::ContextError::HandlerResolve(message)) => {
             error(Some(message.as_str()));
             return 2;
         }

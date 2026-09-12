@@ -21,6 +21,7 @@ native = [
 lsp = ["dep:deka-lsp"]
 
 [dependencies]
+serve = { path = "../serve" }
 compiler = { path = "../compiler" }
 run = { path = "../run" }
 security = { path = "../security" }

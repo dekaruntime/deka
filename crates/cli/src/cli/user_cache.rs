@@ -170,9 +170,11 @@ fn compile_with_dsc(source: &Path, out_dir: &Path) -> Result<PathBuf, String> {
 /// name mirrors the source file.
 fn locate_entry_artifact(out_dir: &Path, source: &Path) -> Result<PathBuf, String> {
     let expected = out_dir
-        .join(source.file_name().ok_or_else(|| {
-            format!("loose source has no file name: {}", source.display())
-        })?)
+        .join(
+            source
+                .file_name()
+                .ok_or_else(|| format!("loose source has no file name: {}", source.display()))?,
+        )
         .with_extension("js");
     if expected.is_file() {
         return Ok(expected);
@@ -449,15 +451,17 @@ pub fn rewrite_context_for_artifact(context: &Context, artifact: &Path) -> Resul
     if let Some(first) = prepared.args.positionals.first_mut() {
         *first = input.clone();
     }
-    let resolved = core::resolve_handler_path(&input)?;
-    let static_config = core::StaticServeConfig::load(&resolved.directory);
+    let resolved = ::run::handler::resolve_handler_path(&input)?;
+    let static_config = ::serve::config::StaticServeConfig::load(&resolved.directory);
     let serve_config_path = resolved.directory.join("serve.json");
-    prepared.handler = core::HandlerContext {
-        input,
-        resolved,
-        static_config,
-        serve_config_path: serve_config_path.exists().then_some(serve_config_path),
-    };
+    prepared
+        .extensions_mut()
+        .insert(::run::handler::HandlerSnapshot {
+            input,
+            resolved,
+            static_config,
+            serve_config_path: serve_config_path.exists().then_some(serve_config_path),
+        });
     Ok(prepared)
 }
 
@@ -470,7 +474,10 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn fake_compile(marker: &'static str, calls: &'static AtomicUsize) -> impl Fn(&Path, &Path) -> Result<PathBuf, String> + use<> {
+    fn fake_compile(
+        marker: &'static str,
+        calls: &'static AtomicUsize,
+    ) -> impl Fn(&Path, &Path) -> Result<PathBuf, String> + use<> {
         move |source: &Path, out_dir: &Path| {
             calls.fetch_add(1, Ordering::SeqCst);
             fs::create_dir_all(out_dir).map_err(|err| err.to_string())?;
@@ -518,7 +525,10 @@ mod tests {
         assert!(err.contains("HOME"), "{err}");
     }
 
-    fn resolve_user_cache_root_from(xdg: Option<&Path>, home: Option<&Path>) -> Result<PathBuf, String> {
+    fn resolve_user_cache_root_from(
+        xdg: Option<&Path>,
+        home: Option<&Path>,
+    ) -> Result<PathBuf, String> {
         // Resolve without touching the process env: the production function
         // reads env vars directly, so mirror its ordering here against
         // explicit inputs (kept in lockstep with `resolve_user_cache_root`).
@@ -528,9 +538,7 @@ mod tests {
             }
         }
         match home {
-            Some(home) if !home.as_os_str().is_empty() => {
-                Ok(home.join(".deka").join("cache"))
-            }
+            Some(home) if !home.as_os_str().is_empty() => Ok(home.join(".deka").join("cache")),
             _ => Err(
                 "cannot resolve the deka user cache: neither XDG_CACHE_HOME nor HOME is set"
                     .to_string(),
@@ -561,11 +569,23 @@ mod tests {
         let source = write_source(source_root.path(), "app.ds", "export const ok = true\n");
         let before = snapshot_dir(source_root.path());
 
-        let first = materialize_with(&source, cache.path(), "dsc 1.0 / deka x", fake_compile("v1", &CALLS))
-            .expect("materialize");
+        let first = materialize_with(
+            &source,
+            cache.path(),
+            "dsc 1.0 / deka x",
+            fake_compile("v1", &CALLS),
+        )
+        .expect("materialize");
 
-        assert_eq!(snapshot_dir(source_root.path()), before, "source dir changed");
-        assert!(first.artifact.starts_with(cache.path()), "artifact outside cache");
+        assert_eq!(
+            snapshot_dir(source_root.path()),
+            before,
+            "source dir changed"
+        );
+        assert!(
+            first.artifact.starts_with(cache.path()),
+            "artifact outside cache"
+        );
         assert!(first.artifact.is_file());
         assert_eq!(
             fs::read_to_string(&first.artifact).expect("read artifact"),
@@ -599,22 +619,42 @@ mod tests {
         let cache = tempfile::tempdir().expect("cache");
         let source = write_source(source_root.path(), "app.ds", "export const ok = true\n");
 
-        let v1 = materialize_with(&source, cache.path(), "dsc 1.0 / deka x", fake_compile("v1", &CALLS))
-            .expect("v1");
+        let v1 = materialize_with(
+            &source,
+            cache.path(),
+            "dsc 1.0 / deka x",
+            fake_compile("v1", &CALLS),
+        )
+        .expect("v1");
         // Same content hash, different reported compiler version: the v1
         // entry must be rejected, not reused (deka#765: digest-only keys
         // reproduce #743's worst symptom).
-        let v2 = materialize_with(&source, cache.path(), "dsc 2.0 / deka x", fake_compile("v2", &CALLS))
-            .expect("v2");
+        let v2 = materialize_with(
+            &source,
+            cache.path(),
+            "dsc 2.0 / deka x",
+            fake_compile("v2", &CALLS),
+        )
+        .expect("v2");
 
         assert_eq!(CALLS.load(Ordering::SeqCst), 2);
         assert_eq!(
             fs::read_to_string(&v2.artifact).expect("read v2"),
             "console.log(\"v2\")"
         );
-        let meta = fs::read_to_string(v1.artifact.parent().unwrap().parent().unwrap().join("meta.json"))
-            .expect("read meta");
-        assert!(meta.contains("dsc 2.0"), "meta must record the new compiler: {meta}");
+        let meta = fs::read_to_string(
+            v1.artifact
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("meta.json"),
+        )
+        .expect("read meta");
+        assert!(
+            meta.contains("dsc 2.0"),
+            "meta must record the new compiler: {meta}"
+        );
     }
 
     #[test]

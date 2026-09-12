@@ -45,7 +45,11 @@ pub fn cmd(context: &Context) {
         crate::cli::build_slots::ensure_dev_build_slots(
             &context.args.flags,
             &context.args.params,
-            &context.handler.input,
+            &context
+                .extensions()
+                .get::<::run::handler::HandlerSnapshot>()
+                .expect("handler snapshot populated before dispatch")
+                .input,
         );
     }
     if loose_file {
@@ -71,7 +75,13 @@ pub fn cmd(context: &Context) {
 /// DEKA_DSC and puts a poisoned `dsc` first on PATH to prove serve cannot use
 /// one.
 fn serves_built_artifact(context: &Context) -> bool {
-    let Ok(resolved) = core::resolve_handler_path(&context.handler.input) else {
+    let Ok(resolved) = ::run::handler::resolve_handler_path(
+        &context
+            .extensions()
+            .get::<::run::handler::HandlerSnapshot>()
+            .expect("handler snapshot populated before dispatch")
+            .input,
+    ) else {
         return false;
     };
     let Some(server_dir) = resolved.path.parent() else {
@@ -88,17 +98,24 @@ fn serves_built_artifact(context: &Context) -> bool {
 /// a context rewritten to the compiled artifact. Project behavior is
 /// untouched; `Ok(None)` means "not a loose source, use the input context".
 fn prepare_loose_serve(context: &Context) -> Result<(Context, bool), String> {
-    let resolved = core::resolve_handler_path(&context.handler.input)
-        .map_err(|err| format!("failed to resolve handler path: {err}"))?;
+    let resolved = ::run::handler::resolve_handler_path(
+        &context
+            .extensions()
+            .get::<::run::handler::HandlerSnapshot>()
+            .expect("handler snapshot populated before dispatch")
+            .input,
+    )
+    .map_err(|err| format!("failed to resolve handler path: {err}"))?;
     if !crate::cli::user_cache::is_loose_source_file(&resolved.path) {
         return Ok((context.clone(), false));
     }
-    let materialized = crate::cli::user_cache::materialize_loose(&resolved.path).map_err(|err| {
-        format!(
-            "failed to materialize {} into the user cache: {err}",
-            resolved.path.display()
-        )
-    })?;
+    let materialized =
+        crate::cli::user_cache::materialize_loose(&resolved.path).map_err(|err| {
+            format!(
+                "failed to materialize {} into the user cache: {err}",
+                resolved.path.display()
+            )
+        })?;
     let prepared =
         crate::cli::user_cache::rewrite_context_for_artifact(context, &materialized.artifact)?;
     Ok((prepared, true))
