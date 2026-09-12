@@ -570,21 +570,6 @@ fn restart_managed_unit(unit: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn get_uid() -> Result<String, String> {
-    if let Ok(uid) = std::env::var("UID") {
-        return Ok(uid);
-    }
-    let output = Command::new("id")
-        .arg("-u")
-        .output()
-        .map_err(|e| format!("failed to get uid: {}", e))?;
-    if !output.status.success() {
-        return Err("id -u failed".to_string());
-    }
-    let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(uid)
-}
-
 fn load_managed_units(context: &Context) -> Result<Vec<String>, String> {
     load_managed_units_for(managed_units_from_env()?, context)
 }

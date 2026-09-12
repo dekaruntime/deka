@@ -66,7 +66,6 @@ pub mod task;
 pub mod test;
 #[cfg(feature = "native")]
 pub mod transpile;
-pub mod user;
 #[cfg(feature = "native")]
 pub mod user_cache;
 #[cfg(feature = "native")]
