@@ -61,7 +61,7 @@ fn run_php_install_in_transaction(
         specs
     };
 
-    if specs.is_empty() {
+    if specs.is_empty() && crate::summon::verify_locked_at(cwd)?.is_empty() {
         bail!("no packages declared in deka.json or deka.lock");
     }
 
@@ -80,7 +80,7 @@ fn run_php_install_in_transaction(
     for spec in &specs {
         enqueue_package_spec(&mut pending, &mut requested, spec, "root")?;
     }
-    let mut installed = BTreeMap::new();
+    let mut installed = crate::summon::verify_locked_at(cwd)?;
 
     // A linked package is provided by a local working tree, so there is
     // nothing to fetch and no published version to resolve. Skipping it here
@@ -648,6 +648,8 @@ struct InstallJournal {
     /// deka#797: grant table snapshot, restored on recovery (see `crate::grants`).
     #[serde(default)]
     grant: grants::GrantTableSnapshot,
+    #[serde(default)]
+    manifest: Option<(PathBuf, Option<PathBuf>)>,
     packages: Vec<InstallJournalPackage>,
 }
 
@@ -675,6 +677,7 @@ impl InstallTransaction {
                 lock_path,
                 lock_backup,
                 grant,
+                manifest: Some(lock::snapshot_file(project_dir.join("deka.json"))?),
                 packages: Vec::new(),
             },
         };
@@ -700,7 +703,7 @@ impl InstallTransaction {
         Ok(())
     }
 
-    fn commit_package(&mut self, staging: &Path, destination: &Path) -> Result<()> {
+    pub(crate) fn commit_package(&mut self, staging: &Path, destination: &Path) -> Result<()> {
         mark_staging_tree(staging)?;
         self.journal.packages.push(InstallJournalPackage {
             staging: staging.to_path_buf(),
@@ -722,7 +725,7 @@ impl InstallTransaction {
         self.persist()
     }
 
-    fn finish(self) -> Result<()> {
+    pub(crate) fn finish(self) -> Result<()> {
         // Clearing the journal is the commit point. Cleanup after this point
         // is best-effort and cannot make the live package/lock inconsistent.
         fs::remove_file(&self.journal_path)?;
@@ -735,6 +738,9 @@ impl InstallTransaction {
             let _ = fs::remove_file(backup);
         }
         self.journal.grant.discard();
+        if let Some((_, Some(backup))) = self.journal.manifest {
+            let _ = fs::remove_file(backup);
+        }
         for package in self.journal.packages {
             let _ = fs::remove_file(package.destination.join(STAGED_MARKER));
             if package.had_destination {
@@ -831,6 +837,15 @@ pub(crate) fn recover_install_transaction(project_dir: &Path) -> Result<()> {
         }
     } else if journal.lock_path.exists() {
         fs::remove_file(&journal.lock_path)?;
+    }
+    if let Some((path, backup)) = journal.manifest {
+        if let Some(backup) = backup {
+            if backup.exists() {
+                fs::rename(backup, path)?;
+            }
+        } else if path.exists() {
+            fs::remove_file(path)?;
+        }
     }
     journal.grant.restore()?; // deka#797: mirrors the lockfile recovery above.
     fs::remove_file(journal_path)?;
@@ -939,6 +954,9 @@ fn collect_deka_json_deps_in(project_dir: &Path) -> Result<Vec<String>> {
     };
     let mut out = Vec::new();
     for (name, version) in deps {
+        if deka_modules::module_spec::is_summoned_js_module_spec(name) {
+            continue;
+        }
         let spec = if let Some(version) = version.as_str() {
             let version = version.trim();
             if version.is_empty() || version == "*" || version == "latest" {

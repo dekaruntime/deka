@@ -1377,9 +1377,9 @@ dependencies = [
 
 [[package]]
 name = "deka-modules"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b8bb715c1bb11510df786b3a9f6a592fa7994404b4648c26bc4ceba78094875"
+checksum = "6364922b79c1be03740382cdf6d38531afd7e1987f24f46f9a0671c5b6069e21"
 dependencies = [
  "serde",
  "serde_json",
@@ -5258,6 +5258,7 @@ dependencies = [
  "deka-modules",
  "deka_host",
  "dirs",
+ "flate2",
  "json5",
  "libc",
  "permissions",
@@ -5266,6 +5267,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "swc_common 18.0.1",
+ "swc_ecma_ast 19.0.0",
+ "swc_ecma_parser 31.0.0",
+ "swc_ecma_visit 19.0.0",
+ "tar",
  "tempfile",
  "tokio",
 ]

@@ -1,0 +1,77 @@
+---
+title: Summoning JavaScript
+description: Vendor and lock a JavaScript URL for an explicitly typed foreign boundary.
+---
+
+`deka summon <url>` downloads a JavaScript module once, vendors it under
+`js_modules/<name>/`, records its SHA-256 integrity in `deka.lock`, and adds
+`@js/<name>` to `deka.json` dependencies. Commit all three together. Run the
+command from your project or a subdirectory containing a parent `deka.json`.
+
+```sh
+deka summon url:https://example.com/geometry.mjs
+```
+
+The command reports `summoned @js/geometry (vendored and SHA-256 locked)`.
+Plain `https://`, `http://`, and `file://` URLs are also accepted. A single
+JavaScript file is stored as `js_modules/geometry/index.mjs` without changing
+its source bytes. No adjacent files or package metadata are fetched.
+
+A `.tgz` or `.tar.gz` URL can carry a package with its own `package.json`
+and relative modules. The manifest and source files must be at the archive
+root or inside `package/`. Only regular files and directories are accepted;
+compressed input and expanded contents are each limited to 64 MiB.
+
+The name comes from `package.json` when present; otherwise it comes from the
+URL basename with the source/archive extension removed and punctuation
+converted to `-`. Vendor names contain letters, digits, `-`, and `_`.
+Scoped package names and `@js/` subpath imports are not supported in this
+stage. The external module resolver selects `package.json`'s `module` before
+`main`, then falls back to `index.mjs` when neither field exists. A declared
+entry that is missing or escapes its package is an error.
+
+If a vendor directory, manifest dependency, or lock entry already uses the
+name, the command prompts for a different name on an interactive terminal.
+Blank input cancels. Noninteractive runs fail on conflicts; `--prompt` allows
+reading a new name from stdin. Existing packages are never overwritten,
+including when `--yes` is supplied.
+
+## Explicit dependencies
+
+Summon never fetches transitive imports. It parses the entry and its reachable
+relative modules with the JavaScript parser, listing unresolved imports and
+re-exports before changing the project. Literal dynamic imports and `require`
+references are checked too; computed imports are refused because their targets
+cannot be enumerated. For example, a file importing `./inner.mjs` without
+including it in the downloaded archive fails with:
+
+```text
+no transitive fetching: unresolved inner imports ...
+  ./inner.mjs
+```
+
+Use a self-contained ES module build, include relative files in the package
+archive, or summon each dependency individually and prepare a vetted module
+that references it as `@js/<name>`. Summon does not rewrite remote URLs, bare
+package names, or relative references into `@js/` imports. Existing `@js/`
+dependencies must already be declared, locked, and present with matching
+vendored integrity.
+
+Minified filenames or long compressed lines produce a warning. For recognized
+jsDelivr and unpkg `.min.js` URLs, the warning suggests a possible `.module.js`
+URL. This is a best-effort hint; availability is not checked or fetched.
+
+## Declare the boundary
+
+Write the typed `summon` block yourself, targeting `@js/<name>`. The compiler's
+summon verification checks the declaration against the vendored JavaScript.
+The fetch command does not generate declarations or certify the declared
+function signatures.
+
+`deka install` and `deka install --locked` preserve declared summoned pins and
+verify their vendored files without contacting their source URLs. Missing or
+changed files fail verification; restore the committed vetted bytes.
+
+This stage supports JavaScript URL sources. `jsr:` support is the next stage;
+TypeScript ingestion and `deka summon infer` declaration scaffolding are not
+implemented here.
