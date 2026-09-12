@@ -14,3 +14,5 @@ pub mod registry_integrity;
 pub use install::run_install;
 pub use links::{link_package_at, unlink_package_at};
 pub use payload::InstallPayload;
+
+pub mod summon;

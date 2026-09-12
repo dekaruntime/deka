@@ -473,3 +473,6 @@ fn format_suggestions(suggestions: &[String]) -> String {
         .collect::<Vec<String>>()
         .join(", ")
 }
+
+#[cfg(feature = "native")]
+pub mod summon;

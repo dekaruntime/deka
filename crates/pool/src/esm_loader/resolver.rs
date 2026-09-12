@@ -59,6 +59,9 @@ pub(crate) fn resolve_phpx_module_spec(
     module_root: Option<&Path>,
     specifier: &str,
 ) -> Option<PathBuf> {
+    if deka_modules::module_spec::is_summoned_js_module_spec(specifier) {
+        return deka_modules::module_spec::resolve_summoned_js_module_file(project_root, specifier).ok();
+    }
     // @/ is a project-root alias: @/src/pages/foo -> {project_root}/src/pages/foo.ds
     //
     // Path-traversal guard: a malicious specifier like `@/../../etc/passwd`
