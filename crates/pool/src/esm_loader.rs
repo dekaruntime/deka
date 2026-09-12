@@ -32,6 +32,7 @@ use deno_core::ResolutionKind;
 use deno_core::resolve_import;
 use deno_error::JsErrorBox;
 
+use deka_modules::modules::MODULES_DIR;
 use permissions::host_bridge::{self, GrantTable};
 
 mod grants;
@@ -228,7 +229,7 @@ impl PhpxEsmLoader {
 
     /// Classify a module path for RFD 27 grant purposes and return the bridge
     /// kinds it may call. Order matters: the compiler-cache and
-    /// `ds_modules|php_modules` trees are checked before the generic
+    /// `ds_modules` trees are checked before the generic
     /// "under project root" rule.
     fn kinds_for_path(&self, path: &Path) -> Vec<String> {
         // `self.project_root`/`cache_dir` are canonicalized at construction;
@@ -290,25 +291,21 @@ impl PhpxEsmLoader {
         Vec::new()
     }
 
-    /// If `path` lives under `<project_root>/{ds_modules,php_modules}/<name>`,
-    /// return the package root directory. Scoped names (`@deka/crypto`) take
-    /// two path segments.
+    /// If `path` lives under `<project_root>/ds_modules/<name>`, return the
+    /// package root directory. Scoped names (`@deka/crypto`) take two path
+    /// segments. A sibling `php_modules/` tree is not a resolution fallback.
     fn dependency_package_root(&self, path: &Path) -> Option<PathBuf> {
-        for dir in ["ds_modules", "php_modules"] {
-            let modules_dir = self.project_root.join(dir);
-            if let Ok(rel) = path.strip_prefix(&modules_dir) {
-                let mut components = rel.components();
-                let first = components.next()?;
-                let mut root = modules_dir.join(first.as_os_str());
-                let file_name = first.as_os_str().to_string_lossy();
-                if file_name.starts_with('@') {
-                    let second = components.next()?;
-                    root = root.join(second.as_os_str());
-                }
-                return Some(root);
-            }
+        let modules_dir = self.project_root.join(MODULES_DIR);
+        let rel = path.strip_prefix(&modules_dir).ok()?;
+        let mut components = rel.components();
+        let first = components.next()?;
+        let mut root = modules_dir.join(first.as_os_str());
+        let file_name = first.as_os_str().to_string_lossy();
+        if file_name.starts_with('@') {
+            let second = components.next()?;
+            root = root.join(second.as_os_str());
         }
-        None
+        Some(root)
     }
 
     /// Best-effort package name for diagnostics: the dependency segment when
@@ -402,7 +399,7 @@ impl PhpxEsmLoader {
                 )
             } else {
                 format!(
-                    "unable to resolve module '{}'; check php_modules",
+                    "unable to resolve module '{}'; check {MODULES_DIR}",
                     specifier
                 )
             };
@@ -820,5 +817,110 @@ mod tests {
             loader.kinds_for_path(&module).is_empty(),
             "a grant for another digest must not unlock this package"
         );
+    }
+
+    /// deka#896: `php_modules/` is not a pool resolution or grant fallback.
+    #[test]
+    fn legacy_tree_is_not_a_resolution_fallback() {
+        use deka_modules::modules::MODULES_DIR;
+        use permissions::host_bridge::GrantTable;
+
+        let project = tempfile::tempdir().expect("temp project");
+        let root = project.path();
+        let entry = root.join("handler.js");
+        fs::write(&entry, "export default {};\n").expect("write js handler");
+
+        let legacy_pkg = root.join("php_modules").join("@deka").join("crypto");
+        fs::create_dir_all(&legacy_pkg).expect("legacy package");
+        let legacy_module = legacy_pkg.join("index.ds");
+        fs::write(&legacy_module, "export const x = 1;\n").expect("legacy module");
+
+        fs::write(
+            root.join("deka.lock"),
+            r#"{
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/crypto": {
+                        "metadata": { "fsGraph": { "algo": "sha256", "hash": "sha256:aaa" } }
+                    }
+                }
+            }"#,
+        )
+        .expect("deka.lock");
+
+        let table = GrantTable::from_json(
+            r#"[{"name":"@deka/crypto","version":"1.0.0","digest":"sha256:aaa","kinds":["crypto"]}]"#,
+        )
+        .expect("grant table");
+        let loader =
+            PhpxEsmLoader::new(root.to_path_buf(), entry, None, Some(table), None, false)
+                .expect("loader");
+
+        let legacy_canon = legacy_module.canonicalize().expect("legacy module");
+        assert_eq!(loader.dependency_package_root(&legacy_canon), None);
+        assert_eq!(
+            super::resolve_phpx_module_spec(root, None, "@deka/crypto"),
+            None
+        );
+        assert!(
+            loader.kinds_for_path(&legacy_module).is_empty(),
+            "php_modules packages must not receive dependency grants"
+        );
+        let legacy_name = super::dependency_package_name(&legacy_pkg, &loader.project_root);
+        assert_ne!(legacy_name, "@deka/crypto");
+        assert!(
+            legacy_name.contains("php_modules"),
+            "legacy tree must not be stripped as a modules prefix: {legacy_name}"
+        );
+
+        let err = loader
+            .resolve_path("missing-pkg", "file:///main")
+            .expect_err("unresolved specifier");
+        let message = err.to_string();
+        assert!(
+            message.contains(MODULES_DIR),
+            "unresolved specifier must name {MODULES_DIR}: {message}"
+        );
+        assert!(
+            !message.contains("php_modules"),
+            "unresolved specifier must not name php_modules: {message}"
+        );
+
+        let modern_pkg = root.join(MODULES_DIR).join("@deka").join("crypto");
+        fs::create_dir_all(&modern_pkg).expect("modern package");
+        let modern_module = modern_pkg.join("index.ds");
+        fs::write(&modern_module, "export const x = 1;\n").expect("modern module");
+        let modern_canon = modern_module.canonicalize().expect("modern module");
+        let modern_root = modern_pkg
+            .canonicalize()
+            .unwrap_or_else(|_| modern_pkg.clone());
+
+        assert_eq!(
+            loader.dependency_package_root(&modern_canon),
+            Some(modern_root.clone())
+        );
+        let resolved = super::resolve_phpx_module_spec(root, None, "@deka/crypto")
+            .expect("ds_modules package must resolve");
+        assert!(
+            resolved.starts_with(root.join(MODULES_DIR)),
+            "resolved path must stay under {MODULES_DIR}: {}",
+            resolved.display()
+        );
+        assert!(
+            !resolved
+                .components()
+                .any(|c| c.as_os_str() == "php_modules"),
+            "resolved path must not walk php_modules: {}",
+            resolved.display()
+        );
+        assert_eq!(
+            loader.kinds_for_path(&modern_module),
+            vec!["crypto".to_string()]
+        );
+        assert_eq!(
+            super::dependency_package_name(&modern_root, &loader.project_root),
+            "@deka/crypto"
+        );
+        assert_eq!(loader.dependency_package_root(&legacy_canon), None);
     }
 }

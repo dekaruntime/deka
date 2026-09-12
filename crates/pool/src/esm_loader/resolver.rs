@@ -151,7 +151,7 @@ pub(crate) fn resolve_phpx_module_spec(
         }
     }
 
-    // DEKA_MODULE_ROOT fallback (#220): if the tenant's php_modules/ doesn't
+    // DEKA_MODULE_ROOT fallback (#220): if the tenant's ds_modules/ doesn't
     // contain the spec, try the runtime stdlib root. This lets stdlib-only
     // tenants (e.g. id.tana.gg) deploy without vendoring stdlib.
     if let Some(root) = module_root {
@@ -261,6 +261,15 @@ mod tests {
         let modules = root.path().join("ds_modules").join("legacy");
         fs::create_dir_all(&modules).expect("ds_modules");
         fs::write(modules.join("index.phpx"), "export const value = 1;").expect("index phpx");
+        assert_eq!(resolve_phpx_module_spec(root.path(), None, "legacy"), None);
+    }
+
+    #[test]
+    fn legacy_php_modules_tree_is_not_a_resolution_fallback() {
+        let root = tempfile::tempdir().expect("temp project");
+        let modules = root.path().join("php_modules").join("legacy");
+        fs::create_dir_all(&modules).expect("php_modules");
+        fs::write(modules.join("index.ds"), "export const value = 1;").expect("index ds");
         assert_eq!(resolve_phpx_module_spec(root.path(), None, "legacy"), None);
     }
 
