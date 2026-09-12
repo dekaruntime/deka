@@ -72,7 +72,7 @@ futures-util = { version = "0.3", optional = true }
 url = "2"
 
 [build-dependencies]
-prost-build = "0.13"
+prost-build = "0.14"
 protoc-bin-vendored = "3"
 
 [dev-dependencies]
