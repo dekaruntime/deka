@@ -11,4 +11,3 @@ crates/pm/src/install.rs 2315
 crates/pool/src/isolate_pool/worker_execution.rs 1789
 crates/pool/src/validation/handler_validator.rs 1133
 crates/security/src/security_policy.rs 1116
-crates/runtime/src/serve.rs 1110
