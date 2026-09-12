@@ -1,6 +1,5 @@
 #![allow(clippy::all)]
 
-pub mod api;
 pub mod config;
 mod fast;
 mod listener;
@@ -12,6 +11,6 @@ pub mod websocket;
 
 pub mod unix;
 
-pub use config::{HttpConfig, Neo4jConfig};
+pub use config::HttpConfig;
 pub use router::app_router;
 pub use server::serve_http;

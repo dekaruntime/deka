@@ -240,34 +240,22 @@ async fn platform_async(context: &Context) {
     let root = PathBuf::from(if input.is_empty() { "." } else { input });
     let root = std::fs::canonicalize(&root).unwrap_or(root);
 
-    // Load database config from platform-level deka.json. The parsed values
-    // thread into host bridge modules via deka_host's explicit process-wide store —
-    // never through the process environment.
-    let db_config = runtime_config::load_database_config(&root);
-    deka_host::host_config::install_database_endpoints(deka_host::host_config::DatabaseEndpoints {
-        neo4j_uri: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.uri.clone()),
-        neo4j_user: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.user.clone()),
-        neo4j_password: db_config
-            .neo4j
-            .as_ref()
-            .and_then(|neo4j| neo4j.password.clone()),
-        neo4j_db: db_config.neo4j.as_ref().and_then(|neo4j| neo4j.db.clone()),
-    });
-
     // Validate directory structure
     let default_dir = root.join("default");
     let tenants_dir = root.join("tenants");
     let default_handler = default_dir.join("main.ds");
 
-    let platform_security =
-        match resolve_platform_security_for_root(&default_dir, &context.args.flags, &context.args.params)
-        {
-            Ok(resolved) => resolved,
-            Err(err) => {
-                stdio::error("platform", &err);
-                std::process::exit(1);
-            }
-        };
+    let platform_security = match resolve_platform_security_for_root(
+        &default_dir,
+        &context.args.flags,
+        &context.args.params,
+    ) {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            stdio::error("platform", &err);
+            std::process::exit(1);
+        }
+    };
 
     if !default_handler.exists() {
         stdio::error(
@@ -825,10 +813,7 @@ mod shop_id_path_validation_tests {
         // Existing tenant dir → tenant-specific handler.
         assert_eq!(
             resolve_handler_path(&root.0, "shop_alpha-1").unwrap(),
-            root.0
-                .join("tenants")
-                .join("shop_alpha-1")
-                .join("main.ds")
+            root.0.join("tenants").join("shop_alpha-1").join("main.ds")
         );
         // Valid charset, missing dir → default fallback.
         assert_eq!(

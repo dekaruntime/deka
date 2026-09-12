@@ -357,39 +357,6 @@ impl WorkerThread {
                             }
                             return { ok: false, error: 'db protobuf bridge ops unavailable' };
                         }
-                        if (kind === 'neo4j') {
-                            const shopId = globalThis.__shopId;
-                            if (shopId && typeof ops.op_zega_backend === 'function' && ops.op_zega_backend(shopId) === 'zega') {
-                                if (typeof ops.op_zega_cql_call === 'function') {
-                                    return ops.op_zega_cql_call(shopId, String(action || ''), payload || {});
-                                }
-                                return { ok: false, error: 'zega CQL bridge op unavailable' };
-                            }
-                            if (typeof ops.op_neo4j_call === 'function') {
-                                const p = payload || {};
-                                // Shard routing: always stamp the Host-derived
-                                // shop slug on connect(). The Rust op uses the
-                                // legacy __account_id payload key as its shard
-                                // key for two things:
-                                //  (1) when no explicit URL was passed, pick
-                                //      the owning shard's Neo4j URL;
-                                //  (2) when an explicit URL looks like a
-                                //      single-machine dev default
-                                //      (`localhost`/`127.0.0.1`), override it
-                                //      with the shop's shard URL so
-                                //      migrated tenants on non-router shards
-                                //      don't try to hit a port their stack
-                                //      doesn't expose.
-                                if (action === 'connect') {
-                                    const shardKey = globalThis.__shardKey || globalThis.__shopId;
-                                    if (shardKey) {
-                                        p.__account_id = shardKey;
-                                    }
-                                }
-                                return ops.op_neo4j_call(String(action || ''), p);
-                            }
-                            return { ok: false, error: 'neo4j bridge op unavailable' };
-                        }
                         if (kind === 'shard') {
                             if (typeof ops.op_shard_for === 'function') {
                                 const p = payload || {};

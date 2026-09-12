@@ -36,13 +36,11 @@ mod net;
 #[cfg(test)]
 mod net_tests;
 mod security;
-mod security_hint;
 #[cfg(test)]
 mod security_context_tests;
+mod security_hint;
 
-pub use security::{
-    enforce_net_public, enforce_net_public_with, security_policy_from_context,
-};
+pub use security::{enforce_net_public, enforce_net_public_with, security_policy_from_context};
 
 fn core_err(msg: impl Into<String>) -> deno_core::error::CoreError {
     deno_core::error::CoreError::from(std::io::Error::other(msg.into()))
@@ -80,8 +78,6 @@ deno_core::extension!(
         fs_ops::op_php_file_exists,
         fs_ops::op_php_path_resolve,
         fs_ops::op_php_read_dir,
-        compat::op_neo4j_call,
-        compat::op_shard_for,
         compat::op_deka_http_call,
         concurrency::op_php_concurrency_lock_acquire,
         concurrency::op_php_concurrency_lock_release,
