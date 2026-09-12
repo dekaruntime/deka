@@ -193,7 +193,6 @@ async fn materialize_build_values_async(
     Ok(materialized)
 }
 
-
 fn copy_dir_contents(from: &Path, to: &Path) -> Result<(), String> {
     for entry in std::fs::read_dir(from)
         .map_err(|err| format!("failed to read {}: {err}", from.display()))?
@@ -293,6 +292,11 @@ fn permission_denial_from_error(
     })
 }
 
+/// Peel `Result<T, string>` from a materialized build slot.
+///
+/// After rfd#62 / dsc#164 Result erasure (dsc 0.50.0), a kept-as-data Result
+/// is `{ok: true, value}` / `{ok: false, error}`. The pre-erasure tagged
+/// `{__enum: "Result", __case}` envelope is still recognized.
 fn unwrap_result<'a>(
     result: &'a serde_json::Value,
     entry: &BuildEntry,
@@ -301,6 +305,15 @@ fn unwrap_result<'a>(
     let object = result
         .as_object()
         .ok_or_else(|| format!("build `{binding}` must return Result<T, string>"))?;
+    if let Some(ok) = object.get("ok").and_then(serde_json::Value::as_bool) {
+        return if ok {
+            object
+                .get("value")
+                .ok_or_else(|| format!("build `{binding}` returned malformed Result.Ok"))
+        } else {
+            Err(result_err_message(object.get("error"), binding, entry))
+        };
+    }
     if object.get("__enum").and_then(serde_json::Value::as_str) != Some("Result") {
         return Err(format!("build `{binding}` must return Result<T, string>"));
     }
@@ -308,28 +321,34 @@ fn unwrap_result<'a>(
         Some("Ok") => object
             .get("value")
             .ok_or_else(|| format!("build `{binding}` returned malformed Result.Ok")),
-        Some("Err") => {
-            // RFD 27: re-encode a direct structured denial or the public
-            // @deka/fs FsError.PermissionDenied into the marker wire format
-            // so the build diagnostic stays machine-readable. Plain string
-            // errors pass through unchanged.
-            let message = object.get("error").map(|error| {
-                if let Some(text) = error.as_str() {
-                    return text.to_string();
-                }
-                if let Some(denial) = permission_denial_from_error(error) {
-                    return denial.encode();
-                }
-                "build entry returned Result.Err".to_string()
-            });
-            let message = message.unwrap_or_else(|| "build entry returned Result.Err".to_string());
-            Err(format!(
-                "build `{binding}` (at {}) failed: {message}",
-                slot_location(entry)
-            ))
-        }
+        Some("Err") => Err(result_err_message(object.get("error"), binding, entry)),
         _ => Err(format!("build `{binding}` returned malformed Result")),
     }
+}
+
+fn result_err_message(
+    error: Option<&serde_json::Value>,
+    binding: &str,
+    entry: &BuildEntry,
+) -> String {
+    // RFD 27: re-encode a direct structured denial or the public
+    // @deka/fs FsError.PermissionDenied into the marker wire format
+    // so the build diagnostic stays machine-readable. Plain string
+    // errors pass through unchanged.
+    let message = error.map(|error| {
+        if let Some(text) = error.as_str() {
+            return text.to_string();
+        }
+        if let Some(denial) = permission_denial_from_error(error) {
+            return denial.encode();
+        }
+        "build entry returned Result.Err".to_string()
+    });
+    let message = message.unwrap_or_else(|| "build entry returned Result.Err".to_string());
+    format!(
+        "build `{binding}` (at {}) failed: {message}",
+        slot_location(entry)
+    )
 }
 
 fn descriptor_node<'a>(descriptor: &'a serde_json::Value) -> Result<&'a str, String> {
@@ -615,11 +634,40 @@ mod tests {
         assert!(unwrap_result(&serde_json::json!(["Ada"]), &entry).is_err());
         assert_eq!(
             unwrap_result(
+                &serde_json::json!({ "ok": false, "error": "missing file" }),
+                &entry
+            )
+            .unwrap_err(),
+            "build `labels` (at app/page.dsx:3:47) failed: missing file"
+        );
+        assert_eq!(
+            unwrap_result(
                 &serde_json::json!({ "__enum": "Result", "__case": "Err", "error": "missing file" }),
                 &entry
             )
             .unwrap_err(),
             "build `labels` (at app/page.dsx:3:47) failed: missing file"
+        );
+    }
+
+    #[test]
+    fn unwraps_erased_result_ok_envelope() {
+        let entry = BuildEntry {
+            id: "slot1".to_string(),
+            binding: "staticParams".to_string(),
+            file: "app/posts/[slug]/page.dsx".to_string(),
+            span: serde_json::json!({ "start": { "line": 3, "column": 47 } }),
+            entry: PathBuf::from("entry.js"),
+            descriptor: serde_json::Value::Null,
+        };
+        let envelope = serde_json::json!({
+            "ok": true,
+            "value": [{ "slug": "hello" }, { "slug": "world" }]
+        });
+        let inner = unwrap_result(&envelope, &entry).expect("erased Result.Ok unwraps");
+        assert_eq!(
+            inner,
+            &serde_json::json!([{ "slug": "hello" }, { "slug": "world" }])
         );
     }
 
@@ -636,6 +684,15 @@ mod tests {
         // RFD 27 wire shape: the DS-level Err carries the structured
         // PermissionDenied object, and the build diagnostic must re-encode it
         // with the machine-readable marker.
+        let erased_denial = serde_json::json!({
+            "ok": false,
+            "error": { "name": "PermissionDenied", "capability": "read", "target": "data/x.json" }
+        });
+        let erased_message = unwrap_result(&erased_denial, &entry).unwrap_err();
+        assert!(
+            erased_message.contains(permissions::host_bridge::PERMISSION_DENIED_MARKER),
+            "erased Result marker missing: {erased_message}"
+        );
         let denial = serde_json::json!({
             "__enum": "Result",
             "__case": "Err",
@@ -647,7 +704,8 @@ mod tests {
             "marker missing: {message}"
         );
         assert!(
-            message.contains(r#""capability":"read""#) && message.contains(r#""target":"data/x.json""#),
+            message.contains(r#""capability":"read""#)
+                && message.contains(r#""target":"data/x.json""#),
             "structured denial missing: {message}"
         );
         // @deka/fs wraps the same host denial in its public typed error. Build

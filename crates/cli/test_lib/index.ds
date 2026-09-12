@@ -206,7 +206,7 @@ fn clear_failures() void {
 }
 
 fn isResultCase(value: Result<number, string>, caseName: string) boolean {
-  const hit = match (unsafe<boolean> { value.__enum === "Result" && value.__case === caseName }) {
+  const hit = match (unsafe<boolean> { (caseName === "Ok" && value.ok === true) || (caseName === "Err" && value.ok === false) || (value.__enum === "Result" && value.__case === caseName) }) {
     Ok(v) => v,
     Err(e) => false,
   }
