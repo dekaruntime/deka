@@ -20,6 +20,8 @@ use swc_ecma_ast::*;
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 use swc_ecma_visit::{Visit, VisitWith};
 
+mod jsr;
+
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 pub struct Summoned {
@@ -52,89 +54,26 @@ pub fn summon_at(
         serde_json::from_slice::<lock::DekaLock>(&fs::read(&lock_path)?)?;
     }
     let mut locked = lock::read_lockfile_at(&lock_path);
-    if source.starts_with("jsr:") {
-        bail!("jsr: sources are planned for the next summon stage; use a JavaScript URL");
-    }
     if source == "infer" {
         bail!("deka summon infer is a separate stage; write the summon block yourself");
-    }
-    let url = reqwest::Url::parse(source.strip_prefix("url:").unwrap_or(source))
-        .context("expected an http(s):// or file:// JavaScript or .tgz URL")?;
-    let mut bytes = Vec::new();
-    match url.scheme() {
-        "file" => {
-            fs::File::open(
-                url.to_file_path()
-                    .map_err(|_| anyhow!("invalid file URL"))?,
-            )?
-            .take(MAX_BYTES + 1)
-            .read_to_end(&mut bytes)?;
-        }
-        "http" | "https" => {
-            reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(60))
-                .build()?
-                .get(url.clone())
-                .send()?
-                .error_for_status()?
-                .take(MAX_BYTES + 1)
-                .read_to_end(&mut bytes)?;
-        }
-        _ => bail!(
-            "unsupported summon source; use url: with http(s):// or file:// (jsr: is next stage)"
-        ),
-    }
-    if bytes.len() as u64 > MAX_BYTES {
-        bail!("summon source exceeds 64 MiB");
     }
     let staging = tempfile::Builder::new()
         .prefix(".deka-summon-")
         .tempdir_in(&project)?;
-    let unpack = staging.path().join("unpack");
-    fs::create_dir(&unpack)?;
-    let basename = url
-        .path_segments()
-        .and_then(|s| s.filter(|p| !p.is_empty()).last())
-        .unwrap_or("module");
-    let archive = basename.ends_with(".tgz") || basename.ends_with(".tar.gz");
-    let package = if archive {
-        unpack_archive(&bytes, &unpack)?;
-        if unpack.join("package/package.json").is_file() {
-            unpack.join("package")
-        } else {
-            unpack.clone()
-        }
+    let prepared = if source.starts_with("jsr:") {
+        jsr::prepare(source, staging.path())?
     } else {
-        fs::write(unpack.join("index.mjs"), &bytes)?;
-        unpack.clone()
+        prepare_url(source, &staging)?
     };
-    let package_json = package.join("package.json");
-    let metadata: Value = if package_json.exists() {
-        serde_json::from_slice(&fs::read(&package_json)?)?
-    } else {
-        json!({})
-    };
-    let fallback = basename
-        .trim_end_matches(".tar.gz")
-        .trim_end_matches(".tgz")
-        .trim_end_matches(".mjs")
-        .trim_end_matches(".js");
-    let mut name = match metadata.get("name") {
-        Some(value) => value
-            .as_str()
-            .ok_or_else(|| anyhow!("package.json name must be a string"))?
-            .to_string(),
-        None => fallback
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '-'
-                }
-            })
-            .collect(),
-    };
+    let Prepared {
+        package,
+        mut name,
+        location,
+        source_kind,
+        provenance,
+        integrity,
+        warnings_url,
+    } = prepared;
     loop {
         let spec = format!("@js/{name}");
         if summoned_js_package_name(&spec).is_none() {
@@ -166,20 +105,29 @@ pub fn summon_at(
     fs::create_dir_all(vendor.parent().unwrap())?;
     fs::rename(package, &vendor)?;
     let entry = resolve_summoned_js_module_file(&stage_project, &spec).map_err(|e| anyhow!(e))?;
-    let warnings = minified_warning(&url, &fs::read_to_string(&entry)?);
-    validate_graph(&project, &vendor, &entry)?;
+    let warnings = match warnings_url {
+        Some(url) => minified_warning(&url, &fs::read_to_string(&entry)?),
+        None => Vec::new(),
+    };
+    validate_graph(&project, &vendor, &entry, source_kind == "jsr")?;
     let files = file_hashes(&vendor)?;
-    let integrity = format!("sha256-{}", STANDARD.encode(Sha256::digest(&bytes)));
     locked.packages.insert(
         spec.clone(),
         (
             spec.clone(),
-            url.to_string(),
-            json!({"source": "url", "integrity": integrity, "files": files}),
+            location.clone(),
+            json!({"source": source_kind, "provenance": provenance, "integrity": integrity, "files": files}),
             integrity,
         ),
     );
-    deps.insert(spec.clone(), json!(format!("url:{url}")));
+    deps.insert(
+        spec.clone(),
+        json!(if source_kind == "jsr" {
+            location
+        } else {
+            format!("url:{location}")
+        }),
+    );
     let result = (|| {
         let mut transaction = InstallTransaction::begin(&project, &lock_path)?;
         transaction.commit_package(&vendor, &project.join("js_modules").join(&name))?;
@@ -196,6 +144,100 @@ pub fn summon_at(
         return Err(error);
     }
     Ok(Summoned { spec, warnings })
+}
+
+struct Prepared {
+    package: std::path::PathBuf,
+    name: String,
+    location: String,
+    source_kind: &'static str,
+    provenance: Value,
+    integrity: String,
+    warnings_url: Option<reqwest::Url>,
+}
+
+fn prepare_url(source: &str, staging: &tempfile::TempDir) -> Result<Prepared> {
+    let url = reqwest::Url::parse(source.strip_prefix("url:").unwrap_or(source))
+        .context("expected an http(s):// or file:// JavaScript or .tgz URL")?;
+    let mut bytes = Vec::new();
+    match url.scheme() {
+        "file" => {
+            fs::File::open(
+                url.to_file_path()
+                    .map_err(|_| anyhow!("invalid file URL"))?,
+            )?
+            .take(MAX_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        }
+        "http" | "https" => {
+            reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()?
+                .get(url.clone())
+                .send()?
+                .error_for_status()?
+                .take(MAX_BYTES + 1)
+                .read_to_end(&mut bytes)?;
+        }
+        _ => bail!("unsupported summon source; use url: with http(s):// or file:// or jsr:"),
+    }
+    if bytes.len() as u64 > MAX_BYTES {
+        bail!("summon source exceeds 64 MiB");
+    }
+    let unpack = staging.path().join("unpack");
+    fs::create_dir(&unpack)?;
+    let basename = url
+        .path_segments()
+        .and_then(|s| s.filter(|p| !p.is_empty()).last())
+        .unwrap_or("module");
+    let archive = basename.ends_with(".tgz") || basename.ends_with(".tar.gz");
+    let package = if archive {
+        unpack_archive(&bytes, &unpack)?;
+        if unpack.join("package/package.json").is_file() {
+            unpack.join("package")
+        } else {
+            unpack.clone()
+        }
+    } else {
+        fs::write(unpack.join("index.mjs"), &bytes)?;
+        unpack.clone()
+    };
+    let package_json = package.join("package.json");
+    let metadata: Value = if package_json.exists() {
+        serde_json::from_slice(&fs::read(&package_json)?)?
+    } else {
+        json!({})
+    };
+    let fallback = basename
+        .trim_end_matches(".tar.gz")
+        .trim_end_matches(".tgz")
+        .trim_end_matches(".mjs")
+        .trim_end_matches(".js");
+    let name = match metadata.get("name") {
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| anyhow!("package.json name must be a string"))?
+            .to_string(),
+        None => fallback
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect(),
+    };
+    Ok(Prepared {
+        package,
+        name,
+        location: url.to_string(),
+        source_kind: "url",
+        provenance: json!({}),
+        integrity: format!("sha256-{}", STANDARD.encode(Sha256::digest(&bytes))),
+        warnings_url: Some(url),
+    })
 }
 
 fn unpack_archive(bytes: &[u8], root: &Path) -> Result<()> {
@@ -290,7 +332,12 @@ pub(crate) fn verify_locked_at(project: &Path) -> Result<BTreeMap<String, lock::
                 .packages
                 .get(spec)
                 .ok_or_else(|| anyhow!("{spec} is not locked; run deka summon <source>"))?;
-            if source.as_str() != Some(format!("url:{}", entry.1).as_str()) {
+            let expected_source = if entry.2.get("source").and_then(Value::as_str) == Some("jsr") {
+                entry.1.clone()
+            } else {
+                format!("url:{}", entry.1)
+            };
+            if source.as_str() != Some(expected_source.as_str()) {
                 bail!("{spec} source differs from deka.lock");
             }
             resolve_summoned_js_module_file(project, spec).map_err(|e| anyhow!(e))?;
@@ -316,6 +363,15 @@ struct Imports {
     unknown: bool,
 }
 impl Visit for Imports {
+    fn visit_ts_external_module_ref(&mut self, n: &TsExternalModuleRef) {
+        self.specs
+            .insert(n.expr.value.to_string_lossy().into_owned());
+    }
+    fn visit_ts_import_type(&mut self, n: &TsImportType) {
+        self.specs
+            .insert(n.arg.value.to_string_lossy().into_owned());
+        n.visit_children_with(self);
+    }
     fn visit_import_decl(&mut self, n: &ImportDecl) {
         self.specs
             .insert(n.src.value.to_string_lossy().into_owned());
@@ -347,9 +403,16 @@ impl Visit for Imports {
     }
 }
 
-fn validate_graph(project: &Path, vendor: &Path, entry: &Path) -> Result<()> {
+fn validate_graph(project: &Path, vendor: &Path, entry: &Path, all_modules: bool) -> Result<()> {
     let root = vendor.canonicalize()?;
     let mut pending = vec![entry.to_path_buf()];
+    if all_modules {
+        for path in file_hashes(vendor)?.keys() {
+            if path.starts_with("js/") && (path.ends_with(".js") || path.ends_with(".mjs")) {
+                pending.push(vendor.join(path));
+            }
+        }
+    }
     let mut seen = BTreeSet::new();
     let mut missing = BTreeSet::new();
     while let Some(path) = pending.pop() {
