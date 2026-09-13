@@ -4,6 +4,7 @@ import type { Post } from "../lib/posts";
 export function PostCard({ post }: { post: Post }) {
   return (
     <Link className="card" to={`/posts/${post.slug}`}>
+      <span data-bench-edit="card">Read post</span>
       <h2>{post.title}</h2>
       <div className="meta">{post.date}</div>
       <p>{post.excerpt}</p>

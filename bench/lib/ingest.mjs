@@ -184,6 +184,9 @@ export function ingest() {
   mkdirSync(join(BENCH_ROOT, "vite-blog/src"), { recursive: true });
   writeFileSync(join(BENCH_ROOT, "deka-blog/src/posts.generated.ds"), emitDs(posts));
   writeFileSync(join(BENCH_ROOT, "vite-blog/src/posts.generated.ts"), emitTs(posts));
+  mkdirSync(join(BENCH_ROOT, "next-blog/src"), { recursive: true });
+  writeFileSync(join(BENCH_ROOT, "next-blog/src/posts.generated.ts"), emitTs(posts));
+  copyImages(join(BENCH_ROOT, "next-blog/public/images"));
   copyImages(join(BENCH_ROOT, "deka-blog/public/images"));
   copyImages(join(BENCH_ROOT, "vite-blog/public/images"));
   return { posts: posts.length, tags: allTags(posts).length };

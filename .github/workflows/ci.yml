@@ -179,6 +179,18 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-features
 
+      # macOS runs this through the workspace suite below. Ubuntu must also
+      # execute the produced native binary, rather than only typechecking it.
+      - name: Install dsc for executable smoke test
+        run: scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc"
+
+      - name: Smoke test host-target executable compilation
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
+          NO_COLOR: "1"
+          FORCE_COLOR: "0"
+        run: cargo test --locked --release -p cli --test compile_executable
+
       - name: Report sccache usage
         if: ${{ always() && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
         run: |

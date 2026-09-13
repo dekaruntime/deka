@@ -79,6 +79,11 @@ copy of React shipped with `deka dev`.
    survive. Editing an island's own module (`client:load` / `idle` /
    `visible`) full-reloads — morphing cannot refresh `hydrateRoot`.
 
+Generated app-router HTML responses include `Content-Type: text/html`, so
+`deka dev` can inject its HMR client. Fragment responses use
+`application/json`. The watcher evicts stale server isolates before notifying
+browsers, so an immediate reload sees the saved source.
+
 ## React in this lane
 
 React 19.1.1, react-dom 19.1.1, and react-refresh 0.17.0 are vendored as

@@ -1,42 +1,37 @@
 #!/usr/bin/env node
-/**
- * deka-bench phase 1 runner.
- *
- * Times cold + incremental production builds (median of 5) and measures
- * two gzipped payload stories: a post page with no islands, and a post
- * page with hydrated Theme + Newsletter islands. HMR, TTFB, and Next.js
- * are not measured here — see README.md.
- */
+/** Three-way benchmark. Methodology and prerequisites: README.md. */
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
-import { gzipSync } from "node:zlib";
+import { Agent, get } from "node:http";
+import { createServer as createSocketServer } from "node:net";
+import { createHash } from "node:crypto";
+import { withBrowser, payload, editLatency, findChrome, stopBrowsers } from "./lib/browser.mjs";
+
 import {
   cpSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
-  statSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, extname, join } from "node:path";
+import { dirname, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { uncontended, contention } from "./lib/contention.mjs";
 import { ingest } from "./lib/ingest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const toolchainDir = join(here, ".toolchain");
 const RUNS = 5;
-const ZERO_JS_PATH = "/posts/zero-js-by-default";
 const ISLANDS_PATH = "/posts/islands-are-a-budget";
 const DEKA_TOUCH = join(here, "deka-blog/src/ui/PostCard.dsx");
 const VITE_TOUCH = join(here, "vite-blog/src/components/PostCard.tsx");
 
 function which(bin) {
   const path = process.env.PATH || "";
-  for (const dir of path.split(":")) {
+  for (const dir of path.split(delimiter)) {
     const candidate = join(dir, bin);
     if (existsSync(candidate)) return candidate;
   }
@@ -47,7 +42,7 @@ function toolchainEnv(extra = {}) {
   const homeBin = join(process.env.HOME || "", ".deka/bin");
   return {
     ...process.env,
-    PATH: `${toolchainDir}:${homeBin}:${process.env.PATH || ""}`,
+    PATH: [toolchainDir, homeBin, process.env.PATH || ""].join(delimiter),
     NO_COLOR: "1",
     ...extra,
   };
@@ -100,11 +95,6 @@ function rmrf(path) {
   rmSync(path, { recursive: true, force: true });
 }
 
-function touch(path) {
-  const now = new Date();
-  utimesSync(path, now, now);
-}
-
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -114,7 +104,7 @@ function resolveDeka() {
   if (existsSync(pinned)) return pinned;
   throw new Error(
     "bench/.toolchain/deka is missing. Build the CLI from main once:\n" +
-      "  cargo build --release -p cli\n" +
+      "  cargo build --release -p cli --features dev-server\n" +
       "  mkdir -p bench/.toolchain\n" +
       "  cp target/release/cli bench/.toolchain/deka\n" +
       "  cp \"$HOME/.deka/bin/dsc\" bench/.toolchain/dsc\n" +
@@ -199,6 +189,7 @@ async function timeCommand(cmd, args, cwd, env) {
 function dekaClean(root = join(here, "deka-blog")) {
   rmrf(join(root, "dist"));
   rmrf(join(root, ".cache"));
+  rmrf(join(root, "ds_modules/.cache"));
   rmrf(join(root, ".deka-dist-stage"));
 }
 
@@ -212,18 +203,20 @@ async function series(label, n, fn) {
   const samples = [];
   for (let i = 0; i < n; i++) {
     process.stderr.write(`  ${label} ${i + 1}/${n}\n`);
-    samples.push(await fn());
+    samples.push(await uncontended(`${label} ${i + 1}/${n}`, attempt => fn(i, attempt)));
   }
   return { samples, median: median(samples) };
 }
 
-async function waitHttp(url, timeoutMs = 60_000) {
+async function waitHttp(url, timeoutMs = 60_000, server) {
   const start = Date.now();
   let last = "";
   while (Date.now() - start < timeoutMs) {
+    if (server?.exited()) throw new Error(`Server exited before readiness: ${server.log()}`);
     try {
       const res = await fetch(url);
-      if (res.ok || res.status === 404) return;
+      await res.arrayBuffer();
+      if (res.ok) return;
       last = `status ${res.status}`;
     } catch (err) {
       last = err instanceof Error ? err.message : String(err);
@@ -233,538 +226,229 @@ async function waitHttp(url, timeoutMs = 60_000) {
   throw new Error(`server did not come up: ${url}${last ? ` (${last})` : ""}`);
 }
 
-function contentTypeFor(file) {
-  switch (extname(file)) {
-    case ".html":
-      return "text/html; charset=utf-8";
-    case ".js":
-      return "text/javascript; charset=utf-8";
-    case ".css":
-      return "text/css; charset=utf-8";
-    case ".svg":
-      return "image/svg+xml";
-    default:
-      return "application/octet-stream";
-  }
-}
+const NEXT_ROOT = join(here, 'next-blog');
+const NEXT_TOUCH = join(NEXT_ROOT, 'src/components/PostCard.tsx');
+const POST_PATH = ISLANDS_PATH;
+const env = { NEXT_TELEMETRY_DISABLED: '1' };
+const resultsDir = join(here, 'results');
+const cleanup = new Set();
+const restoreFiles = new Map();
+const buildLogs = {};
 
-function startStatic(root, port) {
-  const server = createServer((req, res) => {
-    const url = new URL(req.url || "/", `http://127.0.0.1:${port}`);
-    let rel = decodeURIComponent(url.pathname);
-    if (rel.endsWith("/")) rel += "index.html";
-    const file = join(root, rel.replace(/^\/+/, ""));
-    const index = join(root, "index.html");
-    let path = file;
-    if (!existsSync(path) || statSync(path).isDirectory()) {
-      if (existsSync(index)) path = index;
-      else {
-        res.writeHead(404);
-        res.end("not found");
-        return;
-      }
-    }
-    const body = readFileSync(path);
-    res.writeHead(200, { "content-type": contentTypeFor(path) });
-    res.end(body);
-  });
-  return new Promise((resolve) => {
-    server.listen(port, "127.0.0.1", () => resolve(server));
-  });
-}
-
-function collectAssetUrls(html, base) {
-  const urls = new Set();
-  const re = /<(?:script|link)[^>]+(?:src|href)=["']([^"']+)["']/gi;
-  let m;
-  while ((m = re.exec(html))) {
-    const href = m[1];
-    if (href.startsWith("data:") || href.startsWith("http://") || href.startsWith("https://")) continue;
-    if (href.endsWith(".css") || href.endsWith(".js") || href.includes("/assets/")) {
-      urls.add(new URL(href, base).href);
-    }
-  }
-  return [...urls];
-}
-
-function jsAssetRefs(jsText, base) {
-  const urls = [];
-  const re = /["'](\/?assets\/[^"']+\.js)["']|["'](\.\/[^"']+\.js)["']/g;
-  let m;
-  while ((m = re.exec(jsText))) {
-    const spec = m[1] || m[2];
-    if (!spec) continue;
-    urls.push(new URL(spec.startsWith("/") ? spec : "/assets/" + spec.replace(/^\.\//, ""), base).href);
-  }
-  return urls;
-}
-
-async function measurePayload(base, path) {
-  const pageUrl = new URL(path, base).href;
-  const htmlRes = await fetch(pageUrl);
-  const htmlBuf = Buffer.from(await htmlRes.arrayBuffer());
-  const html = htmlBuf.toString("utf8");
-  const pending = collectAssetUrls(html, pageUrl);
-  const seen = new Set();
-  const assets = [];
-  while (pending.length) {
-    const url = pending.pop();
-    if (seen.has(url)) continue;
-    seen.add(url);
-    const res = await fetch(url);
-    if (!res.ok) continue;
-    const buf = Buffer.from(await res.arrayBuffer());
-    const kind = url.endsWith(".css") ? "css" : url.endsWith(".js") ? "js" : "other";
-    if (kind === "other") continue;
-    assets.push({ url, kind, raw: buf.length, gzip: gzipSync(buf).length });
-    if (kind === "js") {
-      for (const next of jsAssetRefs(buf.toString("utf8"), pageUrl)) {
-        if (/AboutPage|TagPage/.test(next) && path.includes("/posts/")) continue;
-        pending.push(next);
-      }
-    }
-  }
-  const htmlGzip = gzipSync(htmlBuf).length;
-  const js = assets.filter((a) => a.kind === "js").reduce((n, a) => n + a.gzip, 0);
-  const css = assets.filter((a) => a.kind === "css").reduce((n, a) => n + a.gzip, 0);
-  return {
-    htmlRaw: htmlBuf.length,
-    htmlGzip,
-    jsGzip: js,
-    cssGzip: css,
-    totalGzip: htmlGzip + js + css,
-    hasIslandMarker: html.includes("data-deka-island"),
-    hasIslandsScript: /assets\/islands(?:\.[^/]+)?\.js/.test(html),
-    assets,
+function startProcess(cmd, args, cwd, extraEnv = {}) {
+  const proc = spawn(cmd, args, { cwd, env: toolchainEnv({ ...env, ...extraEnv }), stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+  let log = '';
+  proc.stdout.on('data', d => { log += d; }); proc.stderr.on('data', d => { log += d; });
+  proc.on('error', err => { log += err.message; });
+  const kill = signal => {
+    try { process.platform === 'win32' ? proc.kill(signal) : process.kill(-proc.pid, signal); } catch (err) { if (err.code !== 'ESRCH') throw err; }
   };
+  const server = { log: () => log, exited: () => proc.exitCode !== null || proc.signalCode !== null, async stop() {
+    cleanup.delete(server);
+    if (proc.exitCode === null && proc.signalCode === null) {
+      const exited = new Promise(resolve => proc.once('exit', resolve));
+      kill('SIGTERM');
+      await Promise.race([exited, sleep(3000)]);
+      kill('SIGKILL');
+      await exited;
+    }
+  } };
+  cleanup.add(server);
+  return server;
 }
 
-function fmtMs(ms) {
-  return `${ms.toFixed(0)} ms`;
-}
-
-function fmtBytes(n) {
-  return `${n} B`;
-}
-
-function materializeZeroJsBlog(dest) {
-  const src = join(here, "deka-blog");
-  rmrf(dest);
-  mkdirSync(dest, { recursive: true });
-  cpSync(src, dest, {
-    recursive: true,
-    filter: (from) => {
-      const rel = from.slice(src.length);
-      return !rel.split(/[/\\]/).some((p) =>
-        p === "dist" || p === ".cache" || p === ".deka-dist-stage" || p === "node_modules",
-      );
-    },
+async function serving(command, cwd, port, extraEnv, fn) {
+  await new Promise((resolve, reject) => {
+    const probe = createSocketServer(); probe.once('error', reject);
+    probe.listen(port, '127.0.0.1', () => probe.close(resolve));
   });
-  const shellPath = join(dest, "src/ui/Shell.dsx");
-  const shell = readFileSync(shellPath, "utf8").replace(/[ \t]+client:load/g, "");
-  if (shell.includes("client:load") || shell.includes("client:idle") || shell.includes("client:visible")) {
-    throw new Error("zero-JS copy still contains a client: directive");
-  }
-  writeFileSync(shellPath, shell);
-}
-
-function spawnDekaServe(dekaBin, dscBin, cwd, port) {
-  const proc = spawn(dekaBin, ["serve", ".", "--port", String(port), "--no-prompt"], {
-    cwd,
-    env: toolchainEnv({ DEKA_DSC: dscBin }),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let log = "";
-  proc.stderr.on("data", (d) => {
-    log += d;
-  });
-  proc.stdout.on("data", (d) => {
-    log += d;
-  });
-  return {
-    proc,
-    log: () => log,
-    async stop() {
-      if (proc.exitCode !== null || proc.signalCode !== null) return;
-      proc.kill("SIGTERM");
-      await Promise.race([
-        new Promise((resolve) => proc.once("exit", resolve)),
-        sleep(5_000),
-      ]);
-    },
-  };
-}
-
-function findChrome() {
-  const candidates = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    which("google-chrome"),
-    which("google-chrome-stable"),
-    which("chromium"),
-    which("chromium-browser"),
-  ];
-  for (const p of candidates) {
-    if (p && existsSync(p)) return p;
-  }
-  return null;
-}
-
-function cdpSend(ws, id, method, params = {}) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`cdp timeout: ${method}`)), 20_000);
-    const onMessage = (event) => {
-      const raw = typeof event.data === "string" ? event.data : event.data.toString();
-      let msg;
-      try {
-        msg = JSON.parse(raw);
-      } catch {
-        return;
-      }
-      if (msg.id !== id) return;
-      clearTimeout(timer);
-      ws.removeEventListener("message", onMessage);
-      if (msg.error) reject(new Error(`${method}: ${JSON.stringify(msg.error)}`));
-      else resolve(msg.result);
-    };
-    ws.addEventListener("message", onMessage);
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-}
-
-async function verifyToggleAndSubmit(pageUrl) {
-  const chrome = findChrome();
-  if (!chrome) return { ok: false, skipped: true, detail: "no chrome/chromium found" };
-  const port = 9333;
-  const profile = mkdtempSync(join(tmpdir(), "deka-bench-chrome-"));
-  const proc = spawn(
-    chrome,
-    [
-      "--headless=new",
-      "--disable-gpu",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-dev-shm-usage",
-      "--password-store=basic",
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${profile}`,
-      "about:blank",
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
-  );
-  let ws;
+  const server = startProcess(command[0], command.slice(1), cwd, extraEnv);
   try {
-    await waitHttp(`http://127.0.0.1:${port}/json/version`, 20_000);
-    const listed = await fetch(`http://127.0.0.1:${port}/json/list`);
-    const targets = await listed.json();
-    const page = (Array.isArray(targets) ? targets : []).find((t) => t.webSocketDebuggerUrl && t.type === "page")
-      || (Array.isArray(targets) ? targets : []).find((t) => t.webSocketDebuggerUrl);
-    if (!page) throw new Error("chrome has no debuggable page target");
-    ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => {
-      ws.addEventListener("open", resolve);
-      ws.addEventListener("error", () => reject(new Error("cdp websocket failed")));
+    await waitHttp(`http://127.0.0.1:${port}/`, 120_000, server);
+    return await fn(`http://127.0.0.1:${port}`);
+  } catch (err) { throw new Error(`${err.stack}\nServer: ${command.join(' ')}\n${server.log()}`); }
+  finally { await server.stop(); }
+}
+
+async function ttfb(url) {
+  const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+  const sample = () => new Promise((resolve, reject) => {
+    const start = nowMs();
+    const req = get(url, { agent, headers: { 'Accept-Encoding': 'identity' } }, res => {
+      const ms = nowMs() - start; // complete response headers, before reading body
+      res.resume();
+      res.on('end', () => res.statusCode === 200 ? resolve(ms) : reject(new Error(`TTFB status ${res.statusCode}`)));
+      res.on('error', reject);
     });
-    await cdpSend(ws, 1, "Page.enable");
-    await cdpSend(ws, 2, "Runtime.enable");
-    const loadFired = new Promise((resolve) => {
-      const timer = setTimeout(resolve, 15_000);
-      const onMessage = (event) => {
-        let msg;
-        try {
-          msg = JSON.parse(typeof event.data === "string" ? event.data : event.data.toString());
-        } catch {
-          return;
-        }
-        if (msg.method === "Page.loadEventFired") {
-          clearTimeout(timer);
-          ws.removeEventListener("message", onMessage);
-          resolve();
-        }
-      };
-      ws.addEventListener("message", onMessage);
+    req.setTimeout(20_000, () => req.destroy(new Error('TTFB timeout'))); req.on('error', reject);
+  });
+  try {
+    for (let i = 0; i < 5; i++) await sample();
+    return await series('warm TTFB', 25, async () => { await sample(); return sample(); });
+  } finally { agent.destroy(); }
+}
+
+async function builds(name, command, cwd, file, clean, extraEnv) {
+  const original = readFileSync(file, 'utf8');
+  restoreFiles.set(file, original);
+  if (original.split('Read post</span>').length !== 2) throw new Error(`Expected one PostCard edit literal: ${file}`);
+  const timed = async () => {
+    const result = await timeCommand(command[0], command.slice(1), cwd, { ...env, ...extraEnv });
+    (buildLogs[name] ||= []).push(result.log);
+    return result.ms;
+  };
+  try {
+    const cold = await series(`${name} cold`, RUNS, async () => { clean(); return timed(); });
+    const incremental = await series(`${name} incremental`, RUNS, async (i, attempt) => {
+      writeFileSync(file, original.replace("Read post</span>", `Read post ${i + 1} attempt ${attempt}</span>`));
+      return timed();
     });
-    await cdpSend(ws, 3, "Page.navigate", { url: pageUrl });
-    await loadFired;
-    let evalId = 20;
-    async function evalExpr(expr) {
-      const id = ++evalId;
-      const result = await cdpSend(ws, id, "Runtime.evaluate", {
-        expression: expr,
-        awaitPromise: true,
-        returnByValue: true,
-      });
-      if (result.exceptionDetails) {
-        throw new Error(result.exceptionDetails.text || expr);
-      }
-      return result.result ? result.result.value : undefined;
-    }
-    let ready = false;
-    for (let i = 0; i < 80; i++) {
-      ready = Boolean(
-        await evalExpr("!!(document.querySelector('#theme-toggle') && document.querySelector('#newsletter'))"),
-      );
-      if (ready) break;
-      await sleep(200);
-    }
-    if (!ready) throw new Error("theme/newsletter widgets did not render");
-    // module islands/SPA bundles evaluate around loadEventFired; give hydrateRoot a beat
-    await sleep(400);
-    const before = await evalExpr("document.querySelector('#theme-toggle').getAttribute('data-theme')");
-    await evalExpr(
-      "document.querySelector('#theme-toggle').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); true",
-    );
-    let theme = before;
-    for (let i = 0; i < 50; i++) {
-      theme = await evalExpr("document.querySelector('#theme-toggle').getAttribute('data-theme')");
-      if (theme && theme !== before) break;
-      await sleep(100);
-    }
-    if (theme === before) throw new Error(`theme did not toggle (still ${String(theme)})`);
-    await evalExpr(`(() => {
-      const input = document.querySelector('#nl-email');
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      setter.call(input, 'ava@deka.gg');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      return input.value;
-    })()`);
-    await evalExpr(`(() => {
-      const form = document.querySelector('#newsletter');
-      if (form.requestSubmit) form.requestSubmit();
-      else document.querySelector('#nl-submit').click();
-      return true;
-    })()`);
-    let status = "";
-    for (let i = 0; i < 50; i++) {
-      status = (await evalExpr("document.querySelector('#nl-status')?.textContent || ''")) || "";
-      if (status.includes("ava@deka.gg")) break;
-      await sleep(100);
-    }
-    if (!status.includes("ava@deka.gg")) throw new Error(`newsletter did not update: ${status}`);
-    return { ok: true, skipped: false, detail: `theme ${before}->${theme}; ${status.trim()}` };
-  } catch (err) {
-    return { ok: false, skipped: false, detail: err instanceof Error ? err.message : String(err) };
-  } finally {
-    try {
-      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
-    } catch {
-      /* ignore */
-    }
-    if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
-    await sleep(300);
-    try {
-      rmrf(profile);
-    } catch {
-      /* chrome may still hold the profile directory */
-    }
+    return { cold, incremental };
+  } finally { writeFileSync(file, original); restoreFiles.delete(file); }
+}
+
+function zeroNextCopy(dest) {
+  mkdirSync(dest, { recursive: true });
+  for (const entry of readdirSync(NEXT_ROOT)) {
+    if (['node_modules', '.next', '.bench-static'].includes(entry)) continue;
+    cpSync(join(NEXT_ROOT, entry), join(dest, entry), { recursive: true });
   }
+  // The copy lives inside next-blog; normal Node resolution finds its parent's
+  // locked node_modules. No install or framework configuration differs.
+  const layout = join(dest, 'src/app/layout.tsx');
+  writeFileSync(layout, readFileSync(layout, 'utf8').replace('../components/Theme', '../components/StaticWidgets').replace('../components/Newsletter', '../components/StaticWidgets'));
+  writeFileSync(join(dest, 'src/components/StaticWidgets.tsx'), `import type { ReactNode } from 'react';
+export function ThemeProvider({ children }: { children: ReactNode }) { return children; }
+export function ThemeToggle() { return <button type="button" id="theme-toggle" className="theme-toggle" data-theme="light" aria-label="Toggle color theme">Dark</button>; }
+export function NewsletterSignup() { return <form className="nl-form" id="newsletter"><input id="nl-email" className="nl-input" type="email" name="email" placeholder="you@example.com" defaultValue="" /><button className="nl-btn" type="submit" id="nl-submit">Subscribe</button><p className="nl-status" id="nl-status">No tracking pixels. This form stays on the page.</p></form>; }
+`);
+}
+
+function zeroDekaCopy(dest) {
+  const src = join(here, 'deka-blog');
+  cpSync(src, dest, { recursive: true, filter: from => !from.slice(src.length).split(/[/\\]/).some(p => ['dist', '.cache', '.deka-dist-stage', 'node_modules'].includes(p)) });
+  const file = join(dest, 'src/ui/Shell.dsx');
+  writeFileSync(file, readFileSync(file, 'utf8').replace(/[ \t]+client:load/g, ''));
+}
+
+async function hmr(name, command, root, file, port, extraEnv) {
+  const original = readFileSync(file, 'utf8');
+  restoreFiles.set(file, original);
+  try {
+    return await serving(command, root, port, extraEnv, base => withBrowser(async browser => {
+      await browser.navigate(`${base}/`);
+      await browser.until("document.querySelector('[data-bench-edit=card]')?.textContent === 'Read post'");
+      await sleep(1500); // socket connection / initial route compilation outside timing
+      const samples = [];
+      for (let i = 0; i < RUNS; i++) {
+        process.stderr.write(`  ${name} HMR ${i + 1}/${RUNS}\n`);
+        samples.push(await uncontended(`${name} HMR ${i + 1}/${RUNS}`, async attempt => {
+          const label = `Read post ${i + 1} attempt ${attempt}`;
+          return editLatency(browser, file, original.replace('Read post</span>', `${label}</span>`), label, '[data-bench-edit=card]');
+        }));
+        await sleep(500);
+      }
+      return { median: median(samples.map(s => s.ms)), samples, fullReloads: samples.filter(s => s.fullReload).length };
+    }));
+  } finally { writeFileSync(file, original); restoreFiles.delete(file); }
+}
+
+function table(report) {
+  const { results, machine: m } = report;
+  const rows = Object.entries(results);
+  const ms = n => `${n.toFixed(2)} ms`;
+  let out = `# deka-bench phase 2 results\n\nGenerated: ${report.generatedAt}\n\nMachine: ${m.os}, ${m.arch}, ${m.cpu}, ${m.memoryGiB} GiB, Node ${m.node}.\n\n`;
+  out += `Toolchains (exact output and binary hashes in JSON):\n\n\`\`\`json\n${JSON.stringify(report.toolchain, null, 2)}\n\`\`\`\n\n`;
+  out += '| stack | cold build (median 5) | incremental build (median 5) | warm TTFB (median 25) | component update (median 5) | full reloads |\n| --- | ---: | ---: | ---: | ---: | ---: |\n';
+  for (const [name, r] of rows) out += `| ${name} | ${ms(r.build.cold.median)} | ${ms(r.build.incremental.median)} | ${ms(r.ttfb.median)} | ${ms(r.hmr.median)} | ${r.hmr.fullReloads}/5 |\n`;
+  for (const [story, label] of [['static', 'A — no application client islands: Deka zero JS; Next static-page framework JS floor; Vite CSR'], ['interactive', 'B — Theme + Newsletter: Deka hydrated islands; Next SSG + client components; Vite CSR']]) {
+    out += `\n## Payload story ${label}\n\nSame URL: \`${POST_PATH}\`. Fresh browser/cache; gzip-normalized bodies, not wire compression. RSC includes default Next link prefetches observed through network idle.\n\n| stack | HTML gzip | JS gzip | CSS gzip | RSC gzip | total gzip |\n| --- | ---: | ---: | ---: | ---: | ---: |\n`;
+    for (const [name, r] of rows) { const p = r[story]; out += `| ${name} | ${p.htmlGzip} B | ${p.jsGzip} B | ${p.cssGzip} B | ${p.rscGzip} B | ${p.totalGzip} B |\n`; }
+  }
+  out += '\n## Chromium widget checks\n\n';
+  for (const [name, r] of rows) out += `- ${name}: ${r.interactive.widgets.theme}; ${r.interactive.widgets.newsletter}\n`;
+  out += `\nContention audit: ${report.contention.waits.length} waits, ${report.contention.discarded.length} discarded overlapping attempts (excluded from medians; preserved in JSON). External compiler checks run at sample boundaries and every ${report.contention.pollMs} ms during samples on macOS/Linux.\n`;
+  out += '\nHMR uses the actual PostCard boundary each framework ships; any full reload is disclosed above. Content-edit HMR remains outside this phase’s component-edit task. Reproduce: `node bench/run.mjs`. See README for clock calibration, cold-cache definition, and serve commands.\n';
+  return out;
 }
 
 async function main() {
-  const dekaBin = resolveDeka();
-  const dscBin = resolveDsc();
-  process.stderr.write("ingest content\n");
+  const dekaBin = resolveDeka(), dscBin = resolveDsc(); findChrome();
   const counts = ingest();
-  const specs = await machine();
-  const dekaVer = await versionText(dekaBin, ["--version", "--verbose"]);
-  const dscVer = (await versionText(dscBin)).split("\n")[0];
-  const npm = which("npm");
-  if (!npm) throw new Error("npm is required to install vite-blog dependencies");
-
-  if (!existsSync(join(here, "vite-blog/node_modules"))) {
-    process.stderr.write("npm install (vite-blog, untimed)\n");
-    await runOk("npm", ["install"], { cwd: join(here, "vite-blog") });
+  for (const app of ['vite-blog', 'next-blog']) {
+    if (!existsSync(join(here, app, 'node_modules'))) await runOk('npm', ['ci'], { cwd: join(here, app) });
   }
-
+  const installed = {};
+  for (const app of ['vite-blog', 'next-blog']) installed[app] = JSON.parse((await runOk('npm', ['ls', '--json', '--depth=0'], { cwd: join(here, app) })).stdout);
+  const nextCli = join(NEXT_ROOT, 'node_modules/next/dist/bin/next');
+  const viteCli = join(here, 'vite-blog/node_modules/vite/bin/vite.js');
   const dekaEnv = { DEKA_DSC: dscBin };
-
-  process.stderr.write("deka cold builds\n");
-  const dekaCold = await series("deka cold", RUNS, async () => {
-    dekaClean();
-    const t = await timeCommand(dekaBin, ["build", "--no-prompt"], join(here, "deka-blog"), dekaEnv);
-    return t.ms;
-  });
-
-  process.stderr.write("deka incremental builds\n");
-  const dekaInc = await series("deka incremental", RUNS, async () => {
-    touch(DEKA_TOUCH);
-    const t = await timeCommand(dekaBin, ["build", "--no-prompt"], join(here, "deka-blog"), dekaEnv);
-    return t.ms;
-  });
-
-  process.stderr.write("vite cold builds\n");
-  const viteCold = await series("vite cold", RUNS, async () => {
-    viteClean();
-    const t = await timeCommand("npx", ["vite", "build"], join(here, "vite-blog"));
-    return t.ms;
-  });
-
-  process.stderr.write("vite incremental builds\n");
-  const viteInc = await series("vite incremental", RUNS, async () => {
-    touch(VITE_TOUCH);
-    const t = await timeCommand("npx", ["vite", "build"], join(here, "vite-blog"));
-    return t.ms;
-  });
-
-  process.stderr.write("payload: deka islands app\n");
-  const dekaPort = 8760;
-  const vitePort = 8761;
-  const zeroPort = 8762;
-  const islandsServe = spawnDekaServe(dekaBin, dscBin, join(here, "deka-blog"), dekaPort);
-  try {
-    await waitHttp(`http://127.0.0.1:${dekaPort}/`);
-  } catch (err) {
-    throw new Error(`${err.message}\n${islandsServe.log()}`);
-  }
-  const dekaIslands = await measurePayload(`http://127.0.0.1:${dekaPort}`, ISLANDS_PATH);
-  process.stderr.write("chromium: deka islands\n");
-  const dekaBrowser = await verifyToggleAndSubmit(`http://127.0.0.1:${dekaPort}${ISLANDS_PATH}`);
-  await islandsServe.stop();
-  if (!dekaBrowser.skipped && !dekaBrowser.ok) {
-    throw new Error(`deka Chromium islands check failed: ${dekaBrowser.detail}`);
-  }
-
-  process.stderr.write("payload: deka zero-JS copy (client: directives stripped)\n");
-  const zeroRoot = join(tmpdir(), `deka-bench-zero-${process.pid}`);
-  materializeZeroJsBlog(zeroRoot);
-  const zeroServe = spawnDekaServe(dekaBin, dscBin, zeroRoot, zeroPort);
-  let dekaZero;
-  try {
-    try {
-      await waitHttp(`http://127.0.0.1:${zeroPort}/`);
-    } catch (err) {
-      throw new Error(`${err.message}\n${zeroServe.log()}`);
-    }
-    dekaZero = await measurePayload(`http://127.0.0.1:${zeroPort}`, ZERO_JS_PATH);
-  } finally {
-    await zeroServe.stop();
-    rmrf(zeroRoot);
-  }
-
-  process.stderr.write("payload: vite static\n");
-  const viteServer = await startStatic(join(here, "vite-blog/dist"), vitePort);
-  const viteZero = await measurePayload(`http://127.0.0.1:${vitePort}`, ZERO_JS_PATH);
-  const viteIslands = await measurePayload(`http://127.0.0.1:${vitePort}`, ISLANDS_PATH);
-  process.stderr.write("chromium: vite csr\n");
-  const viteBrowser = await verifyToggleAndSubmit(`http://127.0.0.1:${vitePort}${ISLANDS_PATH}`);
-  viteServer.close();
-  if (!viteBrowser.skipped && !viteBrowser.ok) {
-    throw new Error(`vite Chromium check failed: ${viteBrowser.detail}`);
-  }
-
-  const report = {
-    generatedAt: new Date().toISOString(),
-    machine: specs,
-    toolchain: {
-      deka: dekaVer,
-      dsc: dscVer,
-      node: process.version,
-      dekaBinary: dekaBin,
-      dscBinary: dscBin,
-      note: "deka rows run on a main-build pending the next release; Vite rows use the pinned npm toolchain",
-    },
-    content: counts,
-    paths: { zeroJs: ZERO_JS_PATH, islands: ISLANDS_PATH },
-    chromium: { deka: dekaBrowser, vite: viteBrowser },
-    results: {
-      deka: {
-        coldBuildMs: dekaCold.median,
-        incrementalBuildMs: dekaInc.median,
-        zeroJs: dekaZero,
-        islands: dekaIslands,
-      },
-      vite: {
-        coldBuildMs: viteCold.median,
-        incrementalBuildMs: viteInc.median,
-        zeroJs: viteZero,
-        islands: viteIslands,
-      },
-    },
-    samples: {
-      dekaCold: dekaCold.samples,
-      dekaIncremental: dekaInc.samples,
-      viteCold: viteCold.samples,
-      viteIncremental: viteInc.samples,
-    },
+  const stacks = {
+    deka: { root: join(here, 'deka-blog'), file: DEKA_TOUCH, build: [dekaBin, 'build', '--no-prompt'], clean: dekaClean, env: dekaEnv,
+      prod: [dekaBin, 'serve', 'dist/server/serve-entry.js', '--port', '8760', '--no-prompt'], dev: [dekaBin, 'dev', '.', '--port', '8770', '--no-prompt'], port: 8760 },
+    vite: { root: join(here, 'vite-blog'), file: VITE_TOUCH, build: [process.execPath, viteCli, 'build'], clean: viteClean,
+      prod: [process.execPath, viteCli, 'preview', '--host', '127.0.0.1', '--port', '8761', '--strictPort'], dev: [process.execPath, viteCli, '--host', '127.0.0.1', '--port', '8771', '--strictPort'], port: 8761 },
+    next: { root: NEXT_ROOT, file: NEXT_TOUCH, build: [process.execPath, nextCli, 'build'], clean: () => rmrf(join(NEXT_ROOT, '.next')),
+      prod: [process.execPath, nextCli, 'start', '--hostname', '127.0.0.1', '--port', '8763'], dev: [process.execPath, nextCli, 'dev', '--hostname', '127.0.0.1', '--port', '8773'], port: 8763 },
   };
-
-  writeFileSync(join(here, "last-results.json"), JSON.stringify(report, null, 2) + "\n");
-
-  const table = `
-# deka-bench phase 1 results
-
-Generated: ${report.generatedAt}
-
-## Machine
-
-- os: ${specs.os}
-- arch: ${specs.arch}
-- cpu: ${specs.cpu}
-- memory: ${specs.memoryGiB} GiB
-- node: ${specs.node}
-- deka: main-build (pending next release)
-- deka --version --verbose:
-${dekaVer.split("\n").map((l) => `  ${l}`).join("\n")}
-- dsc: ${dscVer}
-- deka binary: ${dekaBin}
-- dsc binary: ${dscBin}
-
-## Build (median of ${RUNS}, production)
-
-| stack | cold build | incremental build |
-| --- | ---: | ---: |
-| deka | ${fmtMs(dekaCold.median)} | ${fmtMs(dekaInc.median)} |
-| Vite + React 19.1.1 | ${fmtMs(viteCold.median)} | ${fmtMs(viteInc.median)} |
-| Next.js App Router | TODO (phase 2) | TODO (phase 2) |
-
-## Payload story A — zero-JS static page (\`${ZERO_JS_PATH}\`)
-
-deka ships no client JS. Vite is a CSR SPA on the same URL.
-
-| stack | HTML gzip | JS gzip | CSS gzip | total gzip |
-| --- | ---: | ---: | ---: | ---: |
-| deka (no islands, no client JS) | ${fmtBytes(dekaZero.htmlGzip)} | ${fmtBytes(dekaZero.jsGzip)} | ${fmtBytes(dekaZero.cssGzip)} | ${fmtBytes(dekaZero.totalGzip)} |
-| Vite + React 19.1.1 (CSR SPA) | ${fmtBytes(viteZero.htmlGzip)} | ${fmtBytes(viteZero.jsGzip)} | ${fmtBytes(viteZero.cssGzip)} | ${fmtBytes(viteZero.totalGzip)} |
-| Next.js App Router | TODO (phase 2) | TODO (phase 2) | TODO (phase 2) | TODO (phase 2) |
-
-## Payload story B — hydrated islands (\`${ISLANDS_PATH}\`)
-
-deka: per-page HTML + cached shared islands runtime (production React + Theme + Newsletter). Vite: CSR SPA. This is not a "27x smaller" claim.
-
-| stack | HTML gzip | JS gzip | CSS gzip | total gzip |
-| --- | ---: | ---: | ---: | ---: |
-| deka (HTML + shared islands runtime) | ${fmtBytes(dekaIslands.htmlGzip)} | ${fmtBytes(dekaIslands.jsGzip)} | ${fmtBytes(dekaIslands.cssGzip)} | ${fmtBytes(dekaIslands.totalGzip)} |
-| Vite + React 19.1.1 (CSR SPA) | ${fmtBytes(viteIslands.htmlGzip)} | ${fmtBytes(viteIslands.jsGzip)} | ${fmtBytes(viteIslands.cssGzip)} | ${fmtBytes(viteIslands.totalGzip)} |
-| Next.js App Router | TODO (phase 2) | TODO (phase 2) | TODO (phase 2) | TODO (phase 2) |
-
-## Chromium (toggle + submit)
-
-| stack | result |
-| --- | --- |
-| deka islands | ${dekaBrowser.skipped ? `skipped (${dekaBrowser.detail})` : dekaBrowser.ok ? `ok — ${dekaBrowser.detail}` : `FAIL — ${dekaBrowser.detail}`} |
-| Vite + React 19.1.1 | ${viteBrowser.skipped ? `skipped (${viteBrowser.detail})` : viteBrowser.ok ? `ok — ${viteBrowser.detail}` : `FAIL — ${viteBrowser.detail}`} |
-
-## Not measured yet
-
-| metric | status |
-| --- | --- |
-| HMR (component edit) | TODO (phase 2) — CDP timestamps |
-| HMR (content edit) | TODO (phase 2) — CDP timestamps |
-| TTFB | TODO (phase 2) |
-| Next.js subject app | TODO (phase 2) |
-
-Reproduce: \`node bench/run.mjs\`
-`;
-
-  process.stdout.write(table.trim() + "\n");
+  const report = { generatedAt: '', machine: await machine(), content: counts, path: POST_PATH, toolchain: {
+    note: 'Release build with dev-server from this PR, including app-router Content-Type and server-component reload fixes; not a released CLI.',
+    deka: await versionText(dekaBin, ['--version', '--verbose']), dsc: await versionText(dscBin),
+    chrome: await versionText(findChrome()), node: process.version, installed,
+    vite: JSON.parse(readFileSync(join(here, 'vite-blog/package.json'))), next: JSON.parse(readFileSync(join(NEXT_ROOT, 'package.json'))),
+    dekaSha256: createHash('sha256').update(readFileSync(dekaBin)).digest('hex'),
+    dscSha256: createHash('sha256').update(readFileSync(dscBin)).digest('hex'),
+    sourceCommit: (await runOk('git', ['rev-parse', 'HEAD'])).stdout.trim(),
+  }, commands: {}, results: {} };
+  for (const [name, stack] of Object.entries(stacks)) {
+    report.commands[name] = { build: stack.build, prod: stack.prod, dev: stack.dev, cwd: stack.root };
+    process.stderr.write(`${name}: production builds\n`);
+    const build = await builds(name, stack.build, stack.root, stack.file, stack.clean, stack.env);
+    // Incremental samples edited the source; serve a rebuilt committed baseline.
+    buildLogs[`${name}Baseline`] = [(await runOk(stack.build[0], stack.build.slice(1), { cwd: stack.root, env: { ...env, ...stack.env } })).combined];
+    const measured = await serving(stack.prod, stack.root, stack.port, stack.env, async base => ({
+      ttfb: await ttfb(`${base}${POST_PATH}`),
+      interactive: await withBrowser(browser => payload(browser, `${base}${POST_PATH}`, true)),
+    }));
+    report.results[name] = { build, ...measured };
+    if (name === 'vite') report.results[name].static = await serving(stack.prod, stack.root, stack.port, stack.env,
+      base => withBrowser(browser => payload(browser, `${base}${POST_PATH}`, false)));
+  }
+  const zeroDeka = mkdtempSync(join(tmpdir(), 'deka-bench-static-'));
+  const zeroNext = join(NEXT_ROOT, '.bench-static');
+  try {
+    zeroDekaCopy(zeroDeka);
+    buildLogs.dekaStatic = [(await runOk(dekaBin, ['build', '--no-prompt'], { cwd: zeroDeka, env: dekaEnv })).combined];
+    report.results.deka.static = await serving([dekaBin, 'serve', 'dist/server/serve-entry.js', '--port', '8762', '--no-prompt'], zeroDeka, 8762, dekaEnv,
+      base => withBrowser(browser => payload(browser, `${base}${POST_PATH}`, false)));
+    rmrf(zeroNext); zeroNextCopy(zeroNext);
+    buildLogs.nextStatic = [(await runOk(process.execPath, [nextCli, 'build'], { cwd: zeroNext, env })).combined];
+    report.results.next.static = await serving([process.execPath, nextCli, 'start', '--hostname', '127.0.0.1', '--port', '8764'], zeroNext, 8764, env,
+      base => withBrowser(browser => payload(browser, `${base}${POST_PATH}`, false)));
+  } finally { rmrf(zeroDeka); rmrf(zeroNext); }
+  if (report.results.deka.static.jsGzip !== 0) throw new Error('Deka no-island story unexpectedly shipped JS');
+  if (report.results.next.static.jsGzip === 0) throw new Error('Next static-page JS floor was not captured');
+  for (const [name, stack] of Object.entries(stacks)) {
+    stack.clean(); // dev must not serve the preceding production artifact
+    report.results[name].hmr = await hmr(name, stack.dev, stack.root, stack.file, stack.port + 10, stack.env);
+  }
+  report.contention = contention;
+  report.generatedAt = new Date().toISOString();
+  mkdirSync(resultsDir, { recursive: true });
+  writeFileSync(join(here, 'last-results.json'), JSON.stringify(report, null, 2) + '\n');
+  writeFileSync(join(resultsDir, 'phase2.json'), JSON.stringify(report, null, 2) + '\n');
+  writeFileSync(join(resultsDir, 'phase2.md'), table(report));
+  writeFileSync(join(resultsDir, 'build-logs.json'), JSON.stringify(buildLogs, null, 2) + '\n');
+  process.stdout.write(table(report));
 }
 
-main().catch((err) => {
-  process.stderr.write(String(err.stack || err) + "\n");
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
+  for (const server of cleanup) await server.stop();
+  for (const [file, original] of restoreFiles) writeFileSync(file, original);
+  await stopBrowsers();
   process.exit(1);
+});
+main().catch(async err => {
+  for (const server of cleanup) await server.stop();
+  process.stderr.write(`${err.stack || err}\n`); process.exitCode = 1;
 });

@@ -939,6 +939,7 @@ name = "compile"
 version = "0.52.0"
 dependencies = [
  "anyhow",
+ "compiler",
  "core",
  "flate2",
  "serde",

@@ -101,7 +101,9 @@ export function Label() {
 }
 
 fn spawn_dev(root: &Path, port: u16) -> ServeProcess {
-    let log_path = root.join("dev.log");
+    // Log writes must not feed back into the recursive source watcher.
+    fs::create_dir_all(root.join(".cache")).expect("create dev log directory");
+    let log_path = root.join(".cache/dev.log");
     let log = fs::File::create(&log_path).expect("create dev log");
     let mut command = Command::new(cli_bin());
     command
@@ -233,4 +235,183 @@ export function Label() {
         std::thread::sleep(Duration::from_millis(100));
     }
     panic!("edited Label.js was not recompiled for Fast Refresh; last body:\n{last}");
+}
+
+#[path = "support/app_router.rs"]
+mod app_router;
+
+// Keep watcher fixtures outside target/.cache: those path segments are
+// intentionally ignored by the production watcher.
+#[test]
+fn app_router_headers_and_document_edit_reload_are_visible_over_http_and_ws() {
+    let root = tempfile::Builder::new()
+        .prefix("deka-refresh-955-")
+        .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .unwrap();
+    app_router::init_project(root.path());
+    let page_path = root.path().join("app/page.dsx");
+    fs::write(
+        &page_path,
+        "export fn Page() { return <p>before-edit-955</p> }\n",
+    )
+    .unwrap();
+    let port = free_port();
+    let _server = spawn_dev(root.path(), port);
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let url = format!("http://127.0.0.1:{port}/");
+    let first = wait_ok(&client, &url);
+    assert!(first.contains("before-edit-955"), "{first}");
+    // Warm the server isolate before the edit; a request immediately after
+    // notification must not reuse that isolate's old module graph.
+    let response = client.get(&url).send().unwrap();
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/html; charset=utf-8"
+    );
+    let html = response.text().unwrap();
+    assert!(html.contains("__deka_refresh_preamble"), "{html}");
+    assert!(html.contains("/_deka/hmr"), "{html}");
+
+    let response = client
+        .get(&url)
+        .header("Accept", "text/x-deka-fragment")
+        .send()
+        .unwrap();
+    assert_eq!(
+        response.headers()["content-type"],
+        "application/json; charset=utf-8"
+    );
+    assert!(response.status().is_success());
+    let fragment: serde_json::Value = response.json().unwrap();
+    assert!(
+        fragment["html"]
+            .as_str()
+            .unwrap()
+            .contains("before-edit-955")
+    );
+    assert!(
+        !fragment["html"]
+            .as_str()
+            .unwrap()
+            .contains("__deka_refresh_preamble")
+    );
+
+    let (mut socket, _) = tungstenite::connect(format!("ws://127.0.0.1:{port}/_deka/hmr")).unwrap();
+    if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_mut() {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(45)))
+            .unwrap();
+    }
+    fs::write(
+        &page_path,
+        "export fn Page() { return <p>after-edit-955</p> }\n",
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        assert!(Instant::now() < deadline, "no document-edit notification");
+        let message = socket.read().expect("receive HMR frame");
+        if !message.is_text() {
+            continue;
+        }
+        let payload: serde_json::Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+        if !payload["paths"].as_array().is_some_and(|paths| {
+            paths.iter().any(|path| {
+                path.as_str()
+                    .is_some_and(|path| path.ends_with("/app/page.dsx"))
+            })
+        }) {
+            continue;
+        }
+        assert_eq!(payload["type"], "js-update", "{payload}");
+        assert_eq!(
+            payload["modules"][0]["families"],
+            serde_json::json!(["app/page.dsx Page"])
+        );
+        // No retry/poll after the WS frame: stale content here is a regression.
+        let response = client.get(&url).send().unwrap();
+        assert!(response.status().is_success());
+        let html = response.text().unwrap();
+        assert!(
+            html.contains("after-edit-955") && !html.contains("before-edit-955"),
+            "first post-notification response is stale: {html}"
+        );
+        let client_script =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../http/tests/refresh_client.mjs");
+        let output = Command::new("node")
+            .arg(client_script)
+            .arg(payload.to_string())
+            .output()
+            .expect("execute shipped refresh client");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        break;
+    }
+}
+
+#[test]
+fn handler_reload_notification_observes_evicted_server_isolates() {
+    let root = tempfile::Builder::new()
+        .prefix("deka-reload-955-")
+        .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .unwrap();
+    fs::write(
+        root.path().join("deka.json"),
+        r#"{"name":"reload-955","security":{"prompt":false}}"#,
+    )
+    .unwrap();
+    let handler = root.path().join("index.js");
+    let source = |marker: &str| {
+        format!("globalThis.app = {{ fetch() {{ return new Response({marker:?}); }} }};\n")
+    };
+    fs::write(&handler, source("before-reload-955")).unwrap();
+    let port = free_port();
+    let _server = spawn_dev(root.path(), port);
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let url = format!("http://127.0.0.1:{port}/");
+    assert_eq!(wait_ok(&client, &url), "before-reload-955");
+    let (mut socket, _) = tungstenite::connect(format!("ws://127.0.0.1:{port}/_deka/hmr")).unwrap();
+    if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_mut() {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(45)))
+            .unwrap();
+    }
+    fs::write(&handler, source("after-reload-955")).unwrap();
+    // No React boundary or patchable HTML container: exercise the watcher's
+    // push_js_update(false) -> notify_hmr_changed -> reload WS path.
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        assert!(Instant::now() < deadline, "no handler reload notification");
+        let frame = socket.read().expect("receive reload frame");
+        if !frame.is_text() {
+            continue;
+        }
+        let payload: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+        if !payload["paths"].as_array().is_some_and(|paths| {
+            paths.iter().any(|path| {
+                path.as_str()
+                    .is_some_and(|path| path.ends_with("/index.js"))
+            })
+        }) {
+            continue;
+        }
+        assert_eq!(payload["type"], "reload", "{payload}");
+        let response = client.get(&url).send().unwrap();
+        assert!(response.status().is_success());
+        assert_eq!(
+            response.text().unwrap(),
+            "after-reload-955",
+            "first request after reload notification must see saved source"
+        );
+        break;
+    }
 }
