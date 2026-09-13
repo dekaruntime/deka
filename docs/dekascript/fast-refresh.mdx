@@ -11,7 +11,8 @@ rules allow it. A non-refreshable edit (a changed non-component export, or a
 hook-order change that the runtime cannot recover) falls back to a full reload.
 
 This is the HMR half of the React execution bar (deka#936). Production
-`deka serve` / `deka build` are unchanged.
+`deka serve` / `deka build` resolve `@js/react`, `@js/react/jsx-runtime`,
+and `@js/react-dom/server` as runtime builtins (rfd#64 amendment 2).
 
 ## What you do
 
@@ -74,10 +75,9 @@ copy of React shipped with `deka dev`.
 
 React 19.1.1, react-dom 19.1.1, and react-refresh 0.17.0 are vendored as
 development ESM under `/_deka/react/` (js_modules-style frozen hashes and
-licenses in `crates/http/vendor/react/`). **rfd#64 amendment 2** will replace
-this with runtime-builtin resolution so application code imports nothing;
-this lane is the pragmatic ship so Fast Refresh has one React instance
-without waiting on that productization.
+licenses in `crates/http/vendor/react/`). Production run/serve/bundle use a
+separate always-on builtin graph (`@js/react*`, rfd#64 amendment 2) so
+development React bytes stay out of the production CLI.
 
 Do not add a project `npm` dependency on React for `deka dev`.
 

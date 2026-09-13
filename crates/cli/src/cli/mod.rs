@@ -224,6 +224,8 @@ pub fn version(verbose: bool) {
         raw(&format!("build_unix: {}", build_unix));
         raw(&format!("target: {}", target));
         raw(&format!("runtime_abi: {}", runtime_abi));
+        let react = option_env!("DEKA_REACT_VERSION").unwrap_or("unknown");
+        raw(&format!("react: {}", react));
     }
     raw("");
     raw("to check for updates run: deka --update");

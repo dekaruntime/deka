@@ -63,7 +63,16 @@ pub(super) fn build_bundle_to_path(
     // Bundling is dsc's stage (dsc#157): `dsc transpile --bundle` resolves the
     // entry's graph — including `.ds` imports, which it compiles itself — and
     // emits one file. minify maps onto dsc's `--treeshake`.
-    let bundle = build_dsc::transpile_bundle(&output.project_root, input_path, minify)?;
+    //
+    // dsc cannot resolve `@js/react*` builtins (they are runtime-provided
+    // subpaths, not summoned packages). When the emitted JS imports them,
+    // inline the production bytes here so `--bundle` still produces one file.
+    let bundle = match build_dsc::transpile_bundle(&output.project_root, input_path, minify) {
+        Ok(js) => js,
+        Err(_) if pool::js_builtins::source_imports_builtins(&output.js) => output.js.clone(),
+        Err(err) => return Err(err),
+    };
+    let bundle = pool::js_builtins::inline_into(&bundle)?;
 
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)
@@ -119,7 +128,7 @@ fn emit_import_map_json(import_paths: &[String], output_path: &Path) -> String {
 
     for spec in import_paths {
         let spec = spec.trim();
-        if !is_bare_specifier(spec) {
+        if !is_bare_specifier(spec) || pool::js_builtins::is_builtin(spec) {
             continue;
         }
 

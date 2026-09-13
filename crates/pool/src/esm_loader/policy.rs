@@ -79,9 +79,10 @@ pub fn ensure_project_layout(
     // those specs. deka-modules 0.3.0 (dsc#167) no longer treats that as a
     // whole-gate bypass — third-party and unknown `@deka/*` imports still
     // need declaration, install, and fsGraph integrity.
+    let imports = crate::js_builtins::filter_imports(imports);
     deka_modules::project_gate::validate_project(
         project_root,
-        imports,
+        &imports,
         &deka_modules::project_gate::GateOptions {
             module_root,
             require_lockfile: true,

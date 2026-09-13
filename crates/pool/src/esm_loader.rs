@@ -380,6 +380,9 @@ impl PhpxEsmLoader {
     }
 
     fn resolve_path(&self, specifier: &str, referrer: &str) -> Result<ModuleSpecifier, JsErrorBox> {
+        if let Some(url) = crate::js_builtins::resolve_specifier(specifier) {
+            return Ok(url);
+        }
         if let Some(server_root) = &self.artifact_server_root {
             return self.resolve_artifact_path(server_root, specifier, referrer);
         }
@@ -414,7 +417,10 @@ impl PhpxEsmLoader {
         }
 
         let resolved = resolve_import(specifier, referrer).map_err(JsErrorBox::from_err)?;
-        if resolved.scheme() == "file" || resolved.scheme() == "ext" {
+        if resolved.scheme() == "file"
+            || resolved.scheme() == "ext"
+            || crate::js_builtins::is_builtin_url(&resolved)
+        {
             return Ok(resolved);
         }
         Err(JsErrorBox::generic(format!(
@@ -436,6 +442,9 @@ impl PhpxEsmLoader {
         // application imports remain jailed to explicit relative .js files.
         if specifier == self.wrapper_specifier.as_str() {
             return Ok(self.wrapper_specifier.clone());
+        }
+        if let Some(url) = crate::js_builtins::resolve_specifier(specifier) {
+            return Ok(url);
         }
         if resolver::is_bare_specifier(specifier) {
             if specifier.starts_with("deka:dev/") {
@@ -460,6 +469,9 @@ impl PhpxEsmLoader {
             )));
         }
         let resolved = resolve_import(specifier, referrer).map_err(JsErrorBox::from_err)?;
+        if crate::js_builtins::is_builtin_url(&resolved) {
+            return Ok(resolved);
+        }
         let path = resolved.to_file_path().map_err(|_| {
             JsErrorBox::generic(format!(
                 "artifact module specifier `{specifier}` is not a file path"
@@ -488,6 +500,14 @@ impl PhpxEsmLoader {
             return Ok(ModuleSource::new(
                 ModuleType::JavaScript,
                 ModuleSourceCode::String(wrapper.into()),
+                specifier,
+                None,
+            ));
+        }
+        if let Some(js) = crate::js_builtins::load_esm(specifier) {
+            return Ok(ModuleSource::new(
+                ModuleType::JavaScript,
+                ModuleSourceCode::String(js.to_string().into()),
                 specifier,
                 None,
             ));
@@ -648,6 +668,40 @@ impl ModuleLoader for PhpxEsmLoader {
 mod tests {
     use super::PhpxEsmLoader;
     use std::fs;
+
+    #[test]
+    fn runtime_js_builtins_resolve_without_install() {
+        use deno_core::{ModuleLoader, ModuleSourceCode, ResolutionKind};
+
+        let root = tempfile::tempdir().expect("temp project");
+        let entry = root.path().join("handler.js");
+        fs::write(&entry, "export default {};\n").expect("write js handler");
+        let loader =
+            PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false)
+                .expect("loader");
+
+        let resolved = loader
+            .resolve(
+                "@js/react/jsx-runtime",
+                "file:///handler.js",
+                ResolutionKind::Import,
+            )
+            .expect("builtin specifier");
+        assert_eq!(resolved.as_str(), "deka:///js/jsx-runtime.js");
+        assert!(!root.path().join("ds_modules").exists());
+        assert!(!root.path().join("js_modules").exists());
+
+        let source = match loader.load_source(&resolved) {
+            Ok(source) => source,
+            Err(err) => panic!("load builtin: {err}"),
+        };
+        let ModuleSourceCode::String(code) = source.code else {
+            panic!("expected string source");
+        };
+        let body = code.as_str();
+        assert!(body.contains("exports.jsx"));
+        assert!(!body.contains("react.development.js"));
+    }
 
     #[test]
     fn source_extensions_have_distinct_cache_paths() {

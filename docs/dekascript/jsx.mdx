@@ -85,7 +85,9 @@ accepts children either as the third argument (the emitted form) or inside
 `deka dev` compiles `.dsx` with dsc's development emission when the compiler
 exposes it: `jsxDEV(type, props, key, isStaticChildren, source, self)` from
 `@js/react/jsx-dev-runtime`, with `source` taken from the DS span of the
-opening `<`. Production `jsx` / `jsxs` is unchanged.
+opening `<`. Production `jsx` / `jsxs` is unchanged and resolves from the
+runtime builtin `@js/react/jsx-runtime` — no `deka.json` entry and no
+install.
 
 Emitted modules are registered for React Fast Refresh. Editing a component's
 JSX hot-swaps it in the browser without losing sibling or own state when

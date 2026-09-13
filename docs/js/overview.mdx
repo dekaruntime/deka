@@ -7,3 +7,27 @@ categoryLabel: "Overview"
 
 This is the entry point for the Deka JavaScript runtime docs.
 Use it to orient where to find handlers, runtime config, and built-ins.
+
+## Builtin `@js/react*` modules
+
+The runtime ships pinned production React 19.1.1 as always-on builtins.
+WinterTC handlers and compiled DekaScript may import them with zero
+install. They are **not** summoned packages and must **not** be listed in
+`deka.json` dependencies:
+
+```js
+import { useState, useEffect, useContext } from "@js/react";
+import { jsx } from "@js/react/jsx-runtime";
+import { renderToString } from "@js/react-dom/server";
+```
+
+`deka run`, `deka serve`, and `deka build --bundle` all resolve those
+specifiers from the runtime. `deka --version --verbose` prints the pin as
+`react: 19.1.1`. Development React used by `deka dev` Fast Refresh is a
+separate, feature-gated vendor tree and is not included in production
+output.
+
+The dump/hats harness still talks to dsc's module resolver, which does
+not load these runtime builtins. Do not teach dump a second resolution
+table; JSX dump fixtures that only typeck emitted `@js/react*` imports
+are unchanged.
