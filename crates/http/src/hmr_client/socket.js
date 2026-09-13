@@ -13,7 +13,7 @@ function refetchCurrentFragment() {
     })
     .then(function (fragment) {
       if (fragment && typeof fragment.html === "string") {
-        patchElementHtml("#app", fragment.html);
+        applyHtmlUpdate({ selector: "#app", html: fragment.html });
         if (typeof fragment.title === "string" && fragment.title !== "") {
           document.title = fragment.title;
         }
@@ -49,14 +49,11 @@ function applyPatchMessage(message) {
     var operation = message.ops[index] || {};
     if (operation.op === "set_html") {
       if (operation.island) {
-        patchIslandHtml(
-          operation.island,
-          operation.occurrence || 1,
-          operation.html || ""
-        );
-      } else {
-        patchElementHtml(operation.selector || "#app", operation.html || "");
+        // Hydrated islands are owned by hydrateRoot. Surrounding server
+        // HTML morphs around them; an island's own module change full-reloads.
+        continue;
       }
+      patchElementHtml(operation.selector || "#app", operation.html || "");
       continue;
     }
     refetchCurrentFragment();
@@ -74,12 +71,18 @@ hmrSocket.onmessage = function (event) {
       applyJsUpdate(message);
       return;
     }
+    if (message.type === "html-update") {
+      applyHtmlUpdate(message);
+      return;
+    }
     if (message.type === "patch") {
       applyPatchMessage(message);
       return;
     }
     if (message.type === "reload") {
-      refetchCurrentFragment();
+      // Island source edits (reason "island-source") and unrecoverable
+      // compile failures full-reload. Morphing cannot refresh hydrateRoot.
+      location.reload();
       return;
     }
   } catch (_) {

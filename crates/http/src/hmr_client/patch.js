@@ -1,37 +1,7 @@
-// Applies HMR fragment operations while preserving scroll, focus, and form state.
-function normalizeShadowRootMode(html) {
-  return String(html || "").replace(
-    /shadowrootmode=/gi,
-    "data-shadowrootmode="
-  );
-}
-
+// Applies HMR fragment operations by morphing, never innerHTML-replacing a
+// container that may hold hydrated islands.
 function patchElementHtml(selector, html) {
-  var targetNode = queryElement(selector || "#app");
-  if (!targetNode) {
-    location.reload();
-    return;
-  }
-
-  var scrollY = window.scrollY || window.pageYOffset || 0;
-  var focusedFieldState = captureFocusedFieldState();
-  var fieldStates = captureFormFieldValues();
-  var normalizedHtml = normalizeShadowRootMode(html);
-  if (
-    targetNode.matches &&
-    targetNode.matches("[data-deka-island-id],deka-island") &&
-    targetNode.shadowRoot
-  ) {
-    targetNode.shadowRoot.innerHTML = normalizedHtml;
-  } else {
-    targetNode.innerHTML = normalizedHtml;
-  }
-  if (typeof hmrHydrate === "function") {
-    hmrHydrate(targetNode);
-  }
-  window.scrollTo(0, scrollY);
-  restoreFormFieldValues(fieldStates);
-  restoreFocusedFieldState(focusedFieldState);
+  applyHtmlUpdate({ selector: selector || "#app", html: html || "" });
 }
 
 function patchIslandHtml(islandName, occurrence, html) {

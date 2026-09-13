@@ -7,6 +7,7 @@ mod vendor;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::Response;
 use engine::RuntimeState;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use compile::{compile_abs, compile_relative, dsc_supports_dev, install, RefreshContext};
@@ -29,15 +30,25 @@ pub fn try_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response> {
 }
 
 pub fn js_update_payload(changed: &[String]) -> Option<String> {
+    let ctx = compile::context();
+    if ctx.project_root.as_os_str().is_empty() {
+        return None;
+    }
+    // Island modules are hydrated by hydrateRoot. Morphing cannot refresh
+    // that subtree; full-reload is the correct, simple fallback (#956).
+    if island_source_changed(&ctx.project_root, changed) {
+        return Some(crate::websocket::island_reload_payload(changed));
+    }
+    // App-router .ds/.dsx without a client: boundary is server HTML. The
+    // watch loop falls through to html-update + DOM morph.
+    if is_app_router_server_source_change(&ctx.project_root, changed) {
+        return None;
+    }
     let refreshable: Vec<&String> = changed
         .iter()
         .filter(|path| is_refreshable_path(path))
         .collect();
     if refreshable.is_empty() {
-        return None;
-    }
-    let ctx = compile::context();
-    if ctx.project_root.as_os_str().is_empty() {
         return None;
     }
     let mut modules = Vec::new();
@@ -92,6 +103,51 @@ pub fn broadcast_changed(changed: &[String]) -> bool {
     tracing::info!("fast refresh {payload}");
     crate::websocket::broadcast_hmr_text(payload);
     true
+}
+
+pub fn island_source_changed(project_root: &Path, changed: &[String]) -> bool {
+    if project_root.as_os_str().is_empty() {
+        return false;
+    }
+    let islands = runtime_core::dist::scan_client_islands(project_root);
+    if islands.is_empty() {
+        return false;
+    }
+    let changed_abs: Vec<PathBuf> = changed
+        .iter()
+        .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path)))
+        .collect();
+    for island in islands {
+        let island_abs =
+            std::fs::canonicalize(&island.module).unwrap_or_else(|_| island.module.clone());
+        for changed in &changed_abs {
+            if paths_match(changed, &island_abs) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_app_router_server_source_change(project_root: &Path, changed: &[String]) -> bool {
+    if !runtime_core::dist::is_source_app_router_project(project_root) {
+        return false;
+    }
+    changed.iter().any(|path| is_ds_source_path(path))
+}
+
+fn is_ds_source_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".ds") || lower.ends_with(".dsx")
+}
+
+fn paths_match(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    let a = a.to_string_lossy().replace('\\', "/");
+    let b = b.to_string_lossy().replace('\\', "/");
+    a == b || (!a.is_empty() && (a.ends_with(&b) || b.ends_with(&a)))
 }
 
 fn vendor_response(rel: &str) -> Option<Response> {
@@ -200,6 +256,72 @@ mod tests {
             js_update_payload(&[path]).is_none(),
             "a WinterTC handler is not a React refresh boundary"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn app_router_project(name: &str) -> PathBuf {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/fast-refresh-it")
+            .join(name);
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("app")).unwrap();
+        fs::create_dir_all(root.join("src/ui")).unwrap();
+        fs::write(root.join("deka.json"), r#"{"name":"server-refresh"}"#).unwrap();
+        fs::write(
+            root.join("app/page.dsx"),
+            "export fn Page() ReactNode {\n  return <h1 id=\"server-title\">hello server</h1>\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("app/layout.dsx"),
+            "import { Counter } from \"../src/ui/Counter.dsx\"\n\
+interface LayoutProps { children: ReactNode }\n\
+export fn Layout(props: LayoutProps) ReactNode {\n\
+  return <div><Counter client:load />{props.children}</div>\n\
+}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/ui/Counter.dsx"),
+            "export fn Counter() ReactNode {\n  const pair = useState(0)\n  return <button id=\"counter\">{pair[0]}</button>\n}\n",
+        )
+        .unwrap();
+        install(RefreshContext {
+            project_root: root.clone(),
+            dsc: None,
+        });
+        root
+    }
+
+    #[test]
+    fn app_router_server_page_does_not_claim_fast_refresh() {
+        let _lock = crate::react_refresh::compile::TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = app_router_project("server-page");
+        let path = root.join("app/page.dsx").to_string_lossy().into_owned();
+        assert!(
+            js_update_payload(&[path]).is_none(),
+            "a server-rendered app-router page must morph, not js-update"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn island_module_edit_emits_reload() {
+        let _lock = crate::react_refresh::compile::TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = app_router_project("island-reload");
+        let path = root
+            .join("src/ui/Counter.dsx")
+            .to_string_lossy()
+            .into_owned();
+        let payload = js_update_payload(&[path.clone()]).expect("island reload");
+        let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(json["type"], "reload");
+        assert_eq!(json["reason"], "island-source");
+        assert_eq!(json["paths"][0], path);
         let _ = fs::remove_dir_all(root);
     }
 }

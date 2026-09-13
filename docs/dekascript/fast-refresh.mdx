@@ -71,6 +71,13 @@ copy of React shipped with `deka dev`.
    The client `import()`s the new URL and calls `performReactRefresh()`.
 4. **Fallback.** Missing boundary, non-component export, or a thrown refresh
    performs `location.reload()`, matching Vite plugin-react.
+5. **Server HTML.** An app-router `.ds` / `.dsx` edit that is not an island
+   module re-renders the page and pushes `{ "type": "html-update", "html" }`
+   on `/_deka/hmr`. The dev client morphs `document` against that markup
+   and **leaves hydrated `<deka-island>` subtrees untouched**, so island
+   React state, scroll position, focus, and form values outside islands
+   survive. Editing an island's own module (`client:load` / `idle` /
+   `visible`) full-reloads — morphing cannot refresh `hydrateRoot`.
 
 ## React in this lane
 
@@ -84,11 +91,17 @@ Do not add a project `npm` dependency on React for `deka dev`.
 
 ## Manual check
 
-The automated gate covers registration, the `js-update` payload, and a
-Playwright sibling-state run (`tests/dump/scripts/fast-refresh-e2e.mjs`).
-To see it: `deka dev` on a project that mounts a component from
-`/_deka/hmr/module/...`, click a counter, edit a sibling component's JSX,
-confirm the counter does not reset.
+The automated gate covers registration, the `js-update` payload, a
+Playwright sibling-state run (`tests/dump/scripts/fast-refresh-e2e.mjs`),
+and server-HTML morph (`crates/cli/tests/server_fast_refresh.rs`): edit a
+server-rendered heading while a `client:load` counter is at 3 and a form
+input outside the island holds a typed value — the heading updates, the
+counter stays 3, the input keeps its value, and CDP records no frame
+navigation. Editing the island module itself full-reloads.
+
+To see client Fast Refresh: `deka dev` on a project that mounts a
+component from `/_deka/hmr/module/...`, click a counter, edit a sibling
+component's JSX, confirm the counter does not reset.
 
 ## Building the dev server
 

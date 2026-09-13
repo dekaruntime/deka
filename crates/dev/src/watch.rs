@@ -65,16 +65,18 @@ pub(crate) fn start_watch(
                             }
                         }
                     }
-                    if dev_mode {
-                        stdio_log::log("hmr", &format!("changed {}", changed.join(", ")));
-                        if !crate::refresh::push_js_update(&changed) {
-                            transport::notify_hmr_changed(&changed);
-                        }
-                    }
                     tokio::time::sleep(Duration::from_millis(5)).await;
                     let evicted = engine.pool().evict_all().await;
                     if evicted > 0 {
                         stdio_log::log("watch", &format!("evicted {}", evicted));
+                    }
+                    if dev_mode {
+                        stdio_log::log("hmr", &format!("changed {}", changed.join(", ")));
+                        // Evict first so html-update re-renders the new source
+                        // rather than a stale isolate (#956).
+                        if !crate::refresh::push_js_update(&changed) {
+                            transport::notify_hmr_changed(&changed);
+                        }
                     }
                 }
                 Err(err) => {

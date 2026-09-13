@@ -8,6 +8,33 @@ mod tests {
     }
 
     #[test]
+    fn html_update_payload_carries_selector_and_markup() {
+        let payload = crate::websocket::html_update_payload(
+            &["app/page.dsx".to_string()],
+            "#app",
+            "<h1 id=\"server-title\">hello refreshed</h1>",
+        );
+        let json = parse(&payload);
+        assert_eq!(json["type"], "html-update");
+        assert_eq!(json["selector"], "#app");
+        assert_eq!(
+            json["html"],
+            "<h1 id=\"server-title\">hello refreshed</h1>"
+        );
+        assert_eq!(json["paths"][0], "app/page.dsx");
+    }
+
+    #[test]
+    fn island_reload_payload_is_a_full_reload() {
+        let payload =
+            crate::websocket::island_reload_payload(&["src/ui/Counter.dsx".to_string()]);
+        let json = parse(&payload);
+        assert_eq!(json["type"], "reload");
+        assert_eq!(json["reason"], "island-source");
+        assert_eq!(json["paths"][0], "src/ui/Counter.dsx");
+    }
+
+    #[test]
     fn first_snapshot_uses_container_replace() {
         let payload = build_patch_from_snapshot(
             "/__hmr_test_first",
