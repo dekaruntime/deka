@@ -12,7 +12,7 @@
 //! 6. Health-check the swapped binary; restore snapshot on failure.
 //! 7. Restart configured managed services.
 
-use core::Context;
+use deka_cli_core::Context;
 use serde::Deserialize;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -741,7 +741,7 @@ mod tests {
     static ENV_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn dummy_context(cwd: PathBuf) -> Context {
-        let mut context = Context::new(core::Args {
+        let mut context = Context::new(deka_cli_core::Args {
             flags: HashMap::new(),
             params: HashMap::new(),
             commands: vec!["self".to_string(), "update".to_string()],

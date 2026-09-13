@@ -1,5 +1,5 @@
 use super::{pairing, targets};
-use core::Context;
+use deka_cli_core::Context;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};

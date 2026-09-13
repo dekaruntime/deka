@@ -45,7 +45,7 @@ pub struct ContentTarget {
 pub const TESTSUITE: ContentTarget = ContentTarget {
     name: "testsuite",
     repo: "dekaruntime/testsuite",
-    pin: include_str!("../../../../../scripts/testsuite-corpus-version"),
+    pin: include_str!("../../../scripts/testsuite-corpus-version"),
     marker_file: "corpus/expected-failures.txt",
     runner: "corpus/run.mjs",
 };
@@ -54,7 +54,7 @@ pub const TESTSUITE: ContentTarget = ContentTarget {
 pub const TOUR: ContentTarget = ContentTarget {
     name: "tour",
     repo: "dekaruntime/tour",
-    pin: include_str!("../../../../../scripts/tour-version"),
+    pin: include_str!("../../../scripts/tour-version"),
     marker_file: "tests/tour/manifest.json",
     runner: "tests/tour/run.mjs",
 };

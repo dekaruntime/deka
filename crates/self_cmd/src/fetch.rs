@@ -12,7 +12,7 @@
 //! completion line naming the resolved ref and destination.
 
 use super::targets::{self, ContentTarget};
-use core::Context;
+use deka_cli_core::Context;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};

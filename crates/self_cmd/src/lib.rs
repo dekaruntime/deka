@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, ParamSpec, Registry, SubcommandSpec};
+use deka_cli_core::{CommandSpec, Context, ParamSpec, Registry, SubcommandSpec};
 
 mod fetch;
 pub mod monitor;
@@ -38,7 +38,7 @@ const UPDATE: SubcommandSpec = SubcommandSpec {
 const SUBCOMMANDS: &[SubcommandSpec] = &[FETCH, MONITOR, TEST, UPDATE];
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "self",
     name: "self",
     category: "internal",
     summary: "internal deka maintenance commands",
@@ -76,7 +76,7 @@ pub fn register(registry: &mut Registry) {
     ] {
         registry.add_param(param);
     }
-    registry.add_flag(core::FlagSpec {
+    registry.add_flag(deka_cli_core::FlagSpec {
         name: "--list",
         aliases: &["-l"],
         description: "self test: list fixtures or lessons without running them",

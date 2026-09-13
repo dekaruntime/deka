@@ -3,14 +3,14 @@
 //! Runs in the foreground, polls the linkhash registry on a configurable
 //! interval, and applies updates using the shared `run_update` core.
 
-use core::Context;
+use deka_cli_core::Context;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use stdio;
 
-use crate::cli::self_cmd::update::{
+use crate::update::{
     UpdateConfig, UpdateResult, run_update, validate_managed_unit_name,
 };
 
@@ -294,7 +294,7 @@ mod tests {
     use std::rc::Rc;
 
     fn dummy_context(cwd: PathBuf) -> Context {
-        let mut context = Context::new(core::Args {
+        let mut context = Context::new(deka_cli_core::Args {
             flags: HashMap::new(),
             params: HashMap::new(),
             commands: vec!["self".to_string(), "monitor".to_string()],
