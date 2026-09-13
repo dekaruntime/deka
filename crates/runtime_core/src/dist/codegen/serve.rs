@@ -313,12 +313,12 @@ async fn respond(tree: ReactNode, status: number, fragment: boolean, headHtml: s
         }}
         const payload = unsafe {{ JSON.stringify({{ html: appHtml, title: title_from_head(headHtml), head: headHtml }}) }}
         return match (payload) {{
-            Ok(json) => {{ status: status, body: json }},
-            Err(_) => {{ status: 500, body: "Internal Server Error" }},
+            Ok(json) => {{ status: status, body: json, headers: {{ "content-type": "application/json; charset=utf-8" }} }},
+            Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ "content-type": "text/plain; charset=utf-8" }} }},
         }}
     }}
     const appHtml = await stream_html(tree)
-    return {{ status: status, body: {doc_head} + headHtml + {doc_mid} + appHtml + {doc_tail} }}
+    return {{ status: status, body: {doc_head} + headHtml + {doc_mid} + appHtml + {doc_tail}, headers: {{ "content-type": "text/html; charset=utf-8" }} }}
 }}
 
 async fn App(request: Request) Promise<Response> {{

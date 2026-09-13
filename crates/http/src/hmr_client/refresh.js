@@ -9,6 +9,18 @@ function applyJsUpdate(message) {
     location.reload();
     return;
   }
+  // A server-rendered component has no browser refresh family. Importing it
+  // would register a new, unmounted family and silently leave the DOM stale.
+  // Reload the document instead; only existing client families can refresh.
+  for (var moduleIndex = 0; moduleIndex < modules.length; moduleIndex++) {
+    var families = modules[moduleIndex].families;
+    if (Array.isArray(families) && families.some(function (id) {
+      return !runtime.getFamilyByID(id);
+    })) {
+      location.reload();
+      return;
+    }
+  }
   var chain = Promise.resolve();
   for (var i = 0; i < modules.length; i++) {
     (function (mod) {

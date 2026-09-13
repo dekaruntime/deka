@@ -65,6 +65,12 @@ pub(crate) fn start_watch(
                             }
                         }
                     }
+                    // A reload can reach HTTP immediately after the WS message;
+                    // evict stale isolates before publishing that notification.
+                    let evicted = engine.pool().evict_all().await;
+                    if evicted > 0 {
+                        stdio_log::log("watch", &format!("evicted {}", evicted));
+                    }
                     if dev_mode {
                         stdio_log::log("hmr", &format!("changed {}", changed.join(", ")));
                         if !crate::refresh::push_js_update(&changed) {
@@ -72,10 +78,6 @@ pub(crate) fn start_watch(
                         }
                     }
                     tokio::time::sleep(Duration::from_millis(5)).await;
-                    let evicted = engine.pool().evict_all().await;
-                    if evicted > 0 {
-                        stdio_log::log("watch", &format!("evicted {}", evicted));
-                    }
                 }
                 Err(err) => {
                     tracing::warn!("watch error: {}", err);
