@@ -16,7 +16,7 @@ import {
   runProjectInBrowser,
 } from './run-browser'
 import { setCompilerArtifactPath } from '@dekaruntime/web-ide-kit/runtime'
-import { loadAllTests, type HatsCategory, type HatsHost, type HatsTest, type HatsTestStage, type HatsTestStatus } from './tests'
+import { fixtureEnvGranted, loadAllTests, type HatsCategory, type HatsHost, type HatsTest, type HatsTestStage, type HatsTestStatus } from './tests'
 import { computeOverallStatus, type HatsOverallStatus } from './overall-status'
 
 // Bare stdlib imports (from "io") are rewritten by the compiler to this base;
@@ -169,8 +169,10 @@ async function runBrowserTest(
   slug: string,
   files?: Record<string, string>,
   entryPath?: string,
-  packages?: string[]
+  packages?: string[],
+  dekaJson?: Record<string, unknown>
 ): Promise<RuntimeResult> {
+  const envGranted = fixtureEnvGranted(dekaJson)
   const formatResult = formatDsWithWasm(globalHatsCompiler, source)
   const formattedCode = formatResult.ok ? formatResult.code : undefined
   const hasProjectFiles = Boolean(files && entryPath)
@@ -194,7 +196,7 @@ async function runBrowserTest(
     const projectCompileResult = compileProjectWithWasm(globalHatsCompiler, projectFiles, {
       moduleBase: HARNESS_MODULE_BASE,
     })
-    const runResult = await runProjectInBrowser(entryPath!, projectCompileResult)
+    const runResult = await runProjectInBrowser(entryPath!, projectCompileResult, envGranted)
     return { ...runResult, formattedCode }
   }
 
@@ -216,7 +218,7 @@ async function runBrowserTest(
     }
   }
 
-  const runResult = await runCompiledJsInBrowser(compileResult.js)
+  const runResult = await runCompiledJsInBrowser(compileResult.js, undefined, envGranted)
   const diagnostics = compileResult.diagnostics.slice()
   if (!runResult.ok && runResult.error) {
     diagnostics.push({ severity: 'error', message: runResult.error })
@@ -319,7 +321,7 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
 
         const wasmResult =
           wantBrowser && browserAvailable
-            ? await runBrowserTest(test.source, test.slug, test.files, test.entryPath, test.packages)
+            ? await runBrowserTest(test.source, test.slug, test.files, test.entryPath, test.packages, test.dekaJson)
             : skippedResult(
                 !wantBrowser
                   ? 'fixture is not a browser host test'

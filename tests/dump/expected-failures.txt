@@ -78,26 +78,13 @@ modules-import-syntax-no-braces-001
 modules-relative-import-missing-export-001
 modules-relative-import-missing-module-001
 
-# c5: needs adjudication — preserved native-correct assertions (testsuite#80; deka#904).
-# needs adjudication — preserved native-correct assertions: Raw JSON values are wrapped twice by browser globals and emitted unsafe code.
-data-types-json-static-roundtrip
-# needs adjudication — preserved native-correct assertions: Browser JSON.parse returns a Result where emitted code expects a raw value.
-error-globals-json-parse
-# needs adjudication — preserved native-correct assertions: Browser TextDecoder wrapper changes the raw constructor/value contract.
-unsafe-textdecoder-roundtrip
-# needs adjudication — preserved native-correct assertions: Browser TextEncoder wrapper leaves no callable encode method.
-unsafe-textencoder-encode
-# needs adjudication — preserved native-correct assertions: Browser JSON errors are wrapped twice instead of reaching the expected Err.
-unsafe-unsafe-json-parse-err
-# needs adjudication — preserved native-correct assertions: Browser JSON success is wrapped twice instead of returning the parsed value.
-unsafe-unsafe-json-parse-ok
-# needs adjudication — preserved native-correct assertions: Browser URL wrapper changes the raw constructor/value contract.
-unsafe-unsafe-url-ok
-# needs adjudication — preserved native-correct assertions: Browser export stripping drops a binding and adds a missing-name diagnostic.
-functions-exported-const-in-function-body
-# needs adjudication — preserved native-correct assertions: Browser export stripping removes program statements and loses stdout.
+# 0.3.3 (wik#11) strips `export ` before `const` and `async function`, but the
+# corpus fixture also emits `export function` (non-async `export fn plain`).
+# Worker sandbox then hits Unexpected token 'export'. Do not drop this row
+# until the kit strips that form; wik#11's regression used an unexported
+# `function plain()`.
 modules-export-async-fn
-# needs adjudication — preserved native-correct assertions: Browser exposes process.cwd where native correctly reports not-installed.
-error-globals-process-cwd-no-env-grant
-# needs adjudication — preserved native-correct assertions: WASM missing-import wording differs from the precise native module diagnostic.
+# Documented per-host difference (deka#904 row 11): native filesystem resolver
+# vs wasm single-file typeck. Native assertion kept. See
+# docs/dekascript/missing-module-diagnostics.mdx.
 modules-import-non-relative-001

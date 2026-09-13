@@ -27,10 +27,16 @@ R2.
 The native package cache stores installed modules, `deka.lock`, and the optional
 `deka.grants.json` together under `.cache/deka-packages/with-grants-v1/`.
 Older cache entries are bypassed because they omitted installer-issued grants.
-A grant-free install may legitimately have no grants file.
+A grant-free install may legitimately have no grants file. The browser host
+forwards `envGranted` to web-ide-kit only when the fixture's `deka.json` lists
+a non-empty `security.allow.env` (deka#378 / deka#904); otherwise `process` is
+absent, matching native.
 
 `expected-failures.txt` ratchets all shared-host divergences: full diagnostic
 lists, formatter output, and per-host expectation results. Listed cases remain
 visibly divergent in the dump; unlisted divergences and stale entries fail the
-ratchet. The c5 entries preserve native-correct assertions pending adjudication;
-they do not turn browser bugs into passing expectations.
+ratchet. After web-ide-kit 0.3.3 (wik#10 raw globals, wik#11 export/process),
+the deka#904 c5 browser bugs are gone except `modules-export-async-fn` (kit
+still leaves `export function` in the Worker sandbox) and
+`modules-import-non-relative-001` (documented per-host string difference; see
+`docs/dekascript/missing-module-diagnostics.mdx`).
