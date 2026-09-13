@@ -269,7 +269,7 @@ fn last_segment(s: string) string {{
     return last
 }}
 
-fn head_html(node: Component) string {{
+fn head_html(node: ReactNode) string {{
     const result = unsafe {{ deka.ui.renderToString(node) }}
     return match (result) {{
         Ok(rendered) => rendered.html,
@@ -291,7 +291,7 @@ fn title_from_head(headHtml: string) string {{
     }}
 }}
 
-async fn stream_html(tree: Component) Promise<string> {{
+async fn stream_html(tree: ReactNode) Promise<string> {{
     const boxed = unsafe {{ deka.ui.renderToStreamHtml(tree) }}
     const prom = match (boxed) {{
         Ok(p) => p,
@@ -301,7 +301,7 @@ async fn stream_html(tree: Component) Promise<string> {{
     return await prom
 }}
 
-async fn respond(tree: Component, status: number, fragment: boolean, headHtml: string) Promise<Response> {{
+async fn respond(tree: ReactNode, status: number, fragment: boolean, headHtml: string) Promise<Response> {{
     if (fragment) {{
         const result = unsafe {{ deka.ui.renderToString(tree) }}
         const appHtml = match (result) {{

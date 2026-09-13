@@ -173,7 +173,7 @@ fn generated_serve_entry_merges_head_and_passes_slug() {
     .unwrap();
     std::fs::write(
         tmp.join("app/layout.dsx"),
-        "interface LayoutProps { children: Component }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
+        "interface LayoutProps { children: ReactNode }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
     )
     .unwrap();
     std::fs::write(
@@ -223,7 +223,7 @@ fn generated_serve_entry_imports_suspense_for_loading() {
     .unwrap();
     std::fs::write(
         tmp.join("app/layout.dsx"),
-        "interface LayoutProps { children: Component }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
+        "interface LayoutProps { children: ReactNode }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
     )
     .unwrap();
     std::fs::write(
@@ -260,7 +260,7 @@ fn app_router_entry_fails_build_when_defer_lacks_fallback() {
     .unwrap();
     std::fs::write(
         tmp.join("app/layout.dsx"),
-        "interface LayoutProps { children: Component }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
+        "interface LayoutProps { children: ReactNode }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
     )
     .unwrap();
     std::fs::write(
