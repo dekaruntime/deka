@@ -1,0 +1,22 @@
+import { pageParams } from "../../../src/posts.generated.ds"
+import { PagedHome } from "../../../src/ui/PagedHome.dsx"
+import { Title } from "../../../src/ui/Title.dsx"
+
+interface PageProps {
+  n: string
+}
+struct PageParam {
+  n: string
+}
+
+export const staticParams: Array<PageParam> = build {
+  return Ok(pageParams)
+}
+
+export fn head() ReactNode {
+  return Title("Posts · Signal Path")
+}
+
+export fn Page(props: PageProps) ReactNode {
+  return PagedHome(props.n)
+}

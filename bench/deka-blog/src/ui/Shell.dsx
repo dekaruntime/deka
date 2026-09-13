@@ -1,0 +1,32 @@
+import { jsx as _pullRuntime } from "./index.ds"
+import { useMemo as _pullHooks } from "./react.ds"
+import { ThemeProvider, ThemeToggle } from "./Theme.dsx"
+import { NewsletterSignup } from "./Newsletter.dsx"
+
+interface ShellProps {
+  children: ReactNode
+}
+
+export fn Shell(props: ShellProps) ReactNode {
+  const _keep = _pullRuntime
+  const _keep2 = _pullHooks
+  return <ThemeProvider>
+      <header class="site-header">
+        <nav class="nav">
+          <a class="brand" href="/">Signal Path</a>
+          <div class="nav-links">
+            <a href="/">Posts</a>
+            <a href="/about">About</a>
+            <ThemeToggle client:load />
+          </div>
+        </nav>
+      </header>
+      <div class="wrap">{props.children}</div>
+      <footer class="site-footer">
+        <div class="footer-inner">
+          <p>A fair-play subject app. Theme and newsletter are the only islands.</p>
+          <NewsletterSignup client:load />
+        </div>
+      </footer>
+    </ThemeProvider>
+}

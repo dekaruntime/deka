@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="240" viewBox="0 0 960 240" role="img" aria-label="Compile pipeline">
+  <rect width="960" height="240" fill="#111827"/>
+  <rect x="40" y="70" width="180" height="80" rx="12" fill="#1f2937" stroke="#60a5fa"/>
+  <rect x="390" y="70" width="180" height="80" rx="12" fill="#1f2937" stroke="#c084fc"/>
+  <rect x="740" y="70" width="180" height="80" rx="12" fill="#1f2937" stroke="#34d399"/>
+  <path d="M220 110 H390 M570 110 H740" stroke="#9ca3af" stroke-width="2" marker-end="url(#arrow)"/>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#9ca3af"/>
+    </marker>
+  </defs>
+  <text x="130" y="116" text-anchor="middle" fill="#f9fafb" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18">source</text>
+  <text x="480" y="116" text-anchor="middle" fill="#f9fafb" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18">compile</text>
+  <text x="830" y="116" text-anchor="middle" fill="#f9fafb" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18">artifact</text>
+</svg>

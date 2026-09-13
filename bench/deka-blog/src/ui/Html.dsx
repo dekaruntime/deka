@@ -1,0 +1,7 @@
+interface HtmlProps {
+  html: string
+}
+
+export fn Html(props: HtmlProps) ReactNode {
+  return <div class="prose" data-raw-html={props.html}></div>
+}

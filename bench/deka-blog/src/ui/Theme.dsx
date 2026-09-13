@@ -1,0 +1,32 @@
+const ThemeContext = createContext("light")
+
+interface ThemeProviderProps {
+  children: ReactNode
+}
+
+export fn ThemeProvider(props: ThemeProviderProps) ReactNode {
+  const pair = useState("light")
+  const theme = pair[0]
+  const setTheme = pair[1]
+  useEffect(fn() Option<fn() void> {
+    const _ = unsafe {
+      var root = globalThis.document && globalThis.document.documentElement
+      if (root) {
+        root.setAttribute("data-theme", theme)
+      }
+      return 1
+    }
+    return None
+  })
+  const _keepSetter = setTheme
+  return <ThemeContext.Provider value={theme}>{props.children}</ThemeContext.Provider>
+}
+
+export fn ThemeToggle() ReactNode {
+  const theme = useContext(ThemeContext)
+  let label = "Dark"
+  if (theme == "dark") {
+    label = "Light"
+  }
+  return <button type="button" class="theme-toggle" data-island="theme">{label}</button>
+}

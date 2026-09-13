@@ -1,0 +1,15 @@
+export fn NewsletterSignup() ReactNode {
+  const emailPair = useState("")
+  const sentPair = useState(false)
+  const email = emailPair[0]
+  const sent = sentPair[0]
+  let status = "No tracking pixels. This form stays on the page."
+  if (sent == true) {
+    status = "Thanks — we will not actually email " + email + "."
+  }
+  return <form class="nl-form" data-island="newsletter">
+      <input class="nl-input" type="email" name="email" placeholder="you@example.com" value={email} />
+      <button class="nl-btn" type="submit">Subscribe</button>
+      <p class="nl-status" data-nl-status>{status}</p>
+    </form>
+}

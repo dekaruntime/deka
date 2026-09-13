@@ -1,0 +1,10 @@
+import { Title } from "../src/ui/Title.dsx"
+import { NotFoundPage } from "../src/ui/NotFoundPage.dsx"
+
+export fn head() ReactNode {
+  return Title("Not found")
+}
+
+export fn Page() ReactNode {
+  return NotFoundPage()
+}

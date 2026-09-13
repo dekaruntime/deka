@@ -1,0 +1,15 @@
+import { postsForTag } from "../posts.generated.ds"
+import { PostCard } from "./PostCard.dsx"
+
+export fn TagPage(tag: string) ReactNode {
+  const items = postsForTag(tag)
+  let cards: Array<ReactNode> = [<span></span>]
+  for (const post of items) {
+    cards.push(<PostCard slug={post.slug} title={post.title} date={post.date} excerpt={post.excerpt} tags={post.tags} />)
+  }
+  return <div>
+      <p class="meta"><a href="/">All posts</a></p>
+      <h1 class="page-title">Tag: {tag}</h1>
+      <div class="grid">{cards}</div>
+    </div>
+}
