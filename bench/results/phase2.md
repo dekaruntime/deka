@@ -1,5 +1,7 @@
 # deka-bench phase 2 results
 
+**PRELIMINARY — pending one clean idle-host rerun.** Numbers were measured on a shared host with the contention guard (**10 waits / 8 discards**). The guard mitigates compiler contention; it does not make this an isolated run. Ava schedules the clean idle-host rerun before homepage use. No benchmark rerun was performed for this review fix.
+
 Generated: 2026-09-13T20:50:09.106Z
 
 Machine: macOS 26.6.1, x86_64, Intel(R) Core(TM) i9-10910 CPU @ 3.60GHz, 128 GiB, Node v26.3.1.
@@ -148,6 +150,8 @@ Toolchains (exact output and binary hashes in JSON):
   "sourceCommit": "b7802aeb3aa63ee66fbc842099ced4a1a4c9eb0f"
 }
 ```
+
+## PRELIMINARY measurements — clean idle-host rerun pending
 
 | stack | cold build (median 5) | incremental build (median 5) | warm TTFB (median 25) | component update (median 5) | full reloads |
 | --- | ---: | ---: | ---: | ---: | ---: |

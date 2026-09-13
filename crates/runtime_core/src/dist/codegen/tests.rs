@@ -328,3 +328,30 @@ fn worker_entry_calls_run_api_router() {
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn generated_serve_response_matches_golden() {
+    let tmp = tmp_dir("response_golden");
+    std::fs::create_dir_all(tmp.join("app")).unwrap();
+    std::fs::write(tmp.join("index.html"), "<!doctype html><html><head><!--deka-head--></head><body><!--deka-app--><!--deka-scripts--></body></html>").unwrap();
+    std::fs::write(
+        tmp.join("app/page.dsx"),
+        "export fn Page() { return <p>Hello</p> }\n",
+    )
+    .unwrap();
+    std::fs::write(tmp.join("app/layout.dsx"), "interface Props { children: ReactNode }\nexport fn Layout(props: Props) { return <main>{props.children}</main> }\n").unwrap();
+    let entry = write_app_router_entry(&tmp).unwrap();
+    let source = std::fs::read_to_string(entry).unwrap();
+    let respond = source
+        .split("async fn respond(")
+        .nth(1)
+        .unwrap()
+        .split("\nasync fn App(")
+        .next()
+        .unwrap();
+    assert_eq!(
+        format!("async fn respond({respond}"),
+        include_str!("goldens/serve_response.dsx")
+    );
+    std::fs::remove_dir_all(tmp).unwrap();
+}

@@ -1,5 +1,7 @@
 # deka-bench — phase 2
 
+**PRELIMINARY — pending one clean idle-host rerun.** Numbers were measured on a shared host with the contention guard (**10 waits / 8 discards**). The guard mitigates compiler contention; it does not make this an isolated run. Ava schedules the clean idle-host rerun before homepage use. No benchmark rerun was performed for this review fix.
+
 One 28-post blog, three idiomatic implementations for [deka#938](https://github.com/dekaruntime/deka/issues/938): Deka app router + hydrated islands, Vite + React CSR with lazy routes, and Next.js App Router with SSG + client components. The fairness bar from [#944](https://github.com/dekaruntime/deka/pull/944) applies: both payload stories are separate, clearly labeled claims; no zero-JS-vs-CSR headline masquerading as an interactivity comparison.
 
 ## Reproduce
@@ -40,7 +42,7 @@ All apps have `/`, `/page/2…`, `/posts/:slug`, `/tags/:tag`, `/about`, post ca
 
 Next uses [`generateStaticParams`](https://nextjs.org/docs/app/api-reference/functions/generate-static-params) for the local content's complete route set, with `dynamicParams = false`. It prerenders the blog at build time and uses default output served by [`next start`](https://nextjs.org/docs/app/guides/self-hosting). No `output: export`, forced SSR, timed ISR regeneration, custom server, or artificial zero-JS stripping. Build-time SSG is appropriate for markdown committed with the site; there is no live CMS to revalidate. Full build logs disclose generated routes and framework overhead. The three build commands do different amounts of framework work by design.
 
-The Deka theme binds `theme` in typed effect code before entering `unsafe`, so Deka can infer its reactive dependency, as a workaround for the released compiler's missed dependency inside raw `unsafe` code, tracked in [#951](https://github.com/dekaruntime/deka/issues/951). The runner checks both the actual page theme/background and newsletter state. It does not change the compiler or workspace tests.
+The Deka theme binds `theme` in typed effect code before entering `unsafe`, so Deka can infer its reactive dependency, as a workaround for the released compiler's missed dependency inside raw `unsafe` code, tracked in [#951](https://github.com/dekaruntime/deka/issues/951). The runner checks both the actual page theme/background and newsletter state. It does not change the compiler.
 
 ## Measurements
 
@@ -86,7 +88,7 @@ The observer is also installed with `Page.addScriptToEvaluateOnNewDocument`, so 
 
 The broader #938 content-edit HMR metric remains follow-up work; this phase's requested edit shape is the PostCard JSX literal. No content-edit number is inferred from the component samples.
 
-## Results
+## Results — PRELIMINARY
 
 See the [full table and machine/toolchain stanza](results/phase2.md), [raw samples and resource audit](results/phase2.json), and [production build logs](results/build-logs.json). All numbers there come from the completed one-command run in this lane. Do not publish a chart without its machine, versions, payload-story label, and reload disclosure.
 

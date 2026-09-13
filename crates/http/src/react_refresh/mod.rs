@@ -185,7 +185,22 @@ mod tests {
         assert_eq!(json["type"], "js-update");
         assert_eq!(json["modules"][0]["id"], "Label.js");
         assert_eq!(json["modules"][0]["url"], "/_deka/hmr/module/Label.js");
+        assert_eq!(json["modules"][0]["families"], serde_json::json!(["Label.js Label"]));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shipped_client_reloads_missing_families_and_refreshes_registered_families() {
+        let output = std::process::Command::new("node")
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/refresh_client.mjs"))
+            .output()
+            .expect("run refresh client contract");
+        assert!(
+            output.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
