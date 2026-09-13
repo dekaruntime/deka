@@ -143,6 +143,8 @@ fn find_embedded_vfs_metadata(path: &Path) -> Result<compile::binary::BinaryMeta
         return Err("executable is too small to contain embedded VFS metadata".to_string());
     }
 
+    #[cfg(target_os = "macos")]
+    let file_len = compile::binary::signed_data_end(&mut file)?.unwrap_or(file_len).min(file_len);
     let scan_len = file_len.min(VFS_TAIL_SCAN_BYTES) as usize;
     let scan_start = file_len - scan_len as u64;
     file.seek(SeekFrom::Start(scan_start))
@@ -279,7 +281,7 @@ fn is_safe_vfs_path(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compile::binary::BinaryEmbedder;
+    use compile::binary::BinaryMetadata;
     use compile::vfs::{RuntimeMode, VFS};
 
     #[test]
@@ -297,9 +299,11 @@ mod tests {
             false,
         );
         let bytes = vfs.to_bytes().unwrap();
-        BinaryEmbedder::new(runtime_path)
-            .embed(&bytes, "index.phpx", &output_path)
-            .unwrap();
+        let mut image = std::fs::read(runtime_path).unwrap();
+        let metadata = BinaryMetadata::new(image.len() as u64, bytes.len() as u64, "index.phpx".into());
+        image.extend_from_slice(&bytes);
+        image.extend_from_slice(&metadata.to_bytes());
+        std::fs::write(&output_path, image).unwrap();
 
         let metadata = find_embedded_vfs_metadata(&output_path).unwrap();
         assert_eq!(metadata.entry_point, "index.phpx");

@@ -107,6 +107,18 @@ jobs:
           cargo test -p pool
           cargo test -p engine
 
+      # This integration test also runs in the normal PR workspace suite.
+      # The release matrix proves native execution on each supported host.
+      - name: Install dsc for executable smoke test
+        run: scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc"
+
+      - name: Smoke test host-target executable compilation
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
+          NO_COLOR: "1"
+          FORCE_COLOR: "0"
+        run: cargo test --locked --release -p cli --test compile_executable
+
   fetch-dsc-wasm:
     name: Fetch published dsc WASM
     needs: [test]
