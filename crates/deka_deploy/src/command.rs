@@ -1,7 +1,7 @@
-use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry, SubcommandSpec};
+use deka_cli_core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry, SubcommandSpec};
 use std::collections::HashMap;
 
-mod runner;
+use crate::runner;
 
 const RUN: SubcommandSpec = SubcommandSpec {
     name: "run",
@@ -13,7 +13,7 @@ const RUN: SubcommandSpec = SubcommandSpec {
 const SUBCOMMANDS: &[SubcommandSpec] = &[RUN];
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "deploy",
     name: "deploy",
     category: "pipeline",
     summary: "linkhash pipeline deployment and execution",
@@ -85,7 +85,7 @@ fn run_cmd(context: &Context) {
             format!("deploy-{}", ts)
         });
 
-    let pipeline = match crate::cli::pipeline_yaml::parse_pipeline_yaml(&pipeline_path) {
+    let pipeline = match crate::pipeline_yaml::parse_pipeline_yaml(&pipeline_path) {
         Ok(p) => p,
         Err(e) => {
             stdio::error("deploy", &format!("failed to parse pipeline: {}", e));
@@ -110,7 +110,7 @@ fn run_cmd(context: &Context) {
 }
 
 async fn run_pipeline(
-    pipeline: &crate::cli::pipeline_yaml::Pipeline,
+    pipeline: &crate::pipeline_yaml::Pipeline,
     run_id: &str,
     gild_socket: &str,
     bearer_token: &str,
@@ -209,7 +209,7 @@ async fn run_pipeline(
     }
 }
 
-fn build_job_argv(job: &crate::cli::pipeline_yaml::Job) -> Vec<String> {
+fn build_job_argv(job: &crate::pipeline_yaml::Job) -> Vec<String> {
     let mut argv = Vec::new();
     for step in &job.steps {
         if let Some(run) = &step.run {
@@ -222,7 +222,7 @@ fn build_job_argv(job: &crate::cli::pipeline_yaml::Job) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::pipeline_yaml::{Job, Step};
+    use crate::pipeline_yaml::{Job, Step};
 
     #[test]
     fn build_job_argv_collects_run_commands() {
