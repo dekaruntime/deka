@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, Registry, SubcommandSpec};
+use deka_cli_core::{CommandSpec, Context, Registry, SubcommandSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -37,7 +37,7 @@ const FLUSH: SubcommandSpec = SubcommandSpec {
 const SUBCOMMANDS: &[SubcommandSpec] = &[GENERATE, MIGRATE, INFO, FLUSH];
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "db",
     name: "db",
     category: "database",
     summary: "database tooling (platform-gated)",

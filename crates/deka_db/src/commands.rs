@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, Registry, SubcommandSpec};
+use deka_cli_core::{CommandSpec, Context, Registry, SubcommandSpec};
 use stdio::error;
 
 use super::migrate::{cmd_flush, cmd_info, cmd_migrate};
@@ -27,7 +27,7 @@ const FLUSH: SubcommandSpec = SubcommandSpec {
 const SUBCOMMANDS: &[SubcommandSpec] = &[MIGRATE, INFO, FLUSH];
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "db",
     name: "db",
     category: "database",
     summary: "database tooling for DekaScript ORM generation and migrations",

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use core::Context;
+use deka_cli_core::Context;
 use postgres::{Client, NoTls};
 use rusqlite::{Connection, params};
 use stdio::{error, log};
