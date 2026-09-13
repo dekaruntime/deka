@@ -1,4 +1,34 @@
 use super::*;
+use std::collections::BTreeMap;
+
+fn parse_hash_file(text: &str) -> BTreeMap<&str, &str> {
+    text.lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let hash = parts.next()?;
+            let name = parts.next()?;
+            Some((name, hash))
+        })
+        .collect()
+}
+
+fn sha256_hex(bytes: &str) -> String {
+    runtime_core::dist::sha256_hex(bytes.as_bytes())
+}
+
+const VENDOR_CJS: &[(&str, &str)] = &[
+    ("react.production.js", REACT_CJS),
+    ("react-jsx-runtime.production.js", JSX_RUNTIME_CJS),
+    ("react-dom.production.js", REACT_DOM_CJS),
+    ("react-dom-client.production.js", REACT_DOM_CLIENT_CJS),
+    ("scheduler.production.js", SCHEDULER_CJS),
+    (
+        "react-dom-server-legacy.browser.production.js",
+        SERVER_LEGACY_CJS,
+    ),
+    ("react-dom-server.edge.production.js", SERVER_BROWSER_CJS),
+];
 
 #[test]
 fn hashes_lock_upstream_cjs() {
@@ -13,6 +43,160 @@ fn hashes_lock_upstream_cjs() {
         HASHES.contains(&format!("react@{REACT_VERSION}"))
             || HASHES.contains("react.production.js")
     );
+    let hashes = parse_hash_file(HASHES);
+    for (name, source) in VENDOR_CJS {
+        let got = sha256_hex(source);
+        let expected = hashes.get(name).copied().unwrap_or("");
+        assert_eq!(
+            expected, got,
+            "{name}: HASHES must match pristine include_str bytes"
+        );
+    }
+}
+
+#[test]
+fn minified_react_cjs_runs_in_node() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let minified = crate::js_minify::cached("react.production.js", REACT_CJS);
+    let path = dir.path().join("run-react.mjs");
+    std::fs::write(
+        &path,
+        format!(
+            "const process = {{ env: {{ NODE_ENV: \"production\" }} }};\n\
+             const exports = {{}};\n\
+             const module = {{ exports }};\n\
+             function require(id) {{ throw new Error(\"unexpected require(\" + JSON.stringify(id) + \")\"); }}\n\
+             (function (exports, module, require, process) {{\n\
+             {minified}\n\
+             }})(exports, module, require, process);\n\
+             if (typeof module.exports.useState !== \"function\") throw new Error(\"useState\");\n\
+             if (module.exports.version !== {version:?}) throw new Error(module.exports.version);\n\
+             console.log(\"ok\", module.exports.version);\n",
+            version = REACT_VERSION,
+        ),
+    )
+    .expect("write runner");
+    let output = std::process::Command::new("node")
+        .arg(path.to_str().expect("utf-8"))
+        .output()
+        .expect("node run react");
+    assert!(
+        output.status.success(),
+        "minified react.production.js failed to run:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn minified_server_esm_loads_in_node() {
+    let dir = tempfile::tempdir().expect("tmp");
+    for file in [
+        "react.js",
+        "jsx-runtime.js",
+        "react-dom.js",
+        "react-dom-server-legacy.js",
+        "react-dom-server-browser.js",
+        "react-dom-server.js",
+        "scheduler.js",
+        "react-dom-client.js",
+    ] {
+        let esm = esm_for_file(file).expect(file);
+        std::fs::write(dir.path().join(file), esm).expect("write esm");
+    }
+    let runner = dir.path().join("boot.mjs");
+    std::fs::write(
+        &runner,
+        "import { renderToString, version } from './react-dom-server.js';\n\
+         import { jsx } from './jsx-runtime.js';\n\
+         import { hydrateRoot } from './react-dom-client.js';\n\
+         const html = renderToString(jsx('div', { children: 'ok' }));\n\
+         if (!html.includes('ok')) throw new Error(html);\n\
+         if (typeof hydrateRoot !== 'function') throw new Error('hydrateRoot');\n\
+         console.log('ok', version, html);\n",
+    )
+    .expect("write boot");
+    let output = std::process::Command::new("node")
+        .arg(runner.to_str().expect("utf-8"))
+        .current_dir(dir.path())
+        .output()
+        .expect("node boot");
+    assert!(
+        output.status.success(),
+        "minified ESM server/client failed to load:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn minified_vendor_parses_in_node() {
+    let dir = tempfile::tempdir().expect("tmp");
+    for (name, source) in VENDOR_CJS {
+        let minified = crate::js_minify::cached(name, source);
+        let path = dir.path().join(name);
+        std::fs::write(&path, minified).expect("write minified");
+        let output = std::process::Command::new("node")
+            .args(["--check", path.to_str().expect("utf-8")])
+            .output()
+            .expect("node --check");
+        if !output.status.success() {
+            let loc = std::process::Command::new("node")
+                .args(["--check", path.to_str().expect("utf-8")])
+                .output()
+                .expect("node --check");
+            let err = String::from_utf8_lossy(&loc.stderr);
+            let dump = format!("/tmp/{name}");
+            std::fs::write(&dump, minified).ok();
+            panic!(
+                "{name} minified JS failed node --check (dumped {dump}, {} bytes):\n{err}",
+                minified.len()
+            );
+        }
+    }
+    for file in reachable_files(USER_SPECS.iter().copied()) {
+        let esm = esm_for_file(file).expect(file);
+        let path = dir.path().join(file);
+        std::fs::write(&path, esm).expect("write esm");
+        let output = std::process::Command::new("node")
+            .args(["--check", path.to_str().expect("utf-8")])
+            .output()
+            .expect("node --check esm");
+        assert!(
+            output.status.success(),
+            "{file} minified ESM wrapper failed node --check:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn minified_hashes_lock_swc_output() {
+    let hashes = parse_hash_file(MINIFIED_HASHES);
+    assert_eq!(
+        hashes.len(),
+        VENDOR_CJS.len(),
+        "MINIFIED-HASHES must list every vendor CJS file"
+    );
+    for (name, source) in VENDOR_CJS {
+        let minified = crate::js_minify::cached(name, source);
+        assert!(
+            !contains_dev_bytes(minified),
+            "{name}: minified output leaked a development-build probe"
+        );
+        assert!(
+            minified.len() < source.len(),
+            "{name}: minified {} >= pristine {}",
+            minified.len(),
+            source.len()
+        );
+        let got = sha256_hex(minified);
+        let expected = hashes.get(name).copied().unwrap_or("");
+        assert_eq!(
+            expected, got,
+            "{name}: MINIFIED-HASHES must match SWC minify output (got {got})"
+        );
+    }
 }
 
 #[test]

@@ -1,4 +1,4 @@
-# sha256 of UNWRAPPED upstream CJS bytes
+# sha256 of UNWRAPPED upstream CJS bytes (pristine, before SWC minify)
 f1e2323f141be9d9379c612eeabd7f282f052e60116547395780b032a6f0770d  react.production.js  https://unpkg.com/react@19.1.1/cjs/react.production.js
 1e46f15002696985e80c61d47aaa30dabb03c954270a690f5f7dfbbacfa9002b  react-jsx-runtime.production.js  https://unpkg.com/react@19.1.1/cjs/react-jsx-runtime.production.js
 f518694f8588dacc9acf35452bbeb18f98174bc2e3eb1bf1181b7fbb4a0f0295  react-dom.production.js  https://unpkg.com/react-dom@19.1.1/cjs/react-dom.production.js

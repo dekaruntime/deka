@@ -60,6 +60,8 @@ pub const DEV_BYTE_PROBES: &[&str] = &[
 
 #[cfg(test)]
 const HASHES: &str = include_str!("../vendor/react-prod/HASHES");
+#[cfg(test)]
+const MINIFIED_HASHES: &str = include_str!("../vendor/react-prod/MINIFIED-HASHES");
 const REACT_CJS: &str = include_str!("../vendor/react-prod/cjs/react.production.js");
 const JSX_RUNTIME_CJS: &str =
     include_str!("../vendor/react-prod/cjs/react-jsx-runtime.production.js");
@@ -474,15 +476,40 @@ fn registry_key(file: &str) -> &'static str {
 
 fn cjs_for_file(file: &str) -> Option<(&'static str, &'static str)> {
     match file {
-        "react.js" => Some((REACT_CJS, REACT_SHA)),
-        "jsx-runtime.js" => Some((JSX_RUNTIME_CJS, JSX_RUNTIME_SHA)),
-        "react-dom.js" => Some((REACT_DOM_CJS, REACT_DOM_SHA)),
-        "react-dom-client.js" => Some((REACT_DOM_CLIENT_CJS, REACT_DOM_CLIENT_SHA)),
-        "scheduler.js" => Some((SCHEDULER_CJS, SCHEDULER_SHA)),
-        "react-dom-server-legacy.js" => Some((SERVER_LEGACY_CJS, SERVER_LEGACY_SHA)),
-        "react-dom-server-browser.js" => Some((SERVER_BROWSER_CJS, SERVER_BROWSER_SHA)),
+        "react.js" => Some((vendor_cjs("react.production.js", REACT_CJS), REACT_SHA)),
+        "jsx-runtime.js" => Some((
+            vendor_cjs("react-jsx-runtime.production.js", JSX_RUNTIME_CJS),
+            JSX_RUNTIME_SHA,
+        )),
+        "react-dom.js" => Some((
+            vendor_cjs("react-dom.production.js", REACT_DOM_CJS),
+            REACT_DOM_SHA,
+        )),
+        "react-dom-client.js" => Some((
+            vendor_cjs("react-dom-client.production.js", REACT_DOM_CLIENT_CJS),
+            REACT_DOM_CLIENT_SHA,
+        )),
+        "scheduler.js" => Some((
+            vendor_cjs("scheduler.production.js", SCHEDULER_CJS),
+            SCHEDULER_SHA,
+        )),
+        "react-dom-server-legacy.js" => Some((
+            vendor_cjs(
+                "react-dom-server-legacy.browser.production.js",
+                SERVER_LEGACY_CJS,
+            ),
+            SERVER_LEGACY_SHA,
+        )),
+        "react-dom-server-browser.js" => Some((
+            vendor_cjs("react-dom-server.edge.production.js", SERVER_BROWSER_CJS),
+            SERVER_BROWSER_SHA,
+        )),
         _ => None,
     }
+}
+
+fn vendor_cjs(name: &'static str, source: &'static str) -> &'static str {
+    crate::js_minify::cached(name, source)
 }
 
 fn strip_builtin_imports(js: &str) -> Result<(String, BTreeSet<String>), String> {
@@ -712,7 +739,7 @@ fn react_esm() -> &'static str {
         wrap_cjs(
             &format!("https://unpkg.com/react@{REACT_VERSION}/cjs/react.production.js"),
             REACT_SHA,
-            REACT_CJS,
+            vendor_cjs("react.production.js", REACT_CJS),
             "",
             "",
             REACT_EXPORTS,
@@ -727,7 +754,7 @@ fn jsx_runtime_esm() -> &'static str {
         let mut out = wrap_cjs(
             &format!("https://unpkg.com/react@{REACT_VERSION}/cjs/react-jsx-runtime.production.js"),
             JSX_RUNTIME_SHA,
-            JSX_RUNTIME_CJS,
+            vendor_cjs("react-jsx-runtime.production.js", JSX_RUNTIME_CJS),
             "",
             "",
             JSX_RUNTIME_EXPORTS,
@@ -785,7 +812,7 @@ fn react_dom_esm() -> &'static str {
         wrap_cjs(
             &format!("https://unpkg.com/react-dom@{REACT_VERSION}/cjs/react-dom.production.js"),
             REACT_DOM_SHA,
-            REACT_DOM_CJS,
+            vendor_cjs("react-dom.production.js", REACT_DOM_CJS),
             "import * as __req_react from \"./react.js\";\n",
             "  if (id === \"react\") return __req_react.default;\n",
             REACT_DOM_EXPORTS,
@@ -800,7 +827,7 @@ fn scheduler_esm() -> &'static str {
         wrap_cjs(
             &format!("https://unpkg.com/scheduler@0.26.0/cjs/scheduler.production.js"),
             SCHEDULER_SHA,
-            SCHEDULER_CJS,
+            vendor_cjs("scheduler.production.js", SCHEDULER_CJS),
             "",
             "",
             SCHEDULER_EXPORTS,
@@ -817,7 +844,7 @@ fn react_dom_client_esm() -> &'static str {
                 "https://unpkg.com/react-dom@{REACT_VERSION}/cjs/react-dom-client.production.js"
             ),
             REACT_DOM_CLIENT_SHA,
-            REACT_DOM_CLIENT_CJS,
+            vendor_cjs("react-dom-client.production.js", REACT_DOM_CLIENT_CJS),
             "import * as __req_scheduler from \"./scheduler.js\";\nimport * as __req_react from \"./react.js\";\nimport * as __req_react_dom from \"./react-dom.js\";\n",
             "  if (id === \"scheduler\") return __req_scheduler.default;\n  if (id === \"react\") return __req_react.default;\n  if (id === \"react-dom\") return __req_react_dom.default;\n",
             REACT_DOM_CLIENT_EXPORTS,
@@ -834,7 +861,10 @@ fn server_legacy_esm() -> &'static str {
                 "https://unpkg.com/react-dom@{REACT_VERSION}/cjs/react-dom-server-legacy.browser.production.js"
             ),
             SERVER_LEGACY_SHA,
-            SERVER_LEGACY_CJS,
+            vendor_cjs(
+                "react-dom-server-legacy.browser.production.js",
+                SERVER_LEGACY_CJS,
+            ),
             "import * as __req_react from \"./react.js\";\nimport * as __req_react_dom from \"./react-dom.js\";\n",
             "  if (id === \"react\") return __req_react.default;\n  if (id === \"react-dom\") return __req_react_dom.default;\n",
             SERVER_LEGACY_EXPORTS,
@@ -851,7 +881,7 @@ fn server_browser_esm() -> &'static str {
                 "https://unpkg.com/react-dom@{REACT_VERSION}/cjs/react-dom-server.edge.production.js"
             ),
             SERVER_BROWSER_SHA,
-            SERVER_BROWSER_CJS,
+            vendor_cjs("react-dom-server.edge.production.js", SERVER_BROWSER_CJS),
             "import * as __req_react from \"./react.js\";\nimport * as __req_react_dom from \"./react-dom.js\";\n",
             "  if (id === \"react\") return __req_react.default;\n  if (id === \"react-dom\") return __req_react_dom.default;\n",
             SERVER_BROWSER_EXPORTS,
@@ -899,6 +929,8 @@ fn wrap_cjs(
     out.push_str(upstream);
     out.push_str("\n * sha256: ");
     out.push_str(sha);
+    out.push_str("\n * minified-sha256: ");
+    out.push_str(&runtime_core::dist::sha256_hex(cjs.as_bytes()));
     out.push_str("\n * Pinned React ");
     out.push_str(REACT_VERSION);
     out.push_str(" ships as a runtime builtin (rfd#64 amendment 2).\n */\n");

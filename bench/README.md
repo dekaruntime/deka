@@ -101,3 +101,15 @@ Final run on 2026-09-13 (macOS 26.6.1, Intel i9-10910, 128 GiB, Node 26.3.1):
 | next | 5129.07 ms | 3265.59 ms | 1.00 ms | 52.21 ms | 0/5 |
 
 Both payload stories and every resource are in the linked results. This run recorded 10 contention waits and 8 discarded overlapping attempts; accepted medians contain exactly 5 build/update or 25 TTFB samples. No other lane was paused.
+
+### Payload after #954 minification (from the #957 run)
+
+deka: per-page HTML + cached shared islands runtime (production React + Theme + Newsletter). Vite: CSR SPA. This is not a "27x smaller" claim.
+
+| stack | HTML gzip | JS gzip | CSS gzip | total gzip |
+| --- | ---: | ---: | ---: | ---: |
+| deka (HTML + shared islands runtime) | 1465 B | 60729 B | 1170 B | 63364 B |
+| Vite + React 19.1.1 (CSR SPA) | 293 B | 84396 B | 1170 B | 85859 B |
+| Next.js App Router | TODO (phase 2) | TODO (phase 2) | TODO (phase 2) | TODO (phase 2) |
+
+Chromium (toggle + submit) passed on both stacks: theme `light→dark`, newsletter status `Thanks — we will not actually email ava@deka.gg.`

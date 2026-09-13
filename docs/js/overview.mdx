@@ -26,7 +26,10 @@ import { createRoot, hydrateRoot } from "@js/react-dom/client";
 specifiers from the runtime. `deka --version --verbose` prints the pin as
 `react: 19.1.1`. Development React used by `deka dev` Fast Refresh is a
 separate, feature-gated vendor tree and is not included in production
-output.
+output. The islands hydration bundle and `deka build --bundle` minify the
+vendored production CJS through SWC (mangle + compact emit) so the
+browser payload is minified React 19 production, not the unminified
+npm `*.production.js` bytes.
 
 The dump/hats harness still talks to dsc's module resolver, which does
 not load these runtime builtins. Do not teach dump a second resolution
