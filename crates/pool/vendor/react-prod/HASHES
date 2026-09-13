@@ -1,0 +1,8 @@
+# sha256 of UNWRAPPED upstream CJS bytes
+f1e2323f141be9d9379c612eeabd7f282f052e60116547395780b032a6f0770d  react.production.js  https://unpkg.com/react@19.1.1/cjs/react.production.js
+1e46f15002696985e80c61d47aaa30dabb03c954270a690f5f7dfbbacfa9002b  react-jsx-runtime.production.js  https://unpkg.com/react@19.1.1/cjs/react-jsx-runtime.production.js
+f518694f8588dacc9acf35452bbeb18f98174bc2e3eb1bf1181b7fbb4a0f0295  react-dom.production.js  https://unpkg.com/react-dom@19.1.1/cjs/react-dom.production.js
+b42d9ab70da856b96e240e3d010b08f4284113cf568b1b2a2aa1f251977eeb37  react-dom-client.production.js  https://unpkg.com/react-dom@19.1.1/cjs/react-dom-client.production.js
+cf3928705cd3051cb8fb88da14811aee4ac4320e4eb4caa5193996019d7cf008  react-dom-server-legacy.browser.production.js  https://unpkg.com/react-dom@19.1.1/cjs/react-dom-server-legacy.browser.production.js
+8b316fa071e1fb0e4eb30ae1783c3a16a5d67ca0736192bedda6b5c03310cb7d  react-dom-server.edge.production.js  https://unpkg.com/react-dom@19.1.1/cjs/react-dom-server.edge.production.js
+679adff761d31e9426604f80c0e99be44a3e6f4c6834b0218ecf0312a67c171f  scheduler.production.js  https://unpkg.com/scheduler@0.26.0/cjs/scheduler.production.js

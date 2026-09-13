@@ -363,6 +363,8 @@ fn swap_source_ext(rel: &Path) -> String {
 ///   (the dumped graph may still spell peer sources `.ds`/`.dsx`; the
 ///   artifact only ever spells `.js`);
 /// - `deka:dev/<id>` becomes a relative path into `server/.values/<id>.js`;
+/// - `@js/react*` runtime builtins are left bare: the artifact loader
+///   serves them from the pinned production graph;
 /// - bare `ui/<name>` specifiers are paused-framework imports: left
 ///   unrewritten here, and skipped by every resolution check below;
 /// - any other bare specifier is left for the loader's module resolution

@@ -212,6 +212,28 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
 
     copy_dir_recursive(&public_dir, &dist_client)?;
 
+    let islands_logical = dist_client.join("assets").join("islands.js");
+    if pool::islands::emit_islands_bundle(&project_root, &dsc, &islands_logical)? {
+        let bytes = fs::read(&islands_logical).map_err(|err| {
+            format!(
+                "failed to read {}: {err}",
+                islands_logical.display()
+            )
+        })?;
+        let digest = runtime_core::dist::sha256_hex(&bytes);
+        let hash = digest.get(..10).unwrap_or(&digest);
+        let hashed = dist_client
+            .join("assets")
+            .join(format!("islands.{hash}.js"));
+        fs::rename(&islands_logical, &hashed).map_err(|err| {
+            format!(
+                "failed to hash islands bundle {} -> {}: {err}",
+                islands_logical.display(),
+                hashed.display()
+            )
+        })?;
+    }
+
     let client_index = dist_client.join("index.html");
     if runtime_core::dist::is_source_app_router_project(&project_root) {
         // Static prerendering (deka build → dist HTML) is paused with the

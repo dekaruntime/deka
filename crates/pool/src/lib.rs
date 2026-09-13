@@ -2,7 +2,9 @@
 
 pub mod dsc_compile;
 pub mod esm_loader;
+pub mod islands;
 pub mod isolate_pool;
+pub mod js_builtins;
 pub mod prelude;
 pub mod secrets_cache;
 pub mod tenant;

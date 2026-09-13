@@ -215,6 +215,20 @@ impl WorkerThread {
                     createSignal: __dekaCreateSignal,
                     createEffect: __dekaCreateEffect,
                     createMemo: __dekaCreateMemo,
+                    renderToString(node) {
+                        const fn = globalThis[Symbol.for("deka.react.renderToString")];
+                        if (typeof fn !== "function") {
+                            throw new Error("deka.ui.renderToString requires React SSR");
+                        }
+                        return { html: fn(node) };
+                    },
+                    renderToStreamHtml(node) {
+                        const fn = globalThis[Symbol.for("deka.react.renderToString")];
+                        if (typeof fn !== "function") {
+                            return Promise.reject(new Error("deka.ui.renderToStreamHtml requires React SSR"));
+                        }
+                        return Promise.resolve(fn(node));
+                    },
                 });
 
                 // Performance API polyfill
