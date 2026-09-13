@@ -17,7 +17,7 @@ cp "$HOME/.deka/bin/dsc" bench/.toolchain/dsc # released dsc 0.52.2
 node bench/run.mjs
 ```
 
-The runner ingests shared markdown into all three apps, runs `npm ci` inside `vite-blog` / `next-blog` only if dependencies are absent, builds and serves each stack in isolation, checks production browser behavior, measures the static variants, then runs dev-server component updates. Toolchain preparation and npm installation are untimed. Close other builds and benchmarks before measuring. On macOS/Linux, the runner also checks `ps` at each timed sample boundary and every 500 ms during a sample for external cargo/rustc/clang/linker/Deka compiler processes, excluding its own process tree and ancestors. It waits while they are active, discards overlapping attempts, and retries until five (or 25 for TTFB) accepted samples exist. JSON preserves waits and discarded values; none are silently removed. This is a compiler-contention check, not an OS reservation: it does not detect every background workload or guarantee detection of processes shorter than the polling interval. Monitoring has the same small overhead for all stacks. It never pauses other work; unsupported platforms report the guard as unsupported. Ports 8760–8764 (production) and 8770/8771/8773 (dev) must be free; Chrome chooses its own port. Missing prerequisites, HTTP errors, missing browser updates, or widget failures fail the command. Samples are never fabricated or silently skipped.
+The runner ingests shared markdown into all three apps, runs `npm ci` inside `vite-blog` / `next-blog` only if dependencies are absent, builds and serves each stack in isolation, checks production browser behavior, measures the static variants, then runs dev-server component updates. Toolchain preparation and npm installation are untimed. Close other builds and benchmarks before measuring. On macOS/Linux, the runner also checks `ps` at each timed sample boundary and every 500 ms during a sample for external cargo/rustc/clang/linker/Deka compiler processes, excluding its own process tree and ancestors. It waits while they are active, discards overlapping attempts, and retries until five (or 25 for TTFB) accepted samples exist. Rejection depends only on detected process overlap, never on measured duration. JSON preserves waits and discarded values; none are silently removed. This is a compiler-contention check, not an OS reservation: it does not detect every background workload or guarantee detection of processes shorter than the polling interval. Monitoring has the same small overhead for all stacks. It never pauses other work; unsupported platforms report the guard as unsupported. Ports 8760–8764 (production) and 8770/8771/8773 (dev) must be free; Chrome chooses its own port. Missing prerequisites, HTTP errors, missing browser updates, or widget failures fail the command. Samples are never fabricated or silently skipped.
 
 Output: the full markdown table on stdout, `last-results.json` (ignored), and committed audit artifacts under [`results/`](results/phase2.md): every sample, CDP clock calibration and reload flag, observed resource URLs, raw + gzip JS sizes, exact commands/versions/binary hashes, and complete production build logs. Results are one local run, not a cross-machine claim or a statistical confidence interval. The source commit in the JSON is the runner's starting HEAD; the final PR diff contains the benchmark changes measured on top of it.
 
@@ -89,3 +89,13 @@ The broader #938 content-edit HMR metric remains follow-up work; this phase's re
 ## Results
 
 See the [full table and machine/toolchain stanza](results/phase2.md), [raw samples and resource audit](results/phase2.json), and [production build logs](results/build-logs.json). All numbers there come from the completed one-command run in this lane. Do not publish a chart without its machine, versions, payload-story label, and reload disclosure.
+
+Final run on 2026-09-13 (macOS 26.6.1, Intel i9-10910, 128 GiB, Node 26.3.1):
+
+| stack | cold build | incremental build | warm TTFB | component update | full reloads |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| deka | 1016.09 ms | 1032.39 ms | 0.88 ms | 110.43 ms | 5/5 |
+| vite | 1096.03 ms | 1078.04 ms | 0.51 ms | 147.26 ms | 0/5 |
+| next | 5129.07 ms | 3265.59 ms | 1.00 ms | 52.21 ms | 0/5 |
+
+Both payload stories and every resource are in the linked results. This run recorded 10 contention waits and 8 discarded overlapping attempts; accepted medians contain exactly 5 build/update or 25 TTFB samples. No other lane was paused.
