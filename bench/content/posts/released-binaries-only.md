@@ -2,15 +2,14 @@
 title: Released binaries only
 date: 2026-03-01
 tags: [tooling, runtime]
-excerpt: Homepage numbers from `cargo run --release` are a preview. Homepage numbers from GitHub releases are a product.
+excerpt: Homepage numbers from an unpublished binary are a preview. Record the commit. Ship the release before the homepage.
 ---
 
-This bench installs `deka 0.52.0` and `dsc 0.52.2` as release artifacts. It does not build the compiler from the commit that contains the bench. That would make the bench a moving target and the number a function of the PR.
+The methodology prefers GitHub releases. Islands hydration landed on `main` in deka#948 and is not in a released `deka` yet, so this clone's deka column runs a **main-build** copied to `bench/.toolchain/`, with the git sha recorded in the results stanza. Vite still uses the pinned npm release. `dsc` stays the released compiler.
 
 ```bash
-# from https://deka.gg/install
-curl -fsSL https://deka.gg/install.sh | DEKA_VERSION=v0.52.0 DSC_VERSION=v0.52.2 sh
+cargo build --release -p cli
+cp target/release/cli bench/.toolchain/deka
 ```
 
-If you are iterating on the compiler, run the bench against the released pair anyway. A regression against yourself is a different chart.
-
+The next deka release replaces that pin. Until then the table says "main-build pending the next release" instead of pretending v0.52.0 hydrated islands.

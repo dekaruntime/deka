@@ -2,7 +2,6 @@
   "name": "deka-bench-blog",
   "type": "serve",
   "serve": { "mode": "ds" },
-  "jsxRuntime": "../../src/ui/index.ds",
   "security": {
     "allow": {},
     "deny": {},

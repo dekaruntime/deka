@@ -3,5 +3,6 @@ interface HtmlProps {
 }
 
 export fn Html(props: HtmlProps) ReactNode {
-  return <div class="prose" data-raw-html={props.html}></div>
+  const raw = { __html: props.html }
+  return <div class="prose" dangerouslySetInnerHTML={raw}></div>
 }

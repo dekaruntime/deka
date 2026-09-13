@@ -57,7 +57,14 @@ export function ThemeToggle() {
   const ctx = useContext(ThemeContext);
   if (!ctx) throw new Error("ThemeToggle requires ThemeProvider");
   return (
-    <button type="button" className="theme-toggle" onClick={ctx.toggle} aria-label="Toggle color theme">
+    <button
+      type="button"
+      id="theme-toggle"
+      className="theme-toggle"
+      data-theme={ctx.theme}
+      onClick={ctx.toggle}
+      aria-label="Toggle color theme"
+    >
       {ctx.theme === "dark" ? "Light" : "Dark"}
     </button>
   );
