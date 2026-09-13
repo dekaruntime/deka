@@ -168,11 +168,19 @@ async fn handle_request(
             }
 
             let mut response = Response::builder().status(response_envelope.status);
-            let is_html = is_html_response(&response_envelope.headers);
+            let is_html = is_html_response(&response_envelope.headers)
+                || looks_like_html(&response_envelope.body);
             let inject_dev_hmr = state.dev_mode
                 && is_html
                 && response_envelope.body_base64.is_none()
                 && !response_envelope.body.is_empty();
+            let has_content_type = response_envelope
+                .headers
+                .keys()
+                .any(|key| key.eq_ignore_ascii_case("content-type"));
+            if is_html && !has_content_type {
+                response = response.header("content-type", "text/html; charset=utf-8");
+            }
 
             for (key, value) in response_envelope.headers {
                 if key.eq_ignore_ascii_case("set-cookie") && value.contains('\n') {
@@ -439,6 +447,12 @@ fn is_html_response(headers: &std::collections::HashMap<String, String>) -> bool
     false
 }
 
+fn looks_like_html(body: &str) -> bool {
+    let trimmed = body.trim_start();
+    let lower = trimmed.get(..32).unwrap_or(trimmed).to_ascii_lowercase();
+    lower.starts_with("<!doctype html") || lower.starts_with("<html")
+}
+
 fn inject_hmr_client(html: &str) -> String {
     const MARKER: &str = "__deka_hmr_client";
     if html.contains(MARKER) {
@@ -462,6 +476,7 @@ fn inject_hmr_client(html: &str) -> String {
         r#"<script id="__deka_hmr_client" type="module">"#,
         include_str!("hmr_client/hydrate.js"),
         include_str!("hmr_client/helpers.js"),
+        include_str!("hmr_client/morph.js"),
         include_str!("hmr_client/patch.js"),
         include_str!("hmr_client/refresh.js"),
         include_str!("hmr_client/socket.js"),
@@ -529,6 +544,16 @@ mod tests {
     }
 
     #[test]
+    fn looks_like_html_sniffs_doctype_without_content_type() {
+        assert!(super::looks_like_html(
+            "<!doctype html>\n<html><body>hi</body></html>"
+        ));
+        assert!(super::looks_like_html("<html lang=\"en\"></html>"));
+        assert!(!super::looks_like_html("{\"html\":\"<div></div>\"}"));
+        assert!(!super::looks_like_html("ok"));
+    }
+
+    #[test]
     fn injects_before_body_close() {
         let html = "<html><body><h1>x</h1></body></html>";
         let out = inject_hmr_client(html);
@@ -552,6 +577,11 @@ mod tests {
         assert!(out.contains("querySelectorAll(\"input,textarea,select\")"));
         assert!(out.contains("data-deka-id"));
         assert!(out.contains("setSelectionRange"));
+        assert!(out.contains("isOutsideIsland"));
+        assert!(out.contains("DEKA-ISLAND"));
+        assert!(out.contains("morphChildren"));
+        assert!(out.contains("html-update"));
+        assert!(out.contains("island-source"));
     }
 
     #[test]
@@ -654,7 +684,8 @@ mod tests {
             !out.contains("/assets/ui/client"),
             "dev client must not hardcode an asset path that content hashing rotates"
         );
-        assert!(out.contains("hmrHydrate(targetNode)"));
+        assert!(out.contains("applyHtmlUpdate"));
+        assert!(out.contains("isIslandElement"));
         assert!(!out.contains("window.deka"));
         // Never defined anywhere in the tree; the guarded call was dead code.
         assert!(!out.contains("__dekaMountDeclarativeShadows"));

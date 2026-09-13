@@ -54,6 +54,7 @@ base64 = "0.22"
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
 axum = "0.7"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 sha2 = "0.10"
 tar = "0.4"
 tokio = { workspace = true }
@@ -65,4 +66,3 @@ self_cmd = { path = "../self_cmd" }
 deka-registry = { path = "../deka_registry" }
 deka-deploy = { path = "../deka_deploy" }
 deka-cache = { path = "../deka_cache" }
-tungstenite = "0.24"

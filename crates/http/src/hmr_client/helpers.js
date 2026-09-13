@@ -7,7 +7,21 @@
     );
 
     function queryElement(selector) {
-      return document.querySelector(selector || "#app");
+      return document.querySelector(selector || "#app") || document.body;
+    }
+
+    function normalizeShadowRootMode(html) {
+      return String(html || "").replace(
+        /shadowrootmode=/gi,
+        "data-shadowrootmode="
+      );
+    }
+
+    function isOutsideIsland(node) {
+      if (!node || !node.closest) {
+        return true;
+      }
+      return !node.closest("deka-island, [data-deka-island], [data-deka-island-id]");
     }
 
     function escapeAttributeSelectorValue(value) {
@@ -18,11 +32,13 @@
 
     function captureFocusedFieldState() {
       var activeElement = document.activeElement;
-      if (
-        !activeElement ||
-        !activeElement.closest ||
-        !activeElement.closest("#app")
-      ) {
+      if (!activeElement || !activeElement.closest) {
+        return null;
+      }
+      if (!isOutsideIsland(activeElement)) {
+        return null;
+      }
+      if (!activeElement.closest("#app") && !document.body.contains(activeElement)) {
         return null;
       }
 
@@ -84,7 +100,7 @@
     }
 
     function captureFormFieldValues() {
-      var appRoot = queryElement("#app");
+      var appRoot = queryElement("#app") || document.body;
       if (!appRoot) {
         return [];
       }
@@ -93,6 +109,9 @@
       var fields = appRoot.querySelectorAll("input,textarea,select");
       for (var index = 0; index < fields.length; index++) {
         var field = fields[index];
+        if (!isOutsideIsland(field)) {
+          continue;
+        }
         var id = field.id || "";
         var name = field.getAttribute("name") || "";
         var deka = field.getAttribute("data-deka-id") || "";

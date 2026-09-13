@@ -207,7 +207,8 @@ async fn render_hmr_payload(
         return reload_payload(changed_paths);
     }
     if let Some(html) = partial_html_from_response(&response) {
-        return build_patch_from_snapshot(path, changed_paths, "#app", &html);
+        let _ = build_patch_from_snapshot(path, changed_paths, "#app", &html);
+        return html_update_payload(changed_paths, "#app", &html);
     }
 
     let response = execute_request_parts(
@@ -225,12 +226,25 @@ async fn render_hmr_payload(
         return reload_payload(changed_paths);
     }
     if let Some(html) = extract_container_inner_html(&response.body, "app") {
-        return build_patch_from_snapshot(path, changed_paths, "#app", &html);
+        let _ = build_patch_from_snapshot(path, changed_paths, "#app", &html);
+        return html_update_payload(changed_paths, "#app", &html);
     }
     if let Some(html) = extract_container_inner_html(&response.body, "body") {
-        return build_patch_from_snapshot(path, changed_paths, "body", &html);
+        let _ = build_patch_from_snapshot(path, changed_paths, "body", &html);
+        return html_update_payload(changed_paths, "body", &html);
     }
     reload_payload(changed_paths)
+}
+
+pub(crate) fn html_update_payload(changed_paths: &[String], selector: &str, html: &str) -> String {
+    serde_json::json!({
+        "type": "html-update",
+        "schema": 1,
+        "paths": changed_paths,
+        "selector": selector,
+        "html": html,
+    })
+    .to_string()
 }
 
 pub(crate) fn build_patch_from_snapshot(
@@ -377,9 +391,19 @@ fn partial_html_from_response(response: &engine::ResponseEnvelope) -> Option<Str
         .map(|v| v.to_string())
 }
 
-fn reload_payload(changed_paths: &[String]) -> String {
+pub(crate) fn reload_payload(changed_paths: &[String]) -> String {
     serde_json::json!({
         "type": "reload",
+        "paths": changed_paths,
+    })
+    .to_string()
+}
+
+pub(crate) fn island_reload_payload(changed_paths: &[String]) -> String {
+    serde_json::json!({
+        "type": "reload",
+        "schema": 1,
+        "reason": "island-source",
         "paths": changed_paths,
     })
     .to_string()

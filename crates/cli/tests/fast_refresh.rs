@@ -326,10 +326,14 @@ fn app_router_headers_and_document_edit_reload_are_visible_over_http_and_ws() {
         }) {
             continue;
         }
-        assert_eq!(payload["type"], "js-update", "{payload}");
-        assert_eq!(
-            payload["modules"][0]["families"],
-            serde_json::json!(["app/page.dsx Page"])
+        // Post-#956, a non-island document edit is pushed as an html-update
+        // (state-preserving morph), not a js-update reload cycle.
+        assert_eq!(payload["type"], "html-update", "{payload}");
+        assert!(
+            payload["html"]
+                .as_str()
+                .is_some_and(|html| html.contains("after-edit-955")),
+            "{payload}"
         );
         // No retry/poll after the WS frame: stale content here is a regression.
         let response = client.get(&url).send().unwrap();
@@ -339,18 +343,9 @@ fn app_router_headers_and_document_edit_reload_are_visible_over_http_and_ws() {
             html.contains("after-edit-955") && !html.contains("before-edit-955"),
             "first post-notification response is stale: {html}"
         );
-        let client_script =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../http/tests/refresh_client.mjs");
-        let output = Command::new("node")
-            .arg(client_script)
-            .arg(payload.to_string())
-            .output()
-            .expect("execute shipped refresh client");
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        // The shipped refresh client's js-update contract is covered by the
+        // react_refresh lib tests; the html-update morph path has its own
+        // real-topology e2e in server_fast_refresh.rs.
         break;
     }
 }
