@@ -132,7 +132,8 @@ const MODULE_SHIMS: Record<string, string> = {
 
 async function evaluateInFreshPage(
   jsCode: string,
-  projectModules?: Record<string, string>
+  projectModules?: Record<string, string>,
+  envGranted = false
 ): Promise<HarnessRun> {
   if (!browser || !harnessBundlePath) {
     throw new Error(browserUnavailableReason ?? 'browser host not started')
@@ -185,17 +186,20 @@ async function evaluateInFreshPage(
   const page = await context.newPage()
   try {
     await page.addScriptTag({ path: harnessBundlePath })
-    return await page.evaluate(async (code: string) => {
-      const g = globalThis as unknown as {
-        __dekaRunJs: (js: string) => Promise<HarnessRun>
-        __dekaTerminate?: () => void
-      }
-      try {
-        return await g.__dekaRunJs(code)
-      } finally {
-        g.__dekaTerminate?.()
-      }
-    }, jsCode)
+    return await page.evaluate(
+      async ({ code, envGranted: granted }: { code: string; envGranted: boolean }) => {
+        const g = globalThis as unknown as {
+          __dekaRunJs: (js: string, options?: { envGranted?: boolean }) => Promise<HarnessRun>
+          __dekaTerminate?: () => void
+        }
+        try {
+          return await g.__dekaRunJs(code, granted ? { envGranted: true } : undefined)
+        } finally {
+          g.__dekaTerminate?.()
+        }
+      },
+      { code: jsCode, envGranted }
+    )
   } finally {
     await context.close()
   }
@@ -203,7 +207,8 @@ async function evaluateInFreshPage(
 
 export async function runCompiledJsInBrowser(
   jsCode: string,
-  projectModules?: Record<string, string>
+  projectModules?: Record<string, string>,
+  envGranted = false
 ): Promise<BrowserRunResult> {
   if (!browser) {
     return {
@@ -226,13 +231,13 @@ export async function runCompiledJsInBrowser(
   })
 
   try {
-    return toResult(await evaluateInFreshPage(jsCode, projectModules))
+    return toResult(await evaluateInFreshPage(jsCode, projectModules, envGranted))
   } catch (error) {
     // Retry only closed-browser / protocol failures. A Deka program that
     // returns ok:false is a fixture finding, never an infra retry.
     if (isInfraError(error) && (await relaunchBrowser())) {
       try {
-        return toResult(await evaluateInFreshPage(jsCode, projectModules))
+        return toResult(await evaluateInFreshPage(jsCode, projectModules, envGranted))
       } catch (retryError) {
         const message = retryError instanceof Error ? retryError.message : String(retryError)
         return {
@@ -266,7 +271,8 @@ export async function runCompiledJsInBrowser(
  */
 export async function runProjectInBrowser(
   entryPath: string,
-  compileResult: BuildCompileProjectResult
+  compileResult: BuildCompileProjectResult,
+  envGranted = false
 ): Promise<BrowserRunResult> {
   const diagnostics = compileResult.diagnostics.map((d) => ({
     severity: d.severity,
@@ -290,7 +296,7 @@ export async function runProjectInBrowser(
     Object.entries(compileResult.modules).map(([modulePath, module]) => [modulePath, module.code])
   )
   const loader = projectLoaderJs(entryPath)
-  const runResult = await runCompiledJsInBrowser(loader, projectModules)
+  const runResult = await runCompiledJsInBrowser(loader, projectModules, envGranted)
   if (!runResult.ok && runResult.error) {
     diagnostics.push({ severity: 'error', message: runResult.error })
   }
