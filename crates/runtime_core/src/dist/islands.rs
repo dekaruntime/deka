@@ -116,7 +116,7 @@ fn client_tags(src: &str) -> Vec<(String, String)> {
 
 fn resolve_island_module(src: &str, file: &Path, name: &str) -> Option<PathBuf> {
     let parent = file.parent().unwrap_or(file);
-    for spec in import_specs_for(src, name) {
+    if let Some(spec) = import_specs_for(src, name).into_iter().next() {
         let resolved = parent.join(spec);
         return Some(normalize_path(&resolved));
     }
