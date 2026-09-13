@@ -1,12 +1,12 @@
 use anyhow::{Context as AnyhowContext, Result, bail};
-use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
+use deka_cli_core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
 use serde_json::Value;
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
 use stdio;
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "pm",
     name: "release",
     category: "package",
     summary: "bump, tag, push, and publish a package release",

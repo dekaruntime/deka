@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, Registry};
+use deka_cli_core::{CommandSpec, Context, Registry};
 use std::io::{IsTerminal, Write};
 
 pub fn register(registry: &mut Registry) {
@@ -25,7 +25,7 @@ fn cmd(context: &Context) {
             .ancestors()
             .find(|path| path.join("deka.json").is_file())
             .ok_or_else(|| anyhow::anyhow!("summon requires deka.json; run deka init first"))?;
-        pm::summon::summon_at(project, source, |name| {
+        crate::summon::summon_at(project, source, |name| {
             if !std::io::stdin().is_terminal() && !context.args.flags.contains_key("--prompt") {
                 anyhow::bail!(
                     "summon conflict: @js/{name} already exists; use --prompt to choose a different vendor name"
@@ -64,7 +64,8 @@ fn cmd(context: &Context) {
 mod tests {
     #[test]
     fn shim_registers_summon_with_pm_owner() {
-        let registry = crate::build_registry();
+        let mut registry = deka_cli_core::Registry::new();
+        super::register(&mut registry);
         let command = registry
             .commands()
             .iter()

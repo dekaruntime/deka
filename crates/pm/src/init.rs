@@ -1,9 +1,9 @@
-use core::{CommandSpec, Context, Registry};
+use deka_cli_core::{CommandSpec, Context, Registry};
 use std::path::Path;
 use stdio::{error as stdio_error, raw};
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "pm",
     name: "init",
     category: "project",
     summary: "initialize a new app project",

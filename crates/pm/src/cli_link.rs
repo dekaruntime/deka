@@ -1,10 +1,10 @@
-use core::{CommandSpec, Context, Registry};
-use pm::{link_package_at, unlink_package_at};
+use deka_cli_core::{CommandSpec, Context, Registry};
+use crate::{link_package_at, unlink_package_at};
 use std::path::{Path, PathBuf};
 use stdio;
 
 const LINK_COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "pm",
     name: "link",
     category: "package",
     summary: "link a local package working tree into this project",
@@ -14,7 +14,7 @@ const LINK_COMMAND: CommandSpec = CommandSpec {
 };
 
 const UNLINK_COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "pm",
     name: "unlink",
     category: "package",
     summary: "remove a local package link without touching its target",
