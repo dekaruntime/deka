@@ -19,6 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { uncontended, contention } from "./lib/contention.mjs";
 import { ingest } from "./lib/ingest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -202,7 +203,7 @@ async function series(label, n, fn) {
   const samples = [];
   for (let i = 0; i < n; i++) {
     process.stderr.write(`  ${label} ${i + 1}/${n}\n`);
-    samples.push(await fn(i));
+    samples.push(await uncontended(`${label} ${i + 1}/${n}`, attempt => fn(i, attempt)));
   }
   return { samples, median: median(samples) };
 }
@@ -283,7 +284,7 @@ async function ttfb(url) {
   });
   try {
     for (let i = 0; i < 5; i++) await sample();
-    return await series('warm TTFB', 25, sample);
+    return await series('warm TTFB', 25, async () => { await sample(); return sample(); });
   } finally { agent.destroy(); }
 }
 
@@ -298,8 +299,8 @@ async function builds(name, command, cwd, file, clean, extraEnv) {
   };
   try {
     const cold = await series(`${name} cold`, RUNS, async () => { clean(); return timed(); });
-    const incremental = await series(`${name} incremental`, RUNS, async i => {
-      writeFileSync(file, original.replace("Read post</span>", `Read post ${i + 1}</span>`));
+    const incremental = await series(`${name} incremental`, RUNS, async (i, attempt) => {
+      writeFileSync(file, original.replace("Read post</span>", `Read post ${i + 1} attempt ${attempt}</span>`));
       return timed();
     });
     return { cold, incremental };
@@ -341,8 +342,10 @@ async function hmr(name, command, root, file, port, extraEnv) {
       const samples = [];
       for (let i = 0; i < RUNS; i++) {
         process.stderr.write(`  ${name} HMR ${i + 1}/${RUNS}\n`);
-        const label = `Read post ${i + 1}`;
-        samples.push(await editLatency(browser, file, original.replace('Read post</span>', `${label}</span>`), label, '[data-bench-edit=card]'));
+        samples.push(await uncontended(`${name} HMR ${i + 1}/${RUNS}`, async attempt => {
+          const label = `Read post ${i + 1} attempt ${attempt}`;
+          return editLatency(browser, file, original.replace('Read post</span>', `${label}</span>`), label, '[data-bench-edit=card]');
+        }));
         await sleep(500);
       }
       return { median: median(samples.map(s => s.ms)), samples, fullReloads: samples.filter(s => s.fullReload).length };
@@ -364,6 +367,7 @@ function table(report) {
   }
   out += '\n## Chromium widget checks\n\n';
   for (const [name, r] of rows) out += `- ${name}: ${r.interactive.widgets.theme}; ${r.interactive.widgets.newsletter}\n`;
+  out += `\nContention audit: ${report.contention.waits.length} waits, ${report.contention.discarded.length} discarded overlapping attempts (excluded from medians; preserved in JSON). External compiler checks run at sample boundaries and every ${report.contention.pollMs} ms during samples on macOS/Linux.\n`;
   out += '\nHMR uses the actual PostCard boundary each framework ships; any full reload is disclosed above. Content-edit HMR remains outside this phase’s component-edit task. Reproduce: `node bench/run.mjs`. See README for clock calibration, cold-cache definition, and serve commands.\n';
   return out;
 }
@@ -428,6 +432,7 @@ async function main() {
     stack.clean(); // dev must not serve the preceding production artifact
     report.results[name].hmr = await hmr(name, stack.dev, stack.root, stack.file, stack.port + 10, stack.env);
   }
+  report.contention = contention;
   report.generatedAt = new Date().toISOString();
   mkdirSync(resultsDir, { recursive: true });
   writeFileSync(join(here, 'last-results.json'), JSON.stringify(report, null, 2) + '\n');
