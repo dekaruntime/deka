@@ -81,7 +81,7 @@ mod tests {
         );
         #[cfg(feature = "native")]
         {
-            let rewritten = crate::cli::user_cache::rewrite_context_for_artifact(
+            let rewritten = deka_cache::rewrite_context_for_artifact(
                 &original,
                 &root.path().join("artifact.js"),
             )

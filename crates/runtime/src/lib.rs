@@ -9,6 +9,9 @@ use std::sync::OnceLock;
 mod artifact_loader;
 mod asset_urls;
 mod build_values;
+mod command_platform;
+mod command_run;
+mod command_serve;
 mod dsc_transpile;
 mod extensions;
 mod js_pipeline;
@@ -16,6 +19,44 @@ mod platform;
 mod run;
 pub mod security;
 mod serve;
+
+static DEV_SERVE: OnceLock<fn(&Context)> = OnceLock::new();
+
+/// Installed by the `dev` crate during registry composition so `deka serve --dev`
+/// can dispatch without a `runtime` → `dev` crate cycle.
+pub fn set_dev_serve(handler: fn(&Context)) {
+    let _ = DEV_SERVE.set(handler);
+}
+
+pub(crate) fn invoke_dev_serve(context: &Context) {
+    match DEV_SERVE.get() {
+        Some(handler) => handler(context),
+        None => {
+            stdio::error("serve", "dev dispatcher is not installed");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub fn register(registry: &mut core::Registry) {
+    register_run(registry);
+    register_platform(registry);
+    register_serve(registry);
+}
+
+pub fn register_run(registry: &mut core::Registry) {
+    command_run::register(registry);
+}
+
+pub fn register_platform(registry: &mut core::Registry) {
+    command_platform::register(registry);
+}
+
+pub fn register_serve(registry: &mut core::Registry) {
+    command_serve::register(registry);
+}
+
+pub use command_serve::serves_built_artifact;
 
 pub fn run(context: &Context) {
     run::run(context);

@@ -7,46 +7,13 @@
 //! crate only decides *which* slots changed and logs the decision.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 use runtime_core::dist::{
     BuildManifest, SlotInvalidation, affected_slots, compiler_cache_dir_with,
 };
 
-/// What one watch event asks the refresh hook to do.
-#[derive(Debug, Clone, Default)]
-pub struct BuildSlotRefreshRequest {
-    /// Observation-matched slot ids whose source files did not change (their
-    /// compiler ids are still current).
-    pub slots: Vec<String>,
-    /// Source files (project-relative spelling) whose own content changed.
-    /// Slot ids embed the compiler span, so an edit above a `build {}` block
-    /// changes its id and the manifest's ids for these files are stale: the
-    /// hook must replan the file and rematerialize every slot it NOW
-    /// declares, replacing the file's manifest slots wholesale (Codex review
-    /// of deka#729).
-    pub replan_files: Vec<String>,
-}
-
-impl BuildSlotRefreshRequest {
-    /// Every planned slot: the watcher could not prove relevance (no build
-    /// manifest). Implementations must treat it as a deliberate, logged
-    /// coarse rebuild.
-    pub fn coarse() -> Self {
-        Self::default()
-    }
-
-    /// Both lists empty: the watcher could not prove relevance (no build
-    /// manifest) — implementations must rematerialize every planned slot as
-    /// a deliberate, logged coarse rebuild.
-    pub fn is_coarse(&self) -> bool {
-        self.slots.is_empty() && self.replan_files.is_empty()
-    }
-}
-
-/// Rematerializes build slots for `project_root` per the request.
-pub type BuildSlotRefresh =
-    Arc<dyn Fn(&Path, BuildSlotRefreshRequest) -> Result<(), String> + Send + Sync + 'static>;
+pub use deka_build::{BuildSlotRefresh, BuildSlotRefreshRequest};
 
 fn refresh_hook() -> &'static Mutex<Option<BuildSlotRefresh>> {
     static HOOK: OnceLock<Mutex<Option<BuildSlotRefresh>>> = OnceLock::new();

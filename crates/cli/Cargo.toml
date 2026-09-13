@@ -7,63 +7,60 @@ edition = "2024"
 default = ["native"]
 native = [
   "dep:compile",
-  "dep:pm",
+  "dep:compiler",
   "dep:runtime",
   "dep:dev",
-  "dep:pool",
   "dep:introspect",
-  "dep:tokio",
-  "dep:postgres",
-  "dep:deka_host",
-  "dep:rusqlite",
-  "dep:deno_task_shell",
-  "dep:ctrlc",
+  "dep:deka-build",
+  "dep:deka-cache",
+  "dep:deka-task",
+  "dep:deka-test",
+  "dep:deka-deploy",
+  "dep:deka-registry",
+  "dep:self_cmd",
 ]
-lsp = ["dep:deka-lsp"]
+lsp = ["compiler/lsp"]
 
 [dependencies]
-deka-modules = "0.3.0"
 serve = { path = "../serve" }
-compiler = { path = "../compiler" }
 run = { path = "../run" }
-security = { path = "../security" }
-runtime = { path = "../runtime", optional = true }
-dev = { path = "../dev", optional = true }
-pool = { path = "../pool", optional = true }
-runtime_core = { path = "../runtime_core" }
-compile = { path = "../compile", optional = true }
-core = { path ="../core" }
+core = { path = "../core" }
 stdio = "0.4.0"
-introspect = { path = "../introspect", optional = true }
 wasm_cli = { path = "../wasm_cli" }
-pm = { workspace = true, optional = true }
-anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.13", features = ["blocking", "form", "json"] }
-tokio = { version = "1.35", features = ["rt-multi-thread", "net", "io-util"], optional = true }
-postgres = { version = "0.19", optional = true }
-deka-lsp = { version = "0.1.0", optional = true }
-deka_host = { path = "../deka_host", optional = true, default-features = false, features = ["runtime"] }
-rusqlite = { version = "0.32", optional = true }
-sha2 = "0.10"
-ctrlc = { version = "3", optional = true }
-deno_task_shell = { version = "0.29.0", optional = true }
-glob = "0.3.1"
-serde_yaml = "0.9"
-libc = "0.2"
-tempfile = "3.23.0"
-flate2 = "1.0"
-tar = "0.4"
+pm = { workspace = true }
+deka-db = { path = "../deka_db" }
+compile = { path = "../compile", optional = true }
+compiler = { path = "../compiler", optional = true }
+runtime = { path = "../runtime", optional = true }
+dev = { path = "../dev", optional = true }
+runtime_core = { path = "../runtime_core" }
+introspect = { path = "../introspect", optional = true }
+deka-build = { path = "../deka_build", optional = true }
+deka-cache = { path = "../deka_cache", optional = true }
+deka-task = { path = "../deka_task", optional = true }
+deka-test = { path = "../deka_test", optional = true }
+deka-deploy = { path = "../deka_deploy", optional = true }
+deka-registry = { path = "../deka_registry", optional = true }
+self_cmd = { path = "../self_cmd", optional = true }
 
 [dev-dependencies]
 permissions = { path = "../permissions" }
 tempfile = "3.23.0"
 flate2 = "1.0"
 base64 = "0.22"
-# deka#755/RFD 27: grant fixtures need the fsGraph digest the lockfile pins,
-# exactly as `deka install` computes it.
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
-# deka#797: the grant-table plumbing e2e serves the deka.gg registry + R2 CDN
-# shape from a local fixture server and runs the real `deka add` against it.
 axum = "0.7"
+reqwest = { version = "0.13", features = ["blocking", "json"] }
+sha2 = "0.10"
+tar = "0.4"
+tokio = { workspace = true }
+pool = { path = "../pool" }
+deka-modules = "0.3.0"
+deka-db = { path = "../deka_db" }
+pm = { workspace = true }
+self_cmd = { path = "../self_cmd" }
+deka-registry = { path = "../deka_registry" }
+deka-deploy = { path = "../deka_deploy" }
+deka-cache = { path = "../deka_cache" }

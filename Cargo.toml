@@ -25,6 +25,14 @@ members = [
     "crates/wasm_guest_macros",
     "crates/wasm_cli",
     "crates/pm",
+    "crates/deka_db",
+    "crates/deka_task",
+    "crates/deka_deploy",
+    "crates/deka_registry",
+    "crates/deka_test",
+    "crates/self_cmd",
+    "crates/deka_cache",
+    "crates/deka_build",
 ]
 
 [workspace.package]

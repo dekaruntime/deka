@@ -8,8 +8,10 @@
 
 mod banner;
 pub mod build_watch;
+mod command;
 mod serve;
 mod watch;
 
 pub use banner::{announce_listen, ensure_compiler_cache, prepare, print_banner};
+pub use command::register;
 pub use serve::{serve, serve_with_dsc};

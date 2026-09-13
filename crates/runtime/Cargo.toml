@@ -23,6 +23,7 @@ deka_http = { path = "../http" }
 stdio = "0.4.0"
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
 compile = { path = "../compile" }
+deka-cache = { path = "../deka_cache" }
 axum = { workspace = true }
 base64 = "0.21"
 deno_core = { workspace = true }
