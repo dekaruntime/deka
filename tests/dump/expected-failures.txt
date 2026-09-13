@@ -88,3 +88,28 @@ modules-export-async-fn
 # vs wasm single-file typeck. Native assertion kept. See
 # docs/dekascript/missing-module-diagnostics.mdx.
 modules-import-non-relative-001
+
+# deka#930: native now ships sibling foreign.mjs and produces the real
+# summon diagnostic. Wasm still reports module verification unsupported.
+summon-arity-mismatch
+summon-async-return
+summon-boundary-checked
+summon-boundary-total
+summon-marshal-option
+summon-missing-export
+summon-missing-total
+summon-native-throw
+summon-non-function
+summon-opaque-construct
+summon-opaque-destructure
+summon-opaque-field
+summon-opaque-hold
+summon-opaque-nominal
+summon-private-escape
+summon-private-export
+summon-unhandled-exception
+summon-void-exempt
+
+# Documented per-host difference (deka#927 / deka#928): native accepts
+# `new URL("://invalid")`; Chromium rejects it.
+unsafe-unsafe-url-err

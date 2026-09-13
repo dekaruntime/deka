@@ -29,6 +29,12 @@ for (const test of selected) {
     if ((result.ok ? 'pass' : 'fail') !== test.status) return `${label} status mismatch: got ${result.ok ? 'pass' : 'fail'}, want ${test.status}`
     const expected = test.expectedStdout ?? ''
     if (result.stdout !== expected) return `${label} stdout mismatch: got ${JSON.stringify(result.stdout)}, want ${JSON.stringify(expected)}`
+    if (test.expectedExitCode !== undefined) {
+      const actualExit = result.exitCode ?? (result.ok ? 0 : 1)
+      if (actualExit !== test.expectedExitCode) {
+        return `${label} exit-code mismatch: got ${actualExit}, want ${test.expectedExitCode}`
+      }
+    }
     if (!ignoreCode && test.expectedCode !== undefined) return `${label} formatted-code mismatch (formatter drift, not runtime)`
     return `${label} mismatch`
   }
@@ -48,7 +54,7 @@ for (const test of selected) {
     for (const problem of problems) console.error(`  ${problem}`)
     console.error(`  browser: ${JSON.stringify({ ok: test.wasmResult.ok, stage: test.wasmResult.stage, stdout: test.wasmResult.stdout, error: test.wasmResult.error, formattedCode: test.wasmResult.formattedCode })}`)
     console.error(`  native:  ${JSON.stringify({ ok: test.nativeResult.ok, stage: test.nativeResult.stage, stdout: test.nativeResult.stdout, error: test.nativeResult.error })}`)
-    console.error(`  expect:  ${JSON.stringify({ status: test.status, stage: test.stage, stdout: test.expectedStdout, code: test.expectedCode })}`)
+    console.error(`  expect:  ${JSON.stringify({ status: test.status, stage: test.stage, stdout: test.expectedStdout, code: test.expectedCode, exit: test.expectedExitCode })}`)
   } else {
     console.log(`[smoke] ok ${test.slug}`)
   }

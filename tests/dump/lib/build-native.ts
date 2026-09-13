@@ -47,6 +47,7 @@ export interface NativeRunResult {
   error?: string
   transpileFailed: boolean
   emittedJs?: string
+  exitCode?: number
   diagnostics: Array<{
     severity: 'error' | 'warning' | 'info'
     message: string
@@ -443,6 +444,7 @@ export async function runNativeCli(
           stderr: installed.stderr,
           error: installed.error,
           transpileFailed: true,
+          exitCode: 1,
           diagnostics: installed.error
             ? [{ severity: 'error', message: installed.error }]
             : [],
@@ -502,6 +504,7 @@ export async function runNativeCli(
       error: failed ? firstError : undefined,
       transpileFailed: failed && !ranInIsolate,
       emittedJs,
+      exitCode: spawned.status ?? (failed ? 1 : 0),
       diagnostics,
     }
   } finally {

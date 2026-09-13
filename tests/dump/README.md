@@ -24,6 +24,13 @@ bundles that with the pinned tour checkout (`./tour`, from
 `deka self fetch tour`) and the pinned testsuite corpus (`./testsuite`) for
 R2.
 
+Corpus `.code` sidecars follow dsc's Hats runner: a file whose trimmed body is
+a decimal integer is a process exit code, not formatted source (deka#929).
+The collector copies fixture-local `.ds`/`.dsx`/`.css`/`.mjs` into the native
+tmpdir the way that runner does, so summon fixtures keep their sibling
+`foreign.mjs` (deka#930). Wasm still cannot verify summon; those rows stay
+listed host gaps.
+
 The native package cache stores installed modules, `deka.lock`, and the optional
 `deka.grants.json` together under `.cache/deka-packages/with-grants-v1/`.
 Older cache entries are bypassed because they omitted installer-issued grants.
