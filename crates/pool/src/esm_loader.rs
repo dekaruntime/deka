@@ -688,6 +688,14 @@ mod tests {
             )
             .expect("builtin specifier");
         assert_eq!(resolved.as_str(), "deka:///js/jsx-runtime.js");
+        let client = loader
+            .resolve(
+                "@js/react-dom/client",
+                "file:///handler.js",
+                ResolutionKind::Import,
+            )
+            .expect("client builtin");
+        assert_eq!(client.as_str(), "deka:///js/react-dom-client.js");
         assert!(!root.path().join("ds_modules").exists());
         assert!(!root.path().join("js_modules").exists());
 

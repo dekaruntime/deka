@@ -1,11 +1,15 @@
-React and react-dom are MIT-licensed by Meta Platforms, Inc.
+React, react-dom, and scheduler are MIT-licensed by Meta Platforms, Inc.
 Pinned versions:
   react@19.1.1
   react-dom@19.1.1
+  scheduler@0.26.0
 See licenses/ for the full license texts.
 These production builds ship as always-on runtime builtins for
-@js/react, @js/react/jsx-runtime, and @js/react-dom/server (rfd#64 amendment 2).
+@js/react, @js/react/jsx-runtime, @js/react-dom/server, and
+@js/react-dom/client (rfd#64 amendment 2).
 `react-dom/server` uses the edge production build (WinterTC isolate; no
 browser MessageChannel) plus the browser legacy build for renderToString.
+`react-dom/client` is the browser hydrateRoot/createRoot entry; it requires
+the scheduler production build.
 The development React tree under crates/http/vendor/react/ stays feature-gated
 for `deka dev` Fast Refresh.

@@ -19,6 +19,7 @@ install. They are **not** summoned packages and must **not** be listed in
 import { useState, useEffect, useContext } from "@js/react";
 import { jsx } from "@js/react/jsx-runtime";
 import { renderToString } from "@js/react-dom/server";
+import { createRoot, hydrateRoot } from "@js/react-dom/client";
 ```
 
 `deka run`, `deka serve`, and `deka build --bundle` all resolve those

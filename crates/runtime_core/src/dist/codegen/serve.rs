@@ -102,7 +102,10 @@ pub fn generate_app_router_entry_source(
     } else {
         index_html.to_string()
     };
-    let scripts = defer_script_tag(!deferred.is_empty());
+    let mut scripts = defer_script_tag(!deferred.is_empty());
+    if !super::super::islands::scan_client_islands(project_root).is_empty() {
+        scripts.push_str(&super::super::islands::islands_script_tag());
+    }
     let defer_secret_js = if deferred.is_empty() {
         String::new()
     } else {

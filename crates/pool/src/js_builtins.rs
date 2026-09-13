@@ -39,7 +39,12 @@ pub const URL_PREFIX: &str = "deka:///js/";
 /// summoned `@js/<name>` does not support them, which is why these cannot
 /// go through `js_modules/`. Single list: `file_for_user_spec` / `is_builtin`
 /// and the dsc-externals rewrite all read this.
-pub const USER_SPECS: &[&str] = &["@js/react", "@js/react/jsx-runtime", "@js/react-dom/server"];
+pub const USER_SPECS: &[&str] = &[
+    "@js/react",
+    "@js/react/jsx-runtime",
+    "@js/react-dom/server",
+    "@js/react-dom/client",
+];
 
 /// Distinctive development-build strings. Production output must not contain
 /// these (the deka#937 feature-gate lesson).
@@ -47,6 +52,7 @@ pub const DEV_BYTE_PROBES: &[&str] = &[
     "react.development.js",
     "react-jsx-dev-runtime.development.js",
     "react-dom-client.development.js",
+    "scheduler.development.js",
     "injectIntoGlobalHook",
     "jsxDEV(",
     "You are calling ReactDOMClient.createRoot()",
@@ -58,6 +64,9 @@ const REACT_CJS: &str = include_str!("../vendor/react-prod/cjs/react.production.
 const JSX_RUNTIME_CJS: &str =
     include_str!("../vendor/react-prod/cjs/react-jsx-runtime.production.js");
 const REACT_DOM_CJS: &str = include_str!("../vendor/react-prod/cjs/react-dom.production.js");
+const REACT_DOM_CLIENT_CJS: &str =
+    include_str!("../vendor/react-prod/cjs/react-dom-client.production.js");
+const SCHEDULER_CJS: &str = include_str!("../vendor/react-prod/cjs/scheduler.production.js");
 const SERVER_LEGACY_CJS: &str =
     include_str!("../vendor/react-prod/cjs/react-dom-server-legacy.browser.production.js");
 const SERVER_BROWSER_CJS: &str =
@@ -66,6 +75,9 @@ const SERVER_BROWSER_CJS: &str =
 const REACT_SHA: &str = "f1e2323f141be9d9379c612eeabd7f282f052e60116547395780b032a6f0770d";
 const JSX_RUNTIME_SHA: &str = "1e46f15002696985e80c61d47aaa30dabb03c954270a690f5f7dfbbacfa9002b";
 const REACT_DOM_SHA: &str = "f518694f8588dacc9acf35452bbeb18f98174bc2e3eb1bf1181b7fbb4a0f0295";
+const REACT_DOM_CLIENT_SHA: &str =
+    "b42d9ab70da856b96e240e3d010b08f4284113cf568b1b2a2aa1f251977eeb37";
+const SCHEDULER_SHA: &str = "679adff761d31e9426604f80c0e99be44a3e6f4c6834b0218ecf0312a67c171f";
 const SERVER_LEGACY_SHA: &str = "cf3928705cd3051cb8fb88da14811aee4ac4320e4eb4caa5193996019d7cf008";
 const SERVER_BROWSER_SHA: &str = "8b316fa071e1fb0e4eb30ae1783c3a16a5d67ca0736192bedda6b5c03310cb7d";
 
@@ -110,7 +122,26 @@ const REACT_EXPORTS: &[&str] = &[
     "useTransition",
     "version",
 ];
-const JSX_RUNTIME_EXPORTS: &[&str] = &["Fragment", "jsx", "jsxs"];
+const JSX_RUNTIME_EXPORTS: &[&str] = &["Fragment"];
+const REACT_DOM_CLIENT_EXPORTS: &[&str] = &["createRoot", "hydrateRoot", "version"];
+const SCHEDULER_EXPORTS: &[&str] = &[
+    "unstable_IdlePriority",
+    "unstable_ImmediatePriority",
+    "unstable_LowPriority",
+    "unstable_NormalPriority",
+    "unstable_Profiling",
+    "unstable_UserBlockingPriority",
+    "unstable_cancelCallback",
+    "unstable_forceFrameRate",
+    "unstable_getCurrentPriorityLevel",
+    "unstable_next",
+    "unstable_now",
+    "unstable_requestPaint",
+    "unstable_runWithPriority",
+    "unstable_scheduleCallback",
+    "unstable_shouldYield",
+    "unstable_wrapCallback",
+];
 const REACT_DOM_EXPORTS: &[&str] = &[
     "__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE",
     "createPortal",
@@ -147,6 +178,7 @@ pub fn file_for_user_spec(spec: &str) -> Option<&'static str> {
         "@js/react" => Some("react.js"),
         "@js/react/jsx-runtime" => Some("jsx-runtime.js"),
         "@js/react-dom/server" => Some("react-dom-server.js"),
+        "@js/react-dom/client" => Some("react-dom-client.js"),
         _ => None,
     }
 }
@@ -184,6 +216,8 @@ pub fn esm_for_file(file: &str) -> Option<&'static str> {
         "react.js" => Some(react_esm()),
         "jsx-runtime.js" => Some(jsx_runtime_esm()),
         "react-dom.js" => Some(react_dom_esm()),
+        "react-dom-client.js" => Some(react_dom_client_esm()),
+        "scheduler.js" => Some(scheduler_esm()),
         "react-dom-server-legacy.js" => Some(server_legacy_esm()),
         "react-dom-server-browser.js" => Some(server_browser_esm()),
         "react-dom-server.js" => Some(server_esm()),
@@ -209,6 +243,11 @@ fn add_reachable<'a>(needed: &mut BTreeSet<&'a str>, file: &'a str) {
     }
     match file {
         "react-dom.js" => add_reachable(needed, "react.js"),
+        "react-dom-client.js" => {
+            add_reachable(needed, "react.js");
+            add_reachable(needed, "react-dom.js");
+            add_reachable(needed, "scheduler.js");
+        }
         "react-dom-server-legacy.js" | "react-dom-server-browser.js" => {
             add_reachable(needed, "react.js");
             add_reachable(needed, "react-dom.js");
@@ -333,6 +372,12 @@ fn push_stub_export(body: &mut String, name: &str, emitted: &mut BTreeSet<String
         body.push_str("export const version: string = \"\"\n");
         return;
     }
+    if name == "hydrateRoot" || name == "createRoot" {
+        body.push_str("export fn ");
+        body.push_str(name);
+        body.push_str("(container: ReactNode, node: ReactNode) ReactNode {\n  return node\n}\n");
+        return;
+    }
     body.push_str("export fn ");
     body.push_str(name);
     body.push_str("(node: ReactNode) string {\n  return \"\"\n}\n");
@@ -364,7 +409,9 @@ pub fn inline_into(js: &str) -> Result<String, String> {
     for file in [
         "react.js",
         "jsx-runtime.js",
+        "scheduler.js",
         "react-dom.js",
+        "react-dom-client.js",
         "react-dom-server-legacy.js",
         "react-dom-server-browser.js",
         "react-dom-server.js",
@@ -416,6 +463,8 @@ fn registry_key(file: &str) -> &'static str {
         "react.js" => "react",
         "jsx-runtime.js" => "react/jsx-runtime",
         "react-dom.js" => "react-dom",
+        "react-dom-client.js" => "react-dom/client",
+        "scheduler.js" => "scheduler",
         "react-dom-server-legacy.js" => "react-dom-server-legacy",
         "react-dom-server-browser.js" => "react-dom-server-browser",
         "react-dom-server.js" => "react-dom/server",
@@ -428,6 +477,8 @@ fn cjs_for_file(file: &str) -> Option<(&'static str, &'static str)> {
         "react.js" => Some((REACT_CJS, REACT_SHA)),
         "jsx-runtime.js" => Some((JSX_RUNTIME_CJS, JSX_RUNTIME_SHA)),
         "react-dom.js" => Some((REACT_DOM_CJS, REACT_DOM_SHA)),
+        "react-dom-client.js" => Some((REACT_DOM_CLIENT_CJS, REACT_DOM_CLIENT_SHA)),
+        "scheduler.js" => Some((SCHEDULER_CJS, SCHEDULER_SHA)),
         "react-dom-server-legacy.js" => Some((SERVER_LEGACY_CJS, SERVER_LEGACY_SHA)),
         "react-dom-server-browser.js" => Some((SERVER_BROWSER_CJS, SERVER_BROWSER_SHA)),
         _ => None,
@@ -673,17 +724,60 @@ fn react_esm() -> &'static str {
 fn jsx_runtime_esm() -> &'static str {
     static CELL: OnceLock<String> = OnceLock::new();
     CELL.get_or_init(|| {
-        wrap_cjs(
+        let mut out = wrap_cjs(
             &format!("https://unpkg.com/react@{REACT_VERSION}/cjs/react-jsx-runtime.production.js"),
             JSX_RUNTIME_SHA,
             JSX_RUNTIME_CJS,
             "",
             "",
             JSX_RUNTIME_EXPORTS,
-        )
+        );
+        out.push_str(ISLAND_JSX_WRAP);
+        out
     })
     .as_str()
 }
+
+/// Wrap `client:*` function components in a `<deka-island>` host so
+/// `hydrateRoot` has a container. Host tags keep the prop; the island
+/// component itself is rendered as the custom element's child.
+const ISLAND_JSX_WRAP: &str = r#"
+const __jsx = __m.jsx;
+const __jsxs = __m.jsxs;
+function __dekaIslandJsx(factory, type, config, key) {
+  if (config != null && typeof type === "function") {
+    const load = config["client:load"];
+    const idle = config["client:idle"];
+    const visible = config["client:visible"];
+    if (load || idle || visible) {
+      const directive = load ? "load" : idle ? "idle" : "visible";
+      const inner = {};
+      const serializable = {};
+      for (const k in config) {
+        if (!Object.prototype.hasOwnProperty.call(config, k)) continue;
+        if (k === "client:load" || k === "client:idle" || k === "client:visible") continue;
+        inner[k] = config[k];
+        if (k !== "children" && k !== "key" && k !== "ref") {
+          const v = config[k];
+          const t = typeof v;
+          if (v == null || (t !== "function" && t !== "symbol")) serializable[k] = v;
+        }
+      }
+      const name = type.displayName || type.name || "Island";
+      return factory("deka-island", {
+        "data-deka-island": name,
+        "data-deka-directive": directive,
+        "data-deka-props": JSON.stringify(serializable),
+        style: { display: "contents" },
+        children: factory(type, inner)
+      }, key);
+    }
+  }
+  return factory(type, config, key);
+}
+export const jsx = (type, config, key) => __dekaIslandJsx(__jsx, type, config, key);
+export const jsxs = (type, config, key) => __dekaIslandJsx(__jsxs, type, config, key);
+"#;
 
 fn react_dom_esm() -> &'static str {
     static CELL: OnceLock<String> = OnceLock::new();
@@ -695,6 +789,38 @@ fn react_dom_esm() -> &'static str {
             "import * as __req_react from \"./react.js\";\n",
             "  if (id === \"react\") return __req_react.default;\n",
             REACT_DOM_EXPORTS,
+        )
+    })
+    .as_str()
+}
+
+fn scheduler_esm() -> &'static str {
+    static CELL: OnceLock<String> = OnceLock::new();
+    CELL.get_or_init(|| {
+        wrap_cjs(
+            &format!("https://unpkg.com/scheduler@0.26.0/cjs/scheduler.production.js"),
+            SCHEDULER_SHA,
+            SCHEDULER_CJS,
+            "",
+            "",
+            SCHEDULER_EXPORTS,
+        )
+    })
+    .as_str()
+}
+
+fn react_dom_client_esm() -> &'static str {
+    static CELL: OnceLock<String> = OnceLock::new();
+    CELL.get_or_init(|| {
+        wrap_cjs(
+            &format!(
+                "https://unpkg.com/react-dom@{REACT_VERSION}/cjs/react-dom-client.production.js"
+            ),
+            REACT_DOM_CLIENT_SHA,
+            REACT_DOM_CLIENT_CJS,
+            "import * as __req_scheduler from \"./scheduler.js\";\nimport * as __req_react from \"./react.js\";\nimport * as __req_react_dom from \"./react-dom.js\";\n",
+            "  if (id === \"scheduler\") return __req_scheduler.default;\n  if (id === \"react\") return __req_react.default;\n  if (id === \"react-dom\") return __req_react_dom.default;\n",
+            REACT_DOM_CLIENT_EXPORTS,
         )
     })
     .as_str()
@@ -752,7 +878,8 @@ fn server_esm() -> &'static str {
                renderToStaticMarkup,\n\
                renderToReadableStream,\n\
                prerender,\n\
-             }};\n"
+             }};\n\
+             globalThis[Symbol.for(\"deka.react.renderToString\")] = renderToString;\n"
         )
     })
     .as_str()
@@ -803,109 +930,5 @@ fn wrap_cjs(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hashes_lock_upstream_cjs() {
-        assert!(HASHES.contains(REACT_SHA));
-        assert!(HASHES.contains(JSX_RUNTIME_SHA));
-        assert!(HASHES.contains(REACT_DOM_SHA));
-        assert!(HASHES.contains(SERVER_LEGACY_SHA));
-        assert!(HASHES.contains(SERVER_BROWSER_SHA));
-        assert!(
-            HASHES.contains(&format!("react@{REACT_VERSION}"))
-                || HASHES.contains("react.production.js")
-        );
-    }
-
-    #[test]
-    fn public_specs_are_runtime_provided() {
-        for spec in USER_SPECS {
-            assert!(is_builtin(spec), "{spec}");
-            assert!(file_for_user_spec(spec).is_some(), "{spec}");
-        }
-        assert!(!is_builtin("@js/lodash"));
-        assert!(!is_builtin("@js/react/jsx-dev-runtime"));
-        assert_eq!(
-            filter_imports(&["@js/react".into(), "@js/chosen".into(), "./local.js".into()]),
-            vec!["@js/chosen".to_string(), "./local.js".to_string()]
-        );
-    }
-
-    #[test]
-    fn production_wrappers_do_not_contain_dev_bytes() {
-        for file in reachable_files(USER_SPECS.iter().copied()) {
-            let esm = esm_for_file(file).expect(file);
-            assert!(
-                !contains_dev_bytes(esm),
-                "{file} leaked a development-build probe"
-            );
-            assert!(
-                !esm.contains("NODE_ENV: \"development\""),
-                "{file} is not a production wrap"
-            );
-        }
-        let react = esm_for_file("react.js").unwrap();
-        assert!(react.contains(REACT_VERSION));
-        assert!(react.contains("useState"));
-        let jsx = esm_for_file("jsx-runtime.js").unwrap();
-        assert!(jsx.contains("exports.jsx"));
-        let server = esm_for_file("react-dom-server.js").unwrap();
-        assert!(server.contains("renderToString"));
-        assert!(server.contains("renderToReadableStream"));
-    }
-
-    #[test]
-    fn inline_rewrites_named_imports_and_keeps_prod_bytes() {
-        let js = r#"
-import { useState, createElement as h } from "@js/react";
-import { jsx } from "@js/react/jsx-runtime";
-import { renderToString } from "@js/react-dom/server";
-export function probe() { return renderToString(jsx("div", { children: h("span") })); }
-"#;
-        let inlined = inline_into(js).expect("inline");
-        assert!(!inlined.contains("from \"@js/react"));
-        assert!(inlined.contains("__deka_js_builtins[\"react\"]"));
-        assert!(inlined.contains("__deka_js_builtins[\"react/jsx-runtime\"]"));
-        assert!(inlined.contains("__deka_js_builtins[\"react-dom/server\"]"));
-        assert!(inlined.contains("const useState ="));
-        assert!(inlined.contains("const h ="));
-        assert!(inlined.contains("export function probe()"));
-        assert!(!contains_dev_bytes(&inlined));
-    }
-
-    #[test]
-    fn rewrite_strips_auto_injected_react_import() {
-        let src = "import { useState } from \"@js/react\"\n\nexport fn probe() string {\n  const [label, setLabel] = useState(\"ssr\")\n  return label\n}\n";
-        let rewrite = rewrite_for_dsc_transpile(src);
-        assert!(
-            !rewrite.source.contains("@js/react"),
-            "explicit @js/react import must be stripped: {}",
-            rewrite.source
-        );
-        assert!(rewrite.source.contains("useState"));
-        assert!(rewrite.stubs.is_empty());
-    }
-
-    #[test]
-    fn rewrite_stubs_react_dom_server_and_restores_the_specifier() {
-        let src = "import { renderToString } from \"@js/react-dom/server\"\nexport fn html() string {\n  return renderToString(\"x\")\n}\n";
-        let rewrite = rewrite_for_dsc_transpile(src);
-        assert!(
-            rewrite
-                .source
-                .contains("./__deka_js_builtin_react_dom_server.ds"),
-            "{}",
-            rewrite.source
-        );
-        assert!(!rewrite.source.contains("@js/react-dom/server"));
-        assert_eq!(rewrite.stubs.len(), 1);
-        assert!(rewrite.stubs[0].body.contains("export fn renderToString"));
-        let restored = rewrite.restore_js(
-            "import { renderToString } from \"./__deka_js_builtin_react_dom_server.js\";\n",
-        );
-        assert!(restored.contains("from \"@js/react-dom/server\""));
-        assert!(!restored.contains("__deka_js_builtin_"));
-    }
-}
+#[path = "js_builtins_tests.rs"]
+mod tests;

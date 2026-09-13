@@ -3,14 +3,21 @@ title: Server Rendering and Hydration
 description: Synchronous SSR, safe escaping, and island hydration markers for the DekaScript UI runtime.
 ---
 
-The DekaScript UI runtime includes a small, VDOM-free server renderer. Components are evaluated once, their output is escaped, and the resulting HTML string is returned synchronously. The client-side `hydrate` entry point is provided so islands can be reactivated in the browser; the full DOM wiring is currently stubbed and will be completed by the owning browser-platform lane.
+App-router pages render through production React (`@js/react-dom/server`).
+Components marked `client:load`, `client:idle`, or `client:visible` are
+islands: the compiler injects `data-deka-id` on their host elements
+(dsc#198), the jsx runtime wraps each island in a `<deka-island>` container
+with serialized props, and `deka serve` / `deka build` emit a shared client
+bundle that imports the compiled DSX component and calls `hydrateRoot`
+from `@js/react-dom/client`. The island code that runs in the browser is
+the same compiled component the server rendered — not a parallel script.
 
 ## API
 
 | Function | Purpose |
 |----------|---------|
-| `deka.ui.renderToString(component)` | Synchronously render a component tree to an HTML string. |
-| `deka.ui.hydrate(component, targetElement)` | Attach the client runtime to existing server-rendered HTML. |
+| `deka.ui.renderToString(component)` | Synchronously render a component tree to an HTML string (React `renderToString`). |
+| `hydrateRoot` from `@js/react-dom/client` | Attach a compiled island component to its `<deka-island>` container. |
 
 Both functions are exposed on the `deka.ui` namespace alongside `jsx`, `jsxs`, and `Fragment`.
 
@@ -117,15 +124,26 @@ The comment contents are base64-encoded JSON so serialized props can safely cont
 
 ## hydrate
 
-`deka.ui.hydrate(component, targetElement)` is the client entry point for attaching interactivity to server-rendered markup. In this slice the full DOM activation is stubbed: the function validates the target element, scans the rendered HTML for island markers, parses each island's name, directive, and props, and returns them along with a no-op `dispose()` callback.
+Islands hydrate through `hydrateRoot` from `@js/react-dom/client`. `deka serve`
+and `deka build` generate one shared `/assets/islands.js` bundle for every
+`client:*` component in the project (both of the blog layout islands ship on
+every page, so one file beats N copies of React). The emitted entry is:
 
-```ds
-const hydrated = globalThis.deka.ui.hydrate(Counter, html)
-console.log(hydrated.islands[0])
-// { name: "Counter", directive: "load", props: { start: 5 } }
+```js
+import { hydrateRoot } from "@js/react-dom/client";
+import { jsx } from "@js/react/jsx-runtime";
+import { ThemeToggle } from "../../src/ui/Theme.js";
+
+for (const node of document.querySelectorAll("[data-deka-island]")) {
+  const Component = registry[node.getAttribute("data-deka-island")];
+  const props = JSON.parse(node.getAttribute("data-deka-props") || "{}");
+  hydrateRoot(node, jsx(Component, props));
+}
 ```
 
-In a browser environment `targetElement` is a DOM element; in headless tests a string of HTML or an object with an `innerHTML` string is also accepted. The owning browser-platform lane will replace the stub with real DOM wiring and reactive island mounting.
+The production bundle inlines those `@js/react*` imports so the browser does
+not need a separate install. Development React used by `deka dev` Fast Refresh
+is a different, feature-gated graph and is not included.
 
 ## Runtime notes
 
