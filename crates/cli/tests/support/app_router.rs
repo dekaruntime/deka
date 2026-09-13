@@ -28,7 +28,7 @@ fn default_app_page_dsx() -> &'static str {
 }
 
 fn default_app_layout_dsx() -> &'static str {
-    "interface LayoutProps {\n  children: Component;\n}\nexport fn Layout(props: LayoutProps) {\n  return <main>{props.children}</main>\n}\n"
+    "interface LayoutProps {\n  children: ReactNode;\n}\nexport fn Layout(props: LayoutProps) {\n  return <main>{props.children}</main>\n}\n"
 }
 
 fn default_not_found_dsx() -> &'static str {
