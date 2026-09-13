@@ -25,7 +25,9 @@ compressed input and expanded contents are each limited to 64 MiB.
 The name comes from `package.json` when present; otherwise it comes from the
 URL basename with the source/archive extension removed and punctuation
 converted to `-`. Vendor names contain letters, digits, `-`, and `_`.
-Scoped names in URL archives and `@js/` subpath imports are not supported. The external module resolver selects `package.json`'s `module` before
+Scoped names in URL archives and `@js/` subpath imports are not supported,
+except for the runtime-provided React builtins below. The external module
+resolver selects `package.json`'s `module` before
 `main`, then falls back to `index.mjs` when neither field exists. A declared
 entry that is missing or escapes its package is an error.
 
@@ -34,6 +36,26 @@ name, the command prompts for a different name on an interactive terminal.
 Blank input cancels. Noninteractive runs fail on conflicts; `--prompt` allows
 reading a new name from stdin. Existing packages are never overwritten,
 including when `--yes` is supplied.
+
+## Runtime builtins do not go through summon
+
+The runtime ships a pinned production React as builtin modules. These
+specifiers resolve with zero install — no `deka summon`, no `ds_modules/`,
+no `js_modules/`, and **no `deka.json` dependency entry**:
+
+| Specifier | Provides |
+| --- | --- |
+| `@js/react` | `react@19.1.1` production |
+| `@js/react/jsx-runtime` | `jsx` / `jsxs` / `Fragment` |
+| `@js/react-dom/server` | `renderToString` / `renderToStaticMarkup` / `renderToReadableStream` |
+
+`deka --version --verbose` records the pin as `react: 19.1.1`. Development
+React for Fast Refresh stays behind the `dev-server` feature and is not
+this production graph. Do not add a project npm or summon dependency on
+React for `deka run`, `deka serve`, or `deka build`.
+
+A summoned `@js/react` package would be a different identity (an unscoped
+vendor name with no subpath) and is not a substitute for the builtins.
 
 ## Explicit dependencies
 

@@ -105,9 +105,10 @@ pub fn ensure_project_layout(
     // 0.3.0: an external module_root supplies recognized stdlib only. It is
     // not a whole-gate bypass — third-party and unknown `@deka/*` imports
     // still need declaration, install, and fsGraph integrity.
+    let imports = pool::js_builtins::filter_imports(imports);
     deka_modules::project_gate::validate_project(
         project_root,
-        imports,
+        &imports,
         &deka_modules::project_gate::GateOptions {
             module_root: module_root.map(|p| p.to_path_buf()),
             require_lockfile: true,

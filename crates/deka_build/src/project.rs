@@ -56,9 +56,10 @@ pub(super) fn ensure_project_layout(
     // Callers pass None: `deka build` has no external stdlib root. If one
     // is supplied, 0.3.0 exempts recognized stdlib only — not a whole-gate
     // bypass (dsc#167).
+    let imports = pool::js_builtins::filter_imports(imports);
     deka_modules::project_gate::validate_project(
         project_root,
-        imports,
+        &imports,
         &deka_modules::project_gate::GateOptions {
             module_root: module_root.map(|p| p.to_path_buf()),
             require_lockfile: true,
@@ -223,5 +224,16 @@ mod tests {
             &["@deka/crypto".to_string()],
         )
         .expect("external root still supplies recognized stdlib");
+
+        ensure_project_layout(
+            project.path(),
+            None,
+            &[
+                "@js/react".to_string(),
+                "@js/react/jsx-runtime".to_string(),
+                "@js/react-dom/server".to_string(),
+            ],
+        )
+        .expect("runtime React builtins need no deka.json entry");
     }
 }

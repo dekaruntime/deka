@@ -1,8 +1,9 @@
 //! Frozen React / react-refresh development builds served by `deka dev`.
 //!
 //! Bytes live in `crates/http/vendor/react/` with locked hashes and licenses.
-//! rfd#64 amendment 2 will replace this js_modules-style vendor with a runtime
-//! builtin; the served URLs (`/_deka/react/...`) stay stable.
+//! Production `@js/react*` builtins (rfd#64 amendment 2) live in
+//! `crates/pool/vendor/react-prod/` and are always-on; this tree stays
+//! feature-gated. The served URLs (`/_deka/react/...`) stay stable.
 
 pub struct VendorFile {
     pub body: &'static str,

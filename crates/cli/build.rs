@@ -42,6 +42,15 @@ fn main() {
     println!("cargo:rustc-env=DEKA_BUILD_UNIX={}", build_unix);
     println!("cargo:rustc-env=DEKA_TARGET={}", target);
     println!("cargo:rustc-env=DEKA_RUNTIME_ABI=deka-runtime-phpx-v1");
+
+    let react_version_path = repo_root.join("crates/pool/vendor/react-prod/VERSION");
+    println!("cargo:rerun-if-changed={}", react_version_path.display());
+    let react_version = std::fs::read_to_string(&react_version_path)
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=DEKA_REACT_VERSION={}", react_version);
 }
 
 fn resolve_git_dir(repo_root: &std::path::Path) -> std::path::PathBuf {

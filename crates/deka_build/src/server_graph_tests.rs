@@ -68,6 +68,7 @@ fn rewrite_module_specifiers_reroots_relative_and_dev_specs() {
         "import { Suspense } from \"ui/suspense\";\n",
         "import { hydrate as h } from \"deka:dev/abc123\";\n",
         "import { x } from \"@deka/encoding/json\";\n",
+        "import { jsx } from \"@js/react/jsx-runtime\";\n",
     );
     let rewritten = rewrite_module_specifiers(
         entry_js,
@@ -84,6 +85,11 @@ fn rewrite_module_specifiers_reroots_relative_and_dev_specs() {
     // Bare package specifiers stay for the loader's ds_modules resolution.
     assert!(
         rewritten.contains("\"@deka/encoding/json\""),
+        "{rewritten}"
+    );
+    // Runtime React builtins stay bare; the artifact loader serves them.
+    assert!(
+        rewritten.contains("\"@js/react/jsx-runtime\""),
         "{rewritten}"
     );
     assert!(!rewritten.contains("deka:dev/"), "{rewritten}");
