@@ -4,11 +4,13 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+core = { path = "../core" }
 deka-modules = "0.2.0"
 security = { path = "../security" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
+stdio = "0.4.0"
 
 [dev-dependencies]
 tempfile = "3.23.0"

@@ -5,6 +5,9 @@ edition = "2024"
 
 [dependencies]
 core = { path = "../core" }
+compiler = { path = "../compiler" }
+deka-build = { path = "../deka_build" }
+deka-cache = { path = "../deka_cache" }
 engine = { path = "../engine" }
 notify = { workspace = true }
 pool = { path = "../pool" }

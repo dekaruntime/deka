@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use core::{CommandSpec, Context, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "runtime_core",
     name: "verify",
     category: "project",
     summary: "verify dist/ against the artifact manifest's payload digests",
@@ -57,7 +57,7 @@ fn run(context: &Context) -> Result<(), String> {
         ));
     }
 
-    let manifest = runtime_core::dist::ArtifactManifestV2::load_verified(&dist)?;
+    let manifest = crate::dist::ArtifactManifestV2::load_verified(&dist)?;
 
     let problems = manifest.verify(&dist);
     if !problems.is_empty() {

@@ -1,7 +1,7 @@
 use core::{CommandSpec, Context, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "runtime",
     name: "platform",
     category: "runtime",
     summary: "multi-tenant platform server — serves per-tenant DekaScript handlers from tenants/ directory",
@@ -15,5 +15,5 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(context: &Context) {
-    runtime::platform(context);
+    crate::platform(context);
 }

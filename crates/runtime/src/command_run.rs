@@ -9,7 +9,7 @@ use std::process::Command;
 use stdio;
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "runtime",
     name: "run",
     category: "runtime",
     summary: "run the app",
@@ -41,17 +41,17 @@ pub fn cmd(context: &Context) {
                 .positionals
                 .first()
                 .filter(|path| run::entry::has_run_source_ext(path))
-                .map(|_| crate::dsc::find_dsc())
+                .map(|_| compiler::dsc::find_cli_dsc())
                 .transpose()
                 .unwrap_or_else(|err| {
                     stdio::error("run", &err);
                     std::process::exit(1);
                 })
                 .flatten();
-            runtime::run_with_dsc(&prepared.context, dsc);
+            crate::run_with_dsc(&prepared.context, dsc);
             // RFD 55: situational advisories come last, after the work.
             if prepared.loose_file {
-                stdio::note(crate::cli::user_cache::NOT_A_PROJECT_NOTE);
+                stdio::note(deka_cache::NOT_A_PROJECT_NOTE);
             }
         }
         Err(err) => {
@@ -85,10 +85,10 @@ fn prepare_run_context(context: &Context) -> Result<PreparedRun, String> {
     // Loose file (no project anywhere above it): compile into the
     // user-global cache and run the materialized artifact — never write
     // build output into the user's directory (deka#765).
-    if crate::cli::user_cache::is_loose_source_file(&resolved.path) {
-        let materialized = crate::cli::user_cache::materialize_loose(&resolved.path)
+    if deka_cache::is_loose_source_file(&resolved.path) {
+        let materialized = deka_cache::materialize_loose(&resolved.path)
             .map_err(|err| format!("failed to materialize {} into the user cache: {err}", resolved.path.display()))?;
-        let mut prepared = crate::cli::user_cache::rewrite_context_for_artifact(
+        let mut prepared = deka_cache::rewrite_context_for_artifact(
             context,
             &materialized.artifact,
         )?;

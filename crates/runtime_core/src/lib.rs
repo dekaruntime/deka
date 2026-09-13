@@ -4,6 +4,10 @@ pub mod dist;
 pub mod platform_env;
 pub mod process;
 
+mod command_verify;
+
+pub use command_verify::register;
+
 /// Marker prefixed to validation error messages that are propagated from the
 /// compiler through the isolate loader so the runtime can print them without
 /// its own "Run failed:" wrapper.
