@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, ParamSpec, Registry};
+use deka_cli_core::{CommandSpec, Context, ParamSpec, Registry};
 use deka_modules::modules::MODULES_DIR;
 use std::collections::BTreeSet;
 use std::fs;
@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use stdio;
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "test",
     name: "test",
     category: "runtime",
     summary: "run DekaScript tests",
@@ -16,8 +16,8 @@ const COMMAND: CommandSpec = CommandSpec {
     handler: cmd,
 };
 
-const TEST_LIB_SOURCE: &str = include_str!("../../test_lib/index.ds");
-const TEST_LIB_MANIFEST: &str = include_str!("../../test_lib/deka.json");
+const TEST_LIB_SOURCE: &str = include_str!("../test_lib/index.ds");
+const TEST_LIB_MANIFEST: &str = include_str!("../test_lib/deka.json");
 const TEST_PACKAGE: &str = "@deka/test";
 
 pub fn register(registry: &mut Registry) {
