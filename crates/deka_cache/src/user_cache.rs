@@ -31,10 +31,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use core::Context;
+use deka_cli_core::Context;
 use sha2::{Digest, Sha256};
 
-use crate::cli::build_dsc;
 
 /// Advisory printed (through `stdio::note`, after everything else) when a
 /// loose file ran through the user cache instead of a project.
@@ -116,7 +115,7 @@ pub fn materialize_loose(source: &Path) -> Result<MaterializedLoose, String> {
 }
 
 fn require_dsc_for_loose_run() -> Result<PathBuf, String> {
-    build_dsc::require_dsc().map_err(|_| {
+    compiler::dsc::require_dsc().map_err(|_| {
         "dsc is required to run a .ds/.dsx file outside a deka project. \
          Install dsc (https://deka.gg/install), or run `deka init` and use a project"
             .to_string()
@@ -128,7 +127,7 @@ fn require_dsc_for_loose_run() -> Result<PathBuf, String> {
 /// entry that disagrees is stale by definition.
 fn current_compiler_identity() -> Result<String, String> {
     let dsc = require_dsc_for_loose_run()?;
-    let identity = build_dsc::dsc_identity()
+    let identity = compiler::dsc::dsc_identity()
         .unwrap_or_else(|| format!("{} (version unknown)", dsc.display()));
     Ok(format!("{identity} / deka {}", env!("CARGO_PKG_VERSION")))
 }
@@ -440,6 +439,32 @@ pub fn clear_loose_cache(cache_root: &Path) -> Result<(), String> {
             .map_err(|err| format!("failed to remove {}: {err}", loose_root.display()))?;
     }
     Ok(())
+}
+
+/// Resolve the handler the way `runtime::serve` will. When it is a `.ds` /
+/// `.dsx` outside any project, materialize it into the user cache and return
+/// a context rewritten to the compiled artifact. Project behavior is
+/// untouched.
+pub fn prepare_loose_serve(context: &Context) -> Result<(Context, bool), String> {
+    let resolved = ::run::handler::resolve_handler_path(
+        &context
+            .extensions()
+            .get::<::run::handler::HandlerSnapshot>()
+            .expect("handler snapshot populated before dispatch")
+            .input,
+    )
+    .map_err(|err| format!("failed to resolve handler path: {err}"))?;
+    if !is_loose_source_file(&resolved.path) {
+        return Ok((context.clone(), false));
+    }
+    let materialized = materialize_loose(&resolved.path).map_err(|err| {
+        format!(
+            "failed to materialize {} into the user cache: {err}",
+            resolved.path.display()
+        )
+    })?;
+    let prepared = rewrite_context_for_artifact(context, &materialized.artifact)?;
+    Ok((prepared, true))
 }
 
 /// Rewrite a context so its entry (first positional + handler) points at the

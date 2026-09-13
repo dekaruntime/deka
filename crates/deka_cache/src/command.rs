@@ -4,11 +4,11 @@
 //! user-global cache grows without bound, so eviction runs automatically on
 //! materialize and `deka cache clear` empties it explicitly.
 
-use core::{CommandSpec, Context, Registry};
+use deka_cli_core::{CommandSpec, Context, Registry};
 
-use crate::cli::user_cache;
+use crate::user_cache;
 
-const CLEAR: core::SubcommandSpec = core::SubcommandSpec {
+const CLEAR: deka_cli_core::SubcommandSpec = deka_cli_core::SubcommandSpec {
     name: "clear",
     summary: "remove all loose-file cache entries",
     aliases: &[],
@@ -16,7 +16,7 @@ const CLEAR: core::SubcommandSpec = core::SubcommandSpec {
 };
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "cache",
     name: "cache",
     category: "runtime",
     summary: "manage the user-global cache",
