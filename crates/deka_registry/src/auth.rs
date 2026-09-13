@@ -1,11 +1,11 @@
-use core::{CommandSpec, Context, Registry, SubcommandSpec};
+use deka_cli_core::{CommandSpec, Context, Registry, SubcommandSpec};
 use std::io::{self, Write};
 use stdio;
 
-use crate::cli::auth_store::{self, AuthProfile};
+use crate::auth_store::{self, AuthProfile};
 
 const AUTH_COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "registry",
     name: "auth",
     category: "auth",
     summary: "authenticate with linkhash",
@@ -48,7 +48,7 @@ const WHOAMI_SUBCOMMAND: SubcommandSpec = SubcommandSpec {
 };
 
 const LOGIN_ALIAS_COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "registry",
     name: "login",
     category: "auth",
     summary: "alias for `deka auth login`",
@@ -58,7 +58,7 @@ const LOGIN_ALIAS_COMMAND: CommandSpec = CommandSpec {
 };
 
 const SIGNUP_ALIAS_COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "registry",
     name: "signup",
     category: "auth",
     summary: "alias for `deka auth signup`",
@@ -68,7 +68,7 @@ const SIGNUP_ALIAS_COMMAND: CommandSpec = CommandSpec {
 };
 
 const LOGOUT_ALIAS_COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "registry",
     name: "logout",
     category: "auth",
     summary: "alias for `deka auth logout`",
@@ -78,7 +78,7 @@ const LOGOUT_ALIAS_COMMAND: CommandSpec = CommandSpec {
 };
 
 const WHOAMI_ALIAS_COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "registry",
     name: "whoami",
     category: "auth",
     summary: "alias for `deka auth whoami`",

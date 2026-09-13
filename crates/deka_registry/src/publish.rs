@@ -1,15 +1,15 @@
 use anyhow::{bail, Context as AnyhowContext, Result};
-use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
+use deka_cli_core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
 use deka_modules::modules::is_modules_dir_name;
 use serde_json::json;
 use std::io::{self, Write};
 use std::process::Command;
 use stdio;
 
-use crate::cli::auth_store;
+use crate::auth_store;
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "registry",
     name: "publish",
     category: "package",
     summary: "publish a DekaScript package release to Linkhash",
@@ -94,7 +94,7 @@ struct PublishRequest {
 /// environment fallbacks).
 pub fn resolve_registry_auth(
     params: &std::collections::HashMap<String, String>,
-    profile: Option<&crate::cli::auth_store::AuthProfile>,
+    profile: Option<&crate::auth_store::AuthProfile>,
 ) -> anyhow::Result<(String, String)> {
     let token = params
         .get("--token")
