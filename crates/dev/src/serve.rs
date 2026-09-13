@@ -41,18 +41,21 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
         runtime::prepare_http_session(context, resolved_security, pool_config, serve_options)?;
     stdio::log("dev", "enabled");
 
-    let project_root = crate::watch::project_root_from_handler(&prepared.handler_path)
-        .or_else(|| {
-            std::path::Path::new(&prepared.handler_path)
-                .parent()
-                .map(|parent| parent.to_path_buf())
-        })
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let project_root = std::fs::canonicalize(&project_root).unwrap_or(project_root);
-    deka_http::react_refresh::install(deka_http::react_refresh::RefreshContext {
-        project_root,
-        dsc,
-    });
+    #[cfg(feature = "dev-server")]
+    {
+        let project_root = crate::watch::project_root_from_handler(&prepared.handler_path)
+            .or_else(|| {
+                std::path::Path::new(&prepared.handler_path)
+                    .parent()
+                    .map(|parent| parent.to_path_buf())
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let project_root = std::fs::canonicalize(&project_root).unwrap_or(project_root);
+        deka_http::react_refresh::install(deka_http::react_refresh::RefreshContext {
+            project_root,
+            dsc,
+        });
+    }
 
     if let Err(err) = crate::watch::start_watch(
         &prepared.handler_path,

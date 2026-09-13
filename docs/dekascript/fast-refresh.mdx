@@ -98,8 +98,10 @@ cargo build --release -p cli --features dev-server
 ```
 
 The default `cargo build --release -p cli` retains `deka serve` and excludes
-`deka dev` and the vendored development React code. The HTTP crate's
-`dev-server` feature is enabled by the dev crate; production-only builds
+the vendored development React code. Both builds list `deka dev` and
+`--dev` in help; invoking `deka dev` or `deka serve --dev` without the feature
+reports "this build lacks the dev server; rebuild with --features dev-server".
+The CLI feature forwards to the dev and HTTP crates; production-only builds
 should build the CLI package rather than the entire workspace, where Cargo
 unifies dependency features. `scripts/check-prod-react-bytes.sh` verifies the
 production release binary against the frozen React DOM client source.

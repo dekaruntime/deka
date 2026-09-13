@@ -56,7 +56,7 @@ pub fn build_registry() -> Registry {
             .with(introspect::register);
     }
 
-    #[cfg(feature = "dev-server")]
+    #[cfg(feature = "native")]
     {
         builder = builder.with(dev::register);
     }

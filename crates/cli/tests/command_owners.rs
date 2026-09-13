@@ -65,6 +65,8 @@ fn help_lists_every_registered_command() {
     assert!(names.contains(&"build"));
     assert!(names.contains(&"run"));
     assert!(names.contains(&"serve"));
+    assert!(names.contains(&"dev"));
+    assert!(registry.flags().iter().any(|flag| flag.name == "--dev"));
     assert_eq!(names, {
         let mut expected: Vec<_> = registry.commands().iter().map(|c| c.name).collect();
         expected.sort();
@@ -155,5 +157,26 @@ fn lsp_registers_between_link_and_pkg() {
     {
         assert_eq!(pkg, unlink + 1, "pkg follows unlink when lsp is off");
         assert!(!names.contains(&"lsp"));
+    }
+}
+
+#[test]
+#[cfg(not(feature = "dev-server"))]
+fn dev_without_feature_reports_rebuild_instruction() {
+    for args in [vec!["dev"], vec!["serve", "--dev"]] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_cli"))
+            .args(args)
+            .output()
+            .expect("run cli");
+        assert!(!output.status.success());
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            text.contains("this build lacks the dev server; rebuild with --features dev-server"),
+            "{text}",
+        );
     }
 }

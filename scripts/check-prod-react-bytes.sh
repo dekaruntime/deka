@@ -20,6 +20,11 @@ assert chunks and not any(chunk in data for chunk in chunks), 'dev React found i
 help_text = subprocess.check_output([str(binary), '--help'], text=True, stderr=subprocess.STDOUT)
 commands = [line.split()[0] for line in help_text.splitlines() if line.split()]
 assert 'serve' in commands, 'production CLI must retain serve'
-assert 'dev' not in commands, 'production CLI must not enable the dev crate'
-print(f'PASS: production release CLI ({len(data)} bytes) contains none of {len(chunks)} react-dom-client source chunks; serve is available')
+assert 'dev' in commands, 'production CLI must retain dev help'
+assert '--dev' in commands, 'production CLI must retain --dev help'
+for args in (['dev'], ['serve', '--dev']):
+    result = subprocess.run([str(binary), *args], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    assert result.returncode != 0, f'{args} must fail without dev-server'
+    assert 'this build lacks the dev server; rebuild with --features dev-server' in result.stdout, result.stdout
+print(f'PASS: production release CLI ({len(data)} bytes) contains none of {len(chunks)} react-dom-client source chunks; serve and dev help are available; dev execution reports the missing feature')
 PY

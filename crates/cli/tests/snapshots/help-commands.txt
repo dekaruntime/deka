@@ -74,6 +74,7 @@ platform		multi-tenant platform server — serves per-tenant DekaScript handlers
 serve		serve a handler or directory
 task		run a task from deka.json
 test		run DekaScript tests
+dev		serve with HTTP + HMR (dev mode)
 
 [flags]
 --help		show help

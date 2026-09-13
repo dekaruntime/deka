@@ -3,10 +3,13 @@ name = "dev"
 version.workspace = true
 edition = "2024"
 
+[features]
+dev-server = ["deka_http/dev-server"]
+
 [dependencies]
 core = { path = "../core" }
 compiler = { path = "../compiler" }
-deka_http = { path = "../http", features = ["dev-server"] }
+deka_http = { path = "../http" }
 deka-build = { path = "../deka_build" }
 deka-cache = { path = "../deka_cache" }
 engine = { path = "../engine" }

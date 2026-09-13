@@ -22,6 +22,10 @@ pub fn cmd(context: &Context) {
 }
 
 pub fn run_dev(context: &Context) {
+    if !cfg!(feature = "dev-server") {
+        stdio::error("dev", "this build lacks the dev server; rebuild with --features dev-server");
+        std::process::exit(1);
+    }
     // Loose file or unbuilt loose directory (no deka.json anywhere above the
     // resolved handler): compile into the user-global cache and serve the
     // materialized artifact, leaving the user's directory untouched (deka#765).

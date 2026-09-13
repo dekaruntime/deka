@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 default = ["native"]
 native = [
+  "dep:dev",
   "dep:compile",
   "dep:compiler",
   "dep:runtime",
@@ -18,7 +19,7 @@ native = [
   "dep:deka-registry",
   "dep:self_cmd",
 ]
-dev-server = ["native", "dep:dev"]
+dev-server = ["native", "dev/dev-server"]
 lsp = ["compiler/lsp"]
 
 [dependencies]
