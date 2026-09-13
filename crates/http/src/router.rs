@@ -45,11 +45,26 @@ pub fn app_router_with_rate_limiter(
         static_files: config.static_entry.as_deref().map(StaticFiles::new),
         utility_css: crate::utility_css::load_config(config.project_root.as_deref()),
     };
+    let limiter_state = (rate_limiter, state.dev_mode);
     Router::new()
         .fallback(handle_request)
         .with_state(state)
         .layer(Extension(extensions))
-        .layer(from_fn_with_state(rate_limiter, rate_limit_middleware))
+        .layer(from_fn_with_state(limiter_state, configured_rate_limit))
+}
+
+// Dev infrastructure shares the browser's source IP with the application, but
+// must neither consume its tokens nor be blocked by an exhausted app bucket.
+async fn configured_rate_limit(
+    State((limiter, dev_mode)): State<(Arc<RateLimiter>, bool)>,
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if dev_mode && request.uri().path().starts_with("/_deka/") {
+        return next.run(request).await;
+    }
+    rate_limit_middleware(State(limiter), connect_info, request, next).await
 }
 
 async fn handle_request(
@@ -68,6 +83,7 @@ async fn handle_request(
         return response;
     }
 
+    #[cfg(feature = "dev-server")]
     if let Some(response) = crate::react_refresh::try_response(&state, &path) {
         return response;
     }
@@ -431,6 +447,9 @@ fn inject_hmr_client(html: &str) -> String {
     // Import map + Fast Refresh preamble must run before the page's own
     // React imports. The HMR client stays a single body-end module script
     // so its fragments cannot grow extra <script> tags (RFD 44).
+    #[cfg(not(feature = "dev-server"))]
+    const HEAD: &str = "";
+    #[cfg(feature = "dev-server")]
     const HEAD: &str = concat!(
         r#"<script type="importmap" id="__deka_react_importmap">"#,
         include_str!("hmr_client/import_map.json"),
@@ -654,13 +673,22 @@ mod tests {
             1,
             "the injector owns one HMR client module script; fragments must not add extra wrappers"
         );
-        assert!(out.contains("id=\"__deka_refresh_preamble\""));
-        assert!(out.contains("id=\"__deka_react_importmap\""));
-        assert!(out.contains("applyJsUpdate"));
-        assert!(out.contains("/_deka/react/react.js"));
+        #[cfg(not(feature = "dev-server"))]
+        {
+            assert!(!out.contains("__deka_refresh_preamble"));
+            assert!(!out.contains("__deka_react_importmap"));
+        }
+        #[cfg(feature = "dev-server")]
+        {
+            assert!(out.contains("id=\"__deka_refresh_preamble\""));
+            assert!(out.contains("id=\"__deka_react_importmap\""));
+            assert!(out.contains("applyJsUpdate"));
+            assert!(out.contains("/_deka/react/react.js"));
+        }
     }
 
     #[test]
+    #[cfg(feature = "dev-server")]
     fn injects_fast_refresh_preamble_before_body_modules() {
         let html = "<html><head></head><body><div id=\"app\"></div></body></html>";
         let out = inject_hmr_client(html);

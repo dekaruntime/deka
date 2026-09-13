@@ -559,6 +559,7 @@ fn wait_until(deadline_secs: u64, mut probe: impl FnMut() -> bool) -> bool {
 }
 
 #[test]
+#[cfg(feature = "dev-server")]
 fn dev_watch_rematerializes_affected_slots_on_local_changes() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
@@ -585,7 +586,6 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
             "--no-prompt",
         ])
         .current_dir(project.path())
-        .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .env("DEKA_HOST_GRANTS", &grants)
         .stdout(Stdio::from(log.try_clone().expect("clone log")))
         .stderr(Stdio::from(log))
@@ -682,6 +682,7 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
 /// would rematerialize nothing and serve stale (or unresolved) values. The
 /// fix replans the changed source file and replaces its manifest slots.
 #[test]
+#[cfg(feature = "dev-server")]
 fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
@@ -708,7 +709,6 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
             "--no-prompt",
         ])
         .current_dir(project.path())
-        .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .env("DEKA_HOST_GRANTS", &grants)
         .stdout(Stdio::from(log.try_clone().expect("clone log")))
         .stderr(Stdio::from(log))
@@ -809,6 +809,7 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
 /// rematerializes exactly the affected slot — an actual content edit, not a
 /// directory-glob re-run.
 #[test]
+#[cfg(feature = "dev-server")]
 fn dev_watch_invalidates_slots_under_phase_aware_permissions() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
@@ -835,7 +836,6 @@ fn dev_watch_invalidates_slots_under_phase_aware_permissions() {
             "--no-prompt",
         ])
         .current_dir(project.path())
-        .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .env("DEKA_HOST_GRANTS", &grants)
         .stdout(Stdio::from(log.try_clone().expect("clone log")))
         .stderr(Stdio::from(log))

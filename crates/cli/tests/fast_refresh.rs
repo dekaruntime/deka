@@ -1,3 +1,5 @@
+#![cfg(feature = "dev-server")]
+
 //! deka#936: Fast Refresh over the real `deka dev` HTTP + HMR surface.
 
 use reqwest::blocking::Client;
@@ -105,7 +107,6 @@ fn spawn_dev(root: &Path, port: u16) -> ServeProcess {
     command
         .args(["dev", ".", "--port", &port.to_string(), "--no-prompt"])
         .current_dir(root)
-        .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .stdout(Stdio::from(log.try_clone().expect("clone log")))
         .stderr(Stdio::from(log));
     let dsc_beside_cli = Path::new(cli_bin()).with_file_name("dsc");

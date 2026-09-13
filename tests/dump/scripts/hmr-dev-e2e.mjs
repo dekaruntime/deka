@@ -3,10 +3,9 @@
 // holds one loaded page open and waits for that page to update.
 
 import assert from 'node:assert/strict'
-import { closeSync, existsSync, openSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import net from 'node:net'
-import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -63,8 +62,10 @@ function writeHandler(project, status) {
 }
 
 async function main() {
-  assert.ok(existsSync(cli), `release CLI not found at ${cli}; build it with cargo build --release -p cli`)
-  const project = await mkdtemp(path.join(os.tmpdir(), 'deka-hmr-browser-'))
+  assert.ok(existsSync(cli), `release CLI not found at ${cli}; build it with cargo build --release -p cli --features dev-server`)
+  const scratch = path.join(repoRoot, 'scripts', '.run-tmp')
+  mkdirSync(scratch, { recursive: true })
+  const project = await mkdtemp(path.join(scratch, 'deka-hmr-browser-'))
   const logPath = path.join(project, 'dev.log')
   const logFd = openSync(logPath, 'w')
   let server
@@ -77,7 +78,6 @@ async function main() {
     const port = await freePort()
     server = spawn(cli, ['dev', '.', '--port', String(port), '--no-prompt'], {
       cwd: project,
-      env: { ...process.env, DEKA_RATE_LIMIT_DISABLED: '1' },
       stdio: ['ignore', logFd, logFd],
     })
     const url = `http://127.0.0.1:${port}/`

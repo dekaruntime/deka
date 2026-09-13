@@ -99,7 +99,7 @@ export function Label() {
 }
 
 async function main() {
-  assert.ok(existsSync(cli), `release CLI not found at ${cli}; build it with cargo build --release -p cli`)
+  assert.ok(existsSync(cli), `release CLI not found at ${cli}; build it with cargo build --release -p cli --features dev-server`)
   // Worktree-local and not ignored by the dev watcher (`target` / `.cache`
   // / `node_modules` segments are skipped). scripts/.run-tmp is gitignored.
   const project = path.join(repoRoot, 'scripts', '.run-tmp', 'fast-refresh-e2e', String(process.pid))
@@ -114,7 +114,6 @@ async function main() {
     const port = await freePort()
     server = spawn(cli, ['dev', '.', '--port', String(port), '--no-prompt'], {
       cwd: project,
-      env: { ...process.env, DEKA_RATE_LIMIT_DISABLED: '1' },
       stdio: ['ignore', logFd, logFd],
     })
     const url = `http://127.0.0.1:${port}/`
@@ -130,6 +129,15 @@ async function main() {
       return response.ok && body.includes('$RefreshReg$(Counter, "Counter")') ? body : false
     })
     assert.match(moduleSource, /__dekaRefreshBoundary = true/)
+
+    // Exceed the default per-IP burst before the browser opens its HMR WS.
+    // Vendor and module fan-out must not starve that handshake or the page.
+    const fanOut = await Promise.all(Array.from({ length: 90 }, (_, i) =>
+      fetch(`${url}_deka/${i % 2 ? 'react/react.js' : 'hmr/module/Counter.js'}`)))
+    for (const response of fanOut) {
+      assert.equal(response.status, 200, 'dev fan-out must bypass rate limiting')
+      await response.arrayBuffer()
+    }
 
     browser = await chromium.launch({ headless: true })
     const page = await browser.newPage()

@@ -88,3 +88,24 @@ Playwright sibling-state run (`tests/dump/scripts/fast-refresh-e2e.mjs`).
 To see it: `deka dev` on a project that mounts a component from
 `/_deka/hmr/module/...`, click a counter, edit a sibling component's JSX,
 confirm the counter does not reset.
+
+## Building the dev server
+
+Source builds enable the development server explicitly:
+
+```sh
+cargo build --release -p cli --features dev-server
+```
+
+The default `cargo build --release -p cli` retains `deka serve` and excludes
+`deka dev` and the vendored development React code. The HTTP crate's
+`dev-server` feature is enabled by the dev crate; production-only builds
+should build the CLI package rather than the entire workspace, where Cargo
+unifies dependency features. `scripts/check-prod-react-bytes.sh` verifies the
+production release binary against the frozen React DOM client source.
+
+In development mode, `/_deka/` vendor, module, and HMR WebSocket requests
+bypass the per-IP rate limiter without consuming application request tokens.
+Other paths remain limited. In production, `/_deka/` has no exemption and
+development endpoints remain unavailable. This uses runtime configuration;
+there is no environment-variable switch for disabling the limiter.

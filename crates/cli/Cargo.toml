@@ -9,7 +9,6 @@ native = [
   "dep:compile",
   "dep:compiler",
   "dep:runtime",
-  "dep:dev",
   "dep:introspect",
   "dep:deka-build",
   "dep:deka-cache",
@@ -19,6 +18,7 @@ native = [
   "dep:deka-registry",
   "dep:self_cmd",
 ]
+dev-server = ["native", "dep:dev"]
 lsp = ["compiler/lsp"]
 
 [dependencies]

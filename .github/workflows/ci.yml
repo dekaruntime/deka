@@ -326,7 +326,9 @@ jobs:
       # real_cli_invocation_recovers_each_atomic_swap_boundary test can find
       # target/release/cli (deka#521).
       - name: Build CLI for runtime execution tests
-        run: cargo build --release -p cli
+        run: |
+          scripts/check-prod-react-bytes.sh
+          cargo build --release -p cli --features dev-server
 
       # RFD 59 (deka#836): the shipped CLI fetches the pinned content
       # checkouts. This replaces scripts/ci-fetch-testsuite-corpus.sh and
@@ -366,7 +368,7 @@ jobs:
       - name: Test workspace
         env:
           DEKA_DSC: ${{ github.workspace }}/.ci/dsc
-        run: cargo test --locked --workspace
+        run: cargo test --locked --workspace --features cli/dev-server
 
       - name: Exec dsc for check, fmt, transpile
         env:

@@ -124,7 +124,6 @@ fn spawn_serve() -> Serve {
     let child = Command::new(cli_bin())
         .args(["serve", ".", "--port", &port.to_string(), "--no-prompt"])
         .current_dir(root.path())
-        .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .stdout(Stdio::from(log.try_clone().expect("clone log")))
         .stderr(Stdio::from(log))
         .spawn()
