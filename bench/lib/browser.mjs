@@ -86,7 +86,7 @@ export async function withBrowser(fn) {
       }
       throw new Error(`Browser condition timed out: ${expr}`);
     };
-    await send('Page.enable'); await send('Runtime.enable'); await send('Performance.enable'); await send('Network.enable', { maxTotalBufferSize: 100_000_000, maxResourceBufferSize: 20_000_000 });
+    await send('Page.enable'); await send('Runtime.enable'); await send('Performance.enable', { timeDomain: 'timeTicks' }); await send('Network.enable', { maxTotalBufferSize: 100_000_000, maxResourceBufferSize: 20_000_000 });
     await send('Network.setCacheDisabled', { cacheDisabled: true });
     const browser = { send, evaluate, until, listeners,
       navigate: async url => {

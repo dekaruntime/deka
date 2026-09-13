@@ -401,7 +401,7 @@ async function main() {
     process.stderr.write(`${name}: production builds\n`);
     const build = await builds(name, stack.build, stack.root, stack.file, stack.clean, stack.env);
     // Incremental samples edited the source; serve a rebuilt committed baseline.
-    await runOk(stack.build[0], stack.build.slice(1), { cwd: stack.root, env: { ...env, ...stack.env } });
+    buildLogs[`${name}Baseline`] = [(await runOk(stack.build[0], stack.build.slice(1), { cwd: stack.root, env: { ...env, ...stack.env } })).combined];
     const measured = await serving(stack.prod, stack.root, stack.port, stack.env, async base => ({
       ttfb: await ttfb(`${base}${POST_PATH}`),
       interactive: await withBrowser(browser => payload(browser, `${base}${POST_PATH}`, true)),
@@ -414,11 +414,11 @@ async function main() {
   const zeroNext = join(NEXT_ROOT, '.bench-static');
   try {
     zeroDekaCopy(zeroDeka);
-    await runOk(dekaBin, ['build', '--no-prompt'], { cwd: zeroDeka, env: dekaEnv });
+    buildLogs.dekaStatic = [(await runOk(dekaBin, ['build', '--no-prompt'], { cwd: zeroDeka, env: dekaEnv })).combined];
     report.results.deka.static = await serving([dekaBin, 'serve', 'dist/server/serve-entry.js', '--port', '8762', '--no-prompt'], zeroDeka, 8762, dekaEnv,
       base => withBrowser(browser => payload(browser, `${base}${POST_PATH}`, false)));
     rmrf(zeroNext); zeroNextCopy(zeroNext);
-    await runOk(process.execPath, [nextCli, 'build'], { cwd: zeroNext, env });
+    buildLogs.nextStatic = [(await runOk(process.execPath, [nextCli, 'build'], { cwd: zeroNext, env })).combined];
     report.results.next.static = await serving([process.execPath, nextCli, 'start', '--hostname', '127.0.0.1', '--port', '8764'], zeroNext, 8764, env,
       base => withBrowser(browser => payload(browser, `${base}${POST_PATH}`, false)));
   } finally { rmrf(zeroDeka); rmrf(zeroNext); }

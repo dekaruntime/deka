@@ -40,7 +40,7 @@ All apps have `/`, `/page/2…`, `/posts/:slug`, `/tags/:tag`, `/about`, post ca
 
 Next uses [`generateStaticParams`](https://nextjs.org/docs/app/api-reference/functions/generate-static-params) for the local content's complete route set, with `dynamicParams = false`. It prerenders the blog at build time and uses default output served by [`next start`](https://nextjs.org/docs/app/guides/self-hosting). No `output: export`, forced SSR, timed ISR regeneration, custom server, or artificial zero-JS stripping. Build-time SSG is appropriate for markdown committed with the site; there is no live CMS to revalidate. Full build logs disclose generated routes and framework overhead. The three build commands do different amounts of framework work by design.
 
-The Deka theme binds `theme` in typed effect code before entering `unsafe`, so Deka can infer its reactive dependency, as a workaround for the released compiler's [#951](https://github.com/dekaruntime/deka/issues/951) no-dependencies effect bug. The runner checks both the actual page theme/background and newsletter state. It does not change the compiler or workspace tests.
+The Deka theme binds `theme` in typed effect code before entering `unsafe`, so Deka can infer its reactive dependency, as a workaround for the released compiler's missed dependency inside raw `unsafe` code, tracked in [#951](https://github.com/dekaruntime/deka/issues/951). The runner checks both the actual page theme/background and newsletter state. It does not change the compiler or workspace tests.
 
 ## Measurements
 
