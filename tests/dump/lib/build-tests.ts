@@ -16,7 +16,7 @@ import {
   runProjectInBrowser,
 } from './run-browser'
 import { setCompilerArtifactPath } from '@dekaruntime/web-ide-kit/runtime'
-import { fixtureEnvGranted, loadAllTests, type HatsCategory, type HatsHost, type HatsTest, type HatsTestStage, type HatsTestStatus } from './tests'
+import { fixtureEnvGranted, isWasmProjectSource, loadAllTests, type HatsCategory, type HatsHost, type HatsTest, type HatsTestStage, type HatsTestStatus } from './tests'
 import { computeOverallStatus, type HatsOverallStatus } from './overall-status'
 
 // Bare stdlib imports (from "io") are rewritten by the compiler to this base;
@@ -33,6 +33,8 @@ export interface RuntimeResult {
   stage: HatsTestStage
   stdout: string
   stderr: string
+  /** Process exit code. Browser maps ok→0, failure→1. */
+  exitCode?: number
   formattedCode?: string
   emittedJs?: string
   error?: string
@@ -123,7 +125,7 @@ function stageMatchesExpectation(expected: string, actual: string): boolean {
   )
 }
 
-function runtimeMatchesExpectation(
+export function runtimeMatchesExpectation(
   test: HatsTest,
   result: RuntimeResult,
   host: HatsHost,
@@ -136,6 +138,11 @@ function runtimeMatchesExpectation(
   const expectedStdout = expectedStdoutForHost(test, host)
   if (expectedStdout !== undefined) {
     if (!exactMatch(result.stdout, expectedStdout)) return false
+  }
+
+  if (test.expectedExitCode !== undefined) {
+    const actualExit = result.exitCode ?? (result.ok ? 0 : 1)
+    if (actualExit !== test.expectedExitCode) return false
   }
 
   if (!options.ignoreCode && test.expectedCode !== undefined) {
@@ -175,12 +182,18 @@ async function runBrowserTest(
   const envGranted = fixtureEnvGranted(dekaJson)
   const formatResult = formatDsWithWasm(globalHatsCompiler, source)
   const formattedCode = formatResult.ok ? formatResult.code : undefined
-  const hasProjectFiles = Boolean(files && entryPath)
+  // Summon's foreign.mjs is a native tmpdir asset, not a wasm source
+  // (wasm still cannot verify summon; deka#930). Keep single-file compile
+  // when the only siblings are those native assets.
+  const wasmFiles = Object.fromEntries(
+    Object.entries(files ?? {}).filter(([filePath]) => isWasmProjectSource(filePath))
+  )
+  const hasProjectFiles = Boolean(Object.keys(wasmFiles).length > 0 && entryPath)
   const needsStdlibStubs = packages && packages.length > 0
   const isProject = hasProjectFiles || (needsStdlibStubs && Boolean(entryPath))
 
   if (isProject) {
-    const projectFiles: Record<string, string> = { [entryPath!]: source, ...(files ?? {}) }
+    const projectFiles: Record<string, string> = { [entryPath!]: source, ...wasmFiles }
     // Provide type stubs for declared stdlib packages so the WASM project
     // compiler can typecheck imports that the native host resolves from
     // ds_modules (deka#497). Runtime implementations are served by the harness.
@@ -197,7 +210,7 @@ async function runBrowserTest(
       moduleBase: HARNESS_MODULE_BASE,
     })
     const runResult = await runProjectInBrowser(entryPath!, projectCompileResult, envGranted)
-    return { ...runResult, formattedCode }
+    return { ...runResult, formattedCode, exitCode: runResult.ok ? 0 : 1 }
   }
 
   // Keep the stem "test" (expected stdout embeds it via data-deka-id) but
@@ -212,6 +225,7 @@ async function runBrowserTest(
       stage: determineStage(false, compileResult.js, compileResult.error, compileResult.diagnostics),
       stdout: '',
       stderr: '',
+      exitCode: 1,
       formattedCode,
       error: compileResult.error,
       diagnostics: compileResult.diagnostics,
@@ -227,6 +241,7 @@ async function runBrowserTest(
     ...runResult,
     formattedCode,
     emittedJs: compileResult.js,
+    exitCode: runResult.ok ? 0 : 1,
     diagnostics,
   }
 }
@@ -254,6 +269,7 @@ async function runNativeTest(
     stage,
     stdout: nativeResult.stdout,
     stderr: nativeResult.stderr,
+    exitCode: nativeResult.exitCode ?? (nativeResult.ok ? 0 : 1),
     error: nativeResult.error,
     emittedJs: nativeResult.emittedJs,
     formattedCode: formatResult.ok ? formatResult.code : undefined,

@@ -23,7 +23,10 @@ export interface HatsTest {
   expectedStdout?: string
   expectedStdoutNative?: string
   expectedStdoutBrowser?: string
+  /** Legacy formatted-source sidecar. Numeric `.code` files are exit codes. */
   expectedCode?: string
+  /** Process exit code from a numeric `.code` sidecar (dsc Hats contract). */
+  expectedExitCode?: number
   expectedDiagnosticContains?: string
   dekaJson?: Record<string, unknown>
   packages?: string[]
@@ -59,14 +62,49 @@ function readFile(dir: string, filename: string): string | undefined {
   return fs.readFileSync(filePath, 'utf-8')
 }
 
-function collectDsFiles(dir: string, relativeTo: string): string[] {
+/** Fixture-local files dsc's Hats runner ships into the native tmpdir. */
+export function isFixtureAsset(filename: string): boolean {
+  return (
+    filename.endsWith('.ds') ||
+    filename.endsWith('.dsx') ||
+    filename.endsWith('.css') ||
+    filename.endsWith('.mjs')
+  )
+}
+
+/**
+ * Corpus `.code` sidecar contract, matching dsc's Hats runner (deka#929).
+ * A file whose trimmed body is a decimal integer is a process exit code.
+ * Anything else is legacy formatted source for the dump's formatter check.
+ */
+export function parseCodeSidecar(raw: string | undefined): {
+  expectedExitCode?: number
+  expectedFormattedCode?: string
+} {
+  if (raw === undefined) return {}
+  const trimmed = raw.trim()
+  if (/^(0|[1-9][0-9]*)$/.test(trimmed)) {
+    return { expectedExitCode: Number(trimmed) }
+  }
+  return { expectedFormattedCode: raw }
+}
+
+/** Sources the wasm project compiler can ingest; `.mjs` is native-only. */
+export function isWasmProjectSource(filePath: string): boolean {
+  return filePath.endsWith('.ds') || filePath.endsWith('.dsx') || filePath.endsWith('.css')
+}
+
+export function collectFixtureFiles(dir: string, relativeTo: string): string[] {
   const results: string[] = []
   const entries = fs.readdirSync(dir, { withFileTypes: true })
   for (const entry of entries) {
     const relativePath = path.relative(relativeTo, path.join(dir, entry.name)).replace(/\\/g, '/')
     if (entry.isDirectory()) {
-      results.push(...collectDsFiles(path.join(dir, entry.name), relativeTo))
-    } else if (entry.isFile() && (entry.name.endsWith('.ds') || entry.name.endsWith('.dsx'))) {
+      results.push(...collectFixtureFiles(path.join(dir, entry.name), relativeTo))
+    } else if (entry.isFile() && isFixtureAsset(entry.name)) {
+      // .mjs is the vendored summon foreign module; .css is a component
+      // stylesheet. Both are copied next to the entry so native resolves
+      // them the way dsc's Hats runner does (deka#930).
       results.push(relativePath)
     }
   }
@@ -141,8 +179,8 @@ export function loadAllTests(): HatsCategory[] {
       if (!testEntry.isDirectory()) continue
       const testName = testEntry.name
       const testDir = path.join(categoryDir, testName)
-      const dsFiles = collectDsFiles(testDir, testDir)
-      const entryFile = dsFiles.find((f) => parseStatusFromFilename(f) && !f.includes('/'))
+      const fixtureFiles = collectFixtureFiles(testDir, testDir)
+      const entryFile = fixtureFiles.find((f) => parseStatusFromFilename(f) && !f.includes('/'))
       if (!entryFile) continue
 
       const status = parseStatusFromFilename(entryFile)!
@@ -152,13 +190,13 @@ export function loadAllTests(): HatsCategory[] {
 
       const metadata = readMetadata(testDir, name)
       const expectedStdout = readFile(testDir, `${name}.stdout`)
-      const expectedCode = readFile(testDir, `${name}.code`)
+      const codeSidecar = parseCodeSidecar(readFile(testDir, `${name}.code`))
 
-      const extraDsFiles = dsFiles.filter((f) => f !== entryFile)
+      const extraFiles = fixtureFiles.filter((f) => f !== entryFile)
       const filesRecord: Record<string, string> | undefined =
-        extraDsFiles.length > 0
+        extraFiles.length > 0
           ? Object.fromEntries(
-              extraDsFiles
+              extraFiles
                 .map((f) => [f, readFile(testDir, f)] as const)
                 .filter(([, content]) => content !== undefined)
                 .map(([f, content]) => [f, content as string])
@@ -180,7 +218,8 @@ export function loadAllTests(): HatsCategory[] {
         expectedStdout,
         expectedStdoutNative: metadata.expectedStdoutNative,
         expectedStdoutBrowser: metadata.expectedStdoutBrowser,
-        expectedCode,
+        expectedCode: codeSidecar.expectedFormattedCode,
+        expectedExitCode: codeSidecar.expectedExitCode,
         expectedDiagnosticContains: metadata.expectedDiagnosticContains,
         dekaJson: metadata.dekaJson,
         packages: metadata.packages,
