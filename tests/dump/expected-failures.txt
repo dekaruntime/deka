@@ -109,3 +109,8 @@ summon-void-exempt
 # Documented per-host difference (deka#927 / deka#928): native accepts
 # `new URL("://invalid")`; Chromium rejects it.
 unsafe-unsafe-url-err
+
+# deka#931: native @deka/crypto install fails in the dump env (artifact repaired+republished
+# 2026-09-12; row persists — possibly CDN-cached old tarball or env-specific install path).
+# Remove when #931 closes.
+error-globals-crypto-random-uuid
