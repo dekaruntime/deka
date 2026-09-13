@@ -5,6 +5,7 @@ pub mod esm_loader;
 pub mod islands;
 pub mod isolate_pool;
 pub mod js_builtins;
+mod js_minify;
 pub mod prelude;
 pub mod secrets_cache;
 pub mod tenant;

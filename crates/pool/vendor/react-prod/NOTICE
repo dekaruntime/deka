@@ -13,3 +13,7 @@ browser MessageChannel) plus the browser legacy build for renderToString.
 the scheduler production build.
 The development React tree under crates/http/vendor/react/ stays feature-gated
 for `deka dev` Fast Refresh.
+Islands emit and `deka build --bundle` minify these production CJS files
+through SWC mangle + compact emit in crates/pool/src/js_minify.rs
+(compress is off: SWC 42.x still miscompiles this React pin). HASHES
+locks the pristine upstream bytes; MINIFIED-HASHES locks the minify output.

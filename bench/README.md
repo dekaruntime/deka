@@ -106,18 +106,18 @@ The runner records OS, arch, CPU, memory, and toolchain versions. Copy that stan
 
 ## Results from this clone
 
-Generated: 2026-09-13T19:40:17.251Z
+Generated: 2026-09-13T21:10:29.275Z
 
 Machine: macOS 26.6.1, x86_64, Intel(R) Core(TM) i9-10910 CPU @ 3.60GHz, 128 GiB, node v26.3.1.
 
-deka is a **main-build** (`git_sha e6bb240c1f0b`, crate version still prints 0.52.0, `react: 19.1.1`) pending the next release. dsc is released **0.52.2**. Vite is `react@19.1.1` / `vite@6.3.5` / `react-router-dom@7.6.2`.
+deka is a **main-build** (`git_sha f07ae31291eb`, crate version still prints 0.52.0, `react: 19.1.1`) pending the next release. dsc is released **0.52.2**. Vite is `react@19.1.1` / `vite@6.3.5` / `react-router-dom@7.6.2`.
 
 ### Build (median of 5, production)
 
 | stack | cold build | incremental build |
 | --- | ---: | ---: |
-| deka | 707 ms | 481 ms |
-| Vite + React 19.1.1 | 1530 ms | 1424 ms |
+| deka | 796 ms | 870 ms |
+| Vite + React 19.1.1 | 2392 ms | 1568 ms |
 | Next.js App Router | TODO (phase 2) | TODO (phase 2) |
 
 ### Payload story A — zero-JS static page (`/posts/zero-js-by-default`)
@@ -136,7 +136,7 @@ deka: per-page HTML + cached shared islands runtime (production React + Theme + 
 
 | stack | HTML gzip | JS gzip | CSS gzip | total gzip |
 | --- | ---: | ---: | ---: | ---: |
-| deka (HTML + shared islands runtime) | 1467 B | 101390 B | 1170 B | 104027 B |
+| deka (HTML + shared islands runtime) | 1465 B | 60729 B | 1170 B | 63364 B |
 | Vite + React 19.1.1 (CSR SPA) | 293 B | 84396 B | 1170 B | 85859 B |
 | Next.js App Router | TODO (phase 2) | TODO (phase 2) | TODO (phase 2) | TODO (phase 2) |
 
