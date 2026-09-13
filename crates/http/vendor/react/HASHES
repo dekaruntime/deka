@@ -1,0 +1,8 @@
+# sha256 of UNWRAPPED upstream CJS bytes
+c3140127dd572acd866efa06e63c5c27f79daa5879e4c39af5c91644f8574751  react.development.js  https://unpkg.com/react@19.1.1/cjs/react.development.js
+646eb671c8585382baff16daf92fe16a4cdd10dcf1a363c58b2ae1f6bf3a2b8d  scheduler.development.js  https://unpkg.com/scheduler@0.26.0/cjs/scheduler.development.js
+82eb7d3dc0a281b803279d35ec18ae4c379ab03286d0f187ca9b4da446b88642  react-dom.development.js  https://unpkg.com/react-dom@19.1.1/cjs/react-dom.development.js
+f004c539cd889799f31377ae2cf1d918c786b5bd18a52e0e5cae166aedbccafd  react-dom-client.development.js  https://unpkg.com/react-dom@19.1.1/cjs/react-dom-client.development.js
+fa3de8510895129cfcdbd37cfcce16b5f88e225565517d944f414d7cdd9687b0  react-jsx-runtime.development.js  https://unpkg.com/react@19.1.1/cjs/react-jsx-runtime.development.js
+16a92a1e7e15a81ef5e23f8f7565d6d5f1f12db12b6d9de62e41e22f00561272  react-jsx-dev-runtime.development.js  https://unpkg.com/react@19.1.1/cjs/react-jsx-dev-runtime.development.js
+5ae1a9f8ee9e5472e3e3e19eccf52d535941de3bd7d670af71a0bc78db05f6e8  react-refresh-runtime.cjs.js  https://cdn.jsdelivr.net/npm/react-refresh@0.17.0/cjs/react-refresh-runtime.development.js

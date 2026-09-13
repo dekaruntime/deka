@@ -82,7 +82,6 @@ fn watched_edit_changes_served_output_and_evicts_the_serving_pool() {
             "--no-prompt",
         ])
         .current_dir(root.path())
-        .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .stdout(Stdio::from(log.try_clone().expect("clone serve log")))
         .stderr(Stdio::from(log));
     let dsc_beside_cli = Path::new(cli_bin()).with_file_name("dsc");

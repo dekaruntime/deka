@@ -48,13 +48,17 @@ pub fn build_registry() -> Registry {
             .with(runtime::register_run)
             .with(runtime::register_platform)
             .with(runtime::register_serve)
-            .with(dev::register)
             .with(self_cmd::register)
             .with(deka_task::register)
             .with(deka_test::register)
             .with(compiler::register_transpile)
             .with(runtime_core::register)
             .with(introspect::register);
+    }
+
+    #[cfg(feature = "native")]
+    {
+        builder = builder.with(dev::register);
     }
 
     builder

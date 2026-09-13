@@ -72,9 +72,9 @@ cache clear	remove all loose-file cache entries
 run		run the app
 platform		multi-tenant platform server — serves per-tenant DekaScript handlers from tenants/ directory
 serve		serve a handler or directory
-dev		serve with HTTP + HMR (dev mode)
 task		run a task from deka.json
 test		run DekaScript tests
+dev		serve with HTTP + HMR (dev mode)
 
 [flags]
 --help		show help

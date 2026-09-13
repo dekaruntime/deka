@@ -56,7 +56,6 @@ fn serve_source_project(command: &str, root: &Path) {
     server
         .args([command, ".", "--port", &port.to_string(), "--no-prompt"])
         .current_dir(root)
-        .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .stdout(Stdio::from(log.try_clone().expect("clone command log")))
         .stderr(Stdio::from(log));
     let dsc_beside_cli = Path::new(cli_bin()).with_file_name("dsc");
@@ -95,6 +94,7 @@ fn serve_source_project(command: &str, root: &Path) {
 }
 
 #[test]
+#[cfg(feature = "dev-server")]
 fn help_lists_dev_command() {
     let output = Command::new(cli_bin())
         .arg("--help")
@@ -114,6 +114,7 @@ fn help_lists_dev_command() {
 }
 
 #[test]
+#[cfg(feature = "dev-server")]
 fn registry_exposes_dev_command() {
     let registry = cli::build_registry();
     let command = registry
@@ -130,12 +131,18 @@ fn source_app_router_project_serves_with_dev_and_serve() {
 
     // These commands are distinct postures in RFD 54, but before the later
     // artifact work lands they must both continue serving this source tree.
-    for command in ["dev", "serve"] {
+    let commands = if cfg!(feature = "dev-server") {
+        vec!["dev", "serve"]
+    } else {
+        vec!["serve"]
+    };
+    for command in commands {
         serve_source_project(command, root.path());
     }
 }
 
 #[test]
+#[cfg(feature = "dev-server")]
 fn deka_dev_prints_banner_serves_http_and_hmr() {
     let root = TempDir::new().expect("tempdir");
     init_project(root.path());
@@ -150,7 +157,6 @@ fn deka_dev_prints_banner_serves_http_and_hmr() {
     let mut cmd = Command::new(cli_bin());
     cmd.args(["dev", ".", "--port", &port.to_string(), "--no-prompt"])
         .current_dir(root.path())
-        .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .stdout(Stdio::from(log.try_clone().expect("clone log")))
         .stderr(Stdio::from(log));
     // Prefer an explicit dsc when present next to the test cli binary.

@@ -1,0 +1,9 @@
+React, react-dom, scheduler, and react-refresh are MIT-licensed by Meta Platforms, Inc.
+Pinned versions:
+  react@19.1.1
+  react-dom@19.1.1
+  scheduler@0.26.0
+  react-refresh@0.17.0
+See licenses/ for the full license texts.
+These files ship with `deka dev` so Fast Refresh and jsxDEV have one React instance.
+rfd#64 amendment 2 will replace this vendor tree with runtime-builtin resolution.

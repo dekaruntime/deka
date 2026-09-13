@@ -45,8 +45,7 @@ impl Env {
             .env("HOME", self.home.path())
             .env_remove("XDG_CACHE_HOME")
             .env("DEKA_DSC", dsc)
-            .env("STUB_DSC_VERSION", version)
-            .env("DEKA_RATE_LIMIT_DISABLED", "1");
+            .env("STUB_DSC_VERSION", version);
         command
     }
 

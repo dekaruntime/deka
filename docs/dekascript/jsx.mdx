@@ -79,3 +79,15 @@ they are referenced as members of the global `deka.ui` namespace. The factory
 accepts children either as the third argument (the emitted form) or inside
 `props` (legacy form); in both cases renderers see the same
 `{ tag, props, children }` node with `children` as a flat array.
+
+## Development: jsxDEV and Fast Refresh
+
+`deka dev` compiles `.dsx` with dsc's development emission when the compiler
+exposes it: `jsxDEV(type, props, key, isStaticChildren, source, self)` from
+`@js/react/jsx-dev-runtime`, with `source` taken from the DS span of the
+opening `<`. Production `jsx` / `jsxs` is unchanged.
+
+Emitted modules are registered for React Fast Refresh. Editing a component's
+JSX hot-swaps it in the browser without losing sibling or own state when
+react-refresh allows it; otherwise the page reloads. See
+[Fast Refresh](./fast-refresh.mdx).

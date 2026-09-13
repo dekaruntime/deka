@@ -3,6 +3,10 @@ name = "deka_http"
 version.workspace = true
 edition = "2024"
 
+[features]
+default = []
+dev-server = []
+
 [dependencies]
 axum = { workspace = true, features = ["ws"] }
 base64 = "0.22"

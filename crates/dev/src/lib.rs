@@ -9,6 +9,7 @@
 mod banner;
 pub mod build_watch;
 mod command;
+mod refresh;
 mod serve;
 mod watch;
 
