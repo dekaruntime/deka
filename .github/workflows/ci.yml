@@ -200,6 +200,9 @@ jobs:
       - name: Check crates/**.rs file sizes
         run: scripts/check-file-size.sh
 
+      - name: Check cli composition surface (rfd#61)
+        run: scripts/check-cli-surface.sh
+
   rust:
     name: Rust tests
     needs: [changes, rust-check]

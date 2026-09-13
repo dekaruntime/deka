@@ -126,22 +126,22 @@ fn ambient_environment_child() {
     )
     .unwrap();
 
-    let db = cli::cli::db::config::read_db_runtime_config(&dir);
+    let db = deka_db::config::read_db_runtime_config(&dir);
     println!("ambient-proof:db-engine={:?}", db.engine);
     println!("ambient-proof:db-location={}", db.location);
 
     let ctx = dummy_context(dir.clone());
 
-    let (registry, token) = cli::cli::install::get_registry_config(&ctx);
+    let (registry, token) = pm::get_registry_config(&ctx);
     println!("ambient-proof:install-registry={}", registry);
     println!("ambient-proof:install-token={:?}", token);
 
-    let (registry, token, index) = cli::cli::self_cmd::update::get_registry_config(&ctx);
+    let (registry, token, index) = self_cmd::update::get_registry_config(&ctx);
     println!("ambient-proof:self-update-registry={}", registry);
     println!("ambient-proof:self-update-token={:?}", token);
     println!("ambient-proof:self-update-index={:?}", index);
 
-    let monitor = cli::cli::self_cmd::monitor::load_monitor_config(&ctx).unwrap();
+    let monitor = self_cmd::monitor::load_monitor_config(&ctx).unwrap();
     println!(
         "ambient-proof:monitor-poll-secs={}",
         monitor.poll_interval.as_secs()
@@ -159,10 +159,10 @@ fn ambient_environment_child() {
         monitor.update_config.registry_index_url
     );
 
-    let auth = cli::cli::publish::resolve_registry_auth(&HashMap::new(), None);
+    let auth = deka_registry::publish::resolve_registry_auth(&HashMap::new(), None);
     println!("ambient-proof:publish-auth={:?}", auth);
 
-    let (socket, bearer) = cli::cli::deploy::resolve_gild_endpoint(&HashMap::new());
+    let (socket, bearer) = deka_deploy::resolve_gild_endpoint(&HashMap::new());
     println!("ambient-proof:gild-socket={}", socket);
     println!("ambient-proof:gild-bearer={}", bearer);
 

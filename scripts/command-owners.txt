@@ -1,0 +1,37 @@
+# Declared CommandSpec.owner values. A new command must land in an owner crate
+# and add a line here (rfd#61).
+add pm
+auth registry
+build build
+cache cache
+check compiler
+compile compile
+db db
+deploy deploy
+dev dev
+fmt compiler
+i pm
+init pm
+install pm
+introspect introspect
+link pm
+login registry
+logout registry
+lsp compiler
+pkg pm
+platform runtime
+publish registry
+release pm
+run runtime
+self self
+serve runtime
+signup registry
+summon pm
+task task
+test test
+transpile compiler
+unlink pm
+update pm
+verify runtime_core
+wasm wasm_cli
+whoami registry

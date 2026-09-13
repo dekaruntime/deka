@@ -1,52 +1,64 @@
 #![allow(clippy::all, dead_code, unused_variables, unused_assignments)]
 
-use core::Registry;
+use core::{Registry, RegistryBuilder};
 #[cfg(target_arch = "wasm32")]
 use serde::{Deserialize, Serialize};
 use wasm_cli as wasm_cmd;
 
 pub mod cli;
 pub mod context;
-pub mod dsc;
 
 pub fn build_registry() -> Registry {
-    let mut registry = Registry::new();
-    cli::register_global_flags(&mut registry);
-    cli::register_global_params(&mut registry);
-    cli::init::register(&mut registry);
-    wasm_cmd::register(&mut registry);
+    // Registration order matches the pre-move cli crate so `--help` grouping
+    // within each category stays byte-identical (BTreeMap by category, then
+    // insertion order).
+    let mut builder = RegistryBuilder::new()
+        .with(cli::register_global_flags)
+        .with(cli::register_global_params)
+        .with(pm::register_init)
+        .with(wasm_cmd::register);
+
     #[cfg(target_arch = "wasm32")]
-    cli::db_wasm::register(&mut registry);
+    {
+        builder = builder.with(deka_db::register);
+    }
+
     #[cfg(feature = "native")]
     {
-        cli::auth::register(&mut registry);
-        cli::build::register(&mut registry);
-        cli::cache::register(&mut registry);
-        cli::check::register(&mut registry);
-        cli::deploy::register(&mut registry);
-        cli::fmt::register(&mut registry);
-        cli::compile::register(&mut registry);
-        cli::db::register(&mut registry);
-        cli::install::register(&mut registry);
-        cli::summon::register(&mut registry);
-        cli::link::register(&mut registry);
+        builder = builder
+            .with(deka_registry::auth::register)
+            .with(deka_build::register)
+            .with(deka_cache::register)
+            .with(compiler::register_check)
+            .with(deka_deploy::register)
+            .with(compiler::register_fmt)
+            .with(compile::register)
+            .with(deka_db::register)
+            .with(pm::register_install)
+            .with(pm::register_summon)
+            .with(pm::register_link)
+            .with(pm::register_pkg)
+            .with(deka_registry::publish::register)
+            .with(pm::register_release)
+            .with(runtime::register_run)
+            .with(runtime::register_platform)
+            .with(runtime::register_serve)
+            .with(dev::register)
+            .with(self_cmd::register)
+            .with(deka_task::register)
+            .with(deka_test::register)
+            .with(compiler::register_transpile)
+            .with(runtime_core::register)
+            .with(introspect::register);
         #[cfg(feature = "lsp")]
-        cli::lsp::register(&mut registry);
-        cli::pkg::register(&mut registry);
-        cli::publish::register(&mut registry);
-        cli::release::register(&mut registry);
-        cli::run::register(&mut registry);
-        cli::platform::register(&mut registry);
-        cli::serve::register(&mut registry);
-        cli::dev::register(&mut registry);
-        cli::self_cmd::register(&mut registry);
-        cli::task::register(&mut registry);
-        cli::test::register(&mut registry);
-        cli::transpile::register(&mut registry);
-        cli::verify::register(&mut registry);
-        introspect::register(&mut registry);
+        {
+            builder = builder.with(compiler::register_lsp);
+        }
     }
-    registry
+
+    builder
+        .build()
+        .unwrap_or_else(|err| panic!("cli registry: {err}"))
 }
 
 pub fn run() {

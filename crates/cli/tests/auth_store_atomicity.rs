@@ -1,4 +1,4 @@
-use cli::cli::auth_store::{self, AuthProfile};
+use deka_registry::auth_store::{self, AuthProfile};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::{Mutex, OnceLock};

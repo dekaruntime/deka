@@ -1,0 +1,26 @@
+# crates/cli may depend only on core, stdio, and owner crates (rfd#61).
+# Implementation crates (reqwest, postgres, yaml, db drivers) belong in owners.
+# Format: one cargo package name per line.
+
+core
+stdio
+wasm_cli
+pm
+deka-db
+compile
+compiler
+runtime
+dev
+runtime_core
+introspect
+deka-build
+deka-cache
+deka-task
+deka-test
+deka-deploy
+deka-registry
+self_cmd
+serve
+run
+serde
+serde_json

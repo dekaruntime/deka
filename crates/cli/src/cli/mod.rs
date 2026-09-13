@@ -3,74 +3,6 @@ use std::collections::BTreeMap;
 use core::{FlagSpec, ParamSpec, ParseError, ParseErrorKind, Registry};
 use stdio::{ascii, error as stdio_error, raw};
 
-// define & export cli's submodules
-#[cfg(feature = "native")]
-pub mod auth;
-#[cfg(feature = "native")]
-pub mod auth_store;
-#[cfg(feature = "native")]
-pub mod build;
-#[cfg(feature = "native")]
-pub mod build_dsc;
-#[cfg(feature = "native")]
-pub mod build_publish;
-#[cfg(feature = "native")]
-pub mod build_server_entries;
-#[cfg(feature = "native")]
-pub mod build_server_graph;
-#[cfg(feature = "native")]
-pub mod build_slots;
-#[cfg(feature = "native")]
-pub mod cache;
-#[cfg(feature = "native")]
-pub mod check;
-#[cfg(feature = "native")]
-pub mod compile;
-
-#[cfg(feature = "native")]
-pub mod db;
-#[cfg(target_arch = "wasm32")]
-pub mod db_wasm;
-#[cfg(feature = "native")]
-pub mod deploy;
-#[cfg(feature = "native")]
-pub mod dev;
-#[cfg(feature = "native")]
-pub mod fmt;
-pub mod init;
-#[cfg(feature = "native")]
-pub mod install;
-#[cfg(feature = "native")]
-pub mod link;
-#[cfg(feature = "lsp")]
-pub mod lsp;
-#[cfg(feature = "native")]
-pub mod pipeline_yaml;
-#[cfg(feature = "native")]
-pub mod pkg;
-#[cfg(feature = "native")]
-pub mod platform;
-#[cfg(feature = "native")]
-pub mod publish;
-#[cfg(feature = "native")]
-pub mod release;
-#[cfg(feature = "native")]
-pub mod run;
-#[cfg(feature = "native")]
-pub mod self_cmd;
-#[cfg(feature = "native")]
-pub mod serve;
-#[cfg(feature = "native")]
-pub mod task;
-#[cfg(feature = "native")]
-pub mod test;
-#[cfg(feature = "native")]
-pub mod transpile;
-#[cfg(feature = "native")]
-pub mod user_cache;
-#[cfg(feature = "native")]
-pub mod verify;
-
 pub fn register_global_flags(registry: &mut Registry) {
     registry.add_flag(FlagSpec {
         name: "--help",
@@ -415,9 +347,6 @@ pub fn execute(registry: &Registry) -> i32 {
         };
 
         if cmd.commands.len() == 1 {
-            if matches!(cmd_name.as_str(), "check" | "fmt" | "transpile" | "lsp") {
-                crate::dsc::exec_if_present();
-            }
             (command.handler)(&context);
             return 0;
         }
@@ -473,6 +402,3 @@ fn format_suggestions(suggestions: &[String]) -> String {
         .collect::<Vec<String>>()
         .join(", ")
 }
-
-#[cfg(feature = "native")]
-pub mod summon;
