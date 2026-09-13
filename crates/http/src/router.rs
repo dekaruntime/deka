@@ -68,6 +68,10 @@ async fn handle_request(
         return response;
     }
 
+    if let Some(response) = crate::react_refresh::try_response(&state, &path) {
+        return response;
+    }
+
     let hmr_path = path == "/_deka/hmr";
     if hmr_path && state.dev_mode {
         if let Some(ws) = ws {
@@ -424,34 +428,64 @@ fn inject_hmr_client(html: &str) -> String {
     if html.contains(MARKER) {
         return html.to_string();
     }
-    // The dev HMR client ships as JavaScript-only fragments (compile-time
-    // include_str!, zero runtime cost), split by concern: the hydrate import
-    // specifier, the focus/form preservation helpers, and the patch
-    // dispatcher (island comment-marker walker). The specifier stays the
-    // LOGICAL "ui/client" — the document's inline import map resolves it to
-    // the current hashed chunk, so content-hash rotations stay invisible
-    // here. Fragments replace the former single giant literal, on which
-    // three unrelated PRs collided in one night; per-concern files keep
-    // unrelated HMR changes from textually conflicting.
+    // Import map + Fast Refresh preamble must run before the page's own
+    // React imports. The HMR client stays a single body-end module script
+    // so its fragments cannot grow extra <script> tags (RFD 44).
+    const HEAD: &str = concat!(
+        r#"<script type="importmap" id="__deka_react_importmap">"#,
+        include_str!("hmr_client/import_map.json"),
+        "</script>",
+        r#"<script type="module" id="__deka_refresh_preamble">"#,
+        include_str!("hmr_client/preamble.js"),
+        "</script>"
+    );
     const SCRIPT: &str = concat!(
         r#"<script id="__deka_hmr_client" type="module">"#,
         include_str!("hmr_client/hydrate.js"),
         include_str!("hmr_client/helpers.js"),
         include_str!("hmr_client/patch.js"),
+        include_str!("hmr_client/refresh.js"),
         include_str!("hmr_client/socket.js"),
         "</script>"
     );
-    if let Some(idx) = html.rfind("</body>") {
-        let mut out = String::with_capacity(html.len() + SCRIPT.len());
-        out.push_str(&html[..idx]);
+    let with_head = inject_before_tag(html, "</head>", HEAD).unwrap_or_else(|| {
+        inject_after_tag(html, "<head>", HEAD).unwrap_or_else(|| {
+            let mut out = String::with_capacity(html.len() + HEAD.len());
+            out.push_str(HEAD);
+            out.push_str(html);
+            out
+        })
+    });
+    if let Some(idx) = with_head.rfind("</body>") {
+        let mut out = String::with_capacity(with_head.len() + SCRIPT.len());
+        out.push_str(&with_head[..idx]);
         out.push_str(SCRIPT);
-        out.push_str(&html[idx..]);
+        out.push_str(&with_head[idx..]);
         return out;
     }
-    let mut out = String::with_capacity(html.len() + SCRIPT.len());
-    out.push_str(html);
+    let mut out = String::with_capacity(with_head.len() + SCRIPT.len());
+    out.push_str(&with_head);
     out.push_str(SCRIPT);
     out
+}
+
+fn inject_before_tag(html: &str, tag: &str, insert: &str) -> Option<String> {
+    let idx = html.rfind(tag)?;
+    let mut out = String::with_capacity(html.len() + insert.len());
+    out.push_str(&html[..idx]);
+    out.push_str(insert);
+    out.push_str(&html[idx..]);
+    Some(out)
+}
+
+fn inject_after_tag(html: &str, tag: &str, insert: &str) -> Option<String> {
+    let idx = html.find(tag)?;
+    let end = idx + tag.len();
+    let mut out = String::with_capacity(html.len() + insert.len());
+    out.push_str(&html[..end]);
+    out.push_str(insert);
+    out.push_str(&html[end..]);
+    Some(out)
 }
 
 #[cfg(test)]
@@ -616,11 +650,29 @@ mod tests {
         let html = "<html><body><div id=\"app\"></div></body></html>";
         let out = inject_hmr_client(html);
         assert_eq!(
-            out.matches("<script").count(),
+            out.matches("<script id=\"__deka_hmr_client\"").count(),
             1,
-            "the injector owns the one module script wrapper; its JavaScript fragments must not add HTML"
+            "the injector owns one HMR client module script; fragments must not add extra wrappers"
         );
-        assert_eq!(out.matches("</script>").count(), 1);
+        assert!(out.contains("id=\"__deka_refresh_preamble\""));
+        assert!(out.contains("id=\"__deka_react_importmap\""));
+        assert!(out.contains("applyJsUpdate"));
+        assert!(out.contains("/_deka/react/react.js"));
+    }
+
+    #[test]
+    fn injects_fast_refresh_preamble_before_body_modules() {
+        let html = "<html><head></head><body><div id=\"app\"></div></body></html>";
+        let out = inject_hmr_client(html);
+        let preamble = out.find("id=\"__deka_refresh_preamble\"").unwrap();
+        let client = out.find("id=\"__deka_hmr_client\"").unwrap();
+        let head_close = out.find("</head>").unwrap();
+        assert!(
+            preamble < head_close,
+            "preamble must run before page modules"
+        );
+        assert!(client > head_close);
+        assert!(out.contains("injectIntoGlobalHook"));
     }
 
     #[test]

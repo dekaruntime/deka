@@ -410,6 +410,13 @@ jobs:
           DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
         run: bun tests/dump/scripts/hmr-dev-e2e.mjs
 
+      # deka#936: Fast Refresh must preserve sibling React state on a JSX edit.
+      - name: Browser Fast Refresh sibling-state regression
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
+          DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
+        run: bun tests/dump/scripts/fast-refresh-e2e.mjs
+
       - name: Report sccache usage
         if: ${{ always() && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
         run: |

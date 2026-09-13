@@ -67,7 +67,9 @@ pub(crate) fn start_watch(
                     }
                     if dev_mode {
                         stdio_log::log("hmr", &format!("changed {}", changed.join(", ")));
-                        transport::notify_hmr_changed(&changed);
+                        if !crate::refresh::push_js_update(&changed) {
+                            transport::notify_hmr_changed(&changed);
+                        }
                     }
                     tokio::time::sleep(Duration::from_millis(5)).await;
                     let evicted = engine.pool().evict_all().await;
@@ -85,7 +87,7 @@ pub(crate) fn start_watch(
     Ok(())
 }
 
-fn project_root_from_handler(handler_path: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn project_root_from_handler(handler_path: &str) -> Option<std::path::PathBuf> {
     let mut current = std::path::Path::new(handler_path).parent()?;
     loop {
         if current.join("deka.json").is_file() {

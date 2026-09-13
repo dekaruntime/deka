@@ -1,0 +1,13 @@
+{
+  "imports": {
+    "react": "/_deka/react/react.js",
+    "react/jsx-runtime": "/_deka/react/jsx-runtime.js",
+    "react/jsx-dev-runtime": "/_deka/react/jsx-dev-runtime.js",
+    "react-dom": "/_deka/react/react-dom.js",
+    "react-dom/client": "/_deka/react/react-dom-client.js",
+    "react-refresh/runtime": "/_deka/react/refresh-runtime.js",
+    "@js/react": "/_deka/react/react.js",
+    "@js/react/jsx-runtime": "/_deka/react/jsx-runtime.js",
+    "@js/react/jsx-dev-runtime": "/_deka/react/jsx-dev-runtime.js"
+  }
+}

@@ -70,6 +70,10 @@ hmrSocket.onopen = function () {
 hmrSocket.onmessage = function (event) {
   try {
     var message = JSON.parse(event.data || "{}");
+    if (message.type === "js-update") {
+      applyJsUpdate(message);
+      return;
+    }
     if (message.type === "patch") {
       applyPatchMessage(message);
       return;

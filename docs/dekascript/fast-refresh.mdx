@@ -1,0 +1,90 @@
+---
+title: Fast Refresh
+description: State-preserving React HMR in deka dev.
+---
+
+# Fast Refresh
+
+`deka dev` hot-swaps React components without losing sibling or own state
+when the [react-refresh](https://github.com/facebook/react/tree/main/packages/react-refresh)
+rules allow it. A non-refreshable edit (a changed non-component export, or a
+hook-order change that the runtime cannot recover) falls back to a full reload.
+
+This is the HMR half of the React execution bar (deka#936). Production
+`deka serve` / `deka build` are unchanged.
+
+## What you do
+
+Write a function component. In development, edit its JSX and save:
+
+```js
+import { useState, createElement as h } from "react";
+
+export function Counter() {
+  const [n, setN] = useState(0);
+  return h("button", { onClick: () => setN(n + 1) }, String(n));
+}
+```
+
+A sibling `Label` edit must keep `Counter`'s `n`. That is the demo.
+
+DekaScript `.dsx` components work the same way. The dev compile asks dsc for
+**jsxDEV** emission with real source locations (`fileName` / `lineNumber` /
+`columnNumber` of the opening `<`):
+
+```ds
+export fn Card(props: { title: string }) ReactNode {
+  return <p>{props.title}</p>;
+}
+```
+
+Expected dev output (shape):
+
+```js
+import { jsxDEV } from "@js/react/jsx-dev-runtime";
+export function Card(props) {
+  return jsxDEV("p", { "children": props.title }, undefined, false, {
+    fileName: "Card.dsx",
+    lineNumber: 2,
+    columnNumber: 10
+  }, this);
+}
+$RefreshReg$(Card, "Card");
+```
+
+`@js/react/jsx-dev-runtime` resolves through the injected import map to the
+copy of React shipped with `deka dev`.
+
+## How it is wired
+
+1. **Dev compile** of `.ds` / `.dsx` passes `dsc transpile --dev` when the
+   compiler supports it (dsc main after #197, plus a `--dev` CLI flag; published
+   0.51.2 has the `CompileOptions.dev` API but not the CLI flag).
+2. **Registration.** Each served module is wrapped with the `$RefreshReg$` /
+   `$RefreshSig$` contract. Component detection uses exported PascalCase
+   functions **and** a `ReactNode` / `Component` return type when the source
+   has one.
+3. **WebSocket.** A refreshable file change recompiles that module and pushes
+   `{ "type": "js-update", "modules": [{ "id", "url" }] }` on `/_deka/hmr`.
+   The client `import()`s the new URL and calls `performReactRefresh()`.
+4. **Fallback.** Missing boundary, non-component export, or a thrown refresh
+   performs `location.reload()`, matching Vite plugin-react.
+
+## React in this lane
+
+React 19.1.1, react-dom 19.1.1, and react-refresh 0.17.0 are vendored as
+development ESM under `/_deka/react/` (js_modules-style frozen hashes and
+licenses in `crates/http/vendor/react/`). **rfd#64 amendment 2** will replace
+this with runtime-builtin resolution so application code imports nothing;
+this lane is the pragmatic ship so Fast Refresh has one React instance
+without waiting on that productization.
+
+Do not add a project `npm` dependency on React for `deka dev`.
+
+## Manual check
+
+The automated gate covers registration, the `js-update` payload, and a
+Playwright sibling-state run (`tests/dump/scripts/fast-refresh-e2e.mjs`).
+To see it: `deka dev` on a project that mounts a component from
+`/_deka/hmr/module/...`, click a counter, edit a sibling component's JSX,
+confirm the counter does not reset.
