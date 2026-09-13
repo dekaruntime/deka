@@ -52,6 +52,12 @@ flate2 = "1.0"
 base64 = "0.22"
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
 axum = "0.7"
+reqwest = { version = "0.13", features = ["blocking", "json"] }
+sha2 = "0.10"
+tar = "0.4"
+tokio = { workspace = true }
+pool = { path = "../pool" }
+deka-modules = "0.3.0"
 deka-db = { path = "../deka_db" }
 pm = { workspace = true }
 self_cmd = { path = "../self_cmd" }

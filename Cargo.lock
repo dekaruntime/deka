@@ -868,6 +868,7 @@ dependencies = [
  "deka-cache",
  "deka-db",
  "deka-deploy",
+ "deka-modules",
  "deka-registry",
  "deka-task",
  "deka-test",
@@ -877,6 +878,8 @@ dependencies = [
  "introspect",
  "permissions",
  "pm",
+ "pool",
+ "reqwest",
  "run",
  "runtime",
  "runtime_core",
@@ -884,8 +887,11 @@ dependencies = [
  "serde",
  "serde_json",
  "serve",
+ "sha2 0.10.9",
  "stdio",
+ "tar",
  "tempfile",
+ "tokio",
  "wasm_cli",
 ]
 
