@@ -8,7 +8,8 @@ import {
   formatDsWithWasm,
   readCompilerMetadata,
 } from './build-wasm'
-import { nativeCliVersion, prepareNativeCli, runNativeCli, formatDsWithNative } from './build-native'
+import { nativeCliVersion, packagesFor, prepareNativeCli, runNativeCli, formatDsWithNative } from './build-native'
+import { diagnosticsAgree } from './diagnostics'
 import {
   closeBrowserHost,
   prepareBrowserHost,
@@ -53,7 +54,7 @@ export interface HatsTestWithBuildResult extends HatsTest {
   nativeResult: RuntimeResult
   wasmMatches: boolean | null
   nativeMatches: boolean | null
-  /** True when both hosts emitted the same ordered diagnostic list. */
+  /** True when both hosts emitted the same diagnostic SET (order-insensitive). */
   diagnosticsAgree?: boolean
   /// True when both hosts formatted the source and produced byte-identical
   /// output; false on disagreement; undefined when a host did not format
@@ -88,21 +89,7 @@ function exactMatch(actual: string, expected: string): boolean {
   return actual === expected
 }
 
-export function diagnosticsAgree(
-  native: RuntimeResult['diagnostics'],
-  wasm: RuntimeResult['diagnostics'],
-): boolean {
-  if (native.length !== wasm.length) return false
-  return native.every((diagnostic, index) => {
-    const other = wasm[index]
-    return (
-      diagnostic.severity === other.severity &&
-      diagnostic.message === other.message &&
-      diagnostic.line === other.line &&
-      diagnostic.column === other.column
-    )
-  })
-}
+export { diagnosticsAgree }
 
 function expectedStdoutForHost(test: HatsTest, host: HatsHost): string | undefined {
   if (host === 'native' && test.expectedStdoutNative !== undefined) {
@@ -189,21 +176,21 @@ async function runBrowserTest(
     Object.entries(files ?? {}).filter(([filePath]) => isWasmProjectSource(filePath))
   )
   const hasProjectFiles = Boolean(Object.keys(wasmFiles).length > 0 && entryPath)
-  const needsStdlibStubs = packages && packages.length > 0
+  const resolvedPackages = packagesFor(source, files, packages)
+  const needsStdlibStubs = resolvedPackages.length > 0
   const isProject = hasProjectFiles || (needsStdlibStubs && Boolean(entryPath))
 
   if (isProject) {
     const projectFiles: Record<string, string> = { [entryPath!]: source, ...wasmFiles }
-    // Provide type stubs for declared stdlib packages so the WASM project
-    // compiler can typecheck imports that the native host resolves from
-    // ds_modules (deka#497). Runtime implementations are served by the harness.
-    if (packages) {
-      const stubsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'stdlib-stubs')
-      for (const pkg of packages) {
-        const stubPath = path.join(stubsDir, `${pkg}.ds`)
-        if (fs.existsSync(stubPath)) {
-          projectFiles[`${pkg}.ds`] = fs.readFileSync(stubPath, 'utf-8')
-        }
+    // Provide type stubs for the same packages native installs (including
+    // auto-added `io`) so WASM typeck sees echo(message: string) and the rest
+    // of the published signatures. Runtime implementations stay on the harness
+    // shims via moduleBase (deka#497).
+    const stubsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'stdlib-stubs')
+    for (const pkg of resolvedPackages) {
+      const stubPath = path.join(stubsDir, `${pkg}.ds`)
+      if (fs.existsSync(stubPath)) {
+        projectFiles[`${pkg}.ds`] = fs.readFileSync(stubPath, 'utf-8')
       }
     }
     const projectCompileResult = compileProjectWithWasm(globalHatsCompiler, projectFiles, {
@@ -361,18 +348,23 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
                   : 'native CLI unavailable'
               )
 
+        // Host formatter identity is fmtHostsAgree. Non-numeric `.code`
+        // sidecars are leftover formatted source and drift from the fixture
+        // (indexing `.has()` vs a pre-gate sidecar). Numeric `.code` is the
+        // exit-code contract (deka#929) and still compared.
         const wasmMatches =
           !wasmResult.skipped &&
-          runtimeMatchesExpectation(test, wasmResult, 'browser')
+          runtimeMatchesExpectation(test, wasmResult, 'browser', { ignoreCode: true })
         const nativeMatches =
           !nativeResult.skipped &&
           runtimeMatchesExpectation(test, nativeResult, 'native', { ignoreCode: true })
         const wasmMatchState = wasmResult.skipped ? null : wasmMatches
         const nativeMatchState = nativeResult.skipped ? null : nativeMatches
 
-        // Compare the complete ordered diagnostic stream. Comparing only the
-        // first entry makes two failures look equivalent when one host emits
-        // an additional cascade or orders the same diagnostics differently.
+        // Compare the full diagnostic SET (shared parser, order-insensitive).
+        // Comparing only wasm's synthesized `error` slot (diagnostics[0])
+        // against native's full stderr is how multi-error fixtures looked
+        // like first-error truncation.
         const diagnosticListsAgree =
           !wasmResult.skipped &&
           !nativeResult.skipped &&

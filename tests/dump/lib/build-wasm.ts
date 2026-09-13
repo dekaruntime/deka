@@ -1,3 +1,7 @@
+import { normalizeDiagnostics } from './diagnostics'
+
+export { normalizeDiagnostics }
+
 const MANIFEST_URL = 'https://dsc-wasm.deka.gg/latest/deka-compiler-artifact.json'
 
 const LOCAL_WASM = typeof process !== 'undefined' ? process.env.DEKA_WASM : undefined
@@ -142,39 +146,6 @@ export function readCompilerMetadata(compiler: WasmCompiler): WasmCompilerMetada
     version: parsed.version,
     source_commit: typeof parsed.source_commit === 'string' ? parsed.source_commit : 'unknown',
   }
-}
-
-function diagnosticPosition(
-  raw: Record<string, unknown>,
-  shortName: 'line' | 'column',
-  longName: 'start_line' | 'start_column',
-): number | undefined {
-  if (typeof raw[shortName] === 'number') return raw[shortName]
-  if (typeof raw[longName] === 'number') return raw[longName]
-  return undefined
-}
-
-export function normalizeDiagnostics(value: unknown): BuildCompileResult['diagnostics'] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((diagnostic) => {
-    if (!diagnostic || typeof diagnostic !== 'object') return []
-    const raw = diagnostic as Record<string, unknown>
-    if (typeof raw.message !== 'string') return []
-    const severity =
-      raw.severity === 'error' || raw.severity === 'warning' || raw.severity === 'info'
-        ? raw.severity
-        : 'info'
-    return [
-      {
-        severity,
-        message: raw.message,
-        // dsc's compiler ABI names these fields start_line/start_column;
-        // accept the short names too so the harness keeps one stable shape.
-        line: diagnosticPosition(raw, 'line', 'start_line'),
-        column: diagnosticPosition(raw, 'column', 'start_column'),
-      },
-    ]
-  })
 }
 
 export function compileWithWasm(

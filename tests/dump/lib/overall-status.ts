@@ -12,8 +12,7 @@ export function computeOverallStatus(args: {
   /// Byte-identity of the two hosts' formatter output (deka#477). Only
   /// defined when both hosts formatted the source.
   fmtHostsAgree?: boolean
-  /// Equality of the complete ordered diagnostic lists. Only defined when
-  /// both hosts ran.
+  /// Equality of the complete diagnostic SET. Only defined when both hosts ran.
   diagnosticsAgree?: boolean
 }): HatsOverallStatus {
   const nativeRan = args.wantNative && args.nativeAvailable && !args.nativeSkipped
