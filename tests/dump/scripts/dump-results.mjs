@@ -128,8 +128,8 @@ for (const category of categories) {
     console.log(
       `[hats] ${test.slug}: overall=${test.overallStatus} wasm=${renderMatchState(test.wasmMatches)} native=${renderMatchState(test.nativeMatches)}`
     )
-    console.log(`  wasm stage=${test.wasmResult.stage} ok=${test.wasmResult.ok} stdout=${JSON.stringify(test.wasmResult.stdout)} stderr=${JSON.stringify(test.wasmResult.stderr)} error=${JSON.stringify(test.wasmResult.error)} skipped=${test.wasmResult.skipped || false}`)
-    console.log(`  native stage=${test.nativeResult.stage} ok=${test.nativeResult.ok} stdout=${JSON.stringify(test.nativeResult.stdout)} stderr=${JSON.stringify(test.nativeResult.stderr)} error=${JSON.stringify(test.nativeResult.error)}`)
+    console.log(`  wasm stage=${test.wasmResult.stage} ok=${test.wasmResult.ok} stdout=${JSON.stringify(test.wasmResult.stdout)} stderr=${JSON.stringify(test.wasmResult.stderr)} error=${JSON.stringify(test.wasmResult.error)} diagnostics=${JSON.stringify(test.wasmResult.diagnostics)} skipped=${test.wasmResult.skipped || false}`)
+    console.log(`  native stage=${test.nativeResult.stage} ok=${test.nativeResult.ok} stdout=${JSON.stringify(test.nativeResult.stdout)} stderr=${JSON.stringify(test.nativeResult.stderr)} error=${JSON.stringify(test.nativeResult.error)} diagnostics=${JSON.stringify(test.nativeResult.diagnostics)}`)
   }
 }
 

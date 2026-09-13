@@ -46,3 +46,7 @@ ratchet. web-ide-kit 0.3.4 also strips plain `export function`, so
 `modules-export-async-fn` now agrees and has been removed from the ratchet.
 The remaining deka#904 row is `modules-import-non-relative-001` (documented
 per-host string difference; see `docs/dekascript/missing-module-diagnostics.mdx`).
+Native auto-installs `io` when the source imports it; wasm project-compiles the
+same fixtures against `stdlib-stubs/io.ds` (`echo(message: string)`) so both
+hosts record the same diagnostic SET. Dump comparison uses that shared parser
+(order-insensitive); the synthesized wasm `error` slot is logging only.

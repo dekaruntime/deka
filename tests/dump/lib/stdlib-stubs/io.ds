@@ -1,0 +1,5 @@
+// Type stub for io. The browser harness serves the runtime shim (console.log);
+// this file gives the WASM project compiler `echo(message: string)` so
+// argument-mismatch cascades match native's installed @deka/io.
+export fn echo(message: string) {
+}

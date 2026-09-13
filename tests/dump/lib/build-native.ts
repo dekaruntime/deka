@@ -2,6 +2,9 @@ import fs from 'fs'
 import path from 'path'
 import { execSync, spawnSync } from 'child_process'
 import os from 'os'
+import { parseNativeDiagnostics } from './diagnostics'
+
+export { parseNativeDiagnostics }
 
 const RELEASES_BASE = 'https://releases.deka.gg'
 
@@ -32,7 +35,8 @@ function sourceImportsIo(source: string, files?: Record<string, string>): boolea
   return blobs.some((s) => /\bfrom\s+["']io["']/.test(s))
 }
 
-function packagesFor(source: string, files: Record<string, string> | undefined, declared?: string[]): string[] {
+/** Same package list native installs and wasm stubs. Auto-adds `io`. */
+export function packagesFor(source: string, files: Record<string, string> | undefined, declared?: string[]): string[] {
   const packages = [...(declared ?? [])]
   if (sourceImportsIo(source, files) && !packages.some((p) => p === 'io' || p === '@deka/io')) {
     packages.push('io')
@@ -132,96 +136,6 @@ export function nativeCliVersion(cliPath: string): string | undefined {
   // `deka [version x.y.z]` is written to stderr, same as preflight.mjs.
   const r = spawnSync(cliPath, ['--version'], { encoding: 'utf-8', timeout: 10_000 })
   return `${r.stdout ?? ''}${r.stderr ?? ''}`.match(/(\d+\.\d+\.\d+)/)?.[1]
-}
-
-// Compact diagnostic line emitted by the CLI. Two shapes occur in one run and
-// BOTH must match: the first diagnostic of a file carries a `[transpile] `
-// prefix, subsequent ones do not. The previous pattern anchored on `\\d+:\\d+:`
-// with no optional prefix, so it silently dropped the *primary* diagnostic of
-// every failure — 388 of them across a release pack — while still matching the
-// follow-ons. That is what made the conformance report show 358 host
-// divergences where only 16 exist (deka#739).
-//
-// The file-path segment is optional because not every diagnostic carries one.
-//   [transpile] 6:1: /tmp/test.ds: async function must return Promise<T>
-//   10:6: /tmp/test.ds: `await` expected Promise<T>, found type `number`
-//   2:6: leading-zero octal-style integers are not allowed
-const COMPACT_DIAGNOSTIC = /^\s*(?:\[transpile\]\s+)?(\d+):(\d+):\s+(?:\S+?\.dsx?:\s+)?(.+)$/
-
-// A wrapper the runtime used to prepend ahead of dsc's real output. Kept as an
-// exclusion so old packs and any other caller that still wraps cannot have the
-// wrapper recorded as if it were the diagnostic.
-const NON_DIAGNOSTIC_PREAMBLE = /^dsc transpile failed\b/
-
-export function parseNativeDiagnostics(stderr: string): NativeRunResult['diagnostics'] {
-  const diagnostics: NativeRunResult['diagnostics'] = []
-  const lines = stderr.split('\n')
-
-  let message: string | undefined
-  let line: number | undefined
-  let column: number | undefined
-
-  for (let i = 0; i < lines.length; i++) {
-    const current = lines[i]
-    // Header line: ┌─ /path/to/file.ds:LINE:COLUMN
-    const headerMatch = current.match(/^┌─\s+\S+:(\d+):(\d+)\s*$/)
-    if (headerMatch) {
-      line = Number(headerMatch[1])
-      column = Number(headerMatch[2])
-      continue
-    }
-    // Message line: │   ^ MESSAGE
-    const messageMatch = current.match(/\^\s+(.+)$/)
-    if (messageMatch) {
-      message = messageMatch[1].trim()
-      if (message) {
-        diagnostics.push({ severity: 'error', message, line, column })
-      }
-      message = undefined
-      line = undefined
-      column = undefined
-    }
-  }
-
-  // Fallback: if no rich diagnostic was parsed, the CLI emitted the compact
-  // form (`LINE:COL: /path/file.ds: message`). Collect EVERY such line — a
-  // single failure can carry several diagnostics, and a fixture's expected
-  // diagnostic may be any of them (e.g. a type-mismatch fixture expecting the
-  // second of two emitted diagnostics). Previously only the first line became
-  // a diagnostic, so later lines were invisible to
-  // expectedDiagnosticContains.
-  if (diagnostics.length === 0) {
-    let sawCompact = false
-    for (const l of lines) {
-      const compactMatch = l.match(COMPACT_DIAGNOSTIC)
-      if (compactMatch) {
-        sawCompact = true
-        diagnostics.push({
-          severity: 'error',
-          message: compactMatch[3].trim(),
-          line: Number(compactMatch[1]),
-          column: Number(compactMatch[2]),
-        })
-      }
-    }
-    if (!sawCompact) {
-      const firstLine = lines.find((l) => {
-        const trimmed = l.trim()
-        return (
-          trimmed.length > 0 &&
-          !trimmed.startsWith('[') &&
-          !trimmed.startsWith('Validation') &&
-          !trimmed.startsWith('❌') &&
-          !NON_DIAGNOSTIC_PREAMBLE.test(trimmed)
-        )
-      })
-      if (firstLine) {
-        diagnostics.push({ severity: 'error', message: firstLine.trim() })
-      }
-    }
-  }
-
-  return diagnostics
 }
 
 function createPrivateTempDir(): string {

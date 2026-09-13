@@ -30,8 +30,6 @@ describe('parseNativeDiagnostics', () => {
       'async function must return Promise<T>, found type `number`',
       '`await` expected Promise<T>, found type `number`',
     ])
-    // The primary must come first: wasm reports diagnostics[0] as the error,
-    // so ordering is what makes the two hosts comparable at all.
     expect(d[0].line).toBe(6)
     expect(d[1].line).toBe(10)
   })
