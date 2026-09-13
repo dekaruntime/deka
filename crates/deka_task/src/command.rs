@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, FlagSpec, Registry};
+use deka_cli_core::{CommandSpec, Context, FlagSpec, Registry};
 use deno_task_shell::ExecutableCommand;
 use deno_task_shell::KillSignal;
 use deno_task_shell::ShellCommand;
@@ -22,7 +22,7 @@ use std::thread;
 use stdio::{raw, warn_simple};
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "task",
     name: "task",
     category: "runtime",
     summary: "run a task from deka.json",
