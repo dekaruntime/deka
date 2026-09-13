@@ -53,9 +53,14 @@ pub fn js_update_payload(changed: &[String]) -> Option<String> {
                 if !js.contains("__dekaRefreshBoundary = true") {
                     continue;
                 }
+                let families: Vec<String> = transform::detect_components("", &js)
+                    .iter()
+                    .map(|component| format!("{rel} {}", component.name))
+                    .collect();
                 modules.push(serde_json::json!({
                     "id": rel,
                     "url": format!("{MODULE_PREFIX}{rel}"),
+                    "families": families,
                 }));
             }
             Err(err) => {

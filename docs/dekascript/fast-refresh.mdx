@@ -70,7 +70,20 @@ copy of React shipped with `deka dev`.
    `{ "type": "js-update", "modules": [{ "id", "url" }] }` on `/_deka/hmr`.
    The client `import()`s the new URL and calls `performReactRefresh()`.
 4. **Fallback.** Missing boundary, non-component export, or a thrown refresh
-   performs `location.reload()`, matching Vite plugin-react.
+   performs `location.reload()`. App-router document components that have no
+   registered browser refresh family also reload the document; importing a
+   server-only component cannot update an already-rendered document through
+   React Fast Refresh. Existing client component families retain Fast Refresh.
+
+Generated app-router HTML responses include `Content-Type: text/html`, so
+`deka dev` can inject its HMR client. Fragment responses use
+`application/json`. The watcher evicts stale server isolates before notifying
+browsers, so an immediate reload sees the saved source.
+
+For example, editing `<p>Before</p>` to `<p>After</p>` in a document-only
+post card updates the browser to **After** through a full reload. A sibling
+counter's state is not preserved across that reload. Only a component already
+registered in the browser is eligible for state-preserving Fast Refresh.
 
 ## React in this lane
 

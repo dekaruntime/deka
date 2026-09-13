@@ -3,10 +3,11 @@ export fn ThemeToggle() ReactNode {
   const theme = pair[0]
   const setTheme = pair[1]
   useEffect(fn() Option<fn() void> {
+    const currentTheme = theme
     const _ = unsafe {
       var root = globalThis.document && globalThis.document.documentElement
       if (root) {
-        root.setAttribute("data-theme", theme)
+        root.setAttribute("data-theme", currentTheme)
       }
       return 1
     }
