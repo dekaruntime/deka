@@ -236,7 +236,7 @@ pub fn build_artifact_manifest(
                 .dsc
                 .clone()
                 .filter(|dsc| !dsc.is_empty())
-                .or_else(crate::cli::build_dsc::dsc_identity)
+                .or_else(crate::dsc::dsc_identity)
                 .unwrap_or_else(|| "unknown".to_string()),
             plan_version: manifest.compiler.plan_version,
         },

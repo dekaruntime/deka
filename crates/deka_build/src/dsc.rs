@@ -23,7 +23,7 @@ pub struct StagedBuildEntry {
 }
 
 fn dsc_bin() -> Result<PathBuf, String> {
-    crate::dsc::find_dsc()?.ok_or_else(|| MISSING_DSC.to_string())
+    compiler::dsc::find_cli_dsc()?.ok_or_else(|| MISSING_DSC.to_string())
 }
 
 pub fn require_dsc() -> Result<PathBuf, String> {

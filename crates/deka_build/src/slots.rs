@@ -11,7 +11,37 @@ use std::sync::Arc;
 
 use runtime_core::dist::{BuildManifest, FsObservation, PlannedSource};
 
-use crate::cli::build_dsc;
+use crate::dsc as build_dsc;
+
+/// What one watch event asks the refresh hook to do.
+#[derive(Debug, Clone, Default)]
+pub struct BuildSlotRefreshRequest {
+    /// Observation-matched slot ids whose source files did not change (their
+    /// compiler ids are still current).
+    pub slots: Vec<String>,
+    /// Source files (project-relative spelling) whose own content changed.
+    pub replan_files: Vec<String>,
+}
+
+impl BuildSlotRefreshRequest {
+    /// Every planned slot: the watcher could not prove relevance (no build
+    /// manifest). Implementations must treat it as a deliberate, logged
+    /// coarse rebuild.
+    pub fn coarse() -> Self {
+        Self::default()
+    }
+
+    /// Both lists empty: the watcher could not prove relevance (no build
+    /// manifest) — implementations must rematerialize every planned slot as
+    /// a deliberate, logged coarse rebuild.
+    pub fn is_coarse(&self) -> bool {
+        self.slots.is_empty() && self.replan_files.is_empty()
+    }
+}
+
+/// Rematerializes build slots for `project_root` per the request.
+pub type BuildSlotRefresh =
+    Arc<dyn Fn(&Path, BuildSlotRefreshRequest) -> Result<(), String> + Send + Sync + 'static>;
 
 /// Resolve the security policy the build phase executes under. Phase-aware
 /// manifests (deka#757, RFD 53) execute build slots through
@@ -99,7 +129,7 @@ pub fn attach_observations(
 pub fn make_dev_refresh_callback(
     flags: std::collections::HashMap<String, bool>,
     params: std::collections::HashMap<String, String>,
-) -> ::dev::build_watch::BuildSlotRefresh {
+) -> BuildSlotRefresh {
     Arc::new(move |project_root, request| {
         refresh_dev_build_slots(&flags, &params, project_root, request)
     })
@@ -113,7 +143,7 @@ pub fn refresh_dev_build_slots(
     flags: &std::collections::HashMap<String, bool>,
     params: &std::collections::HashMap<String, String>,
     project_root: &Path,
-    request: ::dev::build_watch::BuildSlotRefreshRequest,
+    request: BuildSlotRefreshRequest,
 ) -> Result<(), String> {
     // Dev artifacts use the explicit dev cache below; no process-global flag
     // selects their location.
@@ -310,7 +340,7 @@ pub fn ensure_dev_build_slots(
         flags,
         params,
         &project_root,
-        ::dev::build_watch::BuildSlotRefreshRequest::coarse(),
+        BuildSlotRefreshRequest::coarse(),
     ) {
         stdio::log("dev", &format!("build-slot materialization skipped: {err}"));
     }

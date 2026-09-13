@@ -1,16 +1,15 @@
-use core::{CommandSpec, Context, ParamSpec, Registry};
+use deka_cli_core::{CommandSpec, Context, ParamSpec, Registry};
 use deka_modules::modules::MODULES_DIR;
 
-use crate::cli::build_dsc;
-use crate::cli::build_publish;
+use crate::dsc as build_dsc;
+use crate::publish as build_publish;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-mod project;
-mod single_file;
+use crate::{project, single_file};
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "build",
     name: "build",
     category: "project",
     summary: "build a DekaScript file into a JavaScript module",
@@ -21,12 +20,12 @@ const COMMAND: CommandSpec = CommandSpec {
 
 pub fn register(registry: &mut Registry) {
     registry.add_command(COMMAND);
-    registry.add_flag(core::FlagSpec {
+    registry.add_flag(deka_cli_core::FlagSpec {
         name: "--bundle",
         aliases: &[],
         description: "bundle emitted JS into a single file (in-memory, no intermediate files)",
     });
-    registry.add_flag(core::FlagSpec {
+    registry.add_flag(deka_cli_core::FlagSpec {
         name: "--minify",
         aliases: &[],
         description: "minify bundled output (only with --bundle)",
@@ -140,7 +139,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // publication step below builds the deployment descriptor from them —
     // the same source walks the manifest was planned from, never fresh ones
     // (deka#719).
-    #[cfg(feature = "native")]
     let app_scans =
         if runtime_core::dist::is_source_app_router_project(&project_root) {
             Some((
@@ -150,7 +148,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         } else {
             None
         };
-    #[cfg(feature = "native")]
     let mut manifest = app_scans
         .as_ref()
         .map(|(app_manifest, api_entries)| {
@@ -167,8 +164,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // The build phase runs under the project's resolved security policy
     // (deka.json + CLI overrides); permitted local reads are recorded per
     // slot for targeted `deka dev` invalidation (deka#725).
-    #[cfg(feature = "native")]
-    let materialized = crate::cli::build_slots::materialize_planned_slots(
+    let materialized = crate::slots::materialize_planned_slots(
         &context.args.flags,
         &context.args.params,
         &project_root,
@@ -178,14 +174,12 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         None,
         Some(dsc.clone()),
     )?;
-    #[cfg(feature = "native")]
     let values = materialized.values.clone();
 
     // StaticParams routes become concrete instances from the materialized
     // values (post-execution, pre-render).
-    #[cfg(feature = "native")]
     if let Some(manifest) = manifest.as_mut() {
-        crate::cli::build_slots::attach_observations(manifest, &materialized.observations);
+        crate::slots::attach_observations(manifest, &materialized.observations);
         manifest.expand_static_params(&values)?;
     }
 
@@ -203,8 +197,8 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // dist/server as source-free, loader-ready modules. The compiled entries
     // are what `deka serve` loads — serve no longer generates
     // .cache/dekascript/serve-entry.dsx for built projects.
-    crate::cli::build_server_entries::emit_server_entries(
-        &crate::cli::build_server_entries::ServerEntriesPlan {
+    crate::server_entries::emit_server_entries(
+        &crate::server_entries::ServerEntriesPlan {
             project_root: &project_root,
             staging_root,
             entries_dir: &entries_dir,
@@ -223,20 +217,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         // Static prerendering (deka build → dist HTML) is paused with the
         // framework (deka#881); the native branch no longer renders. The
         // non-native fallback still copies a hand-written index.html.
-        #[cfg(not(feature = "native"))]
-        {
-            let index_src = project_root.join("index.html");
-            if index_src.is_file() {
-                fs::copy(&index_src, &client_index).map_err(|err| {
-                    format!(
-                        "failed to copy {} -> {}: {}",
-                        index_src.display(),
-                        client_index.display(),
-                        err
-                    )
-                })?;
-            }
-        }
     } else {
         let index_src = project_root.join("index.html");
         if index_src.is_file() {
@@ -362,7 +342,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // generation-time importmap placeholder; bake the final hashed names and
     // the built import map in (the built entry is what serves production —
     // there is no serve-time rewrite pass for it).
-    crate::cli::build_server_entries::rewrite_server_entry_asset_urls(&dist_server, &dist_client)?;
+    crate::server_entries::rewrite_server_entry_asset_urls(&dist_server, &dist_client)?;
 
     // dist/ must be deployable without .cache/ (deka#738 F7): ship the
     // materialized build-value modules in dist and rewrite deka:dev/
@@ -370,8 +350,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // verify every server-module relative specifier resolves inside
     // dist/server. Bare ui/* specifiers are paused-framework imports: they
     // are intentionally left unrewritten here.
-    #[cfg(feature = "native")]
-    crate::cli::build_server_graph::publish_build_values(
+    crate::server_graph::publish_build_values(
         &project_root,
         &dist_root,
         &dist_server,
@@ -382,7 +361,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // and every payload with its digest, anchored by the sha256 sidecar.
     // Server-entry provenance is the plan-time scans carried since the
     // manifest was planned — publication does not re-scan sources (deka#719).
-    #[cfg(feature = "native")]
     let artifact = match (manifest.as_ref(), app_scans.as_ref()) {
         (Some(plan), Some((app_manifest, api_entries))) => Some(
             build_publish::build_artifact_manifest(
@@ -400,10 +378,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
 
     // The staged tree is complete: hash its artifacts into the manifests,
     // persist them, atomically replace dist/, then print the route table.
-    #[cfg(feature = "native")]
     build_publish::finalize(&project_root, &staged, manifest.as_mut(), artifact)?;
-    #[cfg(not(feature = "native"))]
-    build_publish::publish(&project_root, &staged)?;
 
     // publish renamed the staged tree into place; report the real dist paths.
     let dist_root = project_root.join("dist");

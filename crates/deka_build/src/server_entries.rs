@@ -12,8 +12,8 @@
 use std::fs;
 use std::path::Path;
 
-use crate::cli::build::copy_dir_recursive;
-use crate::cli::build_dsc;
+use crate::command::copy_dir_recursive;
+use crate::dsc as build_dsc;
 
 pub(crate) struct ServerEntriesPlan<'a> {
     pub project_root: &'a Path,
@@ -32,9 +32,8 @@ pub(crate) fn emit_server_entries(plan: &ServerEntriesPlan<'_>) -> Result<(), St
     fs::create_dir_all(plan.dist_server)
         .map_err(|err| format!("failed to create {}: {}", plan.dist_server.display(), err))?;
 
-    #[cfg(feature = "native")]
     if plan.has_manifest {
-        let _emitted_entries = crate::cli::build_server_graph::compile_and_reroot_entries(
+        let _emitted_entries = crate::server_graph::compile_and_reroot_entries(
             plan.project_root,
             plan.entries_dir,
             plan.dist_server,
@@ -55,7 +54,6 @@ pub(crate) fn emit_server_entries(plan: &ServerEntriesPlan<'_>) -> Result<(), St
             )?;
         }
     }
-    #[cfg(feature = "native")]
     if !plan.has_manifest {
         replace_dir(
             &plan.staging_root.join("app"),
@@ -68,7 +66,6 @@ pub(crate) fn emit_server_entries(plan: &ServerEntriesPlan<'_>) -> Result<(), St
             &plan.dist_server.join("src"),
         )?;
     }
-    #[cfg(feature = "native")]
     if plan.emitted_api && !plan.has_manifest {
         replace_dir(
             &plan.staging_root.join("api"),

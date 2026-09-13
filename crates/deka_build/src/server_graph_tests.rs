@@ -1,4 +1,4 @@
-use super::*;
+use crate::server_graph::*;
 use std::collections::BTreeMap;
 
 fn write(dir: &Path, rel: &str, body: &str) {

@@ -54,7 +54,6 @@ pub struct EmittedEntries {
 /// by `../../app/...`-style relative paths, so the entry's on-disk location
 /// determines what dsc resolves. Returns the dist-relative paths of the
 /// compiled router entries for the manifest's server entry table.
-#[cfg(feature = "native")]
 pub fn compile_and_reroot_entries(
     project_root: &Path,
     entries_dir: &Path,
@@ -303,7 +302,6 @@ fn emitted_set(
 
 /// Generate the router entry sources (without compiling). Shared with
 /// [`compile_and_reroot_entries`] so tests can exercise generation alone.
-#[cfg(feature = "native")]
 fn generate_entry_sources(
     project_root: &Path,
     entries_dir: &Path,
@@ -526,7 +524,6 @@ fn replace_quoted(source: &str, from: &str, to: &str) -> String {
 /// staged tree is then not deployable and must not publish. Bare `ui/*`
 /// specifiers are paused-framework imports and are intentionally left
 /// unrewritten.
-#[cfg(feature = "native")]
 pub fn publish_build_values(
     project_root: &Path,
     dist_root: &Path,
@@ -719,5 +716,5 @@ pub fn relative_path(from_dir: &Path, to_file: &Path) -> String {
 }
 
 #[cfg(test)]
-#[path = "build_server_graph_tests.rs"]
+#[path = "server_graph_tests.rs"]
 mod tests;

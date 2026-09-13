@@ -1,13 +1,13 @@
-use core::Context;
+use deka_cli_core::Context;
 use deka_modules::modules::MODULES_DIR;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::project;
-use crate::cli::build_dsc;
+use crate::dsc as build_dsc;
+use crate::project;
 
-pub(super) fn run(context: &Context, input: &str) -> Result<(), String> {
+pub(crate) fn run(context: &Context, input: &str) -> Result<(), String> {
     if !project::is_deka_source_path(Path::new(input)) {
         return Err(format!(
             "DekaScript uses .ds only; migrate '{}' before building it",
