@@ -71,8 +71,8 @@ or widen what a profile grants.
   gates execution only; a module reaches nothing the profile has not
   already granted.
 - `import`: gates acquisition from sources other than the Deka package
-  index (GitHub, URLs, third-party origins). `@deka/*` stdlib and
-  first-party `deka.gg` packages are never gated. It is `false` at MVP
+  index (GitHub, URLs, third-party origins). Official `@deka/*` packages
+  and first-party `deka.gg` packages are never gated. It is `false` at MVP
   because those other sources are not yet supported.
 - `build`: `false` or a capability object with the same keys (minus
   `build`). It is independent from request-time dev authority — it does not

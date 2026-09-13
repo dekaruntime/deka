@@ -5,11 +5,10 @@ fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
-/// Minimal valid lockfile content. `ensure_project_layout` (crates/pool/src/esm_loader/policy.rs)
-/// only checks that `deka.lock` exists at the project root — it does not require any
-/// specific packages — but a project root with a `deka.json` and no `deka.lock` is
-/// rejected before the program ever executes ("deka runtime requires deka.lock at
-/// project root"). Mirrors the lockfile shape used by
+/// Minimal valid lockfile content. The project gate requires `deka.lock` at
+/// the project root; a `deka.json` with no lockfile is rejected before the
+/// program executes. These fixtures have no package imports, so an empty
+/// packages map is enough. Mirrors the lockfile shape used by
 /// crates/cli/tests/update_integrity_process.rs and the `deka init` output.
 const EMPTY_DEKA_LOCK: &str = r#"{"lockfileVersion":1,"packages":{}}"#;
 

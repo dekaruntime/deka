@@ -85,6 +85,16 @@ function parsePackages(raw: unknown): string[] | undefined {
   return names.length > 0 ? names : undefined
 }
 
+/** True when the fixture's deka.json grants the env capability (deka#378 / deka#904). */
+export function fixtureEnvGranted(dekaJson?: Record<string, unknown>): boolean {
+  const security = dekaJson?.security
+  if (!security || typeof security !== 'object' || Array.isArray(security)) return false
+  const allow = (security as Record<string, unknown>).allow
+  if (!allow || typeof allow !== 'object' || Array.isArray(allow)) return false
+  const env = (allow as Record<string, unknown>).env
+  return Array.isArray(env) && env.length > 0
+}
+
 function readMetadata(dir: string, name: string): Partial<HatsTest> {
   const jsonPath = path.join(dir, `${name}.json`)
   if (!fs.existsSync(jsonPath)) return {}

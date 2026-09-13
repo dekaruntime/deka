@@ -136,6 +136,10 @@ fn emit_import_map_json(import_paths: &[String], output_path: &Path) -> String {
 }
 
 fn default_import_map() -> BTreeMap<String, String> {
+    // dsc#167: prefixes come from the closed STDLIB_SPEC_PREFIXES table.
+    // Do not add a `@deka/` wildcard — unknown `@deka/*` packages are
+    // ordinary dependencies, not stdlib, and map through the per-spec
+    // package path below.
     let mut imports = BTreeMap::from([("@/".to_string(), "/".to_string())]);
     for prefix in deka_modules::module_spec::STDLIB_SPEC_PREFIXES {
         imports.insert((*prefix).to_string(), stdlib_prefix_target(prefix));
@@ -217,4 +221,54 @@ fn build_to_string(input_path: &Path) -> Result<JsBuildOutput, String> {
         import_paths,
         project_root,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_import_map, emit_import_map_json};
+    use std::path::Path;
+
+    #[test]
+    fn import_map_does_not_wildcard_the_deka_scope() {
+        let map = default_import_map();
+        assert!(
+            !map.contains_key("@deka/"),
+            "browser map must not treat arbitrary @deka/* as stdlib: {map:?}"
+        );
+        for prefix in deka_modules::module_spec::STDLIB_SPEC_PREFIXES {
+            assert!(
+                map.contains_key(*prefix),
+                "closed stdlib prefix {prefix} must be in the default map"
+            );
+        }
+        assert!(
+            !deka_modules::module_spec::is_stdlib_module_spec("@deka/not-a-stdlib-package"),
+            "unknown @deka/* is not stdlib"
+        );
+    }
+
+    #[test]
+    fn unknown_deka_scope_import_maps_as_an_ordinary_package() {
+        let json = emit_import_map_json(
+            &["@deka/not-a-stdlib-package".to_string()],
+            Path::new("dist/app.js"),
+        );
+        let value: serde_json::Value = serde_json::from_str(&json).expect("import map json");
+        let imports = value
+            .get("imports")
+            .and_then(|v| v.as_object())
+            .expect("imports");
+        assert!(
+            imports.get("@deka/").is_none(),
+            "must not emit an @deka/ stdlib prefix: {imports:?}"
+        );
+        let target = imports
+            .get("@deka/not-a-stdlib-package")
+            .and_then(|v| v.as_str())
+            .expect("ordinary package entry");
+        assert!(
+            target.contains("ds_modules/@deka/not-a-stdlib-package"),
+            "unknown @deka/* must map like any other package, got {target}"
+        );
+    }
 }

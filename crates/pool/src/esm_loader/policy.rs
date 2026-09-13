@@ -73,15 +73,12 @@ pub fn ensure_project_layout(
     module_root: Option<PathBuf>,
     imports: &[String],
 ) -> Result<(), String> {
-    // DEKA_MODULE_ROOT is the stdlib-only-tenant escape (#220): when it points
-    // at a root *other* than this project, the runtime supplies the stdlib and
-    // a local ds_modules/ tree is not expected.
-    //
-    // It used to bypass on presence alone, which made this whole function
-    // dead: the CLI sets the variable to the project root itself on every
-    // ordinary run, so the early return always fired (deka#229, deka#430).
-    // Comparing against the project root preserves what #220 actually needed
-    // and drops the accidental blanket bypass.
+    // External module_root is the stdlib-only-tenant escape (#220): when it
+    // points at a root *other* than this project, the runtime supplies
+    // recognized stdlib and a local ds_modules/ tree is not expected for
+    // those specs. deka-modules 0.3.0 (dsc#167) no longer treats that as a
+    // whole-gate bypass — third-party and unknown `@deka/*` imports still
+    // need declaration, install, and fsGraph integrity.
     deka_modules::project_gate::validate_project(
         project_root,
         imports,
@@ -156,7 +153,45 @@ mod tests {
             configured_module_root(root.path()).expect("configured root"),
             Some(stdlib.canonicalize().expect("canonical root"))
         );
-        PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false).expect("loader");
+        PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false)
+            .expect("loader");
         println!("ambient-proof:loader-created");
+    }
+
+    #[test]
+    fn external_module_root_exempts_stdlib_only() {
+        let project = tempfile::tempdir().expect("project");
+        fs::write(project.path().join("deka.json"), r#"{"name":"tenant"}"#).expect("manifest");
+        fs::write(project.path().join("deka.lock"), "{}").expect("lock");
+        let stdlib = tempfile::tempdir().expect("stdlib root");
+
+        super::ensure_project_layout(
+            project.path(),
+            Some(stdlib.path().to_path_buf()),
+            &["crypto".to_string()],
+        )
+        .expect("external root supplies recognized stdlib");
+
+        let err = super::ensure_project_layout(
+            project.path(),
+            Some(stdlib.path().to_path_buf()),
+            &["@acme/tool".to_string()],
+        )
+        .expect_err("external root must not waive third-party declaration");
+        assert!(
+            err.contains("not declared"),
+            "third-party import must fail closed: {err}"
+        );
+
+        let err = super::ensure_project_layout(
+            project.path(),
+            Some(stdlib.path().to_path_buf()),
+            &["@deka/not-a-stdlib-package".to_string()],
+        )
+        .expect_err("unknown @deka/* is not stdlib and is not exempt");
+        assert!(
+            err.contains("not declared"),
+            "unknown @deka/* must fail closed: {err}"
+        );
     }
 }

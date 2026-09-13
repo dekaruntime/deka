@@ -857,7 +857,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "compile"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "anyhow",
  "core",
@@ -942,7 +942,7 @@ dependencies = [
 
 [[package]]
 name = "compiler"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "core",
  "stdio",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "core"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "deka-cli-core",
 ]
@@ -1343,7 +1343,7 @@ dependencies = [
 
 [[package]]
 name = "deka-build"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "compiler",
  "deka-cli-core",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "deka-cache"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "compiler",
  "deka-cli-core",
@@ -1380,7 +1380,7 @@ checksum = "959a3a6061fd69200fa3e0653f51dd985a12948e4a55c83c36ba9756b61cb208"
 
 [[package]]
 name = "deka-db"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "deka-cli-core",
  "postgres",
@@ -1392,7 +1392,7 @@ dependencies = [
 
 [[package]]
 name = "deka-deploy"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "deka-cli-core",
  "serde",
@@ -1404,17 +1404,18 @@ dependencies = [
 
 [[package]]
 name = "deka-modules"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6364922b79c1be03740382cdf6d38531afd7e1987f24f46f9a0671c5b6069e21"
+checksum = "42d68cd6bddffe3cf491a13cd9242d11c8eb4f8be767ca708ff58d47ddc466dd"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
 name = "deka-registry"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "anyhow",
  "deka-cli-core",
@@ -1429,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "deka-task"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "deka-cli-core",
  "deno_task_shell",
@@ -1442,7 +1443,7 @@ dependencies = [
 
 [[package]]
 name = "deka-test"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "deka-cli-core",
  "deka-modules",
@@ -1462,7 +1463,7 @@ dependencies = [
 
 [[package]]
 name = "deka-wasm-guest"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "deka-wasm-guest-macros",
  "serde",
@@ -1471,7 +1472,7 @@ dependencies = [
 
 [[package]]
 name = "deka-wasm-guest-macros"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1480,7 +1481,7 @@ dependencies = [
 
 [[package]]
 name = "deka_host"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -1524,7 +1525,7 @@ dependencies = [
 
 [[package]]
 name = "deka_http"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2505,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "dev"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "compiler",
  "core",
@@ -2850,7 +2851,7 @@ dependencies = [
 
 [[package]]
 name = "engine"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "deno_core",
  "pool",
@@ -3903,7 +3904,7 @@ dependencies = [
 
 [[package]]
 name = "introspect"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "core",
  "runtime",
@@ -4448,7 +4449,7 @@ dependencies = [
 
 [[package]]
 name = "modules_common"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "deno_core",
  "deno_permissions",
@@ -5118,7 +5119,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "permissions"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "security",
  "serde",
@@ -5285,14 +5286,14 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "platform_server"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "anyhow",
  "deka_host",
@@ -5306,7 +5307,7 @@ dependencies = [
 
 [[package]]
 name = "pm"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -5352,7 +5353,7 @@ dependencies = [
 
 [[package]]
 name = "pool"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "compiler",
  "core_affinity",
@@ -6083,7 +6084,7 @@ dependencies = [
 
 [[package]]
 name = "run"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "runtime_core",
  "serde_json",
@@ -6093,7 +6094,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "axum",
  "base64 0.21.7",
@@ -6128,7 +6129,7 @@ dependencies = [
 
 [[package]]
 name = "runtime_core"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "core",
  "deka-modules",
@@ -6435,7 +6436,7 @@ dependencies = [
 
 [[package]]
 name = "security"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "serde_json",
 ]
@@ -6478,7 +6479,7 @@ dependencies = [
 
 [[package]]
 name = "self_cmd"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "compiler",
  "ctrlc",
@@ -6643,7 +6644,7 @@ dependencies = [
 
 [[package]]
 name = "serve"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8193,7 +8194,7 @@ dependencies = [
 
 [[package]]
 name = "transport"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "axum",
  "deka_http",
@@ -8559,7 +8560,7 @@ dependencies = [
 
 [[package]]
 name = "wasm_cli"
-version = "0.50.0"
+version = "0.51.0"
 dependencies = [
  "core",
  "run",

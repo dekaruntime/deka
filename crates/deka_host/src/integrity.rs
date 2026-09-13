@@ -2,8 +2,7 @@ use crate::validation::imports::ImportKind;
 use crate::validation::modules::collect_import_specs;
 use deka_modules::module_spec::is_ds_source_path;
 use sha2::{Digest, Sha256};
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 /// SHA-256 of the empty input. Every `moduleGraph.hash` written before
@@ -21,45 +20,20 @@ pub struct PackageIntegrity {
     pub module_graph: String,
 }
 
+/// Hash a package tree for lockfile pinning.
+///
+/// `fsGraph` is `deka_modules::integrity::compute_fs_graph_hash` — the
+/// single hasher both the project gate and install path must use
+/// (dsc#167). Do not reintroduce a local fsGraph walk: exclusion-set
+/// drift (whole-`php_modules` vs `php_modules/.cache`, plus
+/// `ds_modules`/`dist`/`.deka`) produced spurious integrity mismatches.
 pub fn compute_package_integrity(root: &Path) -> Result<PackageIntegrity, String> {
-    let fs_graph = compute_fs_graph_hash(root)?;
+    let fs_graph = deka_modules::integrity::compute_fs_graph_hash(root)?;
     let module_graph = compute_module_graph_hash(root)?;
     Ok(PackageIntegrity {
         fs_graph,
         module_graph,
     })
-}
-
-fn compute_fs_graph_hash(root: &Path) -> Result<String, String> {
-    let mut files = Vec::new();
-    collect_files(root, root, &mut files)?;
-    files.sort();
-
-    let mut hasher = Sha256::new();
-    for path in files {
-        let rel = path
-            .strip_prefix(root)
-            .map_err(|_| "failed to normalize integrity path")?;
-        let rel_str = normalize_rel(rel);
-        hasher.update(rel_str.as_bytes());
-        hasher.update(b"\0");
-
-        let mut file = File::open(&path)
-            .map_err(|err| format!("failed to open {}: {}", path.display(), err))?;
-        let mut buf = [0u8; 8192];
-        loop {
-            let read = file
-                .read(&mut buf)
-                .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buf[..read]);
-        }
-        hasher.update(b"\n");
-    }
-
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn compute_module_graph_hash(root: &Path) -> Result<String, String> {
@@ -107,30 +81,6 @@ fn import_kind_label(kind: ImportKind) -> &'static str {
         ImportKind::Phpx => "phpx",
         ImportKind::Wasm => "wasm",
     }
-}
-
-fn collect_files(root: &Path, current: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    for entry in fs::read_dir(current)
-        .map_err(|err| format!("failed to read {}: {}", current.display(), err))?
-    {
-        let entry = entry.map_err(|err| format!("failed to read entry: {}", err))?;
-        let path = entry.path();
-        let file_type = entry
-            .file_type()
-            .map_err(|err| format!("failed to read entry type: {}", err))?;
-        if file_type.is_dir() {
-            if should_ignore_dir(&path, root) {
-                continue;
-            }
-            collect_files(root, &path, out)?;
-        } else if file_type.is_file() {
-            if should_ignore_file(&path, root) {
-                continue;
-            }
-            out.push(path);
-        }
-    }
-    Ok(())
 }
 
 fn collect_source_files(root: &Path, current: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -206,20 +156,47 @@ fn normalize_rel(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        compute_fs_graph_hash, compute_module_graph_hash, EMPTY_MODULE_GRAPH_HASH,
-    };
+    use super::{EMPTY_MODULE_GRAPH_HASH, compute_module_graph_hash, compute_package_integrity};
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn package_integrity_fs_graph_uses_shared_hasher() {
+        let dir = tempdir().expect("tmp");
+        let root = dir.path();
+        fs::write(root.join("mod.ds"), "export const x = 1;\n").unwrap();
+        // Trees the retired local hasher hashed, and the shared hasher
+        // excludes. If compute_package_integrity ever grows a second walk,
+        // this fails.
+        fs::create_dir_all(root.join("php_modules")).unwrap();
+        fs::write(root.join("php_modules").join("noise.ds"), "nope\n").unwrap();
+        fs::create_dir_all(root.join("dist")).unwrap();
+        fs::write(root.join("dist").join("out.js"), "nope\n").unwrap();
+        fs::create_dir_all(root.join(".deka")).unwrap();
+        fs::write(root.join(".deka").join("links.json"), "{}\n").unwrap();
+
+        let integrity = compute_package_integrity(root).expect("integrity");
+        let shared = deka_modules::integrity::compute_fs_graph_hash(root).expect("shared");
+        assert_eq!(integrity.fs_graph, shared);
+
+        let clean = tempdir().expect("tmp");
+        fs::write(clean.path().join("mod.ds"), "export const x = 1;\n").unwrap();
+        let clean_hash =
+            deka_modules::integrity::compute_fs_graph_hash(clean.path()).expect("clean");
+        assert_eq!(
+            integrity.fs_graph, clean_hash,
+            "shared hasher must exclude php_modules/, dist/, and .deka/"
+        );
+    }
 
     #[test]
     fn fs_graph_hash_changes_on_file_edit() {
         let dir = tempdir().expect("tmp");
         let root = dir.path();
         fs::write(root.join("mod.ds"), "import { a } from 'core/result'").unwrap();
-        let first = compute_fs_graph_hash(root).expect("hash");
+        let first = deka_modules::integrity::compute_fs_graph_hash(root).expect("hash");
         fs::write(root.join("mod.ds"), "import { b } from 'core/result'").unwrap();
-        let second = compute_fs_graph_hash(root).expect("hash");
+        let second = deka_modules::integrity::compute_fs_graph_hash(root).expect("hash");
         assert_ne!(first, second);
     }
 
@@ -243,7 +220,11 @@ mod tests {
             "import { helper } from './helper.ds'\nconsole.log(helper())\n",
         )
         .unwrap();
-        fs::write(root_a.join("helper.ds"), "export fn helper() int { return 1 }\n").unwrap();
+        fs::write(
+            root_a.join("helper.ds"),
+            "export fn helper() int { return 1 }\n",
+        )
+        .unwrap();
 
         let dir_b = tempdir().expect("tmp");
         let root_b = dir_b.path();
@@ -252,7 +233,11 @@ mod tests {
             "import { other } from './other.ds'\nconsole.log(other())\n",
         )
         .unwrap();
-        fs::write(root_b.join("other.ds"), "export fn other() int { return 2 }\n").unwrap();
+        fs::write(
+            root_b.join("other.ds"),
+            "export fn other() int { return 2 }\n",
+        )
+        .unwrap();
 
         let hash_a = compute_module_graph_hash(root_a).expect("hash a");
         let hash_b = compute_module_graph_hash(root_b).expect("hash b");
@@ -271,7 +256,11 @@ mod tests {
             "import { helper } from './helper.ds'\nconsole.log(helper())\n",
         )
         .unwrap();
-        fs::write(root.join("helper.ds"), "export fn helper() int { return 1 }\n").unwrap();
+        fs::write(
+            root.join("helper.ds"),
+            "export fn helper() int { return 1 }\n",
+        )
+        .unwrap();
 
         let hash = compute_module_graph_hash(root).expect("hash");
         assert_ne!(
@@ -296,7 +285,7 @@ mod tests {
         let nested = root.join("lib");
         fs::create_dir_all(&nested).expect("nested dir");
         fs::write(nested.join("util.ds"), "export const util = true;\n").unwrap();
-        let clean_fs = compute_fs_graph_hash(root).expect("clean fs hash");
+        let clean_fs = deka_modules::integrity::compute_fs_graph_hash(root).expect("clean fs hash");
         let clean_module = compute_module_graph_hash(root).expect("clean module hash");
 
         // Poison the tree the way the published @deka/string tarball was
@@ -304,11 +293,15 @@ mod tests {
         // not valid UTF-8, at the top level and nested inside a directory.
         fs::write(root.join("._mod.ds"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
             .expect("top-level AppleDouble");
-        fs::write(nested.join("._util.ds"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
-            .expect("nested AppleDouble");
+        fs::write(
+            nested.join("._util.ds"),
+            b"\x00\x05\x16\x07\x00\x02\x00\x00",
+        )
+        .expect("nested AppleDouble");
 
         // Both hashes must succeed despite the non-UTF-8 bytes ...
-        let poisoned_fs = compute_fs_graph_hash(root).expect("poisoned fs hash");
+        let poisoned_fs =
+            deka_modules::integrity::compute_fs_graph_hash(root).expect("poisoned fs hash");
         let poisoned_module = compute_module_graph_hash(root).expect("poisoned module hash");
 
         // ... and must be identical to the clean tree's hashes, proving the
