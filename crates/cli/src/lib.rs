@@ -36,7 +36,12 @@ pub fn build_registry() -> Registry {
             .with(deka_db::register)
             .with(pm::register_install)
             .with(pm::register_summon)
-            .with(pm::register_link)
+            .with(pm::register_link);
+        #[cfg(feature = "lsp")]
+        {
+            builder = builder.with(compiler::register_lsp);
+        }
+        builder = builder
             .with(pm::register_pkg)
             .with(deka_registry::publish::register)
             .with(pm::register_release)
@@ -50,10 +55,6 @@ pub fn build_registry() -> Registry {
             .with(compiler::register_transpile)
             .with(runtime_core::register)
             .with(introspect::register);
-        #[cfg(feature = "lsp")]
-        {
-            builder = builder.with(compiler::register_lsp);
-        }
     }
 
     builder
