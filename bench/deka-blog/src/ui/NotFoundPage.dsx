@@ -1,0 +1,6 @@
+export fn NotFoundPage() ReactNode {
+  return <section>
+      <h1 class="page-title">Not found</h1>
+      <p><a href="/">Back to posts</a></p>
+    </section>
+}

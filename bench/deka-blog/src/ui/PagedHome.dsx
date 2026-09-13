@@ -1,0 +1,11 @@
+import { PostList } from "./PostList.dsx"
+
+export fn PagedHome(n: string) ReactNode {
+  let page = 2
+  if (n == "3") { page = 3 }
+  if (n == "4") { page = 4 }
+  if (n == "5") { page = 5 }
+  if (n == "6") { page = 6 }
+  if (n == "2") { page = 2 }
+  return <PostList page={page} />
+}

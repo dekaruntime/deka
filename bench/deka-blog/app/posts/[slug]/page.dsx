@@ -1,0 +1,24 @@
+import { postParams } from "../../../src/posts.generated.ds"
+import { PostPage } from "../../../src/ui/PostPage.dsx"
+import { Title } from "../../../src/ui/Title.dsx"
+import { findPost } from "../../../src/posts.generated.ds"
+
+interface PageProps {
+  slug: string
+}
+struct PostParam {
+  slug: string
+}
+
+export const staticParams: Array<PostParam> = build {
+  return Ok(postParams)
+}
+
+export fn head() ReactNode {
+  return Title("Post · Signal Path")
+}
+
+export fn Page(props: PageProps) ReactNode {
+  const _post = findPost(props.slug)
+  return PostPage(props.slug)
+}

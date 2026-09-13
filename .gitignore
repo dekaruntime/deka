@@ -8,6 +8,11 @@
 **/dist/
 linkhash/**/.cache/
 .cache/
+**/.cache/
+bench/last-results.json
+bench/.toolchain/deka
+bench/.toolchain/dsc
+bench/.toolchain/version.txt
 .cache/deka_js/
 .ci/
 scripts/.run-tmp/

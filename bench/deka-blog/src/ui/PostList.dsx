@@ -1,0 +1,37 @@
+import { PostCard } from "./PostCard.dsx"
+import { pageSlice, hrefForPage, pageCount, posts, tagNames } from "../posts.generated.ds"
+
+interface PostListProps {
+  page: number
+}
+
+export fn PostList(props: PostListProps) ReactNode {
+  const items = pageSlice(props.page)
+  let cards: Array<ReactNode> = [<span></span>]
+  for (const post of items) {
+    cards.push(<PostCard slug={post.slug} title={post.title} date={post.date} excerpt={post.excerpt} tags={post.tags} />)
+  }
+  const total = pageCount()
+  let prev: ReactNode = <span></span>
+  let next: ReactNode = <span></span>
+  if (props.page > 1) {
+    prev = <a href={hrefForPage(props.page - 1)}>Previous</a>
+  }
+  if (props.page < total) {
+    next = <a href={hrefForPage(props.page + 1)}>Next</a>
+  }
+  let tagLinks: Array<ReactNode> = [<span></span>]
+  for (const tag of tagNames) {
+    tagLinks.push(<a class="tag" href={"/tags/" + tag}>{tag}</a>)
+  }
+  const _all = posts
+  return <div>
+      <div class="hero">
+        <h1>Signal Path</h1>
+        <p class="lede">A 28-post blog used as a fair-play subject app. Same markdown as the Vite column.</p>
+        <div class="tags">{tagLinks}</div>
+      </div>
+      <div class="grid">{cards}</div>
+      <div class="pager">{prev}{next}</div>
+    </div>
+}

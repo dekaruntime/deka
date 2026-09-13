@@ -1,0 +1,9 @@
+import { Shell } from "../src/ui/Shell.dsx"
+
+interface LayoutProps {
+  children: ReactNode
+}
+
+export fn Layout(props: LayoutProps) ReactNode {
+  return Shell(props)
+}

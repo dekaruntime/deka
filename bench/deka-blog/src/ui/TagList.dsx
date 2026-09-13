@@ -1,0 +1,11 @@
+interface TagListProps {
+  tags: Array<string>
+}
+
+export fn TagList(props: TagListProps) ReactNode {
+  let nodes: Array<ReactNode> = [<span class="tag-sep"></span>]
+  for (const tag of props.tags) {
+    nodes.push(<a class="tag" href={"/tags/" + tag}>{tag}</a>)
+  }
+  return <div class="tags">{nodes}</div>
+}

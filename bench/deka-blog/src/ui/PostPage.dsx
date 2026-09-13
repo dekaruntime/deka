@@ -1,0 +1,13 @@
+import { findPost } from "../posts.generated.ds"
+import { Html } from "./Html.dsx"
+import { TagList } from "./TagList.dsx"
+
+export fn PostPage(slug: string) ReactNode {
+  const post = findPost(slug)
+  return <article>
+      <p class="meta"><a href="/">All posts</a> · {post.date}</p>
+      <h1 class="page-title">{post.title}</h1>
+      <TagList tags={post.tags} />
+      <Html html={post.html} />
+    </article>
+}

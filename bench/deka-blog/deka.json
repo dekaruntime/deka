@@ -1,0 +1,10 @@
+{
+  "name": "deka-bench-blog",
+  "type": "serve",
+  "serve": { "mode": "ds" },
+  "security": {
+    "allow": {},
+    "deny": {},
+    "prompt": false
+  }
+}
