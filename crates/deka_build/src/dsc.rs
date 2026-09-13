@@ -53,19 +53,67 @@ pub fn check_path(path: &Path) -> Result<(), String> {
 }
 
 pub fn transpile_file(path: &Path) -> Result<String, String> {
+    let source = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    if pool::js_builtins::source_imports_builtins(&source) {
+        return transpile_file_with_runtime_externals(path, &source);
+    }
     run_transpile(path, None, &["transpile"])
+}
+
+/// dsc cannot be told that `@js/react*` are externals. Strip/rewrite those
+/// imports, transpile the rewritten sibling, then restore specifiers so the
+/// host inliner still sees them.
+fn transpile_file_with_runtime_externals(path: &Path, source: &str) -> Result<String, String> {
+    let rewrite = pool::js_builtins::rewrite_for_dsc_transpile(source);
+    let parent = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut workspace = ExternalsWorkspace { files: Vec::new() };
+
+    let entry_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "path is not UTF-8".to_string())?;
+    let tmp_entry = parent.join(format!(".__deka_js_ext_{entry_name}"));
+    fs::write(&tmp_entry, &rewrite.source)
+        .map_err(|err| format!("failed to write {}: {err}", tmp_entry.display()))?;
+    workspace.files.push(tmp_entry.clone());
+
+    for stub in &rewrite.stubs {
+        let stub_path = parent.join(&stub.filename);
+        fs::write(&stub_path, &stub.body)
+            .map_err(|err| format!("failed to write {}: {err}", stub_path.display()))?;
+        workspace.files.push(stub_path);
+    }
+
+    let js = run_transpile(&tmp_entry, None, &["transpile"])?;
+    Ok(rewrite.restore_js(&js))
+}
+
+struct ExternalsWorkspace {
+    files: Vec<PathBuf>,
+}
+
+impl Drop for ExternalsWorkspace {
+    fn drop(&mut self) {
+        for path in &self.files {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 /// Bundle stage: `dsc transpile <entry> --bundle [--treeshake] --out <tmp>`,
 /// run from `project_root` so graph imports resolve against the project.
 /// `minify` maps onto dsc's `--treeshake` (dsc owns minification semantics).
-pub fn transpile_bundle(
-    project_root: &Path,
-    entry: &Path,
-    minify: bool,
-) -> Result<String, String> {
+pub fn transpile_bundle(project_root: &Path, entry: &Path, minify: bool) -> Result<String, String> {
     if minify {
-        run_transpile(entry, Some(project_root), &["transpile", "--bundle", "--treeshake"])
+        run_transpile(
+            entry,
+            Some(project_root),
+            &["transpile", "--bundle", "--treeshake"],
+        )
     } else {
         run_transpile(entry, Some(project_root), &["transpile", "--bundle"])
     }

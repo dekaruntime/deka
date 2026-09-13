@@ -1,6 +1,6 @@
 import { useState } from "@js/react"
 
-export function probe(): string {
-  const [label] = useState("ssr")
+export fn probe() string {
+  const [label, setLabel] = useState("ssr")
   return label
 }

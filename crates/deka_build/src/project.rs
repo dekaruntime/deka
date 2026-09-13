@@ -228,11 +228,10 @@ mod tests {
         ensure_project_layout(
             project.path(),
             None,
-            &[
-                "@js/react".to_string(),
-                "@js/react/jsx-runtime".to_string(),
-                "@js/react-dom/server".to_string(),
-            ],
+            &pool::js_builtins::USER_SPECS
+                .iter()
+                .map(|spec| (*spec).to_string())
+                .collect::<Vec<_>>(),
         )
         .expect("runtime React builtins need no deka.json entry");
     }

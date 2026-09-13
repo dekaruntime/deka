@@ -8,8 +8,38 @@ use deno_core::ModuleSpecifier;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
-pub const REACT_VERSION: &str = "19.1.1";
+pub const REACT_VERSION: &str = trim_version(include_str!("../vendor/react-prod/VERSION"));
+
+const fn trim_version(raw: &str) -> &str {
+    let bytes = raw.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 {
+        match bytes[end - 1] {
+            b' ' | b'\n' | b'\r' | b'\t' => end -= 1,
+            _ => break,
+        }
+    }
+    let mut start = 0;
+    while start < end {
+        match bytes[start] {
+            b' ' | b'\n' | b'\r' | b'\t' => start += 1,
+            _ => break,
+        }
+    }
+    let trimmed = raw.as_bytes().split_at(end).0.split_at(start).1;
+    match core::str::from_utf8(trimmed) {
+        Ok(text) => text,
+        Err(_) => raw,
+    }
+}
+
 pub const URL_PREFIX: &str = "deka:///js/";
+
+/// User-facing specifiers the runtime provides. Subpaths are intentional:
+/// summoned `@js/<name>` does not support them, which is why these cannot
+/// go through `js_modules/`. Single list: `file_for_user_spec` / `is_builtin`
+/// and the dsc-externals rewrite all read this.
+pub const USER_SPECS: &[&str] = &["@js/react", "@js/react/jsx-runtime", "@js/react-dom/server"];
 
 /// Distinctive development-build strings. Production output must not contain
 /// these (the deka#937 feature-gate lesson).
@@ -100,9 +130,6 @@ const REACT_DOM_EXPORTS: &[&str] = &[
 const SERVER_LEGACY_EXPORTS: &[&str] = &["renderToStaticMarkup", "renderToString", "version"];
 const SERVER_BROWSER_EXPORTS: &[&str] = &["prerender", "renderToReadableStream", "version"];
 
-/// User-facing specifiers the runtime provides. Subpaths are intentional:
-/// summoned `@js/<name>` does not support them, which is why these cannot
-/// go through `js_modules/`.
 pub fn is_builtin(spec: &str) -> bool {
     file_for_user_spec(spec.trim()).is_some()
 }
@@ -198,6 +225,117 @@ pub fn source_imports_builtins(js: &str) -> bool {
     deka_modules::ds_imports::paths(js)
         .iter()
         .any(|spec| is_builtin(spec))
+}
+
+/// dsc 0.52 has no `--external` flag. Explicit `@js/react*` imports are
+/// treated as undeclared summoned packages and fail `dsc transpile` before
+/// emit. Compiler-known hooks/JSX re-inject `@js/react` and
+/// `@js/react/jsx-runtime`; `@js/react-dom/server` is rewritten to a sibling
+/// stub and restored after emit so host inlining still sees the specifier.
+pub struct DscTranspileRewrite {
+    pub source: String,
+    pub stubs: Vec<DscExternalStub>,
+}
+
+pub struct DscExternalStub {
+    pub spec: String,
+    pub filename: String,
+    pub body: String,
+}
+
+impl DscTranspileRewrite {
+    pub fn restore_js(&self, js: &str) -> String {
+        let mut out = js.to_string();
+        for stub in &self.stubs {
+            let js_name = stub_js_filename(&stub.filename);
+            let from = format!("./{js_name}");
+            out = out.replace(&format!("\"{from}\""), &format!("\"{}\"", stub.spec));
+            out = out.replace(&format!("'{from}'"), &format!("'{}'", stub.spec));
+        }
+        out
+    }
+}
+
+pub fn rewrite_for_dsc_transpile(source: &str) -> DscTranspileRewrite {
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    let mut stubs: Vec<DscExternalStub> = Vec::new();
+    while let Some((prefix, decl, spec, names, suffix)) = next_builtin_import(rest) {
+        out.push_str(prefix);
+        if dsc_reinjects(&spec) {
+            rest = suffix;
+            continue;
+        }
+        let filename = stub_ds_filename(&spec);
+        let relative = format!("./{filename}");
+        out.push_str(&retarget_import_decl(decl, &spec, &relative));
+        if !stubs.iter().any(|stub| stub.spec == spec) {
+            stubs.push(DscExternalStub {
+                body: stub_module_body(&names),
+                spec,
+                filename,
+            });
+        }
+        rest = suffix;
+    }
+    out.push_str(rest);
+    DscTranspileRewrite { source: out, stubs }
+}
+
+fn dsc_reinjects(spec: &str) -> bool {
+    spec == "@js/react" || spec == "@js/react/jsx-runtime"
+}
+
+fn stub_ds_filename(spec: &str) -> String {
+    let name = spec
+        .trim_start_matches("@js/")
+        .replace('/', "_")
+        .replace('-', "_");
+    format!("__deka_js_builtin_{name}.ds")
+}
+
+fn stub_js_filename(ds_filename: &str) -> String {
+    match ds_filename.rsplit_once('.') {
+        Some((stem, _)) => format!("{stem}.js"),
+        None => ds_filename.to_string(),
+    }
+}
+
+fn retarget_import_decl(decl: &str, spec: &str, relative: &str) -> String {
+    decl.replace(&format!("\"{spec}\""), &format!("\"{relative}\""))
+        .replace(&format!("'{spec}'"), &format!("'{relative}'"))
+}
+
+fn stub_module_body(names: &[ImportedName]) -> String {
+    let mut body =
+        String::from("// Generated for dsc transpile; runtime builtins are inlined after emit.\n");
+    let mut emitted = BTreeSet::new();
+    for name in names {
+        if name.imported == "*" || name.imported == "default" {
+            for export in ["renderToString", "renderToStaticMarkup", "version"] {
+                push_stub_export(&mut body, export, &mut emitted);
+            }
+            continue;
+        }
+        push_stub_export(&mut body, &name.imported, &mut emitted);
+    }
+    if emitted.is_empty() {
+        push_stub_export(&mut body, "renderToString", &mut emitted);
+    }
+    body
+}
+
+fn push_stub_export(body: &mut String, name: &str, emitted: &mut BTreeSet<String>) {
+    if !emitted.insert(name.to_string()) {
+        return;
+    }
+    if name == "version" {
+        body.push_str("export const version: string = \"\"\n");
+        return;
+    }
+    body.push_str("export fn ");
+    body.push_str(name);
+    body.push_str("(node: ReactNode) string {\n  return \"\"\n}\n");
 }
 
 /// Inline `@js/react*` imports into a single module by wrapping the CJS
@@ -468,7 +606,8 @@ fn take_quoted(bytes: &[u8], i: usize) -> Option<(String, usize)> {
 
 fn take_ident(bytes: &[u8], i: usize) -> Option<(String, usize)> {
     let mut j = i;
-    while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'$')
+    while j < bytes.len()
+        && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'$')
     {
         j += 1;
     }
@@ -520,7 +659,7 @@ fn react_esm() -> &'static str {
     static CELL: OnceLock<String> = OnceLock::new();
     CELL.get_or_init(|| {
         wrap_cjs(
-            "https://unpkg.com/react@19.1.1/cjs/react.production.js",
+            &format!("https://unpkg.com/react@{REACT_VERSION}/cjs/react.production.js"),
             REACT_SHA,
             REACT_CJS,
             "",
@@ -535,7 +674,7 @@ fn jsx_runtime_esm() -> &'static str {
     static CELL: OnceLock<String> = OnceLock::new();
     CELL.get_or_init(|| {
         wrap_cjs(
-            "https://unpkg.com/react@19.1.1/cjs/react-jsx-runtime.production.js",
+            &format!("https://unpkg.com/react@{REACT_VERSION}/cjs/react-jsx-runtime.production.js"),
             JSX_RUNTIME_SHA,
             JSX_RUNTIME_CJS,
             "",
@@ -550,7 +689,7 @@ fn react_dom_esm() -> &'static str {
     static CELL: OnceLock<String> = OnceLock::new();
     CELL.get_or_init(|| {
         wrap_cjs(
-            "https://unpkg.com/react-dom@19.1.1/cjs/react-dom.production.js",
+            &format!("https://unpkg.com/react-dom@{REACT_VERSION}/cjs/react-dom.production.js"),
             REACT_DOM_SHA,
             REACT_DOM_CJS,
             "import * as __req_react from \"./react.js\";\n",
@@ -565,7 +704,9 @@ fn server_legacy_esm() -> &'static str {
     static CELL: OnceLock<String> = OnceLock::new();
     CELL.get_or_init(|| {
         wrap_cjs(
-            "https://unpkg.com/react-dom@19.1.1/cjs/react-dom-server-legacy.browser.production.js",
+            &format!(
+                "https://unpkg.com/react-dom@{REACT_VERSION}/cjs/react-dom-server-legacy.browser.production.js"
+            ),
             SERVER_LEGACY_SHA,
             SERVER_LEGACY_CJS,
             "import * as __req_react from \"./react.js\";\nimport * as __req_react_dom from \"./react-dom.js\";\n",
@@ -580,7 +721,9 @@ fn server_browser_esm() -> &'static str {
     static CELL: OnceLock<String> = OnceLock::new();
     CELL.get_or_init(|| {
         wrap_cjs(
-            "https://unpkg.com/react-dom@19.1.1/cjs/react-dom-server.edge.production.js",
+            &format!(
+                "https://unpkg.com/react-dom@{REACT_VERSION}/cjs/react-dom-server.edge.production.js"
+            ),
             SERVER_BROWSER_SHA,
             SERVER_BROWSER_CJS,
             "import * as __req_react from \"./react.js\";\nimport * as __req_react_dom from \"./react-dom.js\";\n",
@@ -670,30 +813,29 @@ mod tests {
         assert!(HASHES.contains(REACT_DOM_SHA));
         assert!(HASHES.contains(SERVER_LEGACY_SHA));
         assert!(HASHES.contains(SERVER_BROWSER_SHA));
-        assert!(HASHES.contains("react@19.1.1") || HASHES.contains("react.production.js"));
+        assert!(
+            HASHES.contains(&format!("react@{REACT_VERSION}"))
+                || HASHES.contains("react.production.js")
+        );
     }
 
     #[test]
     fn public_specs_are_runtime_provided() {
-        for spec in ["@js/react", "@js/react/jsx-runtime", "@js/react-dom/server"] {
+        for spec in USER_SPECS {
             assert!(is_builtin(spec), "{spec}");
+            assert!(file_for_user_spec(spec).is_some(), "{spec}");
         }
         assert!(!is_builtin("@js/lodash"));
         assert!(!is_builtin("@js/react/jsx-dev-runtime"));
         assert_eq!(
-            filter_imports(&[
-                "@js/react".into(),
-                "@js/chosen".into(),
-                "./local.js".into()
-            ]),
+            filter_imports(&["@js/react".into(), "@js/chosen".into(), "./local.js".into()]),
             vec!["@js/chosen".to_string(), "./local.js".to_string()]
         );
     }
 
     #[test]
     fn production_wrappers_do_not_contain_dev_bytes() {
-        for file in reachable_files(["@js/react", "@js/react/jsx-runtime", "@js/react-dom/server"])
-        {
+        for file in reachable_files(USER_SPECS.iter().copied()) {
             let esm = esm_for_file(file).expect(file);
             assert!(
                 !contains_dev_bytes(esm),
@@ -731,5 +873,39 @@ export function probe() { return renderToString(jsx("div", { children: h("span")
         assert!(inlined.contains("const h ="));
         assert!(inlined.contains("export function probe()"));
         assert!(!contains_dev_bytes(&inlined));
+    }
+
+    #[test]
+    fn rewrite_strips_auto_injected_react_import() {
+        let src = "import { useState } from \"@js/react\"\n\nexport fn probe() string {\n  const [label, setLabel] = useState(\"ssr\")\n  return label\n}\n";
+        let rewrite = rewrite_for_dsc_transpile(src);
+        assert!(
+            !rewrite.source.contains("@js/react"),
+            "explicit @js/react import must be stripped: {}",
+            rewrite.source
+        );
+        assert!(rewrite.source.contains("useState"));
+        assert!(rewrite.stubs.is_empty());
+    }
+
+    #[test]
+    fn rewrite_stubs_react_dom_server_and_restores_the_specifier() {
+        let src = "import { renderToString } from \"@js/react-dom/server\"\nexport fn html() string {\n  return renderToString(\"x\")\n}\n";
+        let rewrite = rewrite_for_dsc_transpile(src);
+        assert!(
+            rewrite
+                .source
+                .contains("./__deka_js_builtin_react_dom_server.ds"),
+            "{}",
+            rewrite.source
+        );
+        assert!(!rewrite.source.contains("@js/react-dom/server"));
+        assert_eq!(rewrite.stubs.len(), 1);
+        assert!(rewrite.stubs[0].body.contains("export fn renderToString"));
+        let restored = rewrite.restore_js(
+            "import { renderToString } from \"./__deka_js_builtin_react_dom_server.js\";\n",
+        );
+        assert!(restored.contains("from \"@js/react-dom/server\""));
+        assert!(!restored.contains("__deka_js_builtin_"));
     }
 }
