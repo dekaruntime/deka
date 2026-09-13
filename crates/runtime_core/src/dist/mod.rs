@@ -24,6 +24,7 @@ mod build_manifest;
 mod codegen;
 mod defer;
 mod document;
+mod islands;
 mod manifest;
 mod routes;
 mod source;
@@ -64,6 +65,10 @@ pub use artifact_manifest::{
 pub use defer::{
     DeferLint, DeferLintLevel, DeferredIsland, defer_script_tag, scan_defer_lints,
     scan_server_defer,
+};
+pub use islands::{
+    ClientIsland, ISLANDS_SCRIPT_SRC, generate_islands_entry_js, islands_script_tag,
+    scan_client_islands,
 };
 pub use document::{
     CLIENT_IMPORTMAP_PLACEHOLDER_TAG, DEFAULT_INDEX_HARNESS, DEKA_APP_HOLE, DEKA_HEAD_HOLE,

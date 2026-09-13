@@ -17,7 +17,10 @@ use deno_core::ModuleSourceCode;
 /// left with the framework extraction, so the wrapper imports nothing.
 /// Generate the loader-owned entry wrapper executed for every entry.
 pub fn entry_wrapper_source(entry_specifier: &str) -> String {
-    let template = "const __dekaMain = await import(\"__ENTRY__\");\n\
+    let template = "if (\"__ENTRY__\".includes(\"serve-entry\")) {\n\
+  await import(\"deka:///js/react-dom-server.js\");\n\
+}\n\
+const __dekaMain = await import(\"__ENTRY__\");\n\
 globalThis.__dekaStaticRender =\n\
   typeof __dekaMain.StaticRender === \"function\"\n\
     ? __dekaMain.StaticRender\n\

@@ -125,6 +125,12 @@ pub fn prepare_http_session(
         ))
         .or_else(|| crate::asset_urls::find_app_router_root(&resolved.path))
     };
+    if let (Some(root), Some(dsc)) = (app_router_root.as_ref(), pool_config.dsc.as_ref()) {
+        let assets = runtime_core::dist::compiler_cache_dir(root)
+            .join("assets")
+            .join("islands.js");
+        pool::islands::emit_islands_bundle(root, dsc, &assets)?;
+    }
 
     let handler_path = resolved.path.to_string_lossy().to_string();
     if handler_path.to_ascii_lowercase().ends_with(".phpx") {
