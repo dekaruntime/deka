@@ -5,7 +5,7 @@ let afterEachHooks = []
 let beforeAllHooks = []
 let afterAllHooks = []
 let currentFailures = []
-let abortedFlag: Array<boolean> = [false]
+let abortedFlag: [boolean] = [false]
 
 export fn describe(name: string, body: fn() void) {
   suiteNames.push(name)
