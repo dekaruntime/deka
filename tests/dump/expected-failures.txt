@@ -78,12 +78,8 @@ modules-import-syntax-no-braces-001
 modules-relative-import-missing-export-001
 modules-relative-import-missing-module-001
 
-# 0.3.3 (wik#11) strips `export ` before `const` and `async function`, but the
-# corpus fixture also emits `export function` (non-async `export fn plain`).
-# Worker sandbox then hits Unexpected token 'export'. Do not drop this row
-# until the kit strips that form; wik#11's regression used an unexported
-# `function plain()`.
-modules-export-async-fn
+# web-ide-kit 0.3.4 also strips plain export function; modules-export-async-fn
+# now agrees on both hosts and is deliberately no longer listed.
 # Documented per-host difference (deka#904 row 11): native filesystem resolver
 # vs wasm single-file typeck. Native assertion kept. See
 # docs/dekascript/missing-module-diagnostics.mdx.

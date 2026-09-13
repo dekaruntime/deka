@@ -35,8 +35,7 @@ absent, matching native.
 `expected-failures.txt` ratchets all shared-host divergences: full diagnostic
 lists, formatter output, and per-host expectation results. Listed cases remain
 visibly divergent in the dump; unlisted divergences and stale entries fail the
-ratchet. After web-ide-kit 0.3.3 (wik#10 raw globals, wik#11 export/process),
-the deka#904 c5 browser bugs are gone except `modules-export-async-fn` (kit
-still leaves `export function` in the Worker sandbox) and
-`modules-import-non-relative-001` (documented per-host string difference; see
-`docs/dekascript/missing-module-diagnostics.mdx`).
+ratchet. web-ide-kit 0.3.4 also strips plain `export function`, so
+`modules-export-async-fn` now agrees and has been removed from the ratchet.
+The remaining deka#904 row is `modules-import-non-relative-001` (documented
+per-host string difference; see `docs/dekascript/missing-module-diagnostics.mdx`).
