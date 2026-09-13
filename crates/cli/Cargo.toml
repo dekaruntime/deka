@@ -66,4 +66,3 @@ self_cmd = { path = "../self_cmd" }
 deka-registry = { path = "../deka_registry" }
 deka-deploy = { path = "../deka_deploy" }
 deka-cache = { path = "../deka_cache" }
-tungstenite = "0.24"
