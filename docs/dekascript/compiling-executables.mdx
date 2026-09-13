@@ -1,0 +1,44 @@
+---
+title: Compiling an executable
+description: Package a DekaScript entry and the Deka runtime into one executable for the current platform.
+---
+
+`deka compile <entry.ds>` produces a self-contained executable for the platform
+running the command. It invokes dsc to transpile and bundle the entry, then embeds
+that JavaScript in a copy of the running Deka executable, including V8.
+
+```ts
+// hello.ds
+import { echo } from "io"
+
+echo("hello from compiled Deka");
+```
+
+```sh
+deka add @deka/io
+deka compile hello.ds --outfile hello
+./hello
+```
+
+Standard output:
+
+```text
+hello from compiled Deka
+```
+
+The default output path is `./deka-app`. Existing output files are rejected;
+choose another path or remove the old output before rebuilding. Compilation
+errors return a nonzero exit status and do not publish an executable.
+
+The produced executable runs from another directory without the original `.ds`
+files, dsc, or a separate Deka installation. It materializes the embedded bundle
+in a temporary directory at startup, so the host needs writable temporary storage.
+Program output and exit status follow normal runtime execution.
+
+Compilation needs dsc: set `DEKA_DSC`, install it beside Deka, or put it on `PATH`.
+On macOS, compilation also uses `/usr/bin/codesign` to ad-hoc sign the executable
+after embedding the payload. This is a local executable, not a notarized app.
+
+This first cut targets only the current host platform and architecture; there is
+no `--target` option. Runtime data files and desktop application packaging are
+not included by this command.

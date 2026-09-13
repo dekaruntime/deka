@@ -12,6 +12,10 @@ const COMMAND: CommandSpec = CommandSpec {
 
 pub fn register(registry: &mut Registry) {
     registry.add_command(COMMAND);
+    registry.add_param(core::ParamSpec {
+        name: "--outfile",
+        description: "compiled executable output path (default: deka-app)",
+    });
 }
 
 pub fn cmd(context: &Context) {
