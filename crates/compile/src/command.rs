@@ -1,7 +1,7 @@
 use core::{CommandSpec, Context, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "compile",
     name: "compile",
     category: "project",
     summary: "compile to single-file executable",
@@ -15,5 +15,5 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(context: &Context) {
-    compile::run(context);
+    crate::run(context);
 }

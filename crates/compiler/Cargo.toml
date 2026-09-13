@@ -2,3 +2,10 @@
 name = "compiler"
 version.workspace = true
 edition = "2024"
+
+[features]
+lsp = []
+
+[dependencies]
+core = { path = "../core" }
+stdio = "0.4.0"

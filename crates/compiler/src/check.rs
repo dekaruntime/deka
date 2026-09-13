@@ -1,7 +1,7 @@
 use core::{CommandSpec, Context, FlagSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "compiler",
     name: "check",
     category: "project",
     summary: "validate a DekaScript source file (execs dsc)",
@@ -25,9 +25,5 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(_context: &Context) {
-    stdio::error(
-        "check",
-        "internal error: deka check should have exec'd dsc",
-    );
-    std::process::exit(1);
+    crate::dsc::exec_if_present();
 }

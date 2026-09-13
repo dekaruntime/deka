@@ -1,10 +1,12 @@
 #![allow(clippy::all)]
 
+pub mod command;
 pub mod binary;
 pub mod config;
 pub mod embed;
 pub mod vfs;
 
+pub use command::register;
 pub use config::{DekaConfig, WindowConfig};
 
 use binary::BinaryEmbedder;

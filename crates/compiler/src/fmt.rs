@@ -1,7 +1,7 @@
 use core::{CommandSpec, Context, ParamSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "compiler",
     name: "fmt",
     category: "project",
     summary: "format DekaScript source or emitted JavaScript (execs dsc)",
@@ -29,9 +29,5 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(_context: &Context) {
-    stdio::error(
-        "fmt",
-        "internal error: deka fmt should have exec'd dsc",
-    );
-    std::process::exit(1);
+    crate::dsc::exec_if_present();
 }

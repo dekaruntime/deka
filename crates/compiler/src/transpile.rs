@@ -1,7 +1,7 @@
 use core::{CommandSpec, Context, ParamSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
-    owner: "",
+    owner: "compiler",
     name: "transpile",
     category: "project",
     summary: "emit JavaScript from a .ds file or directory (execs dsc)",
@@ -39,9 +39,5 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(_context: &Context) {
-    stdio::error(
-        "transpile",
-        "internal error: deka transpile should have exec'd dsc",
-    );
-    std::process::exit(1);
+    crate::dsc::exec_if_present();
 }
