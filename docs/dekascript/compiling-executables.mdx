@@ -40,5 +40,42 @@ On macOS, compilation also uses `/usr/bin/codesign` to ad-hoc sign the executabl
 after embedding the payload. This is a local executable, not a notarized app.
 
 This first cut targets only the current host platform and architecture; there is
-no `--target` option. Runtime data files and desktop application packaging are
-not included by this command.
+no `--target` option. Runtime data files are not included by this command.
+
+## Desktop apps (`--desktop`)
+
+`deka compile --desktop` packages a DekaScript web project as a native desktop
+app whose window is a webview showing the same React output the browser would
+render. There is no npm, no `package.json`, and no `@tauri-apps/cli` step: `deka`
+drives the Tauri-stack webview (wry + tao) itself.
+
+```sh
+deka compile --desktop --outfile MyApp
+DEKA_DESKTOP_DUMP=1 ./MyApp
+```
+
+Dump-mode standard output (CI / headless check):
+
+```text
+__DEKA_DESKTOP_DUMP__
+React island
+Hello from Deka desktop
+```
+
+What `deka` does, in order:
+
+1. Run the same web pipeline as `deka build --bundle` in the project (requires
+   `deka.json` `type: "serve"`, `deka.lock`, `app/`, and `public/`).
+2. Start `deka serve` long enough to snapshot `/` (React SSR HTML, including
+   island markers) and every local `src` / `href` asset that document references.
+3. Embed those bytes in a copy of the running Deka executable.
+
+Launching the produced binary opens a native window and serves the snapshot over
+a custom `deka://` protocol. Client React (`hydrateRoot`, islands) runs in the
+webview. Set `DEKA_DESKTOP_DUMP=1` to print `document.body.innerText` and exit
+instead of leaving the window open.
+
+This first cut launches the webview on macOS only. Packaging the snapshot works
+on any host; opening the window on Linux or Windows is a follow-up. There is no
+`.app` / `.exe` / AppImage matrix, no `--target`, and no npm-based Tauri project
+generation.

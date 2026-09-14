@@ -107,6 +107,7 @@ dev		serve with HTTP + HMR (dev mode)
 --gild-socket		gild Unix socket path (default: /run/gild/sock)
 --check		exit non-zero if files would change
 --stdin		read source from stdin instead of a file
+--desktop		package a web project as a desktop app (React in webview)
 --quiet		suppress informational output
 --yes		assume yes when prompted
 --prompt		prompt before installing

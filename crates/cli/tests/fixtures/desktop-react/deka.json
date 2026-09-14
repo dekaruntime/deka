@@ -1,0 +1,6 @@
+{
+  "name": "desktop-react",
+  "type": "serve",
+  "serve": { "mode": "ds" },
+  "security": { "allow": {}, "deny": {}, "prompt": false }
+}

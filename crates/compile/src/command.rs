@@ -16,6 +16,11 @@ pub fn register(registry: &mut Registry) {
         name: "--outfile",
         description: "compiled executable output path (default: deka-app)",
     });
+    registry.add_flag(core::FlagSpec {
+        name: "--desktop",
+        aliases: &[],
+        description: "package a web project as a desktop app (React in webview)",
+    });
 }
 
 pub fn cmd(context: &Context) {
