@@ -1,152 +1,97 @@
 ---
 title: Server Rendering and Hydration
-description: Synchronous SSR, safe escaping, and island hydration markers for the DekaScript UI runtime.
+description: React server rendering and hydration of compiled DekaScript islands.
 ---
 
 App-router pages render through production React (`@js/react-dom/server`).
 Components marked `client:load`, `client:idle`, or `client:visible` are
-islands: the compiler injects `data-deka-id` on their host elements
-(dsc#198), the jsx runtime wraps each island in a `<deka-island>` container
-with serialized props, and `deka serve` / `deka build` emit a shared client
-bundle that imports the compiled DSX component and calls `hydrateRoot`
-from `@js/react-dom/client`. The island code that runs in the browser is
-the same compiled component the server rendered — not a parallel script.
+islands: the `@js/react/jsx-runtime` wrapper places each function component
+inside a `<deka-island>` container with serialized props. The shared client
+bundle hydrates that container with the same compiled component the server
+rendered.
 
 ## API
 
-| Function | Purpose |
-|----------|---------|
-| `deka.ui.renderToString(component)` | Synchronously render a component tree to an HTML string (React `renderToString`). |
-| `hydrateRoot` from `@js/react-dom/client` | Attach a compiled island component to its `<deka-island>` container. |
+| API | Purpose |
+|-----|---------|
+| `deka.ui.renderToString(node)` | Synchronously render a React node; returns `{ html: string }`. Requires React SSR to be initialized. |
+| `deka.ui.renderToStreamHtml(node)` | Returns a promise for the rendered HTML string, not a streaming response. |
+| `jsx`, `jsxs`, `Fragment` from `@js/react/jsx-runtime` | Create React nodes; the compiler emits imports from this module. |
+| `hydrateRoot` from `@js/react-dom/client` | Hydrate an island's `<deka-island>` container in the browser. |
 
-Both functions are exposed on the `deka.ui` namespace alongside `jsx`, `jsxs`, and `Fragment`.
+The frozen `globalThis.deka.ui` object contains `signal`, `effect`, `memo`,
+`createSignal`, `createEffect`, `createMemo`, `renderToString`, and
+`renderToStreamHtml`. JSX factories, `Fragment`, and `hydrateRoot` are module
+exports, not members of that namespace.
 
-## renderToString
+## Server rendering
 
-`renderToString` accepts any value the JSX factories can produce:
-
-- primitive tags (`"div"`, `"span"`, ...)
-- function components
-- `deka.ui.Fragment`
-- strings, numbers, `null`, `undefined`, and nested arrays
-
-Text content and attribute values are HTML-escaped. Boolean attributes are emitted as HTML boolean attributes (`disabled`, `required`) when `true` and omitted when `false`, `null`, or `undefined`.
-
-```ds
-const html = globalThis.deka.ui.renderToString(
-  globalThis.deka.ui.jsx("div", { "class": "container", children: "hello" })
-)
-console.log(html) // <div class="container">hello</div>
-```
-
-### Function components
-
-Function components receive their props and children and return a node that is rendered recursively.
-
-```ds
-fn Greeting(props: object) object {
-  return globalThis.deka.ui.jsxs("h1", {
-    "class": "greet",
-    children: ["Hello ", props.name]
-  })
-}
-
-const html = globalThis.deka.ui.renderToString(
-  globalThis.deka.ui.jsx(Greeting, { name: "Deka" })
-)
-console.log(html) // <h1 class="greet">Hello Deka</h1>
-```
-
-### Fragments
-
-Fragments render their children without an outer wrapper.
-
-```ds
-const html = globalThis.deka.ui.renderToString(
-  globalThis.deka.ui.jsxs(globalThis.deka.ui.Fragment, { children: ["a", "b", "c"] })
-)
-console.log(html) // abc
-```
-
-### Escaping
-
-Escaping is per context. Text content escapes `&`, `<`, and `>`; double-quoted attribute values escape `&` and `"` only. An apostrophe never needs escaping — the renderer does not emit single-quoted attribute values — so storefront prose like `don't` and `we'll` ships as one byte each, not `&#39;`. User-provided values cannot inject raw HTML: inside a double-quoted attribute value, `<` cannot start a tag, and the quote that could close the value is escaped.
-
-```ds
-const html = globalThis.deka.ui.renderToString(
-  globalThis.deka.ui.jsx("div", {
-    title: "<script>alert('x')</script>",
-    children: "1 < 2 & 3 > 0"
-  })
-)
-// <div title="<script>alert('x')</script>">1 &lt; 2 &amp; 3 &gt; 0</div>
-```
-
-### Boolean attributes
-
-`true` emits the attribute name with no value; `false`, `null`, and `undefined` omit it.
-
-```ds
-const html = globalThis.deka.ui.renderToString(
-  globalThis.deka.ui.jsxs("input", {
-    disabled: true,
-    readonly: false,
-    checked: null,
-    required: true
-  })
-)
-// <input disabled required>
-```
-
-## Island directives
-
-Island directives mark interactive components that should be hydrated on the client. The renderer recognizes `client:load`, `client:idle`, and `client:visible`.
-
-When a function component carries one of these directives, the renderer wraps its output in HTML comments that record the component name, the directive, and the serialized props. Primitive tags with directives receive `data-client-*` attributes instead.
-
-```ds
-fn Counter(props: object) object {
-  return globalThis.deka.ui.jsxs("button", {
-    type: "button",
-    children: ["count: ", props.start]
-  })
-}
-
-const html = globalThis.deka.ui.renderToString(
-  globalThis.deka.ui.jsx(Counter, { start: 5, "client:load": true })
-)
-// <!--deka-island start:... directive:... props:...-->
-//   <button type="button">count: 5</button>
-// <!--deka-island end:...-->
-```
-
-The comment contents are base64-encoded JSON so serialized props can safely contain spaces or punctuation.
-
-## hydrate
-
-Islands hydrate through `hydrateRoot` from `@js/react-dom/client`. `deka serve`
-and `deka build` generate one shared `/assets/islands.js` bundle for every
-`client:*` component in the project (both of the blog layout islands ship on
-every page, so one file beats N copies of React). The emitted entry is:
+Function components receive props and return React nodes. JSX compiles to
+`jsx` or `jsxs` calls with children in the props object; fragments use the
+imported `Fragment`. For example, this is JavaScript at the React module boundary:
 
 ```js
-import { hydrateRoot } from "@js/react-dom/client";
-import { jsx } from "@js/react/jsx-runtime";
-import { ThemeToggle } from "../../src/ui/Theme.js";
+import { jsx, jsxs, Fragment } from "@js/react/jsx-runtime";
+import { renderToString } from "@js/react-dom/server";
 
-for (const node of document.querySelectorAll("[data-deka-island]")) {
-  const Component = registry[node.getAttribute("data-deka-island")];
-  const props = JSON.parse(node.getAttribute("data-deka-props") || "{}");
-  hydrateRoot(node, jsx(Component, props));
+function Greeting(props) {
+  return jsx("h1", { className: "greet", children: "Hello " + props.name });
+}
+
+const html = renderToString(jsxs(Fragment, {
+  children: [jsx(Greeting, { name: "Deka" }), jsx("p", { children: "Welcome" })]
+}));
+// <h1 class="greet">Hello Deka</h1><p>Welcome</p>
+```
+
+Here the imported React `renderToString` returns a string. The host's
+`deka.ui.renderToString` wraps the rendered string in `{ html }`.
+React handles text and attribute escaping, boolean attributes, and void tags.
+
+## Islands and hydration
+
+Apply `client:load`, `client:idle`, or `client:visible` to a function component.
+For example, `app/page.dsx` can render an imported counter:
+
+```ds
+import { Counter } from "../src/ui/Counter.dsx"
+
+export fn Page() ReactNode {
+  return <Counter start={5} client:load />
 }
 ```
 
-The production bundle inlines those `@js/react*` imports so the browser does
-not need a separate install. Development React used by `deka dev` Fast Refresh
-is a different, feature-gated graph and is not included.
+With a `Counter` that renders a button containing its initial count, the served
+HTML is:
 
-## Runtime notes
+```html
+<deka-island data-deka-island="Counter" data-deka-directive="load" data-deka-props="{&quot;start&quot;:5}" style="display:contents"><button data-deka-id="Counter:Counter/i0" type="button">5</button></deka-island>
+```
 
-- There is no virtual DOM diffing. Server rendering is a single synchronous walk over the component tree.
-- Components are evaluated once during SSR; signals and effects are not active on the server.
-- Void tags such as `<img>`, `<input>`, and `<br>` are emitted without closing tags.
+The JSX runtime wraps function components, not primitive tags. The compiler's
+`data-deka-id` identifies the inner host element; the wrapper's
+`data-deka-island` identifies the component for hydration. Props are JSON in an
+HTML-escaped attribute, not base64 in HTML comments. The wrapper removes the
+three directives from the component's props and excludes `children`, `key`,
+`ref`, and function or symbol values from the serialized props. Pass
+JSON-serializable data to islands.
+
+`deka serve` injects the shared runtime:
+
+```html
+<script type="module" src="/assets/islands.js"></script>
+```
+
+`deka build` emits the same shared runtime under a content-hashed filename in
+`dist/client/assets/`, such as `islands.9361b10245.js`. Serving the built artifact
+uses that hashed URL in the script tag.
+
+The bundle includes the compiled island components and production React,
+including `hydrateRoot` from `@js/react-dom/client`. Its hydration loop reads
+`data-deka-island`, looks up the component in the generated registry, parses
+`data-deka-props` with `JSON.parse`, and calls `hydrateRoot(node, jsx(Component,
+props))`. The browser does not need a separate React install.
+
+All three directives currently use this same immediate hydration loop. The
+emitted `data-deka-directive` records `load`, `idle`, or `visible`, but the loop
+does not defer hydration until idle time or visibility.
