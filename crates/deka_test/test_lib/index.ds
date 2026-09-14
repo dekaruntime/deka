@@ -1,10 +1,21 @@
-let tests = []
-let suiteNames = []
-let beforeEachHooks = []
-let afterEachHooks = []
-let beforeAllHooks = []
-let afterAllHooks = []
-let currentFailures = []
+struct TestCase {
+  name: string
+  fullName: string
+  suite: string
+  body: fn() void
+  beforeEach: Array<fn() void>
+  afterEach: Array<fn() void>
+  beforeAll: Array<fn() void>
+  afterAll: Array<fn() void>
+}
+
+let tests: Array<TestCase> = []
+let suiteNames: Array<string> = []
+let beforeEachHooks: Array<fn() void> = []
+let afterEachHooks: Array<fn() void> = []
+let beforeAllHooks: Array<fn() void> = []
+let afterAllHooks: Array<fn() void> = []
+let currentFailures: Array<string> = []
 let abortedFlag: [boolean] = [false]
 
 export fn describe(name: string, body: fn() void) {
@@ -30,7 +41,7 @@ export fn describe(name: string, body: fn() void) {
 }
 
 export fn it(name: string, body: fn() void) {
-  tests.push({name: name, fullName: fullName(name), suite: currentSuite(), body: body, beforeEach: snapshot(beforeEachHooks), afterEach: snapshot(afterEachHooks), beforeAll: snapshot(beforeAllHooks), afterAll: snapshot(afterAllHooks)})
+  tests.push(TestCase { name: name, fullName: fullName(name), suite: currentSuite(), body: body, beforeEach: snapshot(beforeEachHooks), afterEach: snapshot(afterEachHooks), beforeAll: snapshot(beforeAllHooks), afterAll: snapshot(afterAllHooks) })
 }
 
 export fn test(name: string, body: fn() void) {
@@ -171,7 +182,7 @@ fn fullName(name: string) string {
 }
 
 fn snapshot(hooks: Array<fn() void>) Array<fn() void> {
-  let copy = []
+  let copy: Array<fn() void> = []
   for (const hook of hooks) {
     copy.push(hook)
   }
