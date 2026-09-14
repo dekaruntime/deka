@@ -2,7 +2,7 @@ use anyhow::Result;
 use deka_cli_core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
 use deka_modules::module_spec::canonical_php_package_spec;
 use deka_modules::modules::MODULES_DIR;
-use crate::{InstallPayload, run_install};
+use crate::{InstallPayload, run_install, spec::strip_semver_range_prefix};
 use std::path::{Path, PathBuf};
 use stdio;
 
@@ -87,14 +87,6 @@ pub fn register(registry: &mut Registry) {
     registry.add_param(ParamSpec {
         name: "--concurrency",
         description: "number of concurrent downloads (ignored for now)",
-    });
-    registry.add_param(ParamSpec {
-        name: "--registry",
-        description: "registry base URL (default: https://git.tana.gg)",
-    });
-    registry.add_param(ParamSpec {
-        name: "--token",
-        description: "auth token",
     });
 }
 
@@ -283,11 +275,7 @@ fn collect_deka_json_deps() -> Vec<String> {
     deps.iter()
         .map(|(name, version)| {
             if let Some(v) = version.as_str() {
-                // Strip semver range prefixes for resolution
-                let clean = v
-                    .trim_start_matches('^')
-                    .trim_start_matches('~')
-                    .trim_start_matches(">=");
+                let clean = strip_semver_range_prefix(v);
                 format!("{}@{}", name, clean)
             } else {
                 name.clone()
@@ -345,22 +333,6 @@ fn resolve_php_spec(raw: &str) -> Result<String> {
         "unscoped php package `{}` is not allowed. use @scope/name (bare names map to @deka/*)",
         trimmed
     ))
-}
-
-/// Extract registry URL and token from CLI flags (deka#801: config flows
-/// explicitly through flags/deka.json/auth profile, never the environment).
-#[doc(hidden)]
-pub fn get_registry_config(context: &Context) -> (String, Option<String>) {
-    let registry = context
-        .args
-        .params
-        .get("--registry")
-        .cloned()
-        .unwrap_or_else(|| "https://git.tana.gg".to_string());
-
-    let token = context.args.params.get("--token").cloned();
-
-    (registry, token)
 }
 
 /// Parse a spec like `@tana/store@1.0.0` into `("@tana/store", "1.0.0")`.

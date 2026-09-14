@@ -132,9 +132,12 @@ fn ambient_environment_child() {
 
     let ctx = dummy_context(dir.clone());
 
-    let (registry, token) = pm::get_registry_config(&ctx);
-    println!("ambient-proof:install-registry={}", registry);
-    println!("ambient-proof:install-token={:?}", token);
+    // pm's install/add/update commands used to carry their own dead
+    // `--registry`/`--token` params defaulting to the retired
+    // `git.tana.gg` (deka#997) -- they were removed because the real
+    // @deka/* resolution path (crates/pm/src/registry.rs) always talks to
+    // deka.gg and never read them. Nothing left in `pm` to pin here.
+    let _ = &ctx;
 
     // self_cmd::update / self_cmd::monitor only exist behind the
     // non-default `self-update` feature (deka#992: self-update is

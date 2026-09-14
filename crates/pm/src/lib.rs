@@ -28,8 +28,6 @@ pub mod registry_integrity;
 pub use install::run_install;
 pub use links::{link_package_at, unlink_package_at};
 pub use payload::InstallPayload;
-#[cfg(not(target_arch = "wasm32"))]
-pub use cli_install::get_registry_config;
 
 pub mod summon;
 

@@ -1,4 +1,9 @@
-use crate::{grants, lock, payload::InstallPayload, registry, spec::parse_package_spec};
+use crate::{
+    grants, lock,
+    payload::InstallPayload,
+    registry,
+    spec::{parse_package_spec, strip_semver_range_prefix},
+};
 use anyhow::{Context, Result, anyhow, bail};
 use deka_host::integrity::compute_package_integrity;
 use deka_modules::module_spec::canonical_php_package_spec;
@@ -55,10 +60,26 @@ fn run_php_install_in_transaction(
     cwd: &Path,
 ) -> Result<()> {
     let explicit_add = !specs.is_empty();
+    let root_specs = specs.clone();
     let specs = if specs.is_empty() {
         collect_project_install_specs(cwd)?
     } else {
-        specs
+        // `deka install <pkg>` / `deka add <pkg>` is additive: it must not
+        // silently drop @deka/* packages a previous explicit install already
+        // locked. `installed` below is seeded only from `verify_locked_at`,
+        // which carries forward summoned `@js/*` entries but has no notion
+        // of already-locked `@deka/*` packages -- so without this union, a
+        // second `deka install other-pkg` call rewrites deka.lock to hold
+        // only `other-pkg`, orphaning everything installed before it even
+        // though ds_modules/ and deka.json still have it (deka#971).
+        let mut merged = specs;
+        for existing in collect_locked_deka_specs(cwd) {
+            let (name, _) = parse_package_spec(&existing);
+            if !merged.iter().any(|s| parse_package_spec(s).0 == name) {
+                merged.push(existing);
+            }
+        }
+        merged
     };
 
     if specs.is_empty() && crate::summon::verify_locked_at(cwd)?.is_empty() {
@@ -256,7 +277,7 @@ fn run_php_install_in_transaction(
     // RFD 27 grant-table delivery (deka#797): rewrite the grant table with the lockfile.
     grants::deliver_grant_table(cwd, &installed, locked)?;
     if explicit_add {
-        record_root_dependencies(cwd, &specs, &installed)?;
+        record_root_dependencies(cwd, &root_specs, &installed)?;
     }
     #[cfg(test)]
     pause_for_kill_test("after-lock");
@@ -958,7 +979,7 @@ fn collect_deka_json_deps_in(project_dir: &Path) -> Result<Vec<String>> {
             continue;
         }
         let spec = if let Some(version) = version.as_str() {
-            let version = version.trim();
+            let version = strip_semver_range_prefix(version.trim());
             if version.is_empty() || version == "*" || version == "latest" {
                 name.to_string()
             } else {
@@ -1466,10 +1487,14 @@ mod tests {
         .expect("write deka.json");
 
         let specs = collect_project_install_specs(tmp.path()).expect("specs");
+        // deka#971: the installer has no range resolver -- every version
+        // string is matched literally against the registry. A `^0.1.0`
+        // range in deka.json must resolve to the pinned base version
+        // `0.1.0`, not fail to find a release literally named `^0.1.0`.
         assert_eq!(
             specs,
             vec![
-                "@deka/core@^0.1.0".to_string(),
+                "@deka/core@0.1.0".to_string(),
                 "@deka/encoding".to_string()
             ]
         );
@@ -1542,11 +1567,13 @@ mod tests {
         .expect("write lock");
 
         let specs = collect_project_install_specs(tmp.path()).expect("specs");
+        // deka#971: same range-stripping rule applies when a manifest dep
+        // overlaps with an already-locked package.
         assert_eq!(
             specs,
             vec![
                 "@deka/core@0.1.0".to_string(),
-                "@deka/encoding@^0.2.0".to_string()
+                "@deka/encoding@0.2.0".to_string()
             ]
         );
     }
