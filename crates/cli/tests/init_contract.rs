@@ -74,8 +74,27 @@ fn assert_scaffold(root: &Path) {
     assert!(page.contains("client:load"), "{page}");
     assert!(page.contains("fn greeting("), "{page}");
 
+    // deka#999: the scaffold must teach the idiomatic destructured tuple
+    // form (`const [n, setN] = useState(0)`), matching docs/dekascript/
+    // fast-refresh.mdx, not the index-access workaround
+    // (`const pair = useState(0); const n = pair[0]`) that implies
+    // destructuring does not work.
     let counter = fs::read_to_string(root.join("src/ui/Counter.dsx")).unwrap();
     assert!(counter.contains("useState"), "{counter}");
+    assert!(
+        counter.contains("const [n, setN] = useState(0)"),
+        "scaffold must teach destructured useState, not an index-access workaround:\n{counter}"
+    );
+    assert!(
+        !counter.contains("pair[0]") && !counter.contains("pair[1]"),
+        "scaffold must not fall back to index-access on the useState tuple:\n{counter}"
+    );
+    // deka#999: id="counter" existed only so tests could find the element;
+    // a generated user project should not carry our test scaffolding.
+    assert!(
+        !counter.contains("id=\"counter\""),
+        "scaffold must not carry test-only id attributes:\n{counter}"
+    );
 
     let index = fs::read_to_string(root.join("index.html")).unwrap();
     assert!(index.contains("<!--deka-app-->"), "{index}");
@@ -252,7 +271,7 @@ fn fresh_init_serves_html_and_css_without_exposing_project_files() {
     assert!(body.contains("Deka App"), "{body}");
     assert!(body.contains("Hello, World."), "{body}");
     assert!(
-        body.contains("id=\"counter\"") && body.contains("data-deka-island=\"Counter\""),
+        body.contains("data-deka-island=\"Counter\""),
         "served page must include the counter island:\n{body}"
     );
     let css = http.get(format!("{base}/style.css")).send().unwrap();
