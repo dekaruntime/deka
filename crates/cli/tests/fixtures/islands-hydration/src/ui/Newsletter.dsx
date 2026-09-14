@@ -16,7 +16,7 @@ export fn NewsletterSignup() ReactNode {
         event.preventDefault()
         return 1
       }
-      const value = match (unsafe { return event.target.elements.email.value }) {
+      const value = match (unsafe<string> { return event.target.elements.email.value }) {
         Ok(v) => v,
         Err(_) => email
       }

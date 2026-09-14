@@ -224,6 +224,7 @@ fn generate_serve_entry(
         r#"{suspense_import}{imports}
 interface RequestHeaders {{ accept: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders }}
+interface RenderResult {{ html: string }}
 interface Response {{ status: number, body: string }}
 
 {fallback_fn}fn starts_with(s: string, prefix: string) boolean {{
@@ -273,7 +274,7 @@ fn last_segment(s: string) string {{
 }}
 
 fn head_html(node: ReactNode) string {{
-    const result = unsafe {{ deka.ui.renderToString(node) }}
+    const result = unsafe<RenderResult> {{ deka.ui.renderToString(node) }}
     return match (result) {{
         Ok(rendered) => rendered.html,
         Err(_) => "",
@@ -281,7 +282,7 @@ fn head_html(node: ReactNode) string {{
 }}
 
 fn title_from_head(headHtml: string) string {{
-    let result = unsafe {{
+    let result = unsafe<string> {{
         var openAt = headHtml.indexOf("<title>")
         if (openAt < 0) {{ return "" }}
         var closeAt = headHtml.indexOf("</title>", openAt + 7)
@@ -294,24 +295,27 @@ fn title_from_head(headHtml: string) string {{
     }}
 }}
 
+async fn resolved_empty() Promise<string> {{
+    return ""
+}}
+
 async fn stream_html(tree: ReactNode) Promise<string> {{
-    const boxed = unsafe {{ deka.ui.renderToStreamHtml(tree) }}
+    const boxed = unsafe<Promise<string>> {{ deka.ui.renderToStreamHtml(tree) }}
     const prom = match (boxed) {{
         Ok(p) => p,
-        Err(_) => "",
-        _ => "",
+        Err(_) => resolved_empty(),
     }}
     return await prom
 }}
 
 async fn respond(tree: ReactNode, status: number, fragment: boolean, headHtml: string) Promise<Response> {{
     if (fragment) {{
-        const result = unsafe {{ deka.ui.renderToString(tree) }}
+        const result = unsafe<RenderResult> {{ deka.ui.renderToString(tree) }}
         const appHtml = match (result) {{
             Ok(rendered) => rendered.html,
             Err(_) => "<p>Internal Server Error</p>",
         }}
-        const payload = unsafe {{ JSON.stringify({{ html: appHtml, title: title_from_head(headHtml), head: headHtml }}) }}
+        const payload = unsafe<string> {{ JSON.stringify({{ html: appHtml, title: title_from_head(headHtml), head: headHtml }}) }}
         return match (payload) {{
             Ok(json) => {{ status: status, body: json, headers: {{ "content-type": "application/json; charset=utf-8" }} }},
             Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ "content-type": "text/plain; charset=utf-8" }} }},

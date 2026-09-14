@@ -36,7 +36,7 @@ const FIXTURE_VERSION: &str = "9.9.9-fixture";
 
 /// The fixture release: a bridging `@deka/fs` package exactly like a real
 /// stdlib release (manifest + DekaScript sources calling `bridge`).
-const FIXTURE_INDEX_DS: &str = "export async fn read_file(p: string) Promise<Result<bytes, string>> {\n  return await bridge fs.read_file(p)\n}\n";
+const FIXTURE_INDEX_DS: &str = "export async fn read_file(p: string) Promise<Result<bytes, string>> {\n  const raw = await bridge fs.read_file(p)\n  return match (unsafe<Result<bytes, string>> { raw }) {\n    Ok(v) => v,\n    Err(e) => Err(\"fixturefs: read_file cast failed\")\n  }\n}\n";
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
