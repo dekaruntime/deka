@@ -3,6 +3,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { loadAndRunAllTests } from '../lib/build-tests.ts'
 import { runAdhocScenarios, toHatsCategory } from '../../adhoc/cases.mjs'
+import { computeGateExitCode } from '../lib/gate-exit-code.ts'
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
@@ -69,7 +70,6 @@ if (unexpectedDivergences.length > 0 || staleDivergences.length > 0) {
     console.error('Listed host divergences that now agree (remove them):')
     for (const slug of staleDivergences) console.error(`  ${slug}`)
   }
-  process.exitCode = 1
 }
 
 const adhoc = await runAdhocScenarios({
@@ -138,6 +138,18 @@ console.log(
     `wasm(match=${summary.wasm.match} mismatch=${summary.wasm.mismatch} notRun=${summary.wasm.notRun}) ` +
     `native(match=${summary.native.match} mismatch=${summary.native.mismatch} notRun=${summary.native.notRun})`
 )
+
+// deka#906: the ratchet (checked above) and the raw fail count are
+// independent failure signals -- a clean ratchet does not mean every
+// fixture passed. Both must be able to fail the gate on their own.
+process.exitCode = computeGateExitCode({
+  unexpectedDivergences: unexpectedDivergences.length,
+  staleDivergences: staleDivergences.length,
+  overallFail: summary.overall.fail,
+})
+if (process.exitCode !== 0) {
+  console.error(`[hats] gate FAILED: exit=${process.exitCode} overall.fail=${summary.overall.fail} unexpectedDivergences=${unexpectedDivergences.length} staleDivergences=${staleDivergences.length}`)
+}
 
 // Persist results so the static export can read them without re-running the
 // full conformance suite inside the Next.js SSG environment.
