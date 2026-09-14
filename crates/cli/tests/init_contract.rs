@@ -27,8 +27,20 @@ fn assert_scaffold(root: &Path) {
         "init must write app/layout.dsx"
     );
     assert!(
-        root.join("src/ui/Counter.dsx").is_file(),
-        "init must write src/ui/Counter.dsx"
+        root.join("app/Counter.dsx").is_file(),
+        "init must write app/Counter.dsx"
+    );
+    assert!(
+        !root.join("src").exists(),
+        "init must not create a src/ directory (RFD 24 tree has none): deka#1044"
+    );
+    assert!(
+        !root.join("app/not-found.dsx").exists(),
+        "the default 404 must be a static public/404.html, not a rendered route: deka#1045"
+    );
+    assert!(
+        root.join("public/404.html").is_file(),
+        "init must write public/404.html"
     );
     assert!(
         root.join("index.html").is_file(),
@@ -44,6 +56,14 @@ fn assert_scaffold(root: &Path) {
     );
     assert!(root.join("public/style.css").is_file());
     assert!(root.join(".gitignore").is_file());
+
+    // deka#1046 / deka#1000: the scaffolded style.css must be readable,
+    // properly formatted CSS, not a single escaped line.
+    let style = fs::read_to_string(root.join("public/style.css")).unwrap();
+    assert!(
+        style.lines().filter(|l| !l.trim().is_empty()).count() > 1,
+        "style.css must be formatted with more than one line:\n{style}"
+    );
 
     let config: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root.join("deka.json")).unwrap()).unwrap();
@@ -79,7 +99,7 @@ fn assert_scaffold(root: &Path) {
     // fast-refresh.mdx, not the index-access workaround
     // (`const pair = useState(0); const n = pair[0]`) that implies
     // destructuring does not work.
-    let counter = fs::read_to_string(root.join("src/ui/Counter.dsx")).unwrap();
+    let counter = fs::read_to_string(root.join("app/Counter.dsx")).unwrap();
     assert!(counter.contains("useState"), "{counter}");
     assert!(
         counter.contains("const [n, setN] = useState(0)"),
@@ -152,13 +172,30 @@ fn init_creates_dekascript_app_and_preserves_existing_files() {
 
     let printed = String::from_utf8_lossy(&output.stderr);
     assert!(
-        printed_line_count(&output) <= 3,
-        "init output must be at most 3 lines, got:\n{printed}"
-    );
-    assert!(
         printed.contains("deka serve"),
         "init must tell the user to run deka serve:\n{printed}"
     );
+
+    // deka#1042: the ASCII banner (restored to stdio in #698) must appear on
+    // the init path too, not just `deka dev`/`serve`.
+    assert!(
+        printed_line_count(&output) > 10,
+        "init with a banner + one progress line per file should print more than a bare summary, got:\n{printed}"
+    );
+
+    // deka#1043: one aligned `[create] <path>` progress line per meaningful
+    // action, so the user can see what was written.
+    for expected in [
+        "[create] deka.json",
+        "[create] app/page.dsx",
+        "[create] app/Counter.dsx",
+        "[create] public/404.html",
+    ] {
+        assert!(
+            printed.contains(expected),
+            "init must print progress line {expected:?}, got:\n{printed}"
+        );
+    }
 
     assert_scaffold(project.path());
 
@@ -279,6 +316,24 @@ fn fresh_init_serves_html_and_css_without_exposing_project_files() {
         .unwrap()
         .contains("text/css"));
     assert!(css.text().unwrap().contains("font-family"));
+
+    // deka#1045: an unmatched route must serve the static public/404.html,
+    // not the JS-rendered app-router fallback.
+    let missing = http
+        .get(format!("{base}/this-route-does-not-exist"))
+        .send()
+        .unwrap();
+    assert_eq!(missing.status(), 404);
+    assert!(missing.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .contains("text/html"));
+    let missing_body = missing.text().unwrap();
+    assert!(
+        missing_body.contains("Not found"),
+        "404 body must come from public/404.html:\n{missing_body}"
+    );
+
     for private in ["deka.json", "deka.lock", "serve.log"] {
         assert_eq!(
             http.get(format!("{base}/{private}"))

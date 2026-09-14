@@ -1,0 +1,14 @@
+{
+  "name": "__APP_NAME__",
+  "type": "serve",
+  "serve": { "mode": "ds" },
+  "tasks": { "dev": "deka serve --dev" },
+  "permissions": {
+    "dev": {
+      "read": true,
+      "write": [".cache", "ds_modules/.cache"],
+      "wasm": true
+    },
+    "prod": {}
+  }
+}
