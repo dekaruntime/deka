@@ -10,16 +10,30 @@
 //!   touches first (deka#977) — real usage lines and copy-pasteable
 //!   examples, not generated from the registry.
 //! - a generic fallback for every other registered command, built from
-//!   whatever the registry actually has (summary, subcommands, and any
-//!   flags/params this module knows that command owns) so help never
-//!   claims a flag or subcommand that isn't really there.
+//!   whatever the registry actually has (summary, subcommands, and its
+//!   own flags/params — see [`CommandFlags`]) so help never claims a
+//!   flag, param, or subcommand that isn't really there.
+//!
+//! Flag/param ownership (deka#996 review): `Registry::add_flag`/
+//! `add_param` just push onto one shared flat list with no owner tag, so a
+//! name lookup against that list resolves to whichever command happened to
+//! register that name *first* — wrong whenever two commands share a name
+//! (`--version`, `--token`, `--yes`, `--registry`, `--json`, `--list`, ...).
+//! [`build_ownership_index`] avoids this without touching the external
+//! registry crate: registration is a pure sequence of `add_command`/
+//! `add_flag`/`add_param` calls, so re-running each registration function
+//! against a private scratch [`Registry`] reveals exactly what *that*
+//! function adds, uncontaminated by every other command sharing the real
+//! registry. [`render_command_help`] renders only from that per-command
+//! result, never from a global name search.
 
 use crate::{CommandSpec, FlagSpec, ParamSpec, Registry};
 
 /// Curated help for a single command: a real usage line, a plain-English
-/// description, and copy-pasteable examples. Flags are resolved from the
-/// live registry by name (see [`command_flag_names`]) so the description
-/// text shown never drifts from what the flag actually says.
+/// description, and copy-pasteable examples. Flags are rendered from that
+/// command's own entry in [`build_ownership_index`]'s result, so the
+/// description text shown can never drift from — or belong to a different
+/// command than — what the flag actually says.
 pub struct CommandHelp {
     pub usage: &'static str,
     pub about: &'static str,
@@ -63,18 +77,18 @@ fn curated_help(name: &str) -> Option<CommandHelp> {
             examples: &[("deka dev", "serve the current project with hot reload")],
         }),
         "run" => Some(CommandHelp {
-            usage: "deka run <file> [--watch] [-- <args>]",
+            usage: "deka run <file> [-- <args>]",
             about: "Run a single .ds/.dsx/.js file, or a script named in deka.json. \
                     The file does not need to belong to a project — a loose file \
                     compiles into a user-global cache and runs from there, without \
                     writing anything into your directory.",
-            examples: &[
-                ("deka run app.ds", "run a single file"),
-                (
-                    "deka run --watch server.ds",
-                    "run and restart on file changes",
-                ),
-            ],
+            // deka#996 review: --watch is registered on `run` but nothing in
+            // the handler reads it (grep for `"--watch"` across crates/*/src
+            // turns up only the registration), so it does not restart on
+            // file changes or do anything else observable yet. Don't
+            // document a capability that isn't implemented — drop the
+            // example until it is (or the flag is removed).
+            examples: &[("deka run app.ds", "run a single file")],
         }),
         "build" => Some(CommandHelp {
             usage: "deka build [file] [--bundle] [--minify] [--out <path>]",
@@ -110,82 +124,50 @@ fn curated_help(name: &str) -> Option<CommandHelp> {
     }
 }
 
-/// Flag/param names this module knows belong to a given command, used to
-/// build the "Flags" section of the generic fallback. Only names go here —
-/// the description text is always read live off the registry, so it can
-/// never drift out of sync with the real flag.
-fn command_flag_names(name: &str) -> &'static [&'static str] {
-    match name {
-        "serve" => &["--dev"],
-        "dev" => &["--dev"],
-        "run" => &["--watch", "-W"],
-        "build" => &["--bundle", "--minify", "--out"],
-        "install" | "add" | "i" | "update" => &[
-            "--quiet",
-            "-q",
-            "--yes",
-            "-y",
-            "--prompt",
-            "-p",
-            "--rehash",
-            "--locked",
-            "--payload",
-            "--spec",
-            "--concurrency",
-            "--registry",
-            "--token",
-        ],
-        "deploy" => &["--gild-socket", "--gild-bearer", "--run-id"],
-        "task" => &["--list", "--json"],
-        "compile" => &["--outfile", "--desktop"],
-        "lsp" => &["--stdio"],
-        "transpile" => &["--preserve", "--bundle", "--treeshake", "--client", "--out"],
-        "check" => &["--as-package", "--single-file"],
-        "test" => &["--test-name-pattern", "-t"],
-        "introspect" => &[
-            "--archive",
-            "--json",
-            "--runtime",
-            "-r",
-            "--sort",
-            "-s",
-            "--limit",
-            "-l",
-        ],
-        "fmt" => &["--lang", "--check", "--stdin"],
-        "release" => &[
-            "--name",
-            "--repo",
-            "--version",
-            "--pkg-version",
-            "--bump",
-            "--token",
-            "--registry-url",
-            "--description",
-            "--no-push",
-            "--yes",
-        ],
-        "publish" => &[
-            "--name",
-            "--version",
-            "--pkg-version",
-            "--repo",
-            "--git-ref",
-            "--token",
-            "--registry-url",
-            "--registry",
-            "--description",
-            "--yes",
-            "--dry-run",
-        ],
-        // "-l" is only an alias on --list (self_cmd), not a separately
-        // registered name — leaving it out of this list avoids resolving to
-        // introspect's unrelated, separately-registered "-l" param ("limit
-        // number of rows") by name collision. --list already covers it.
-        "self" => &["--deka", "--dsc", "--filter", "-f", "--jobs", "--list"],
-        "wasm" => &["--root"],
-        _ => &[],
+/// Every flag/param one command's own registration function adds — the
+/// result of running that one function against a private [`Registry`], not
+/// a name lookup against the shared one. See the module docs for why the
+/// distinction matters (deka#996 review).
+#[derive(Default, Clone)]
+pub struct CommandFlags {
+    pub flags: Vec<FlagSpec>,
+    pub params: Vec<ParamSpec>,
+}
+
+/// Derive, for every command a registration function adds, exactly the
+/// flags/params *that same function* adds — never a different command's,
+/// even when both register a flag or param by the same name (`--version`,
+/// `--token`, `--yes`, `--registry`, `--json`, `--list`, ...).
+///
+/// Each function in `register_fns` is a pure sequence of `add_command`/
+/// `add_flag`/`add_param` calls (true of every registration function in
+/// this tree — none does I/O or reads external state), so re-running one
+/// against a fresh, throwaway `Registry` reveals exactly what it adds,
+/// uncontaminated by every other command's calls into the real registry.
+/// A function that registers a family of related commands sharing one flag
+/// set (e.g. `install`/`add`/`i`/`update`) legitimately maps all of them to
+/// that same set; a function that registers no commands (the two global
+/// registration functions) contributes nothing here — its flags/params are
+/// global, not owned by any one command, and stay out of this index.
+pub fn build_ownership_index(
+    register_fns: &[fn(&mut Registry)],
+) -> std::collections::HashMap<&'static str, CommandFlags> {
+    let mut index = std::collections::HashMap::new();
+    for register_fn in register_fns {
+        let mut scratch = Registry::new();
+        register_fn(&mut scratch);
+        if scratch.commands().is_empty() {
+            continue;
+        }
+        let owned = CommandFlags {
+            flags: scratch.flags().to_vec(),
+            params: scratch.params().to_vec(),
+        };
+        for command in scratch.commands() {
+            index.insert(command.name, owned.clone());
+        }
     }
+    index
 }
 
 /// Flag names that apply across every command (permissions, `--help`,
@@ -196,7 +178,6 @@ const GLOBAL_FLAG_NAMES: &[&str] = &[
     "--help",
     "--version",
     "--verbose",
-    "--update",
     "--debug",
     "--allow-read",
     "--allow-write",
@@ -236,20 +217,14 @@ pub fn global_flags(registry: &Registry) -> Vec<&FlagSpec> {
     out
 }
 
-fn find_flag<'a>(registry: &'a Registry, name: &str) -> Option<&'a FlagSpec> {
-    registry.flags().iter().find(|flag| flag.name == name)
-}
-
-fn find_param<'a>(registry: &'a Registry, name: &str) -> Option<&'a ParamSpec> {
-    registry.params().iter().find(|param| param.name == name)
-}
-
 /// Render `deka <command> --help`: a usage line, what the command does,
 /// its own flags, and — for the handful of commands new users touch
-/// first — at least one worked example. Falls back to registry data
-/// (summary + subcommands + known flag names) for every other command,
-/// so no command is ever left printing the global wall of text (deka#977).
-pub fn render_command_help(registry: &Registry, command: &CommandSpec) -> Vec<String> {
+/// first — at least one worked example. `owned` is this command's entry
+/// in [`build_ownership_index`]'s result (`None` for a command with no
+/// flags/params of its own). Falls back to registry data (summary +
+/// subcommands) for every command without curated copy, so no command is
+/// ever left printing the global wall of text (deka#977).
+pub fn render_command_help(command: &CommandSpec, owned: Option<&CommandFlags>) -> Vec<String> {
     let mut lines = Vec::new();
 
     if let Some(help) = curated_help(command.name) {
@@ -257,7 +232,7 @@ pub fn render_command_help(registry: &Registry, command: &CommandSpec) -> Vec<St
         lines.push(String::new());
         lines.push(help.about.to_string());
         lines.push(String::new());
-        render_flags_section(&mut lines, registry, command.name);
+        render_flags_section(&mut lines, owned);
         if !help.examples.is_empty() {
             lines.push("Examples:".to_string());
             for (example, note) in help.examples {
@@ -281,41 +256,28 @@ pub fn render_command_help(registry: &Registry, command: &CommandSpec) -> Vec<St
             }
             lines.push(String::new());
         }
-        render_flags_section(&mut lines, registry, command.name);
+        render_flags_section(&mut lines, owned);
     }
 
     lines.push("Run `deka --help` to see every command.".to_string());
     lines
 }
 
-fn render_flags_section(lines: &mut Vec<String>, registry: &Registry, command_name: &str) {
-    let names = command_flag_names(command_name);
-    if names.is_empty() {
+fn render_flags_section(lines: &mut Vec<String>, owned: Option<&CommandFlags>) {
+    let Some(owned) = owned else {
+        return;
+    };
+    if owned.flags.is_empty() && owned.params.is_empty() {
         return;
     }
-    let mut seen = std::collections::HashSet::new();
-    let mut printed = false;
-    for name in names {
-        if !seen.insert(*name) {
-            continue;
-        }
-        if let Some(flag) = find_flag(registry, name) {
-            if !printed {
-                lines.push("Flags:".to_string());
-                printed = true;
-            }
-            lines.push(format!("  {}\t\t{}", flag.name, flag.description));
-        } else if let Some(param) = find_param(registry, name) {
-            if !printed {
-                lines.push("Flags:".to_string());
-                printed = true;
-            }
-            lines.push(format!("  {} <value>\t{}", param.name, param.description));
-        }
+    lines.push("Flags:".to_string());
+    for flag in &owned.flags {
+        lines.push(format!("  {}\t\t{}", flag.name, flag.description));
     }
-    if printed {
-        lines.push(String::new());
+    for param in &owned.params {
+        lines.push(format!("  {} <value>\t{}", param.name, param.description));
     }
+    lines.push(String::new());
 }
 
 /// Full body of `deka --help`, everything after the ascii banner: usage,

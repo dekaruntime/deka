@@ -172,9 +172,13 @@ pub fn help(registry: &Registry) {
 
 /// `deka <command> --help`: the command's own usage, description, flags,
 /// and (for the commands a new user reaches for first) worked examples —
-/// no longer a byte-identical copy of `deka --help` (deka#977).
-pub fn command_help(registry: &Registry, command: &core::CommandSpec) {
-    for line in core::help::render_command_help(registry, command) {
+/// no longer a byte-identical copy of `deka --help` (deka#977). `owned` is
+/// that command's own flags/params, resolved by re-running its own
+/// registration function (see `crate::command_flag_index`), never by
+/// name-searching the shared registry — two different commands can
+/// register a flag with the same name (deka#996 review).
+pub fn command_help(command: &core::CommandSpec, owned: Option<&core::help::CommandFlags>) {
+    for line in core::help::render_command_help(command, owned) {
         raw(&line);
     }
 }
@@ -236,7 +240,10 @@ pub fn execute(registry: &Registry) -> i32 {
     // output, so they keep passing through.
     if single_command_wants_help(args) {
         match registry.command_named(&args.commands[0]) {
-            Some(command) => command_help(registry, command),
+            Some(command) => {
+                let index = crate::command_flag_index();
+                command_help(command, index.get(command.name));
+            }
             None => help(registry),
         }
         return 0;
@@ -323,7 +330,10 @@ pub(crate) fn single_command_wants_help(args: &core::Args) -> bool {
     if args.commands.len() != 1 {
         return false;
     }
-    if matches!(args.commands[0].as_str(), "check" | "fmt" | "transpile" | "lsp") {
+    if matches!(
+        args.commands[0].as_str(),
+        "check" | "fmt" | "transpile" | "lsp"
+    ) {
         return false;
     }
     args.flags.contains_key("--help")
