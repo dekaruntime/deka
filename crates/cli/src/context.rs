@@ -1,7 +1,6 @@
 //! Runtime handler state is captured once, before command dispatch.
 use core::{Context, ParseError, Registry};
 use run::handler::{HandlerSnapshot, resolve_handler_path};
-use serve::config::StaticServeConfig;
 
 #[derive(Debug)]
 pub enum ContextError {
@@ -28,13 +27,9 @@ fn prepare(mut context: Context) -> Result<Context, ContextError> {
                 .any(|cmd| matches!(cmd.as_str(), "test" | "self" | "link" | "unlink" | "pkg"))
             {
                 let resolved = resolve_handler_path(".").map_err(ContextError::HandlerResolve)?;
-                let static_config = StaticServeConfig::load(&resolved.directory);
-                let serve_config_path = resolved.directory.join("serve.json");
                 HandlerSnapshot {
                     input: ".".to_string(),
                     resolved,
-                    static_config,
-                    serve_config_path: serve_config_path.exists().then_some(serve_config_path),
                 }
             } else {
                 return Err(ContextError::HandlerResolve(message));
@@ -65,20 +60,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("original.js"), "").unwrap();
         std::fs::write(root.path().join("artifact.js"), "").unwrap();
-        let config = root.path().join("serve.json");
-        std::fs::write(&config, r#"{"entry":"original.js","cleanUrls":false}"#).unwrap();
+        let config = root.path().join("deka.json");
+        std::fs::write(&config, r#"{"serve":{"entry":"original.js"}}"#).unwrap();
         let original = prepare(context("serve", root.path())).unwrap();
-        std::fs::write(&config, r#"{"entry":"missing.js","cleanUrls":true}"#).unwrap();
+        std::fs::write(&config, r#"{"serve":{"entry":"missing.js"}}"#).unwrap();
         let snapshot = original.extensions().get::<HandlerSnapshot>().unwrap();
         assert!(snapshot.resolved.path.ends_with("original.js"));
-        assert!(matches!(
-            snapshot.static_config.clean_urls,
-            serve::config::CleanUrls::Bool(false)
-        ));
-        assert_eq!(
-            snapshot.serve_config_path.as_deref(),
-            Some(config.canonicalize().unwrap().as_path())
-        );
         #[cfg(feature = "native")]
         {
             let rewritten = deka_cache::rewrite_context_for_artifact(
@@ -111,7 +98,8 @@ mod tests {
     #[test]
     fn dispatch_keeps_resolution_errors_and_command_fallbacks() {
         let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("serve.json"), r#"{"entry":"missing.js"}"#).unwrap();
+        std::fs::write(root.path().join("deka.json"), r#"{"serve":{"entry":"missing.js"}}"#)
+            .unwrap();
         assert!(matches!(
             prepare(context("serve", root.path())),
             Err(ContextError::HandlerResolve(_))
@@ -126,6 +114,26 @@ mod tests {
                     .input,
                 "."
             );
+        }
+    }
+
+    // deka#1038: a leftover serve.json must not be reachable through the
+    // "test"/"self"/"link"/"unlink"/"pkg" resolution-error fallback either
+    // -- the migration error is a hard stop for the explicit path, and the
+    // fallback resolves "." against the real process cwd, so this only
+    // pins that the explicit-path branch surfaces the migration error
+    // rather than silently swallowing it into the fallback path.
+    #[test]
+    fn dispatch_surfaces_serve_json_migration_error_for_serve_command() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("index.html"), "<html></html>").unwrap();
+        std::fs::write(root.path().join("serve.json"), r#"{"entry":"index.html"}"#).unwrap();
+        match prepare(context("serve", root.path())) {
+            Err(ContextError::HandlerResolve(message)) => {
+                assert!(message.contains("serve.json"), "{message}");
+                assert!(message.contains("deka.json"), "{message}");
+            }
+            other => panic!("expected a serve.json migration error, got {other:?}"),
         }
     }
 }

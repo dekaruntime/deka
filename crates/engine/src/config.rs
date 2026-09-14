@@ -54,7 +54,7 @@ pub struct ServeConfig {
 }
 
 impl ServeConfig {
-    /// Loads `serve` config from `deka.json` (or the legacy `serve.json`).
+    /// Loads `serve` config from `deka.json`.
     ///
     /// A missing config file, or a config file with no `serve`-shaped keys
     /// at all, is a normal case and resolves to defaults. A config file that
@@ -62,15 +62,26 @@ impl ServeConfig {
     /// commonly an unrecognized `mode`/`kind` value, i.e. a typo — is a hard
     /// error (deka#1017): the whole block silently reverting to defaults on
     /// a bad value is how a typo turns into a wrong, working-looking server.
+    ///
+    /// `serve.json` is no longer a config surface at all (deka#1038): one
+    /// project, one config file. A leftover `serve.json` is a hard error
+    /// naming the file and saying where its fields now live, never a
+    /// silently-ignored legacy fallback -- silent-ignore is exactly what
+    /// this whole cluster of issues (#1017, #1032, #1034, #1037) was about.
     pub fn load(directory: &std::path::Path) -> Result<Self, String> {
-        let deka_json_path = directory.join("deka.json");
-        if let Some(config) = load_serve_from_deka_json(&deka_json_path)? {
-            return Ok(config);
+        let legacy_path = directory.join("serve.json");
+        if legacy_path.exists() {
+            return Err(format!(
+                "{} is no longer supported: deka.json is now the only config file. \
+                 Move its fields into deka.json's `serve` object -- e.g. \
+                 {{\"serve\": {{\"mode\": \"...\", \"entry\": \"...\"}}}} -- then delete {}.",
+                legacy_path.display(),
+                legacy_path.display(),
+            ));
         }
 
-        // Backward compatibility: keep reading serve.json if present.
-        let legacy_path = directory.join("serve.json");
-        Ok(load_legacy_serve_json(&legacy_path)?.unwrap_or_default())
+        let deka_json_path = directory.join("deka.json");
+        Ok(load_serve_from_deka_json(&deka_json_path)?.unwrap_or_default())
     }
 }
 
@@ -138,30 +149,6 @@ fn load_serve_from_deka_json(path: &std::path::Path) -> Result<Option<ServeConfi
             }
         }
     }
-}
-
-fn load_legacy_serve_json(path: &std::path::Path) -> Result<Option<ServeConfig>, String> {
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let contents = match std::fs::read_to_string(path) {
-        Ok(contents) => contents,
-        Err(err) => {
-            tracing::warn!("Failed to read {}: {}", path.display(), err);
-            return Ok(None);
-        }
-    };
-
-    serde_json::from_str::<ServeConfig>(&contents)
-        .map(Some)
-        .map_err(|err| {
-            format!(
-                "{}: invalid serve config: {}. `mode` accepts \"static\" or \"ds\" (also written \"php\" or \"js\").",
-                path.display(),
-                err
-            )
-        })
 }
 
 #[derive(Debug)]
@@ -571,7 +558,8 @@ mod tests {
             "export function main() { return 'main'; }",
         )
         .expect("write configured");
-        fs::write(dir.join("serve.json"), r#"{"entry":"main.ds"}"#).expect("write config");
+        fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.ds"}}"#)
+            .expect("write config");
 
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         let resolved_canon = resolved.path.canonicalize().expect("resolved canonicalize");
@@ -592,5 +580,36 @@ mod tests {
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         assert!(resolved.path.is_dir());
         assert!(matches!(resolved.mode, ServeMode::Static));
+    }
+
+    // deka#1038: serve.json is no longer a config surface at all. Its
+    // presence must fail resolution with a hard error naming the file and
+    // saying where its fields now live -- never a silently-ignored legacy
+    // fallback, and never consulted even when deka.json also exists.
+    #[test]
+    fn leftover_serve_json_is_a_hard_migration_error() {
+        let dir = temp_dir("deka_engine_serve_json_migration");
+        fs::write(dir.join("index.html"), "<html></html>").expect("write index");
+        fs::write(dir.join("serve.json"), r#"{"entry":"index.html"}"#).expect("write serve.json");
+
+        let err = resolve_handler_path(dir.to_str().expect("path"))
+            .expect_err("a leftover serve.json must fail resolution");
+        assert!(err.contains("serve.json"), "{err}");
+        assert!(err.contains("deka.json"), "{err}");
+        assert!(err.contains("serve"), "{err}");
+    }
+
+    #[test]
+    fn leftover_serve_json_errors_even_when_deka_json_already_has_a_serve_block() {
+        let dir = temp_dir("deka_engine_serve_json_migration_with_deka_json");
+        fs::write(dir.join("index.html"), "<html></html>").expect("write index");
+        fs::write(dir.join("deka.json"), r#"{"serve":{"mode":"static"}}"#)
+            .expect("write deka.json");
+        fs::write(dir.join("serve.json"), r#"{"entry":"index.html"}"#).expect("write serve.json");
+
+        let err = resolve_handler_path(dir.to_str().expect("path")).expect_err(
+            "serve.json must not be silently ignored just because deka.json also has a serve block",
+        );
+        assert!(err.contains("serve.json"), "{err}");
     }
 }

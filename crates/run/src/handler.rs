@@ -1,5 +1,5 @@
 use engine::config as runtime_config;
-use serve::config::{ServeConfig, ServeMode, StaticServeConfig};
+use serve::config::{ServeConfig, ServeMode};
 use std::path::{Path, PathBuf};
 
 pub fn handler_input_with<Get>(positionals: &[String], env_get: &Get) -> (String, Vec<String>)
@@ -147,12 +147,16 @@ fn detect_mode(path: &Path) -> ServeMode {
 }
 
 /// Handler and serving configuration captured before command dispatch.
+///
+/// `serve.json` is no longer a config surface (deka#1038): this used to
+/// also carry `static_config: StaticServeConfig` (loaded from `serve.json`)
+/// and `serve_config_path`, but resolving `resolved` above already hard
+/// errors if a `serve.json` is present (`engine::config::ServeConfig::load`)
+/// -- there is nothing left to load here.
 #[derive(Debug, Clone)]
 pub struct HandlerSnapshot {
     pub input: String,
     pub resolved: ResolvedHandler,
-    pub static_config: StaticServeConfig,
-    pub serve_config_path: Option<PathBuf>,
 }
 
 impl HandlerSnapshot {
@@ -160,15 +164,8 @@ impl HandlerSnapshot {
         let (input, _) = handler_input_with(positionals, &|key| std::env::var(key).ok());
 
         let resolved = resolve_handler_path(&input)?;
-        let static_config = StaticServeConfig::load(&resolved.directory);
-        let serve_config_path = resolved.directory.join("serve.json");
 
-        Ok(Self {
-            input,
-            resolved,
-            static_config,
-            serve_config_path: serve_config_path.exists().then_some(serve_config_path),
-        })
+        Ok(Self { input, resolved })
     }
 }
 
@@ -253,7 +250,8 @@ mod tests {
         let configured = dir.join("main.phpx");
         fs::write(&explicit, "<?php echo 'simple';").expect("write explicit");
         fs::write(&configured, "<?php echo 'main';").expect("write configured");
-        fs::write(dir.join("serve.json"), r#"{"entry":"main.phpx"}"#).expect("write config");
+        fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.phpx"}}"#)
+            .expect("write config");
 
         let resolved = resolve_handler_path(explicit.to_str().expect("path")).expect("resolve");
         let resolved_canon = resolved.path.canonicalize().expect("resolved canonicalize");
@@ -269,7 +267,8 @@ mod tests {
         let app_dir = dir.join("app");
         fs::create_dir_all(&app_dir).expect("mkdir app");
         fs::write(app_dir.join("page.phpx"), "<?php echo 'page';").expect("write page");
-        fs::write(dir.join("serve.json"), r#"{"entry":"main.phpx"}"#).expect("write config");
+        fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.phpx"}}"#)
+            .expect("write config");
 
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         let resolved_canon = resolved.path.canonicalize().expect("resolved canonicalize");
@@ -307,23 +306,22 @@ mod tests {
         assert!(matches!(resolved.mode, ServeMode::Js));
     }
 
-    // deka#1021: run::handler::resolve_handler_path must not swallow a
-    // malformed serve.json into a silent default. Before this crate
-    // delegated to engine::config::resolve_handler_path, a bad `mode`
-    // value here resolved to Ok(..) with mode=Static instead of failing;
-    // pin the local resolver specifically, not engine's (which already
-    // hard-failed independently via #1020 and would pass on unmodified
-    // main, proving nothing about this crate's own behavior).
+    // deka#1038: serve.json is no longer read at all -- run::handler's
+    // resolver must propagate the same hard migration error as engine's
+    // (it delegates to `resolve_handler_path_readonly`), not swallow it.
+    // Supersedes the old
+    // `malformed_legacy_serve_json_is_a_hard_error_not_a_silent_default`,
+    // which asserted the (now removed) legacy-fallback parse-error message.
     #[test]
-    fn malformed_legacy_serve_json_is_a_hard_error_not_a_silent_default() {
-        let dir = temp_dir("deka_handler_legacy_serve_json_typo");
+    fn leftover_serve_json_is_a_hard_migration_error_not_a_legacy_fallback() {
+        let dir = temp_dir("deka_handler_serve_json_migration");
         fs::write(dir.join("index.html"), "<html></html>").expect("write index");
-        fs::write(dir.join("serve.json"), r#"{"mode": "statc"}"#).expect("write config");
+        fs::write(dir.join("serve.json"), r#"{"mode": "static"}"#).expect("write config");
 
         let err = resolve_handler_path(dir.to_str().expect("path"))
-            .expect_err("serve.json with a bad mode must not resolve");
-        assert!(err.contains("invalid serve config"), "{err}");
-        assert!(err.contains("statc"), "{err}");
+            .expect_err("a leftover serve.json must fail to resolve, valid or not");
+        assert!(err.contains("serve.json"), "{err}");
+        assert!(err.contains("deka.json"), "{err}");
     }
 
     // deka#1021 QA finding: resolving an app-router project through

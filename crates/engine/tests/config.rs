@@ -32,7 +32,7 @@ fn file_input_routes_to_correct_handler() {
 fn directory_with_serve_entry_routes_to_correct_handler() {
     let dir = temp_dir("engine_test_serve");
     fs::write(dir.join("main.js"), "").unwrap();
-    fs::write(dir.join("serve.json"), r#"{"entry":"main.js"}"#).unwrap();
+    fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.js"}}"#).unwrap();
     let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
     assert_eq!(
         resolved.path.canonicalize().unwrap(),
@@ -115,7 +115,7 @@ fn package_json_main_is_ignored_for_handler_resolution() {
 #[test]
 fn missing_entry_file_returns_error() {
     let dir = temp_dir("engine_test_missing_entry");
-    fs::write(dir.join("serve.json"), r#"{"entry":"nonexistent.js"}"#).unwrap();
+    fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"nonexistent.js"}}"#).unwrap();
     let result = resolve_handler_path(dir.to_str().unwrap());
     if let Err(err) = result {
         assert!(err.contains("Entry file not found"));
@@ -277,16 +277,21 @@ fn unrecognized_serve_mode_is_a_hard_error_not_a_silent_default() {
     );
 }
 
+// deka#1038: serve.json is no longer read at all -- a leftover file is a
+// hard migration error regardless of whether its own contents would have
+// parsed. Supersedes the old
+// `malformed_legacy_serve_json_is_a_hard_error_not_a_silent_default`, which
+// asserted the (now removed) legacy-fallback parse-error message.
 #[test]
-fn malformed_legacy_serve_json_is_a_hard_error_not_a_silent_default() {
-    let dir = temp_dir("engine_test_legacy_serve_json_typo");
+fn leftover_serve_json_is_a_hard_migration_error_not_a_legacy_fallback() {
+    let dir = temp_dir("engine_test_serve_json_migration");
     fs::write(dir.join("index.html"), "<html></html>").unwrap();
-    fs::write(dir.join("serve.json"), r#"{"mode": "statc"}"#).unwrap();
+    fs::write(dir.join("serve.json"), r#"{"mode": "static"}"#).unwrap();
 
     let err = resolve_handler_path(dir.to_str().unwrap())
-        .expect_err("serve.json with bad mode should fail to resolve");
-    assert!(err.contains("invalid serve config"), "{err}");
-    assert!(err.contains("statc"), "{err}");
+        .expect_err("a leftover serve.json must fail to resolve, valid or not");
+    assert!(err.contains("serve.json"), "{err}");
+    assert!(err.contains("deka.json"), "{err}");
 }
 
 #[test]
