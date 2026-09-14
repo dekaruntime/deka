@@ -232,10 +232,35 @@ pub fn version(verbose: bool) {
     raw("");
 }
 
+/// Checks the published release manifest and reports plainly whether the
+/// running binary is current. Does NOT download or replace anything — see
+/// PUBLISH.md for the manual install path. Landed for deka#976: the footer
+/// on every command used to point here, and this used to print "not yet
+/// implemented."
 pub fn update() {
-    raw(
-        "this will check for updates and offer the ability to run the update. not yet implemented. \n",
-    );
+    let current_version = env!("CARGO_PKG_VERSION");
+    let manifest_url = pm::releases::releases_url();
+    match pm::releases::fetch_latest_release_from(&manifest_url) {
+        Ok(latest) => {
+            if pm::releases::is_newer(current_version, &latest.version) {
+                raw(&format!(
+                    "a newer deka is available: {} -> {}",
+                    current_version, latest.version
+                ));
+                match pm::releases::download_url(&manifest_url, &latest) {
+                    Some(url) => raw(&format!("download: {}", url)),
+                    None => raw(
+                        "no prebuilt binary is published for this platform; see https://releases.deka.gg/latest.json",
+                    ),
+                }
+            } else {
+                raw(&format!("deka {} is up to date", current_version));
+            }
+        }
+        Err(err) => {
+            stdio_error("cli", &format!("could not check for updates: {}", err));
+        }
+    }
 }
 
 pub fn error(msg: Option<&str>) {

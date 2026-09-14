@@ -19,6 +19,7 @@ pub mod links;
 pub mod lock;
 pub mod payload;
 pub mod registry;
+pub mod releases;
 pub mod spec;
 
 pub mod registry_integrity;
