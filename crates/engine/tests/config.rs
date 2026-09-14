@@ -197,24 +197,36 @@ fn incomplete_authored_dist_is_terminal_with_both_remedies() {
 }
 
 #[test]
-fn app_router_project_respects_explicit_serve_mode_override() {
-    // deka#985: `serve.mode` in deka.json must actually select the handler
-    // mode for app-router projects, not just for loose files/index files.
-    // Scaffolded projects emit `"serve": {"mode": "ds"}`, which is the same
-    // value the app-router branch defaults to when the key is absent — so a
-    // naive test using the default value alone cannot tell "wired" apart
-    // from "decorative and ignored". Overriding to a *different* mode here
-    // is the only way to prove the field is actually consulted: if a future
-    // change hardcodes `ServeMode::Php` for app-router regardless of config
-    // (reintroducing the exact defect this issue investigated), this test
-    // fails.
-    let dir = temp_dir("engine_test_app_router_mode_override");
+fn app_router_project_rejects_incompatible_serve_mode_at_startup() {
+    // deka#1017: `serve.mode: "static"` on an app-router project (an `app/`
+    // directory) used to resolve "successfully" to `ServeMode::Static` and
+    // serve the generated router's raw `.dsx` source verbatim over HTTP with
+    // a 200 — a config typo that looks like a working server while leaking
+    // server source to the client. `Static` is fundamentally incompatible
+    // with an app-router project: its entry is generated router source that
+    // must be compiled and executed, never handed out as bytes. This must
+    // fail at startup with a diagnostic naming the conflict (app/ present,
+    // mode requested, what to set instead) rather than resolve at all.
+    //
+    // This test supersedes the earlier
+    // `app_router_project_respects_explicit_serve_mode_override`, which
+    // asserted the old (buggy) "resolves to Static" behavior as correct.
+    let dir = temp_dir("engine_test_app_router_mode_incompatible");
     fs::create_dir(dir.join("app")).unwrap();
     fs::write(dir.join("app").join("page.dsx"), "").unwrap();
     fs::write(dir.join("app").join("layout.dsx"), "").unwrap();
     fs::write(dir.join("deka.json"), r#"{"serve": {"mode": "static"}}"#).unwrap();
-    let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
-    assert!(matches!(resolved.mode, engine::config::ServeMode::Static));
+    let err = resolve_handler_path(dir.to_str().unwrap())
+        .expect_err("static mode on an app-router project must fail to resolve");
+    assert!(err.contains("app/"), "error should name the app/ directory: {err}");
+    assert!(
+        err.contains("static"),
+        "error should name the conflicting mode: {err}"
+    );
+    assert!(
+        err.contains("ds"),
+        "error should name the fix (serve.mode: \"ds\"): {err}"
+    );
 }
 
 #[test]
@@ -230,4 +242,37 @@ fn app_router_project_defaults_to_php_mode_without_explicit_override() {
     fs::write(dir.join("deka.json"), r#"{"type": "serve"}"#).unwrap();
     let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
     assert!(matches!(resolved.mode, engine::config::ServeMode::Php));
+}
+
+#[test]
+fn app_router_project_accepts_explicit_ds_mode() {
+    // The other valid, non-default spelling: `"ds"` (the alias the scaffold
+    // emits) must keep resolving exactly like the implicit default (#1016).
+    let dir = temp_dir("engine_test_app_router_mode_ds");
+    fs::create_dir(dir.join("app")).unwrap();
+    fs::write(dir.join("app").join("page.dsx"), "").unwrap();
+    fs::write(dir.join("app").join("layout.dsx"), "").unwrap();
+    fs::write(dir.join("deka.json"), r#"{"serve": {"mode": "ds"}}"#).unwrap();
+    let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
+    assert!(matches!(resolved.mode, engine::config::ServeMode::Php));
+}
+
+#[test]
+fn unrecognized_serve_mode_is_a_hard_error_not_a_silent_default() {
+    // deka#1017's second finding: previously, ANY failure to deserialize
+    // `deka.json`'s `serve` block (most commonly an unrecognized `mode`
+    // string — a typo) was caught, logged with `tracing::warn!` only, and
+    // silently discarded — the whole `serve` config, not just the bad
+    // field, quietly reverted to defaults. A typo that changes behavior
+    // without telling anyone is exactly the failure mode this issue exists
+    // to close, so this must be a hard, propagated error instead.
+    let dir = temp_dir("engine_test_serve_mode_typo");
+    fs::write(dir.join("index.html"), "<html></html>").unwrap();
+    fs::write(dir.join("deka.json"), r#"{"serve": {"mode": "statc"}}"#).unwrap();
+    let err = resolve_handler_path(dir.to_str().unwrap())
+        .expect_err("an unrecognized serve.mode value must fail to resolve, not silently default");
+    assert!(
+        err.contains("statc"),
+        "error should surface the bad value verbatim: {err}"
+    );
 }
