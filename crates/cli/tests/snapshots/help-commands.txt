@@ -31,9 +31,7 @@ wasm stubs	generate wasm .d.ds stubs
 [internal]
 self		internal deka maintenance commands
 self fetch	fetch a pinned content checkout (testsuite, tour)
-self monitor	run the long-running self-update daemon
 self test	run internal deka compatibility and content tests
-self update	update deka components
 
 [package]
 install		install dependencies via the package manager
@@ -80,7 +78,6 @@ dev		serve with HTTP + HMR (dev mode)
 --help		show help
 --version		show version
 --verbose		show detailed metadata where supported
---update		check for updates
 --debug		enable debug logging
 --allow-read		allow filesystem reads (`--allow-read=./src,./data`)
 --allow-write		allow filesystem writes

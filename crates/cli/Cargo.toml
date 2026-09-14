@@ -66,11 +66,13 @@ pool = { path = "../pool" }
 deka-modules = "0.3.0"
 deka-db = { path = "../deka_db" }
 pm = { workspace = true }
-# ambient_environment.rs pins self_cmd::update/self_cmd::monitor config
-# resolution directly, so this test-only edge enables the feature even
-# though the shipped `cli` binary (built without --features self-update)
-# does not compile those modules in.
-self_cmd = { path = "../self_cmd", features = ["self-update"] }
+# ambient_environment.rs cfg-gates its self_cmd::update/self_cmd::monitor
+# assertions behind the `self-update` feature (rather than forcing it on
+# here) precisely so this dev-dependency edge does NOT unify self-update
+# into every other cli test target in the same `cargo test -p cli`
+# invocation -- e.g. command_owners.rs's help-snapshot pin, which must see
+# the real default (no self-update) command surface to mean anything.
+self_cmd = { path = "../self_cmd" }
 deka-registry = { path = "../deka_registry" }
 deka-deploy = { path = "../deka_deploy" }
 deka-cache = { path = "../deka_cache" }

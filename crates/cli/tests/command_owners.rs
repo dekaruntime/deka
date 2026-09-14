@@ -76,6 +76,7 @@ fn help_lists_every_registered_command() {
 
 /// Category-grouped command names + summaries, then flags, matching `deka --help`
 /// (minus the version banner). Insertion order within each category is load-bearing.
+#[cfg(not(feature = "self-update"))]
 fn help_surface() -> String {
     let registry = cli::build_registry();
     let mut grouped: BTreeMap<&str, Vec<String>> = BTreeMap::new();
@@ -109,11 +110,19 @@ fn help_surface() -> String {
     out
 }
 
+#[cfg(not(feature = "self-update"))]
 fn help_snapshot_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/help-commands.txt")
 }
 
+// This snapshot pins what a real DEFAULT build's `deka --help` shows.
+// self-update is deferred behind the non-default `self-update` feature
+// (deka#992) and is deliberately absent from the checked-in snapshot; a
+// `--features self-update` build legitimately shows more commands (`self
+// update`, `self monitor`), so this test does not run there rather than
+// being made to tolerate two different "correct" outputs.
 #[test]
+#[cfg(not(feature = "self-update"))]
 fn help_snapshot_command_names_and_summaries() {
     let actual = help_surface();
     let path = help_snapshot_path();
