@@ -278,6 +278,18 @@ fn unrecognized_serve_mode_is_a_hard_error_not_a_silent_default() {
 }
 
 #[test]
+fn malformed_legacy_serve_json_is_a_hard_error_not_a_silent_default() {
+    let dir = temp_dir("engine_test_legacy_serve_json_typo");
+    fs::write(dir.join("index.html"), "<html></html>").unwrap();
+    fs::write(dir.join("serve.json"), r#"{"mode": "statc"}"#).unwrap();
+
+    let err = resolve_handler_path(dir.to_str().unwrap())
+        .expect_err("serve.json with bad mode should fail to resolve");
+    assert!(err.contains("invalid serve config"), "{err}");
+    assert!(err.contains("statc"), "{err}");
+}
+
+#[test]
 fn serve_mode_js_is_accepted_as_a_php_alias() {
     // deka#1020 CI finding: the react-builtin CLI fixture
     // (crates/cli/tests/fixtures/react-builtin/deka.json, introduced in

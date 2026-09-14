@@ -171,8 +171,51 @@ pub struct ResolvedHandler {
     pub config: ServeConfig,
 }
 
-/// Resolve a handler path, detecting directories and index files
+/// Resolve a handler path, detecting directories and index files, checking
+/// for an already-built artifact, and materializing the generated
+/// app-router entry to disk when the project shape needs one
+/// (`.cache/dekascript/serve-entry.dsx`). This is the serve/build-time
+/// entry point -- callers that intend to actually run, serve, or compile
+/// the resolved handler.
 pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
+    resolve_handler_path_inner(path, true)
+}
+
+/// Same resolution and the same hard-fail-on-malformed-serve-config
+/// behavior as [`resolve_handler_path`], but skips everything that is only
+/// meaningful to an actual run/serve/build:
+/// - it never writes to disk (an app-router project resolves to its
+///   directory with mode `Php`, without materializing the generated router
+///   entry into `.cache/dekascript/`);
+/// - it never resolves or validates a `dist/build-manifest.json` as a built
+///   artifact, so a stale or incompatible `dist/` (wrong `compat.targets`,
+///   missing payloads, ...) does not fail an unrelated command.
+///
+/// For callers that only need to know a project's shape/mode -- e.g.
+/// `run::handler::resolve_handler_path`, which every CLI command's
+/// context-prep runs through (deka#1021 QA findings, two rounds). Calling
+/// the materializing/artifact-checking `resolve_handler_path` from a
+/// non-serving command path caused two separate regressions once
+/// `run::handler` started delegating here: (1) it silently wrote a compiled
+/// router entry into the project's `.cache/dekascript/` on every
+/// invocation of `deka install`, `deka task`, etc.; (2) it made `deka
+/// verify` (and any other non-serving command) fail outright against a
+/// `dist/` artifact manifest that doesn't declare `native` in
+/// `compat.targets` -- a check that is about to-be-served correctness, not
+/// about whether the command being run needs to touch `dist/` at all.
+/// `deka verify` never asked this resolver anything about `dist/`; it reads
+/// `dist/build-manifest.json` itself, directly, in
+/// `runtime_core::command_verify::run`. It broke purely because
+/// context-prep now runs this artifact check on its way to every command,
+/// serving or not.
+pub fn resolve_handler_path_readonly(path: &str) -> Result<ResolvedHandler, String> {
+    resolve_handler_path_inner(path, false)
+}
+
+fn resolve_handler_path_inner(
+    path: &str,
+    resolve_for_execution: bool,
+) -> Result<ResolvedHandler, String> {
     let path = std::path::Path::new(path);
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
@@ -196,7 +239,12 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
     // Resolve an authored artifact before reading source configuration. This
     // is the actual precedence boundary: `deka serve project/` with dist/
     // must not even consult project-root source files on the artifact path.
-    if is_dir {
+    // Only for callers that intend to actually run/serve/build the result
+    // (deka#1021 QA finding): a non-serving command (`deka verify`, `deka
+    // install`, ...) has no reason to validate `dist/`'s native-runtime
+    // compatibility just to resolve what project it's operating on, and
+    // must not fail because an unrelated `dist/` artifact is stale.
+    if is_dir && resolve_for_execution {
         if let Some(built) = built_artifact_handler(&abs_path, &ServeConfig::default())? {
             return Ok(built);
         }
@@ -269,9 +317,13 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
                 mode.label(),
             ));
         }
-        let entry_path = runtime_core::dist::write_app_router_entry(&handler_dir)?;
+        let handler_path = if resolve_for_execution {
+            runtime_core::dist::write_app_router_entry(&handler_dir)?
+        } else {
+            handler_dir.clone()
+        };
         return Ok(ResolvedHandler {
-            path: entry_path,
+            path: handler_path,
             mode,
             config: serve_config,
         });

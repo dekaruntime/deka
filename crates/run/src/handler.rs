@@ -1,3 +1,4 @@
+use engine::config as runtime_config;
 use serve::config::{ServeConfig, ServeMode, StaticServeConfig};
 use std::path::{Path, PathBuf};
 
@@ -73,114 +74,63 @@ pub struct ResolvedHandler {
 }
 
 pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
-    let path = Path::new(path);
-    let abs_path = if path.is_absolute() {
-        path.to_path_buf()
+    // deka#1021 QA finding: this runs as part of every CLI command's
+    // context-prep (via HandlerSnapshot::from_positionals), not just
+    // serve/build -- so it must not trigger engine's app-router entry
+    // materialization, a disk write that only serve/build should cause.
+    // resolve_handler_path_readonly still hard-fails on a malformed serve
+    // config; it only skips the write_app_router_entry side effect.
+    let resolved = runtime_config::resolve_handler_path_readonly(path)?;
+    let handler_dir = if resolved.path.is_dir() {
+        resolved.path.clone()
     } else {
-        let cwd = std::env::current_dir().map_err(|e| format!("Failed to get cwd: {}", e))?;
-        cwd.join(path)
+        resolved
+            .path
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     };
-
-    let abs_path = if abs_path.exists() {
-        abs_path.canonicalize().unwrap_or(abs_path)
-    } else {
-        abs_path
-    };
-
-    let is_dir = abs_path.is_dir();
-    let (handler_dir, serve_config) = if is_dir {
-        let config = ServeConfig::load(&abs_path);
-        (abs_path.clone(), config)
-    } else if let Some(parent) = abs_path.parent() {
-        let config = ServeConfig::load(parent);
-        (parent.to_path_buf(), config)
-    } else {
-        (PathBuf::from("."), ServeConfig::default())
-    };
-
-    if !is_dir {
-        let mode = serve_config
-            .mode
-            .clone()
-            .unwrap_or_else(|| detect_mode(&abs_path));
-        return Ok(ResolvedHandler {
-            path: abs_path,
-            directory: handler_dir,
-            mode,
-            config: serve_config,
-        });
-    }
-
-    if let Some(ref entry) = serve_config.entry {
-        let entry_path = if Path::new(entry).is_absolute() {
-            PathBuf::from(entry)
-        } else {
-            handler_dir.join(entry)
-        };
-
-        if !entry_path.exists() {
-            return Err(format!("Entry file not found: {}", entry_path.display()));
-        }
-
-        let mode = serve_config
-            .mode
-            .clone()
-            .unwrap_or_else(|| detect_mode(&entry_path));
-        return Ok(ResolvedHandler {
-            path: entry_path,
-            directory: handler_dir,
-            mode,
-            config: serve_config,
-        });
-    }
-
-    // Convention: if an app/ folder exists, default to PHP app routing mode.
-    let app_dir = abs_path.join("app");
-    if app_dir.is_dir() {
-        return Ok(ResolvedHandler {
-            path: abs_path.clone(),
-            directory: handler_dir,
-            mode: serve_config.mode.clone().unwrap_or(ServeMode::Php),
-            config: serve_config,
-        });
-    }
-
-    let index_files = [
-        "index.ds",
-        "index.dsx",
-        "index.js",
-        "index.mjs",
-        "index.php",
-        "index.phpx",
-        "index.html",
-        "main.php",
-        "main.phpx",
-        "handler.php",
-        "handler.phpx",
-    ];
-
-    for index_file in &index_files {
-        let index_path = abs_path.join(index_file);
-        if index_path.exists() {
-            let mode = serve_config
-                .mode
-                .clone()
-                .unwrap_or_else(|| detect_mode(&index_path));
-            return Ok(ResolvedHandler {
-                path: index_path,
-                directory: handler_dir,
-                mode,
-                config: serve_config,
-            });
-        }
-    }
+    let mode = serve_mode_for_runtime_resolver(&resolved, &handler_dir);
 
     Ok(ResolvedHandler {
-        path: abs_path,
+        path: resolved.path,
         directory: handler_dir,
-        mode: serve_config.mode.clone().unwrap_or(ServeMode::Static),
-        config: serve_config,
+        mode,
+        config: as_legacy_serve_config(resolved.config),
     })
+}
+
+fn serve_mode_for_runtime_resolver(
+    resolved: &runtime_config::ResolvedHandler,
+    handler_dir: &Path,
+) -> ServeMode {
+    if let Some(mode) = resolved.config.mode.clone() {
+        return match mode {
+            runtime_config::ServeMode::Static => ServeMode::Static,
+            runtime_config::ServeMode::Php => ServeMode::Php,
+        };
+    }
+
+    if resolved.path.is_dir() {
+        if handler_dir.join("app").is_dir() {
+            return ServeMode::Php;
+        }
+        return ServeMode::Static;
+    }
+
+    detect_mode(&resolved.path)
+}
+
+fn as_legacy_serve_config(
+    config: runtime_config::ServeConfig,
+) -> ServeConfig {
+    ServeConfig {
+        mode: config.mode.map(|mode| match mode {
+            runtime_config::ServeMode::Static => ServeMode::Static,
+            runtime_config::ServeMode::Php => ServeMode::Php,
+        }),
+        entry: config.entry,
+        directory_listing: config.directory_listing,
+    }
 }
 
 fn detect_mode(path: &Path) -> ServeMode {
@@ -355,5 +305,138 @@ mod tests {
             file.canonicalize().expect("file")
         );
         assert!(matches!(resolved.mode, ServeMode::Js));
+    }
+
+    // deka#1021: run::handler::resolve_handler_path must not swallow a
+    // malformed serve.json into a silent default. Before this crate
+    // delegated to engine::config::resolve_handler_path, a bad `mode`
+    // value here resolved to Ok(..) with mode=Static instead of failing;
+    // pin the local resolver specifically, not engine's (which already
+    // hard-failed independently via #1020 and would pass on unmodified
+    // main, proving nothing about this crate's own behavior).
+    #[test]
+    fn malformed_legacy_serve_json_is_a_hard_error_not_a_silent_default() {
+        let dir = temp_dir("deka_handler_legacy_serve_json_typo");
+        fs::write(dir.join("index.html"), "<html></html>").expect("write index");
+        fs::write(dir.join("serve.json"), r#"{"mode": "statc"}"#).expect("write config");
+
+        let err = resolve_handler_path(dir.to_str().expect("path"))
+            .expect_err("serve.json with a bad mode must not resolve");
+        assert!(err.contains("invalid serve config"), "{err}");
+        assert!(err.contains("statc"), "{err}");
+    }
+
+    // deka#1021 QA finding: resolving an app-router project through
+    // run::handler::resolve_handler_path -- what every CLI command's
+    // context-prep does via HandlerSnapshot::from_positionals, not just
+    // serve/build -- must not write the compiled router entry to disk.
+    // Collapsing this crate's resolver onto engine::config's briefly
+    // regressed that: engine's resolver materializes
+    // .cache/dekascript/serve-entry.dsx unconditionally, so `deka install`,
+    // `deka task`, and every other non-serving command silently compiled
+    // and wrote a cache file into the project on every invocation.
+    #[test]
+    fn app_router_resolution_does_not_materialize_a_cache_entry() {
+        // QA finding: runtime_core::dist::is_source_app_router_project
+        // requires BOTH deka.json and app/page.dsx (or app/page.ds) --
+        // an app/ directory with only a .phpx page never satisfies it, so
+        // the fixture never entered the materializing branch this test
+        // claims to guard (QA proved this by reverting the production fix
+        // entirely and watching the test still pass). Use the real gate.
+        let dir = temp_dir("deka_handler_app_router_readonly");
+        fs::write(dir.join("deka.json"), r#"{"name":"app-router-readonly-fixture"}"#)
+            .expect("write deka.json");
+        let app_dir = dir.join("app");
+        fs::create_dir_all(&app_dir).expect("mkdir app");
+        fs::write(
+            app_dir.join("page.dsx"),
+            r#"export default fn Page() any { return <div>ok</div> }
+"#,
+        )
+        .expect("write page");
+        fs::write(
+            app_dir.join("layout.dsx"),
+            r#"export default fn Layout({ children }: { children: any }) any { return children }
+"#,
+        )
+        .expect("write layout");
+
+        let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
+        assert!(matches!(resolved.mode, ServeMode::Php));
+        assert!(
+            !dir.join(".cache").exists(),
+            ".cache must not be created by a non-serving resolve"
+        );
+    }
+
+    // deka#1021 QA finding (second round): resolving a directory that
+    // happens to contain a `dist/build-manifest.json` must not validate it
+    // as a built artifact unless the caller is actually about to run it.
+    // `deka verify` reads dist/build-manifest.json itself and never asked
+    // this resolver about it -- but it broke anyway once every command's
+    // context-prep started routing through the artifact-checking resolver.
+    // A `compat.targets` that omits "native" (this fixture's fixture
+    // manifest, and any manifest built for a different target) must not
+    // fail a command that isn't trying to run the artifact.
+    #[test]
+    fn readonly_resolve_ignores_an_incompatible_built_artifact() {
+        use runtime_core::dist::{
+            ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactProducer,
+            ArtifactServer, MODULE_FORMAT, RUNTIME_ABI,
+        };
+
+        let dir = temp_dir("deka_handler_readonly_stale_artifact");
+        let dist = dir.join("dist");
+        fs::create_dir_all(dist.join("server")).expect("mkdir dist/server");
+        fs::create_dir_all(dist.join("client")).expect("mkdir dist/client");
+        fs::write(
+            dist.join("client").join("index.html"),
+            "<!doctype html>
+<html></html>
+",
+        )
+        .expect("write index.html");
+
+        let mut manifest = ArtifactManifestV2 {
+            format: ARTIFACT_FORMAT.to_string(),
+            origin: "handler-test-fixture".to_string(),
+            producer: ArtifactProducer {
+                deka: "fixture".to_string(),
+                dsc: "fixture".to_string(),
+                plan_version: 2,
+            },
+            compat: ArtifactCompat {
+                runtime_abi: RUNTIME_ABI,
+                module_format: MODULE_FORMAT.to_string(),
+                // Deliberately omits "native" -- this is the condition
+                // that made deka verify fail outright before this fix.
+                targets: Vec::new(),
+                host_imports: Vec::new(),
+            },
+            client: ArtifactClient {
+                root: "client".to_string(),
+                index: Some("client/index.html".to_string()),
+                trailing_slash: false,
+            },
+            server: ArtifactServer {
+                root: "server".to_string(),
+                entries: Vec::new(),
+            },
+            worker: None,
+            routes: Vec::new(),
+            slots: Vec::new(),
+            payloads: Vec::new(),
+            payload_root: String::new(),
+        };
+        manifest.record_payloads(&dist).expect("record payloads");
+        manifest.write_into(&dist).expect("write manifest");
+
+        // resolve_handler_path (this crate's public entry point, which is
+        // what HandlerSnapshot::from_positionals uses for every command's
+        // context-prep) must resolve this directory without touching or
+        // validating dist/ at all.
+        let resolved = resolve_handler_path(dir.to_str().expect("path"))
+            .expect("a non-serving resolve must not fail on a stale/incompatible dist/");
+        assert!(resolved.path.is_dir() || resolved.path.starts_with(&dir));
     }
 }

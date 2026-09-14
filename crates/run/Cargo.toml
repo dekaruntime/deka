@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 serve = { path = "../serve" }
+engine = { path = "../engine" }
 runtime_core = { path = "../runtime_core" }
 serde_json = { workspace = true }
 
