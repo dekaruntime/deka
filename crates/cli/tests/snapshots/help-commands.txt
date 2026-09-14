@@ -1,3 +1,11 @@
+[getting started]
+init		scaffold a new project
+serve		run it as a local dev server
+dev		same, plus hot reload while you edit
+add		add a package to your project
+build		build your project for production
+run		run a single .ds/.dsx file or script
+
 [auth]
 auth		authenticate with linkhash
 auth signup	create a new linkhash account
@@ -97,31 +105,3 @@ dev		serve with HTTP + HMR (dev mode)
 --deny-dynamic		deny dynamic code execution
 --deny-wasm		deny wasm module load and execution
 --no-prompt		disable interactive security prompts
---bundle		bundle emitted JS into a single file (in-memory, no intermediate files)
---minify		minify bundled output (only with --bundle)
---as-package		typecheck a package working tree the way an installed consumer would resolve it
---single-file		typecheck only the requested file without project imports
---gild-socket		gild Unix socket path (default: /run/gild/sock)
---check		exit non-zero if files would change
---stdin		read source from stdin instead of a file
---desktop		package a web project as a desktop app (React in webview)
---quiet		suppress informational output
---yes		assume yes when prompted
---prompt		prompt before installing
---rehash		rehash php package integrity and update deka.lock
---locked		fail if deka.lock is missing or would change
---yes		auto-apply publish guard-rail fixes
---dry-run		run preflight check only; do not actually publish
---no-push		skip pushing commit and tag to origin
---yes		auto-accept prompts
---watch		keep event loop alive (for long-running processes)
---dev		enable development runtime mode (watch + hmr scaffolding)
---list		self test: list fixtures or lessons without running them
---list		list tasks
---json		output tasks as json
---preserve		preserve a directory's module tree (default for directories)
---bundle		emit one resolved JavaScript module graph
---treeshake		apply JavaScript optimization to emitted modules
---client		treat the entry as a client bundle (ui/server is a build failure)
---archive		show archived request history
---json		output JSON format

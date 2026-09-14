@@ -74,11 +74,28 @@ fn help_lists_every_registered_command() {
     });
 }
 
-/// Category-grouped command names + summaries, then flags, matching `deka --help`
-/// (minus the version banner). Insertion order within each category is load-bearing.
+/// Getting Started, then category-grouped command names + summaries, then
+/// the global-only deduplicated flags, matching `deka --help` (minus the
+/// version banner). Insertion order within each category is load-bearing.
+///
+/// Getting Started and the flags filter/dedup come straight from
+/// `core::help` (the same code the real `deka --help` renders through) so
+/// this snapshot can't silently drift from production behavior (deka#978).
 #[cfg(not(feature = "self-update"))]
 fn help_surface() -> String {
     let registry = cli::build_registry();
+    let mut out = String::new();
+
+    let known: std::collections::HashSet<&str> =
+        registry.commands().iter().map(|c| c.name).collect();
+    out.push_str("[getting started]\n");
+    for (name, blurb) in core::help::GETTING_STARTED {
+        if known.contains(name) {
+            out.push_str(&format!("{name}\t\t{blurb}\n"));
+        }
+    }
+    out.push('\n');
+
     let mut grouped: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for command in registry.commands() {
         grouped
@@ -92,7 +109,6 @@ fn help_surface() -> String {
             ));
         }
     }
-    let mut out = String::new();
     for (category, lines) in grouped {
         out.push('[');
         out.push_str(category);
@@ -104,7 +120,7 @@ fn help_surface() -> String {
         out.push('\n');
     }
     out.push_str("[flags]\n");
-    for flag in registry.flags() {
+    for flag in core::help::global_flags(&registry) {
         out.push_str(&format!("{}\t\t{}\n", flag.name, flag.description));
     }
     out

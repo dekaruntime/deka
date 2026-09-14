@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use core::{FlagSpec, ParamSpec, ParseError, ParseErrorKind, Registry};
 use stdio::{ascii, error as stdio_error, raw};
 
@@ -167,43 +165,21 @@ pub fn register_global_params(registry: &mut Registry) {
 pub fn help(registry: &Registry) {
     raw(&ascii("deka"));
     raw("");
-    raw("Usage: deka [options] [command]");
-    raw(&format!(
-        "deka v{} - the cloud is a lie",
-        env!("CARGO_PKG_VERSION")
-    ));
-    raw("");
-
-    let dim = "\x1b[2m";
-    let reset = "\x1b[0m";
-
-    let mut grouped: BTreeMap<&str, Vec<&core::CommandSpec>> = BTreeMap::new();
-    for command in registry.commands() {
-        grouped.entry(command.category).or_default().push(command);
+    for line in core::help::render_global_help(registry, env!("CARGO_PKG_VERSION")) {
+        raw(&line);
     }
+}
 
-    for (category, commands) in grouped {
-        raw(&format!("{dim}{category}{reset}"));
-        for command in commands {
-            raw(&format!("  {}\t\t{}", command.name, command.summary));
-            if !command.subcommands.is_empty() {
-                for subcommand in command.subcommands {
-                    raw(&format!(
-                        "  {} {}\t{}",
-                        command.name, subcommand.name, subcommand.summary
-                    ));
-                }
-            }
-        }
-        raw("");
-    }
-
-    if !registry.flags().is_empty() {
-        raw(&format!("{dim}flags{reset}"));
-        for flag in registry.flags() {
-            raw(&format!("  {}\t\t{}", flag.name, flag.description));
-        }
-        raw("");
+/// `deka <command> --help`: the command's own usage, description, flags,
+/// and (for the commands a new user reaches for first) worked examples —
+/// no longer a byte-identical copy of `deka --help` (deka#977). `owned` is
+/// that command's own flags/params, resolved by re-running its own
+/// registration function (see `crate::command_flag_index`), never by
+/// name-searching the shared registry — two different commands can
+/// register a flag with the same name (deka#996 review).
+pub fn command_help(command: &core::CommandSpec, owned: Option<&core::help::CommandFlags>) {
+    for line in core::help::render_command_help(command, owned) {
+        raw(&line);
     }
 }
 
@@ -263,7 +239,13 @@ pub fn execute(registry: &Registry) -> i32 {
     // Compiler commands delegate their help to dsc for command-specific
     // output, so they keep passing through.
     if single_command_wants_help(args) {
-        help(registry);
+        match registry.command_named(&args.commands[0]) {
+            Some(command) => {
+                let index = crate::command_flag_index();
+                command_help(command, index.get(command.name));
+            }
+            None => help(registry),
+        }
         return 0;
     }
 
@@ -348,7 +330,10 @@ pub(crate) fn single_command_wants_help(args: &core::Args) -> bool {
     if args.commands.len() != 1 {
         return false;
     }
-    if matches!(args.commands[0].as_str(), "check" | "fmt" | "transpile" | "lsp") {
+    if matches!(
+        args.commands[0].as_str(),
+        "check" | "fmt" | "transpile" | "lsp"
+    ) {
         return false;
     }
     args.flags.contains_key("--help")

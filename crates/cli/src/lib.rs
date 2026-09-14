@@ -8,62 +8,87 @@ use wasm_cli as wasm_cmd;
 pub mod cli;
 pub mod context;
 
-pub fn build_registry() -> Registry {
-    // Registration order matches the pre-move cli crate so `--help` grouping
-    // within each category stays byte-identical (BTreeMap by category, then
-    // insertion order).
-    let mut builder = RegistryBuilder::new()
-        .with(cli::register_global_flags)
-        .with(cli::register_global_params)
-        .with(pm::register_init)
-        .with(wasm_cmd::register);
+/// The ordered list of registration functions that make up the CLI.
+/// Registration order matches the pre-move cli crate so `--help` grouping
+/// within each category stays byte-identical (BTreeMap by category, then
+/// insertion order). [`build_registry`] folds these into the real registry;
+/// [`command_flag_index`] re-runs each one against a private scratch
+/// registry to learn exactly which flags/params it — and only it —
+/// registers, which is how per-command help resolves a flag by its actual
+/// owner instead of the first same-named entry anywhere in the registry
+/// (deka#996 review).
+fn register_fns() -> Vec<fn(&mut Registry)> {
+    let mut fns: Vec<fn(&mut Registry)> = vec![
+        cli::register_global_flags,
+        cli::register_global_params,
+        pm::register_init,
+        wasm_cmd::register,
+    ];
 
     #[cfg(target_arch = "wasm32")]
     {
-        builder = builder.with(deka_db::register);
+        fns.push(deka_db::register);
     }
 
     #[cfg(feature = "native")]
     {
-        builder = builder
-            .with(deka_registry::auth::register)
-            .with(deka_build::register)
-            .with(deka_cache::register)
-            .with(compiler::register_check)
-            .with(deka_deploy::register)
-            .with(compiler::register_fmt)
-            .with(compile::register)
-            .with(deka_db::register)
-            .with(pm::register_install)
-            .with(pm::register_summon)
-            .with(pm::register_link);
+        fns.extend([
+            deka_registry::auth::register,
+            deka_build::register,
+            deka_cache::register,
+            compiler::register_check,
+            deka_deploy::register,
+            compiler::register_fmt,
+            compile::register,
+            deka_db::register,
+            pm::register_install,
+            pm::register_summon,
+            pm::register_link,
+        ]);
         #[cfg(feature = "lsp")]
         {
-            builder = builder.with(compiler::register_lsp);
+            fns.push(compiler::register_lsp);
         }
-        builder = builder
-            .with(pm::register_pkg)
-            .with(deka_registry::publish::register)
-            .with(pm::register_release)
-            .with(runtime::register_run)
-            .with(runtime::register_platform)
-            .with(runtime::register_serve)
-            .with(self_cmd::register)
-            .with(deka_task::register)
-            .with(deka_test::register)
-            .with(compiler::register_transpile)
-            .with(runtime_core::register)
-            .with(introspect::register);
+        fns.extend([
+            pm::register_pkg,
+            deka_registry::publish::register,
+            pm::register_release,
+            runtime::register_run,
+            runtime::register_platform,
+            runtime::register_serve,
+            self_cmd::register,
+            deka_task::register,
+            deka_test::register,
+            compiler::register_transpile,
+            runtime_core::register,
+            introspect::register,
+        ]);
     }
 
     #[cfg(feature = "native")]
     {
-        builder = builder.with(dev::register);
+        fns.push(dev::register);
     }
 
+    fns
+}
+
+pub fn build_registry() -> Registry {
+    let mut builder = RegistryBuilder::new();
+    for register_fn in register_fns() {
+        builder = builder.with(register_fn);
+    }
     builder
         .build()
         .unwrap_or_else(|err| panic!("cli registry: {err}"))
+}
+
+/// Per-command flag/param ownership for help rendering. See
+/// [`core::help::build_ownership_index`] for how this avoids the
+/// first-match-wins bug a name-only lookup against the shared registry
+/// would have (deka#996 review).
+pub fn command_flag_index() -> std::collections::HashMap<&'static str, core::help::CommandFlags> {
+    core::help::build_ownership_index(&register_fns())
 }
 
 pub fn run() {
@@ -104,7 +129,13 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
     let cmd = &parsed.args;
 
     if cli::single_command_wants_help(cmd) {
-        cli::help(&registry);
+        match registry.command_named(&cmd.commands[0]) {
+            Some(command) => {
+                let index = command_flag_index();
+                cli::command_help(command, index.get(command.name));
+            }
+            None => cli::help(&registry),
+        }
         let output = stdio::end_capture();
         return WasmRunOutput { code: 0, output };
     }
