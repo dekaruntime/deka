@@ -191,9 +191,11 @@ mod tests {
         assert_eq!(json["tasks"]["dev"], "deka serve --dev");
 
         let index = include_str!("../scaffold/index.html");
-        assert!(index.contains("<!--deka-app-->"));
-        assert!(index.contains("<!--deka-head-->"));
-        assert!(index.contains("<!--deka-scripts-->"));
+        assert!(!index.contains("<!--deka-app-->"));
+        assert!(!index.contains("<!--deka-head-->"));
+        assert!(!index.contains("<!--deka-scripts-->"));
+        assert!(!index.contains("<script"));
+        assert!(index.contains("<div id=\"app\"></div>"));
         assert!(index.contains("href=\"/style.css\""));
         assert!(!index.contains("<h1>Deka App</h1>"));
 
