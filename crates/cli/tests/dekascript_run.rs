@@ -887,3 +887,96 @@ unsafe { console.log(b) };
         "none\nsome",
     );
 }
+
+/// deka#998 (refs #748, dsc#66, #746 F2): the whole "won't-fix at runtime"
+/// adjudication for lost struct brands rests on enums surviving the island
+/// boundary, because the discriminant is emitted as a plain enumerable
+/// `__case` field. Islands ship props through `JSON.stringify`/`JSON.parse`,
+/// so this round-trips an enum (bare case + payload case) through the real
+/// boundary shape and asserts `match` takes the correct arm on the
+/// reconstructed value -- not just that `__case` is present.
+#[test]
+fn enum_case_survives_json_roundtrip_and_matches() {
+    run_dekascript(
+        "enum_json_roundtrip",
+        r#"
+enum Status { Pending, Shipped(number) }
+
+fn label(s: Status) string {
+  return match (s) {
+    Pending => "pending",
+    Shipped(v) => "shipped:" + v
+  }
+}
+
+const shipped: Status = Status.Shipped(42);
+const pending: Status = Status.Pending;
+const shippedCrossed = unsafe<Status> { JSON.parse(JSON.stringify(shipped)) };
+const pendingCrossed = unsafe<Status> { JSON.parse(JSON.stringify(pending)) };
+const a = match (shippedCrossed) { Ok(v) => label(v), Err(e) => "cast-err" };
+const b = match (pendingCrossed) { Ok(v) => label(v), Err(e) => "cast-err" };
+unsafe { console.log(a) };
+unsafe { console.log(b) };
+"#,
+        "shipped:42\npending",
+    );
+}
+
+/// deka#998 companion coverage: `Option`/`Result` share the boundary-crossing
+/// claim in #746 F2. `Some` and `Ok`/`Err` each round-trip through the real
+/// `JSON.parse(JSON.stringify(...))` shape and `match` correctly on the
+/// reconstructed value.
+#[test]
+fn option_some_and_result_survive_json_roundtrip_and_match() {
+    run_dekascript(
+        "option_result_json_roundtrip",
+        r#"
+fn labelOption(o: Option<number>) string {
+  return match (o) { Some(v) => "some:" + v, None => "none" };
+}
+fn labelResult(r: Result<number, string>) string {
+  return match (r) { Ok(v) => "ok:" + v, Err(e) => "err:" + e };
+}
+
+const someVal: Option<number> = Some(7);
+const okVal: Result<number, string> = Ok(9);
+const errVal: Result<number, string> = Err("bad");
+const someCrossed = unsafe<Option<number>> { JSON.parse(JSON.stringify(someVal)) };
+const okCrossed = unsafe<Result<number, string>> { JSON.parse(JSON.stringify(okVal)) };
+const errCrossed = unsafe<Result<number, string>> { JSON.parse(JSON.stringify(errVal)) };
+const a = match (someCrossed) { Ok(v) => labelOption(v), Err(e) => "cast-err" };
+const b = match (okCrossed) { Ok(v) => labelResult(v), Err(e) => "cast-err" };
+const c = match (errCrossed) { Ok(v) => labelResult(v), Err(e) => "cast-err" };
+unsafe { console.log(a) };
+unsafe { console.log(b) };
+unsafe { console.log(c) };
+"#,
+        "some:7\nok:9\nerr:bad",
+    );
+}
+
+/// LIVE BUG found while writing deka#998, filed as dsc#237: unlike
+/// user-defined enums and `Result`, `Option` is erased at compile time
+/// (`Some(x)` -> bare `x`, `None` -> bare `undefined`). `undefined` inside a
+/// JSON array becomes `null` after `JSON.parse`, so a `None` carried in a
+/// list-shaped island prop reconstructs as `null` and `match` silently takes
+/// the `Some` arm instead of `None` -- no throw, no diagnostic, wrong
+/// branch. Ignored (not deleted) so the regression stays documented and this
+/// test is the un-ignore signal once dsc#237 lands.
+#[test]
+#[ignore = "live bug, not yet fixed: Option::None -> undefined -> JSON null inside arrays mismatches match (dsc#237)"]
+fn option_none_in_array_json_roundtrip_matches_correct_arm() {
+    run_dekascript(
+        "option_none_array_json_roundtrip",
+        r#"
+fn labelOption(o: Option<number>) string {
+  return match (o) { Some(v) => "some:" + v, None => "none" };
+}
+const noneVal: Option<number> = None;
+const crossed = unsafe<Option<number>> { JSON.parse(JSON.stringify([noneVal]))[0] };
+const label = match (crossed) { Ok(v) => labelOption(v), Err(e) => "cast-err" };
+unsafe { console.log("RESULT:" + label) };
+"#,
+        "RESULT:none",
+    );
+}
