@@ -1,0 +1,13 @@
+import { Counter } from "./Counter.dsx"
+
+fn greeting(name: string) string {
+  return "Hello, " + name + "."
+}
+
+export fn Page() ReactNode {
+  return <section>
+      <h1>Deka App</h1>
+      <p>{greeting("World")}</p>
+      <Counter client:load />
+    </section>
+}

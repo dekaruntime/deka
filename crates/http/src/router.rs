@@ -155,6 +155,7 @@ async fn handle_request(
             if extensions.debug {
                 tracing::info!("[http] response {} {}", response_envelope.status, uri);
             }
+            apply_static_not_found(&state, &mut response_envelope);
             if let Some(upgrade) = response_envelope.upgrade {
                 if let Some(ws) = ws {
                     return ws
@@ -334,6 +335,30 @@ fn try_asset_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response>
 
 /// Serve app-router `public/` files before evaluating a route handler.
 /// The root is set only for an app-router project by `runtime::serve`.
+/// A 404 from the V8 handler (no matching route, no `app/not-found.dsx`)
+/// is replaced with `public/404.html` when the project ships one — the
+/// scaffolded 404 is a static file per RFD 24 (deka#1045), not a rendered
+/// route, so it must win over the JS-side `FallbackNotFound()` render.
+fn apply_static_not_found(state: &Arc<RuntimeState>, response_envelope: &mut engine::ResponseEnvelope) {
+    if response_envelope.status != 404 {
+        return;
+    }
+    let Some(root) = &state.public_dir else {
+        return;
+    };
+    let Some((bytes, _ctype)) = read_static_file(root, std::path::Path::new("404.html")) else {
+        return;
+    };
+    response_envelope.body = String::from_utf8_lossy(&bytes).into_owned();
+    response_envelope.body_base64 = None;
+    response_envelope
+        .headers
+        .retain(|key, _| !key.eq_ignore_ascii_case("content-type"));
+    response_envelope
+        .headers
+        .insert("content-type".to_string(), "text/html; charset=utf-8".to_string());
+}
+
 fn try_public_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response> {
     let root = state.public_dir.as_ref()?;
     if let Some(manifest) = &state.artifact_manifest {

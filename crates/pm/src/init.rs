@@ -1,6 +1,6 @@
 use deka_cli_core::{CommandSpec, Context, Registry};
 use std::path::Path;
-use stdio::{error as stdio_error, raw};
+use stdio::{error as stdio_error, log, raw};
 
 const COMMAND: CommandSpec = CommandSpec {
     owner: "pm",
@@ -35,6 +35,9 @@ pub fn cmd(context: &Context) {
         cwd
     };
 
+    raw(&stdio::ascii("deka"));
+    raw("");
+
     if let Err(err) = std::fs::create_dir_all(&target) {
         stdio_error(
             "init",
@@ -52,51 +55,61 @@ pub fn cmd(context: &Context) {
     }
 }
 
+/// The DekaScript scaffold lives as real files under `scaffold/`, embedded
+/// with `include_str!` (deka#1000) — readable, diffable, and checked by
+/// whatever corpus the compiler already typechecks in CI, instead of a
+/// single-line escaped Rust string literal nobody can review.
+///
+/// Tree matches RFD 24 exactly: `public/`, `app/{layout.dsx,page.dsx}`,
+/// `index.html`, `deka.json`. No `src/` (deka#1044); the 404 is a static
+/// `public/404.html`, not a rendered route (deka#1045).
 fn write_scaffold(target: &Path) -> Result<Vec<String>, String> {
     let mut touched: Vec<String> = Vec::new();
+    let name = project_name_from_dir(target);
+
     ensure_file(
         &target.join("deka.json"),
-        default_deka_json(project_name_from_dir(target).as_str()),
+        default_deka_json(&name),
         &mut touched,
     )?;
     ensure_file(
         &target.join("deka.lock"),
-        default_deka_lock_json().to_string(),
+        include_str!("../scaffold/deka.lock").to_string(),
         &mut touched,
     )?;
     ensure_file(
         &target.join(".gitignore"),
-        default_gitignore().to_string(),
+        include_str!("../scaffold/.gitignore").to_string(),
         &mut touched,
     )?;
     ensure_file(
         &target.join("index.html"),
-        default_index_html().to_string(),
+        include_str!("../scaffold/index.html").to_string(),
         &mut touched,
     )?;
     ensure_file(
         &target.join("app/layout.dsx"),
-        default_app_layout_dsx().to_string(),
+        include_str!("../scaffold/app/layout.dsx").to_string(),
         &mut touched,
     )?;
     ensure_file(
         &target.join("app/page.dsx"),
-        default_app_page_dsx().to_string(),
+        include_str!("../scaffold/app/page.dsx").to_string(),
         &mut touched,
     )?;
     ensure_file(
-        &target.join("app/not-found.dsx"),
-        default_not_found_dsx().to_string(),
-        &mut touched,
-    )?;
-    ensure_file(
-        &target.join("src/ui/Counter.dsx"),
-        default_counter_dsx().to_string(),
+        &target.join("app/Counter.dsx"),
+        include_str!("../scaffold/app/Counter.dsx").to_string(),
         &mut touched,
     )?;
     ensure_file(
         &target.join("public/style.css"),
-        default_public_style_css().to_string(),
+        include_str!("../scaffold/public/style.css").to_string(),
+        &mut touched,
+    )?;
+    ensure_file(
+        &target.join("public/404.html"),
+        include_str!("../scaffold/public/404.html").to_string(),
         &mut touched,
     )?;
     Ok(touched)
@@ -126,7 +139,9 @@ fn ensure_file(path: &Path, content: String, touched: &mut Vec<String>) -> Resul
     }
     std::fs::write(path, content.as_bytes())
         .map_err(|err| format!("failed to write {}: {}", path.display(), err))?;
-    touched.push(path_display(path));
+    let display = path_display(path);
+    log("create", &display);
+    touched.push(display);
     Ok(())
 }
 
@@ -156,50 +171,16 @@ fn path_display(path: &Path) -> String {
 /// fully denied — production default-deny is unchanged and the emptiness is
 /// visible right here rather than hidden behind a manifest the user has no
 /// reason to open.
+///
+/// Templated (not `include_str!`) because it carries the one substitution
+/// the scaffold needs: the project name from the target directory.
 fn default_deka_json(name: &str) -> String {
-    format!(
-        "{{\n  \"name\": \"{name}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"mode\": \"ds\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"permissions\": {{\n    \"dev\": {{\n      \"read\": true,\n      \"write\": [\".cache\", \"ds_modules/.cache\"],\n      \"wasm\": true\n    }},\n    \"prod\": {{}}\n  }}\n}}\n"
-    )
-}
-
-fn default_deka_lock_json() -> &'static str {
-    "{\n  \"lockfileVersion\": 1,\n  \"packages\": {}\n}\n"
-}
-
-fn default_gitignore() -> &'static str {
-    "ds_modules/\ndist/\n.cache/\n"
-}
-
-fn default_index_html() -> &'static str {
-    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Deka</title>\n    <link rel=\"stylesheet\" href=\"/style.css\" />\n    <!--deka-head-->\n  </head>\n  <body>\n    <div id=\"app\"><!--deka-app--></div>\n    <!--deka-scripts-->\n  </body>\n</html>\n"
-}
-
-fn default_app_page_dsx() -> &'static str {
-    "import { Counter } from \"../src/ui/Counter.dsx\"\n\nfn greeting(name: string) string {\n  return \"Hello, \" + name + \".\"\n}\n\nexport fn Page() ReactNode {\n  return <section>\n      <h1>Deka App</h1>\n      <p>{greeting(\"World\")}</p>\n      <Counter client:load />\n    </section>\n}\n"
-}
-
-fn default_app_layout_dsx() -> &'static str {
-    "interface LayoutProps {\n  children: ReactNode\n}\n\nexport fn Layout(props: LayoutProps) ReactNode {\n  return <main>{props.children}</main>\n}\n"
-}
-
-fn default_not_found_dsx() -> &'static str {
-    "export fn Page() ReactNode {\n  return <section><h1>Not found</h1></section>\n}\n"
-}
-
-fn default_counter_dsx() -> &'static str {
-    "export fn Counter() ReactNode {\n  const [n, setN] = useState(0)\n  return <button type=\"button\" onClick={fn() void {\n      setN(n + 1)\n    }}>{n}</button>\n}\n"
-}
-
-fn default_public_style_css() -> &'static str {
-    "body { font-family: system-ui, sans-serif; margin: 2rem; }\n"
+    include_str!("../scaffold/deka.json").replace("__APP_NAME__", name)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        default_app_page_dsx, default_counter_dsx, default_deka_json, default_gitignore,
-        default_index_html,
-    };
+    use super::default_deka_json;
 
     #[test]
     fn default_scaffold_is_a_live_ds_app() {
@@ -209,24 +190,32 @@ mod tests {
         assert!(json["serve"].get("entry").is_none());
         assert_eq!(json["tasks"]["dev"], "deka serve --dev");
 
-        let index = default_index_html();
+        let index = include_str!("../scaffold/index.html");
         assert!(index.contains("<!--deka-app-->"));
         assert!(index.contains("<!--deka-head-->"));
         assert!(index.contains("<!--deka-scripts-->"));
         assert!(index.contains("href=\"/style.css\""));
         assert!(!index.contains("<h1>Deka App</h1>"));
 
-        let page = default_app_page_dsx();
+        let page = include_str!("../scaffold/app/page.dsx");
         assert!(page.contains("export fn Page()"));
         assert!(page.contains("<h1>Deka App</h1>"));
         assert!(page.contains("client:load"));
         assert!(page.contains("fn greeting("));
+        assert!(page.contains("./Counter.dsx"));
+        assert!(!page.contains("src/"));
 
-        let counter = default_counter_dsx();
+        let counter = include_str!("../scaffold/app/Counter.dsx");
         assert!(counter.contains("useState"));
         assert!(counter.contains("export fn Counter()"));
 
-        let gitignore = default_gitignore();
+        let not_found = include_str!("../scaffold/public/404.html");
+        assert!(not_found.contains("Not found"));
+
+        let style = include_str!("../scaffold/public/style.css");
+        assert!(style.lines().count() > 1, "style.css must not be one line");
+
+        let gitignore = include_str!("../scaffold/.gitignore");
         assert!(gitignore.contains("ds_modules/"));
         assert!(gitignore.contains("dist/"));
         assert!(!gitignore.contains(".deka.json-backup-*"));
