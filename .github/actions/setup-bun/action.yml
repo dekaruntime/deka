@@ -1,0 +1,14 @@
+name: Setup Bun
+description: >
+  Install the pinned Bun version used everywhere in this repo's workflows.
+  This is the single source of truth for the Bun version (deka#1006) — every
+  job that needs Bun should call this action instead of pinning
+  oven-sh/setup-bun@v2's bun-version directly, so there is exactly one place
+  to bump when Bun moves and no chance of the pin drifting between jobs or
+  between ci.yml and release.yml.
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: "1.3.14"

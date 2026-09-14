@@ -61,9 +61,7 @@ jobs:
           fi
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
+        uses: ./.github/actions/setup-bun
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.96.0
@@ -314,9 +312,7 @@ jobs:
         uses: ./.github/actions/where-am-i
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
+        uses: ./.github/actions/setup-bun
 
       - name: Download WASM + darwin-arm64 CLI
         uses: actions/download-artifact@v7
@@ -335,8 +331,12 @@ jobs:
 
       - name: Install dump deps and Chromium
         working-directory: tests/dump
+        # --frozen-lockfile: deka#1006. Without it, an unreadable lockfile is
+        # a warning bun recovers from by re-resolving over the network —
+        # nondeterministic and exactly how the v0.53.1 dump job died further
+        # downstream instead of failing fast and clearly on this step.
         run: |
-          bun install
+          bun install --frozen-lockfile
           bunx playwright install chromium
 
       - name: Dump native + browser
