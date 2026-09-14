@@ -1,20 +1,33 @@
 // ---------------------------------------------------------------------------
-// Update-check for `deka --update` (deka#976 / rfd#61)
+// Update-check for `deka self update` (deka#976 / rfd#61 / deka#990)
 // ---------------------------------------------------------------------------
 //
+// deka#990 course correction: `deka --update` was a global flag duplicating
+// this subcommand, so it is gone -- `cmd` below is now what `deka self
+// update` actually runs (wired from the facade `update::cmd` re-export,
+// which `self_cmd::lib.rs`'s `self update` SubcommandSpec points at).
+//
 // This is deliberately independent of `run_update` in the sibling
-// `pipeline` module: `run_update`
-// resolves against a linkhash registry URL (default
-// `http://localhost:9418`) that is the retired self-hosted registry and is
-// not reachable in the current distribution model (see CLAUDE.md, "Issue
-// Tracking" and "Distribution"). `check_latest` does not call it, does not
-// touch `resolve_latest_version`, and performs no download or binary swap
-// -- it only reads the public, unauthenticated release manifest that the
-// release workflow already publishes to R2, and reports the result. It
-// used to live inline in `cli::update()`; moved here because self_cmd
-// already owns `deka self update` and cli is composition-only (rfd#61).
+// `pipeline` module: `run_update` resolves against a linkhash registry URL
+// (default `http://localhost:9418`) that is the retired self-hosted
+// registry and is not reachable in the current distribution model (see
+// CLAUDE.md, "Issue Tracking" and "Distribution"). Before deka#990, running
+// the correctly-spelled `deka self update` hit exactly that dead registry
+// and failed with a connection error -- `cmd`/`check_latest` do not call
+// `run_update`, do not touch `resolve_latest_version`, and perform no
+// download or binary swap; they only read the public, unauthenticated
+// release manifest that the release workflow already publishes to R2, and
+// report the result.
 
+use deka_cli_core::Context;
 use stdio;
+
+/// `deka self update`'s handler. Ignores `context` -- the check takes no
+/// flags today (no `--registry-url`/`--token`/`--config`, unlike the dead
+/// `pipeline::cmd` this replaced).
+pub fn cmd(_context: &Context) {
+    check_latest();
+}
 
 /// Checks `https://releases.deka.gg/latest.json` (via `pm::releases`) and
 /// prints plainly whether the running binary is current, or the newer

@@ -196,9 +196,19 @@ pub fn run_update(config: &UpdateConfig) -> Result<UpdateResult, String> {
 }
 
 // ---------------------------------------------------------------------------
-// CLI handler
+// CLI handler -- NOT WIRED TO ANY COMMAND (deka#990)
 // ---------------------------------------------------------------------------
-
+//
+// This was `deka self update`'s handler until deka#990's course correction
+// pointed that subcommand at `check::cmd` instead: this function resolves
+// against a linkhash registry URL (default `http://localhost:9418`) that
+// is the retired self-hosted registry, so running it hit a connection
+// error rather than checking anything real. `run_update` below is still
+// live via `deka self monitor` (see `monitor.rs`), so it stays -- only
+// this specific CLI entry point into it is dead. Do not re-wire this as a
+// command handler without first fixing what `resolve_latest_version`
+// resolves against.
+#[allow(dead_code)]
 pub fn cmd(context: &Context) {
     let (registry_url, token, registry_index_url) = get_registry_config(context);
     let current_version = env!("CARGO_PKG_VERSION").to_string();

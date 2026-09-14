@@ -124,11 +124,6 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
             let output = stdio::end_capture();
             return WasmRunOutput { code: 0, output };
         }
-        if cmd.flags.contains_key("--update") || cmd.flags.contains_key("-U") {
-            cli::update();
-            let output = stdio::end_capture();
-            return WasmRunOutput { code: 0, output };
-        }
     }
 
     let env = core::EnvContext::load();
