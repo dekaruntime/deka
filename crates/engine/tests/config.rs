@@ -276,3 +276,36 @@ fn unrecognized_serve_mode_is_a_hard_error_not_a_silent_default() {
         "error should surface the bad value verbatim: {err}"
     );
 }
+
+#[test]
+fn serve_mode_js_is_accepted_as_a_php_alias() {
+    // deka#1020 CI finding: the react-builtin CLI fixture
+    // (crates/cli/tests/fixtures/react-builtin/deka.json, introduced in
+    // 08d5b0a4) has shipped with `"serve": {"mode": "js", "entry":
+    // "index.js"}` for weeks. `"js"` was never a variant of *this*
+    // `ServeMode` (only `serve::config::ServeMode`, a different enum in a
+    // different crate, has a real `Js` variant) — so before deka#1017
+    // hardened error handling, the whole `serve` block silently failed to
+    // parse and was discarded, and the fixture worked anyway only because
+    // its `entry` value happens to equal the default index-file name. That
+    // is precisely the "typo that changes nothing you notice" failure mode
+    // deka#1017 closes generally. But "js" is not a typo: `detect_mode`
+    // below has always mapped `.js`/`.mjs`/`.cjs` files to `ServeMode::Php`,
+    // identically to `.ds`/`.dsx` — so accepting `"js"` as another spelling
+    // of `"ds"` matches behavior this enum already had by extension
+    // detection. Also proves the entry field is now genuinely honored
+    // (rather than coincidentally rediscovered by the index-file fallback).
+    let dir = temp_dir("engine_test_serve_mode_js_alias");
+    fs::write(dir.join("index.js"), "export default () => {}").unwrap();
+    fs::write(
+        dir.join("deka.json"),
+        r#"{"serve": {"mode": "js", "entry": "index.js"}}"#,
+    )
+    .unwrap();
+    let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
+    assert!(matches!(resolved.mode, engine::config::ServeMode::Php));
+    assert_eq!(
+        resolved.path.canonicalize().unwrap(),
+        dir.join("index.js").canonicalize().unwrap()
+    );
+}

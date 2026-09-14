@@ -11,7 +11,15 @@ pub struct RuntimeConfig {
 #[serde(rename_all = "lowercase")]
 pub enum ServeMode {
     Static,
+    // `"js"` is an accepted alias, not a distinct mode (deka#1020 CI
+    // finding): unlike the *other* `ServeMode` in `serve::config` (which
+    // genuinely distinguishes `Js` from `Php` for security-policy purposes),
+    // this engine-level enum has never treated plain JS entries differently
+    // from DekaScript ones — `detect_mode` below already maps `.js`/`.mjs`/
+    // `.cjs` extensions to `Php`, same as `.ds`/`.dsx`. So "js" here means
+    // exactly what "ds" means: run through the engine, not served as bytes.
     #[serde(alias = "ds")]
+    #[serde(alias = "js")]
     Php,
 }
 
@@ -93,7 +101,7 @@ fn load_serve_from_deka_json(path: &std::path::Path) -> Result<Option<ServeConfi
             .map_err(|err| {
                 format!(
                     "{}: invalid `serve` config: {}. `serve.mode` accepts \"static\" or \"ds\" \
-                     (also written \"php\"); `serve.kind` accepts \"static\" or \"worker\".",
+                     (also written \"php\" or \"js\"); `serve.kind` accepts \"static\" or \"worker\".",
                     path.display(),
                     err
                 )
@@ -121,7 +129,7 @@ fn load_serve_from_deka_json(path: &std::path::Path) -> Result<Option<ServeConfi
             if looks_like_serve_config {
                 Err(format!(
                     "{}: invalid top-level serve config: {}. `mode` accepts \"static\" or \"ds\" \
-                     (also written \"php\").",
+                     (also written \"php\" or \"js\").",
                     path.display(),
                     err
                 ))
@@ -149,7 +157,7 @@ fn load_legacy_serve_json(path: &std::path::Path) -> Result<Option<ServeConfig>,
         .map(Some)
         .map_err(|err| {
             format!(
-                "{}: invalid serve config: {}. `mode` accepts \"static\" or \"ds\" (also written \"php\").",
+                "{}: invalid serve config: {}. `mode` accepts \"static\" or \"ds\" (also written \"php\" or \"js\").",
                 path.display(),
                 err
             )
