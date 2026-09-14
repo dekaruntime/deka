@@ -187,7 +187,7 @@ fn default_not_found_dsx() -> &'static str {
 }
 
 fn default_counter_dsx() -> &'static str {
-    "export fn Counter() ReactNode {\n  const pair = useState(0)\n  const n = pair[0]\n  const setN = pair[1]\n  return <button type=\"button\" id=\"counter\" onClick={fn() void {\n      setN(n + 1)\n    }}>{n}</button>\n}\n"
+    "export fn Counter() ReactNode {\n  const [n, setN] = useState(0)\n  return <button type=\"button\" onClick={fn() void {\n      setN(n + 1)\n    }}>{n}</button>\n}\n"
 }
 
 fn default_public_style_css() -> &'static str {
