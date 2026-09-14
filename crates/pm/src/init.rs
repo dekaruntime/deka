@@ -167,7 +167,7 @@ fn default_deka_lock_json() -> &'static str {
 }
 
 fn default_gitignore() -> &'static str {
-    "ds_modules/\ndist/\n.cache/\n.deka.json-backup-*\n.deka.lock-backup-*\n"
+    "ds_modules/\ndist/\n.cache/\n"
 }
 
 fn default_index_html() -> &'static str {
@@ -229,8 +229,8 @@ mod tests {
         let gitignore = default_gitignore();
         assert!(gitignore.contains("ds_modules/"));
         assert!(gitignore.contains("dist/"));
-        assert!(gitignore.contains(".deka.json-backup-*"));
-        assert!(gitignore.contains(".deka.lock-backup-*"));
+        assert!(!gitignore.contains(".deka.json-backup-*"));
+        assert!(!gitignore.contains(".deka.lock-backup-*"));
     }
 
     /// deka#973: the scaffold must declare RFD-53 phase-aware permissions

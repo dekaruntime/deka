@@ -43,10 +43,12 @@ fn run_php_install_in(specs: Vec<String>, quiet: bool, locked: bool, cwd: &Path)
     let result = run_php_install_in_transaction(specs, quiet, locked, cwd);
     if let Err(error) = result {
         let recovery = recover_install_transaction(cwd);
+        let details = lock::recovery_backups_report(cwd);
         return match recovery {
-            Ok(()) => Err(error),
+            Ok(()) => Err(anyhow!("{error}{details}")),
             Err(recovery_error) => Err(anyhow!(
-                "install failed: {error}; rollback failed: {recovery_error}"
+                "install failed: {error}; rollback failed: {recovery_error}{}",
+                details
             )),
         };
     }

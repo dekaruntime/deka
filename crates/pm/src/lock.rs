@@ -132,14 +132,20 @@ pub fn update_lock_entry_at(
 }
 
 /// Snapshot one project file for install-transaction recovery: returns the
-/// path and, when the file exists, a durable backup copy beside it. Shared by
-/// the lockfile and the grant table (`deka.grants.json`), which the installer
-/// rewrites together inside one transaction (deka#797).
+/// path and, when the file exists, a durable backup copy in the project
+/// `.cache` directory. Shared by the lockfile and the grant table
+/// (`deka.grants.json`), which the installer rewrites together inside one
+/// transaction (deka#797).
 pub(crate) fn snapshot_file(path: PathBuf) -> Result<(PathBuf, Option<PathBuf>)> {
     if !path.exists() {
         return Ok((path, None));
     }
-    let backup = path.with_file_name(format!(
+    let backup_dir = path
+        .parent()
+        .ok_or_else(|| anyhow!("snapshot source has no parent"))?
+        .join(".cache");
+    fs::create_dir_all(&backup_dir)?;
+    let backup = backup_dir.join(format!(
         ".{}-backup-{}-{}",
         path.file_name()
             .and_then(|name| name.to_str())
@@ -160,6 +166,34 @@ pub(crate) fn unique_suffix() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default()
+}
+
+pub(crate) fn recovery_backups_report(project_dir: &Path) -> String {
+    let cache_dir = project_dir.join(".cache");
+    let Ok(entries) = std::fs::read_dir(&cache_dir) else {
+        return String::new();
+    };
+
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let path = entry.path().display().to_string();
+        if name.starts_with(".deka.json-backup-") {
+            files.push(format!("  - {} (recovery backup of previous deka.json)", path));
+        } else if name.starts_with(".deka.lock-backup-") {
+            files.push(format!("  - {} (recovery backup of previous deka.lock)", path));
+        }
+    }
+
+    if files.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nA recovery backup was left behind and can be used to restore prior state:\n{}",
+            files.join("\n")
+        )
+    }
 }
 
 pub(crate) fn sync_directory(path: &Path) -> Result<()> {
