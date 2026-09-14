@@ -172,7 +172,34 @@ pub struct ResolvedHandler {
 }
 
 /// Resolve a handler path, detecting directories and index files
+/// Resolve a handler path, detecting directories and index files, and
+/// materializing the generated app-router entry to disk when the project
+/// shape needs one (`.cache/dekascript/serve-entry.dsx`). This is the
+/// serve/build-time entry point -- callers that intend to actually run or
+/// compile the resolved handler.
 pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
+    resolve_handler_path_inner(path, true)
+}
+
+/// Same resolution and the same hard-fail-on-malformed-config behavior as
+/// [`resolve_handler_path`], but never writes to disk: an app-router
+/// project resolves to its directory with mode `Php`, without materializing
+/// the generated router entry. For callers that only need to know a
+/// project's shape/mode -- e.g. `run::handler::resolve_handler_path`, which
+/// every CLI command's context-prep runs through (deka#1021 QA finding) --
+/// not callers that are about to actually serve or build. Calling
+/// `resolve_handler_path` from a non-serving command path silently wrote a
+/// compiled router entry into the project's `.cache/dekascript/` on every
+/// invocation (`deka install`, `deka task`, ...), which this variant exists
+/// to avoid.
+pub fn resolve_handler_path_readonly(path: &str) -> Result<ResolvedHandler, String> {
+    resolve_handler_path_inner(path, false)
+}
+
+fn resolve_handler_path_inner(
+    path: &str,
+    materialize_app_router: bool,
+) -> Result<ResolvedHandler, String> {
     let path = std::path::Path::new(path);
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
@@ -269,9 +296,13 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
                 mode.label(),
             ));
         }
-        let entry_path = runtime_core::dist::write_app_router_entry(&handler_dir)?;
+        let handler_path = if materialize_app_router {
+            runtime_core::dist::write_app_router_entry(&handler_dir)?
+        } else {
+            handler_dir.clone()
+        };
         return Ok(ResolvedHandler {
-            path: entry_path,
+            path: handler_path,
             mode,
             config: serve_config,
         });

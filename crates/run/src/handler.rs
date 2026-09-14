@@ -74,7 +74,13 @@ pub struct ResolvedHandler {
 }
 
 pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
-    let resolved = runtime_config::resolve_handler_path(path)?;
+    // deka#1021 QA finding: this runs as part of every CLI command's
+    // context-prep (via HandlerSnapshot::from_positionals), not just
+    // serve/build -- so it must not trigger engine's app-router entry
+    // materialization, a disk write that only serve/build should cause.
+    // resolve_handler_path_readonly still hard-fails on a malformed serve
+    // config; it only skips the write_app_router_entry side effect.
+    let resolved = runtime_config::resolve_handler_path_readonly(path)?;
     let handler_dir = if resolved.path.is_dir() {
         resolved.path.clone()
     } else {
@@ -299,5 +305,48 @@ mod tests {
             file.canonicalize().expect("file")
         );
         assert!(matches!(resolved.mode, ServeMode::Js));
+    }
+
+    // deka#1021: run::handler::resolve_handler_path must not swallow a
+    // malformed serve.json into a silent default. Before this crate
+    // delegated to engine::config::resolve_handler_path, a bad `mode`
+    // value here resolved to Ok(..) with mode=Static instead of failing;
+    // pin the local resolver specifically, not engine's (which already
+    // hard-failed independently via #1020 and would pass on unmodified
+    // main, proving nothing about this crate's own behavior).
+    #[test]
+    fn malformed_legacy_serve_json_is_a_hard_error_not_a_silent_default() {
+        let dir = temp_dir("deka_handler_legacy_serve_json_typo");
+        fs::write(dir.join("index.html"), "<html></html>").expect("write index");
+        fs::write(dir.join("serve.json"), r#"{"mode": "statc"}"#).expect("write config");
+
+        let err = resolve_handler_path(dir.to_str().expect("path"))
+            .expect_err("serve.json with a bad mode must not resolve");
+        assert!(err.contains("invalid serve config"), "{err}");
+        assert!(err.contains("statc"), "{err}");
+    }
+
+    // deka#1021 QA finding: resolving an app-router project through
+    // run::handler::resolve_handler_path -- what every CLI command's
+    // context-prep does via HandlerSnapshot::from_positionals, not just
+    // serve/build -- must not write the compiled router entry to disk.
+    // Collapsing this crate's resolver onto engine::config's briefly
+    // regressed that: engine's resolver materializes
+    // .cache/dekascript/serve-entry.dsx unconditionally, so `deka install`,
+    // `deka task`, and every other non-serving command silently compiled
+    // and wrote a cache file into the project on every invocation.
+    #[test]
+    fn app_router_resolution_does_not_materialize_a_cache_entry() {
+        let dir = temp_dir("deka_handler_app_router_readonly");
+        let app_dir = dir.join("app");
+        fs::create_dir_all(&app_dir).expect("mkdir app");
+        fs::write(app_dir.join("page.phpx"), "<?php echo 'ok';").expect("write page");
+
+        let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
+        assert!(matches!(resolved.mode, ServeMode::Php));
+        assert!(
+            !dir.join(".cache").exists(),
+            ".cache must not be created by a non-serving resolve"
+        );
     }
 }
