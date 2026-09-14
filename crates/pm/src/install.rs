@@ -299,9 +299,8 @@ fn run_php_install_in_transaction(
         .take()
         .expect("transaction was initialized before lock commit")
         .finish()?;
-
     if !cleanup_warnings.is_empty() {
-        emit_install_cleanup_warnings(&cleanup_warnings);
+        recovery_report::emit_cleanup_warnings(&cleanup_warnings);
     }
 
     let duration = Instant::now().duration_since(start);
@@ -680,9 +679,9 @@ fn install_staging_path(destination: &Path) -> Result<PathBuf> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct InstallJournal {
+pub(crate) struct InstallJournal {
     lock_path: PathBuf,
-    lock_backup: Option<PathBuf>,
+    pub(crate) lock_backup: Option<PathBuf>,
     /// deka#797: grant table snapshot, restored on recovery (see `crate::grants`).
     #[serde(default)]
     grant: grants::GrantTableSnapshot,
@@ -701,7 +700,7 @@ struct InstallJournalPackage {
 
 pub(crate) struct InstallTransaction {
     journal_path: PathBuf,
-    journal: InstallJournal,
+    pub(crate) journal: InstallJournal,
 }
 
 impl InstallTransaction {
@@ -767,7 +766,6 @@ impl InstallTransaction {
         // Clearing the journal is the commit point. Cleanup after this point
         // is best-effort and cannot make the live package/lock inconsistent.
         let mut cleanup_warnings = Vec::new();
-
         fs::remove_file(&self.journal_path)?;
         lock::sync_directory(
             self.journal_path
@@ -776,19 +774,13 @@ impl InstallTransaction {
         )?;
         if let Some(backup) = self.journal.lock_backup {
             if let Err(error) = fs::remove_file(&backup) {
-                cleanup_warnings.push(format!(
-                    "failed to remove backup file {} after successful install: {error}",
-                    backup.display()
-                ));
+                cleanup_warnings.push(recovery_report::backup_removal_warning(&backup, &error));
             }
         }
         self.journal.grant.discard();
         if let Some((_, Some(backup))) = self.journal.manifest {
             if let Err(error) = fs::remove_file(&backup) {
-                cleanup_warnings.push(format!(
-                    "failed to remove backup file {} after successful install: {error}",
-                    backup.display()
-                ));
+                cleanup_warnings.push(recovery_report::backup_removal_warning(&backup, &error));
             }
         }
         for package in self.journal.packages {
@@ -1829,88 +1821,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn finish_reports_backup_cleanup_failures_without_failing_install() {
-        let tmp = tempfile::tempdir().expect("tmp");
-        let lock_path = tmp.path().join("deka.lock");
-        fs::write(
-            &lock_path,
-            "{\"lockfileVersion\":1,\"packages\":{}}\n",
-        )
-        .expect("write lockfile");
-        fs::write(
-            tmp.path().join("deka.json"),
-            "{\"name\":\"probe\",\"dependencies\":{}}\n",
-        )
-        .expect("write manifest");
-
-        let mut transaction = InstallTransaction::begin(tmp.path(), &lock_path).expect("begin");
-        let lock_backup = transaction
-            .journal
-            .lock_backup
-            .as_ref()
-            .expect("lock backup")
-            .clone();
-
-        #[cfg(target_os = "macos")]
-        {
-            std::process::Command::new("chflags")
-                .arg("uchg")
-                .arg(&lock_backup)
-                .status()
-                .expect("lock backup lock");
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let dir = lock_backup
-                .parent()
-                .expect("backup file is always in cache");
-            let mut permissions = fs::metadata(dir)
-                .expect("cache metadata")
-                .permissions();
-            use std::os::unix::fs::PermissionsExt;
-            permissions.set_mode(0o555);
-            fs::set_permissions(dir, permissions).expect("make cache read-only");
-        }
-
-        let warnings = transaction
-            .finish()
-            .expect("finish");
-        assert!(!warnings.is_empty(), "expected backup cleanup warning");
-        assert!(
-            warnings.iter().any(|warning| warning.contains(&lock_backup.display().to_string())),
-            "expected warning to include backup path"
-        );
-        super::emit_install_cleanup_warnings(&warnings);
-
-        let lock_backup_still_exists = lock_backup.exists();
-        assert!(lock_backup_still_exists, "expected stubborn lock backup to remain");
-
-        #[cfg(target_os = "macos")]
-        {
-            std::process::Command::new("chflags")
-                .arg("nouchg")
-                .arg(&lock_backup)
-                .status()
-                .expect("unlock backup");
-            fs::remove_file(lock_backup).expect("cleanup mocked backup file");
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let dir = lock_backup
-                .parent()
-                .expect("backup file is always in cache");
-            let mut permissions = fs::metadata(dir)
-                .expect("cache metadata")
-                .permissions();
-            use std::os::unix::fs::PermissionsExt;
-            permissions.set_mode(0o755);
-            fs::set_permissions(dir, permissions).expect("restore cache permissions");
-            fs::remove_file(lock_backup).expect("cleanup mocked backup file");
-        }
-    }
-
     #[test]
     fn interrupted_transaction_restores_exact_package_and_lock_snapshot() {
         let tmp = tempfile::tempdir().expect("tmp");
@@ -2398,10 +2308,4 @@ fn emit_summary(installed: usize, duration_ms: u64, quiet: bool) -> Result<()> {
 fn emit_probe(path: &PathBuf) -> Result<()> {
     eprintln!("📁 {}", path.display());
     Ok(())
-}
-
-pub(crate) fn emit_install_cleanup_warnings(warnings: &[String]) {
-    for warning in warnings {
-        eprintln!("warning: {warning}");
-    }
 }

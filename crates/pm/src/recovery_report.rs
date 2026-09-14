@@ -84,9 +84,31 @@ pub(crate) fn format_backups(backups: &[(PathBuf, &'static str)]) -> String {
     )
 }
 
+/// One warning line for a recovery backup that a successful install could
+/// not remove during its final cleanup pass. `InstallTransaction::finish`
+/// calls this for both the lockfile backup and the manifest backup instead
+/// of formatting the same string inline at each site (deka#1024 QA note).
+pub(crate) fn backup_removal_warning(path: &Path, error: &std::io::Error) -> String {
+    format!(
+        "failed to remove backup file {} after successful install: {error}",
+        path.display()
+    )
+}
+
+/// Print cleanup warnings collected by a successful `InstallTransaction::finish`
+/// (backup files, or -- for package staging -- the marker/temp directory,
+/// that a normally-silent best-effort removal could not clear). A completed
+/// install already committed; these are informational, not failures.
+pub(crate) fn emit_cleanup_warnings(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("warning: {warning}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::install::InstallTransaction;
     use std::fs;
 
     /// A journal referencing all three backup kinds -- lock, manifest, and
@@ -159,5 +181,91 @@ mod tests {
     #[test]
     fn format_backups_is_empty_string_when_nothing_survived() {
         assert_eq!(format_backups(&[]), "");
+    }
+
+    /// Moved from install.rs's own test module during the deka#1024
+    /// relocation: this exercises `InstallTransaction::finish` directly, so
+    /// it still needs `crate::install::InstallTransaction`, but the warning
+    /// text and emission it asserts on now live in this module.
+    #[cfg(unix)]
+    #[test]
+    fn finish_reports_backup_cleanup_failures_without_failing_install() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let lock_path = tmp.path().join("deka.lock");
+        fs::write(
+            &lock_path,
+            "{\"lockfileVersion\":1,\"packages\":{}}\n",
+        )
+        .expect("write lockfile");
+        fs::write(
+            tmp.path().join("deka.json"),
+            "{\"name\":\"probe\",\"dependencies\":{}}\n",
+        )
+        .expect("write manifest");
+
+        let transaction = InstallTransaction::begin(tmp.path(), &lock_path).expect("begin");
+        let lock_backup = transaction
+            .journal
+            .lock_backup
+            .as_ref()
+            .expect("lock backup")
+            .clone();
+
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("chflags")
+                .arg("uchg")
+                .arg(&lock_backup)
+                .status()
+                .expect("lock backup lock");
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let dir = lock_backup
+                .parent()
+                .expect("backup file is always in cache");
+            let mut permissions = fs::metadata(dir)
+                .expect("cache metadata")
+                .permissions();
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(0o555);
+            fs::set_permissions(dir, permissions).expect("make cache read-only");
+        }
+
+        let warnings = transaction
+            .finish()
+            .expect("finish");
+        assert!(!warnings.is_empty(), "expected backup cleanup warning");
+        assert!(
+            warnings.iter().any(|warning| warning.contains(&lock_backup.display().to_string())),
+            "expected warning to include backup path"
+        );
+        emit_cleanup_warnings(&warnings);
+
+        let lock_backup_still_exists = lock_backup.exists();
+        assert!(lock_backup_still_exists, "expected stubborn lock backup to remain");
+
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("chflags")
+                .arg("nouchg")
+                .arg(&lock_backup)
+                .status()
+                .expect("unlock backup");
+            fs::remove_file(lock_backup).expect("cleanup mocked backup file");
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let dir = lock_backup
+                .parent()
+                .expect("backup file is always in cache");
+            let mut permissions = fs::metadata(dir)
+                .expect("cache metadata")
+                .permissions();
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(0o755);
+            fs::set_permissions(dir, permissions).expect("restore cache permissions");
+            fs::remove_file(lock_backup).expect("cleanup mocked backup file");
+        }
     }
 }

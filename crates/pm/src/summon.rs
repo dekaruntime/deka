@@ -139,7 +139,7 @@ pub fn summon_at(
         fs::File::open(&manifest_path)?.sync_all()?;
         let cleanup_warnings = transaction.finish()?;
         if !cleanup_warnings.is_empty() {
-            crate::install::emit_install_cleanup_warnings(&cleanup_warnings);
+            crate::recovery_report::emit_cleanup_warnings(&cleanup_warnings);
         }
         Ok(())
     })();
