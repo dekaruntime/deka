@@ -47,8 +47,3 @@ libc = "0.2"
 [dev-dependencies]
 axum = "0.7"
 security = { path = "../security" }
-
-# deka#1029: trivial no-op touch on this PR to exercise the lockfile-check
-# job-level gate empirically (needs.changes.outputs.lockfile == "true"),
-# proving it actually runs rather than being skipped. Safe to revert once
-# the run is observed.
