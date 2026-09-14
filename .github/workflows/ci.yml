@@ -340,7 +340,7 @@ jobs:
       - name: Build CLI for runtime execution tests
         run: |
           scripts/check-prod-react-bytes.sh
-          cargo build --release -p cli --features dev-server
+          cargo build --release -p cli
 
       # RFD 59 (deka#836): the shipped CLI fetches the pinned content
       # checkouts. This replaces scripts/ci-fetch-testsuite-corpus.sh and

@@ -22,3 +22,12 @@ The starter does not use JSX page rendering, layouts, islands, hydration, or
 prerendering. Those framework features are paused while the component foundation
 moves to dsc. Existing JSX projects are not converted by `deka init`; their
 framework rendering remains unavailable during the extraction.
+
+## Task exit status
+
+Tasks in `deka.json` run with `deka task <name>`. A failed task returns its
+command's exit code, including failures in dependencies or wildcard matches.
+For example, with `"tasks": {"dev": "exit 23"}`, `deka task dev` reports
+``task `dev` failed with exit code 23`` and exits with status 23. A task whose
+dependency fails does not run its own command. Task setup errors return status 1;
+successful tasks return status 0.

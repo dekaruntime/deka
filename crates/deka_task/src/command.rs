@@ -49,11 +49,11 @@ pub fn cmd(context: &Context) {
     let cwd = std::env::current_dir().ok();
     let Some(cwd) = cwd else {
         stdio::error("task", "failed to resolve current directory");
-        return;
+        std::process::exit(1);
     };
     let Some((project_root, json)) = load_deka_json(&cwd) else {
         stdio::error("task", "deka.json not found (searched parent directories)");
-        return;
+        std::process::exit(1);
     };
 
     let (tasks, used_scripts) = extract_tasks(&json);
@@ -72,9 +72,10 @@ pub fn cmd(context: &Context) {
     }
 
     let task_name = task_name.unwrap();
-    if let Err(message) = run_tasks(task_name, &tasks, &project_root, &cwd) {
-        stdio::error("task", &message);
+    if let Err(error) = run_tasks(task_name, &tasks, &project_root, &cwd) {
+        stdio::error("task", &error.message);
         print_task_list(&tasks);
+        std::process::exit(error.exit_code);
     }
 }
 
@@ -86,6 +87,21 @@ fn requested_task_name<'a>(context: &'a Context) -> Option<&'a str> {
         return Some(context.args.commands[1].as_str());
     }
     None
+}
+
+#[derive(Debug, Clone)]
+struct TaskError {
+    message: String,
+    exit_code: i32,
+}
+
+impl From<String> for TaskError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            exit_code: 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -257,9 +273,9 @@ fn run_task(
     task: &TaskDef,
     project_root: &Path,
     init_cwd: &Path,
-) -> Result<(), String> {
+) -> Result<(), TaskError> {
     if task.command.trim().is_empty() {
-        return Err(format!("task `{}` has empty command", name));
+        return Err(format!("task `{}` has empty command", name).into());
     }
 
     let list = parse(&task.command).map_err(|err| err.to_string())?;
@@ -306,10 +322,10 @@ fn run_task(
     if exit_code == 0 {
         Ok(())
     } else {
-        Err(format!(
-            "task `{}` failed with exit code {}",
-            name, exit_code
-        ))
+        Err(TaskError {
+            message: format!("task `{}` failed with exit code {}", name, exit_code),
+            exit_code,
+        })
     }
 }
 
@@ -318,7 +334,7 @@ fn run_tasks(
     tasks: &BTreeMap<String, TaskDef>,
     project_root: &Path,
     init_cwd: &Path,
-) -> Result<(), String> {
+) -> Result<(), TaskError> {
     let runner = TaskRunner::new(tasks, project_root, init_cwd);
     if tasks.contains_key(name) {
         return runner.run(name, Vec::new());
@@ -326,7 +342,7 @@ fn run_tasks(
 
     let is_pattern = name.contains('*') || name.contains('?') || name.contains('[');
     if !is_pattern {
-        return Err(format!("unknown task `{}`", name));
+        return Err(format!("unknown task `{}`", name).into());
     }
 
     let pattern = Pattern::new(name).map_err(|err| err.to_string())?;
@@ -336,7 +352,7 @@ fn run_tasks(
         .cloned()
         .collect::<Vec<_>>();
     if matches.is_empty() {
-        return Err(format!("no tasks matched `{}`", name));
+        return Err(format!("no tasks matched `{}`", name).into());
     }
     let mut handles = Vec::new();
     for task_name in matches {
@@ -347,7 +363,7 @@ fn run_tasks(
         match handle.join() {
             Ok(Ok(())) => {}
             Ok(Err(err)) => return Err(err),
-            Err(_) => return Err("task thread panicked".to_string()),
+            Err(_) => return Err("task thread panicked".to_string().into()),
         }
     }
     Ok(())
@@ -364,7 +380,7 @@ struct TaskRunner {
 #[derive(Clone)]
 enum TaskState {
     InProgress,
-    Done(Result<(), String>),
+    Done(Result<(), TaskError>),
 }
 
 impl TaskRunner {
@@ -377,11 +393,11 @@ impl TaskRunner {
         }
     }
 
-    fn run(&self, name: &str, stack: Vec<String>) -> Result<(), String> {
+    fn run(&self, name: &str, stack: Vec<String>) -> Result<(), TaskError> {
         if stack.iter().any(|item| item == name) {
             let mut chain = stack;
             chain.push(name.to_string());
-            return Err(format!("task dependency cycle: {}", chain.join(" -> ")));
+            return Err(format!("task dependency cycle: {}", chain.join(" -> ")).into());
         }
         let task = self
             .tasks
@@ -423,7 +439,7 @@ impl TaskRunner {
                     return Err(err);
                 }
                 Err(_) => {
-                    let message = "task thread panicked".to_string();
+                    let message = TaskError::from("task thread panicked".to_string());
                     self.finish(name, Err(message.clone()));
                     return Err(message);
                 }
@@ -435,7 +451,7 @@ impl TaskRunner {
         result
     }
 
-    fn finish(&self, name: &str, result: Result<(), String>) {
+    fn finish(&self, name: &str, result: Result<(), TaskError>) {
         let (lock, cvar) = &*self.state;
         if let Ok(mut guard) = lock.lock() {
             guard.insert(name.to_string(), TaskState::Done(result));
@@ -629,6 +645,6 @@ mod tests {
         );
         let err =
             run_tasks("root", &tasks, project_root.path(), init_cwd).expect_err("should fail");
-        assert!(err.contains("task `a` failed"));
+        assert!(err.message.contains("task `a` failed"));
     }
 }
