@@ -374,6 +374,14 @@ jobs:
       # Build the release CLI before the workspace test so pm's
       # real_cli_invocation_recovers_each_atomic_swap_boundary test can find
       # target/release/cli (deka#521).
+      #
+      # check-prod-react-bytes.sh (deka#982) already builds the
+      # default-feature release CLI as part of its byte scan, and leaves it
+      # at target/release/cli — the exact artifact this step's own
+      # `cargo build --release -p cli` produces. That makes this line a
+      # cargo cache hit in the common case; it stays explicit rather than
+      # relying on script-internal ordering, since the next step depends on
+      # this exact path existing regardless of how the scan script evolves.
       - name: Build CLI for runtime execution tests
         run: |
           scripts/check-prod-react-bytes.sh

@@ -21,6 +21,32 @@ fn fixture_src() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/react-builtin")
 }
 
+/// The frozen development React source `deka dev`'s Fast Refresh serves
+/// (crates/http/vendor/react/, gated behind the `dev-server` feature). The
+/// default-feature CLI legitimately embeds this in its own binary (deka#980)
+/// so the dev server has it to serve — that is not a leak. What must never
+/// happen is this source landing inside a *production bundle* a merchant
+/// actually ships. `dev_react_chunks()` slices it the same way
+/// scripts/check-prod-react-bytes.sh does, so both guards use one
+/// definition of "a chunk of this file."
+fn dev_react_vendor_bytes() -> Vec<u8> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crates/")
+        .parent()
+        .expect("workspace root")
+        .to_path_buf();
+    fs::read(workspace_root.join("crates/http/vendor/react/react-dom-client.js"))
+        .expect("read crates/http/vendor/react/react-dom-client.js")
+}
+
+fn dev_react_chunks(vendor: &[u8]) -> Vec<&[u8]> {
+    (0..vendor.len().saturating_sub(128))
+        .step_by(4096)
+        .map(|i| &vendor[i..i + 128])
+        .collect()
+}
+
 struct ServeProcess {
     child: Child,
     log_path: PathBuf,
@@ -196,6 +222,30 @@ fn build_bundle_inlines_prod_react_without_dev_bytes() {
             "prod bundle leaked development React bytes ({probe})"
         );
     }
+
+    // deka#982: the checks above assert on `bundle`, an in-memory decoded
+    // `String` — they cannot catch source that lands in the *file on disk*
+    // through some path that never touches that `String` (encoding quirks,
+    // a post-processing pass, a different write path). Re-read the emitted
+    // file's raw bytes and scan them directly for disjoint chunks of the
+    // actual frozen dev-React vendor source, the same technique
+    // scripts/check-prod-react-bytes.sh uses on the CLI binary itself. This
+    // is the byte-level guard on the artifact that matters: what a merchant
+    // actually ships to their storefront's customers.
+    let bundle_bytes = fs::read(&out).expect("read bundle bytes");
+    let vendor = dev_react_vendor_bytes();
+    let chunks = dev_react_chunks(&vendor);
+    assert!(
+        !chunks.is_empty(),
+        "no vendor chunks derived from react-dom-client.js"
+    );
+    assert!(
+        !chunks
+            .iter()
+            .any(|chunk| bundle_bytes.windows(chunk.len()).any(|w| w == *chunk)),
+        "prod bundle file bytes contain a chunk of the frozen dev-React vendor source"
+    );
+
     assert!(!root.path().join("ds_modules").exists());
 
     let runner = root.path().join("run-bundle.mjs");
