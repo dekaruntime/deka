@@ -3,6 +3,13 @@ name = "pm"
 version.workspace = true
 edition = "2024"
 
+[features]
+default = []
+# deka#992: self-update is deferred until closer to MVP. Gates `releases`
+# (the deka.gg release-manifest check `self_cmd::update::check_latest`
+# depends on) so it does not compile into a default build.
+self-update = []
+
 [dependencies]
 deka-cli-core = { version = "0.5.0", default-features = false, features = ["registry"] }
 stdio = "0.4.0"

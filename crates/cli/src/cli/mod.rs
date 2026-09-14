@@ -20,11 +20,6 @@ pub fn register_global_flags(registry: &mut Registry) {
         description: "show detailed metadata where supported",
     });
     registry.add_flag(FlagSpec {
-        name: "--update",
-        aliases: &["-U"],
-        description: "check for updates",
-    });
-    registry.add_flag(FlagSpec {
         name: "--debug",
         aliases: &["-d", "debug"],
         description: "enable debug logging",
@@ -228,14 +223,6 @@ pub fn version(verbose: bool) {
         raw(&format!("react: {}", react));
     }
     raw("");
-    raw("to check for updates run: deka --update");
-    raw("");
-}
-
-pub fn update() {
-    raw(
-        "this will check for updates and offer the ability to run the update. not yet implemented. \n",
-    );
 }
 
 pub fn error(msg: Option<&str>) {
@@ -293,10 +280,6 @@ pub fn execute(registry: &Registry) -> i32 {
             version(verbose);
             return 0;
         }
-        if args.flags.contains_key("--update") || args.flags.contains_key("-U") {
-            update();
-            return 0;
-        }
     }
 
     let context = match crate::context::from_env(registry) {
@@ -330,9 +313,6 @@ pub fn execute(registry: &Registry) -> i32 {
             {
                 let verbose = cmd.flags.contains_key("--verbose");
                 version(verbose);
-            }
-            if cmd.flags.contains_key("--update") || cmd.flags.contains_key("-U") {
-                update();
             }
         }
         return 0;

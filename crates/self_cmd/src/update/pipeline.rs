@@ -13,21 +13,16 @@
 //! 7. Restart configured managed services.
 
 use deka_cli_core::Context;
-use serde::Deserialize;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use stdio;
 
+use super::resolve::{is_newer, resolve_latest_version};
+
 // ---------------------------------------------------------------------------
 // Public shared core (callable from deka self monitor)
 // ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct LatestVersionInfo {
-    pub version: String,
-    pub digest: String,
-}
 
 #[derive(Debug, Clone)]
 pub struct UpdateConfig {
@@ -46,37 +41,6 @@ pub struct UpdateResult {
     pub new_version: String,
     pub snapshot_path: PathBuf,
     pub restarted_units: Vec<String>,
-}
-
-/// Resolve the latest published version from the linkhash registry.
-///
-/// The query path is isolated in this small function so it is easy to repoint
-/// at the live endpoint once Samira deploys it.
-pub fn resolve_latest_version(
-    registry_url: &str,
-    token: Option<&str>,
-) -> Result<LatestVersionInfo, String> {
-    let client = reqwest::blocking::Client::new();
-    let url = format!(
-        "{}/api/v1/packages/cargo/deka/latest",
-        registry_url.trim_end_matches('/')
-    );
-    let mut request = client.get(&url);
-    if let Some(t) = token {
-        request = request.bearer_auth(t);
-    }
-    let response = request
-        .send()
-        .map_err(|e| format!("version resolution request failed: {}", e))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().unwrap_or_default();
-        return Err(format!("version resolution failed ({}): {}", status, body));
-    }
-    let info: LatestVersionInfo = response
-        .json()
-        .map_err(|e| format!("failed to parse version response: {}", e))?;
-    Ok(info)
 }
 
 /// Run the full update flow with safety rails.
@@ -232,9 +196,19 @@ pub fn run_update(config: &UpdateConfig) -> Result<UpdateResult, String> {
 }
 
 // ---------------------------------------------------------------------------
-// CLI handler
+// CLI handler -- NOT WIRED TO ANY COMMAND (deka#990)
 // ---------------------------------------------------------------------------
-
+//
+// This was `deka self update`'s handler until deka#990's course correction
+// pointed that subcommand at `check::cmd` instead: this function resolves
+// against a linkhash registry URL (default `http://localhost:9418`) that
+// is the retired self-hosted registry, so running it hit a connection
+// error rather than checking anything real. `run_update` below is still
+// live via `deka self monitor` (see `monitor.rs`), so it stays -- only
+// this specific CLI entry point into it is dead. Do not re-wire this as a
+// command handler without first fixing what `resolve_latest_version`
+// resolves against.
+#[allow(dead_code)]
 pub fn cmd(context: &Context) {
     let (registry_url, token, registry_index_url) = get_registry_config(context);
     let current_version = env!("CARGO_PKG_VERSION").to_string();
@@ -317,24 +291,6 @@ pub fn get_registry_config(context: &Context) -> (String, Option<String>, Option
     (registry, token, registry_index_url)
 }
 
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = v.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next()?.parse().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some((major, minor, patch))
-}
-
-fn is_newer(latest: &str, current: &str) -> bool {
-    match (parse_version(latest), parse_version(current)) {
-        (Some(l), Some(c)) => l > c,
-        _ => latest != current,
-    }
-}
-
 fn snapshot_binary(binary: &Path) -> Result<PathBuf, String> {
     let parent = binary.parent().unwrap_or_else(|| Path::new("."));
     let stem = binary
@@ -387,7 +343,7 @@ fn verify_binary_digest(binary: &Path, expected_digest: &str) -> Result<(), Stri
     Ok(())
 }
 
-pub(super) fn validate_managed_unit_name(unit: &str) -> Result<(), String> {
+pub(crate) fn validate_managed_unit_name(unit: &str) -> Result<(), String> {
     if unit.is_empty() {
         return Err("managed unit name is empty".to_string());
     }
@@ -726,10 +682,6 @@ fn prompt_yes_no(prompt: &str, default_yes: bool) -> Option<bool> {
     Some(default_yes)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -762,31 +714,6 @@ mod tests {
                 serve_config_path: None,
             });
         context
-    }
-
-    #[test]
-    fn parse_version_valid() {
-        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
-        assert_eq!(parse_version("0.0.1"), Some((0, 0, 1)));
-        assert_eq!(parse_version("10.20.30"), Some((10, 20, 30)));
-    }
-
-    #[test]
-    fn parse_version_invalid() {
-        assert_eq!(parse_version("1.2"), None);
-        assert_eq!(parse_version("1.2.3.4"), None);
-        assert_eq!(parse_version("a.b.c"), None);
-        assert_eq!(parse_version(""), None);
-    }
-
-    #[test]
-    fn is_newer_comparison() {
-        assert!(is_newer("1.0.0", "0.9.9"));
-        assert!(is_newer("0.2.0", "0.1.99"));
-        assert!(is_newer("0.0.2", "0.0.1"));
-        assert!(!is_newer("0.0.1", "0.0.2"));
-        assert!(!is_newer("1.0.0", "1.0.0"));
-        assert!(!is_newer("1.0.0", "2.0.0"));
     }
 
     #[test]
@@ -922,30 +849,6 @@ mod tests {
         let err = validate_update_config_path(Path::new("monitor.json"), true)
             .expect_err("privileged relative config should fail");
         assert!(err.contains("absolute --config path"));
-    }
-
-    #[test]
-    fn resolve_latest_version_url_shape() {
-        // Contract test: verify the URL is built exactly as expected.
-        let url = "http://localhost:9418";
-        let constructed = format!(
-            "{}/api/v1/packages/cargo/deka/latest",
-            url.trim_end_matches('/')
-        );
-        assert_eq!(
-            constructed,
-            "http://localhost:9418/api/v1/packages/cargo/deka/latest"
-        );
-
-        let url2 = "http://localhost:9418/";
-        let constructed2 = format!(
-            "{}/api/v1/packages/cargo/deka/latest",
-            url2.trim_end_matches('/')
-        );
-        assert_eq!(
-            constructed2,
-            "http://localhost:9418/api/v1/packages/cargo/deka/latest"
-        );
     }
 
     #[test]

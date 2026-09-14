@@ -136,28 +136,37 @@ fn ambient_environment_child() {
     println!("ambient-proof:install-registry={}", registry);
     println!("ambient-proof:install-token={:?}", token);
 
-    let (registry, token, index) = self_cmd::update::get_registry_config(&ctx);
-    println!("ambient-proof:self-update-registry={}", registry);
-    println!("ambient-proof:self-update-token={:?}", token);
-    println!("ambient-proof:self-update-index={:?}", index);
+    // self_cmd::update / self_cmd::monitor only exist behind the
+    // non-default `self-update` feature (deka#992: self-update is
+    // deferred until closer to MVP). Their ambient-env resolution is
+    // still pinned here, just conditionally -- `cargo test -p cli
+    // --features self-update` exercises it; the default build has
+    // nothing to pin because the code is not compiled in.
+    #[cfg(feature = "self-update")]
+    {
+        let (registry, token, index) = self_cmd::update::get_registry_config(&ctx);
+        println!("ambient-proof:self-update-registry={}", registry);
+        println!("ambient-proof:self-update-token={:?}", token);
+        println!("ambient-proof:self-update-index={:?}", index);
 
-    let monitor = self_cmd::monitor::load_monitor_config(&ctx).unwrap();
-    println!(
-        "ambient-proof:monitor-poll-secs={}",
-        monitor.poll_interval.as_secs()
-    );
-    println!(
-        "ambient-proof:monitor-registry={}",
-        monitor.update_config.registry_url
-    );
-    println!(
-        "ambient-proof:monitor-token={:?}",
-        monitor.update_config.token
-    );
-    println!(
-        "ambient-proof:monitor-index={:?}",
-        monitor.update_config.registry_index_url
-    );
+        let monitor = self_cmd::monitor::load_monitor_config(&ctx).unwrap();
+        println!(
+            "ambient-proof:monitor-poll-secs={}",
+            monitor.poll_interval.as_secs()
+        );
+        println!(
+            "ambient-proof:monitor-registry={}",
+            monitor.update_config.registry_url
+        );
+        println!(
+            "ambient-proof:monitor-token={:?}",
+            monitor.update_config.token
+        );
+        println!(
+            "ambient-proof:monitor-index={:?}",
+            monitor.update_config.registry_index_url
+        );
+    }
 
     let auth = deka_registry::publish::resolve_registry_auth(&HashMap::new(), None);
     println!("ambient-proof:publish-auth={:?}", auth);

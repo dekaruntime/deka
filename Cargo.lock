@@ -7572,11 +7572,13 @@ dependencies = [
 name = "self_cmd"
 version = "0.53.1"
 dependencies = [
+ "axum",
  "compiler",
  "ctrlc",
  "deka-cli-core",
  "flate2",
  "libc",
+ "pm",
  "reqwest",
  "run",
  "serde",
@@ -7586,6 +7588,7 @@ dependencies = [
  "stdio",
  "tar",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

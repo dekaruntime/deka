@@ -21,6 +21,10 @@ native = [
 ]
 dev-server = ["native", "dev/dev-server"]
 lsp = ["compiler/lsp"]
+# deka#992: self-update is deferred until closer to MVP; off by default.
+# Forwards to self_cmd, which gates `self update`/`self monitor` and the
+# pm::releases check-latest path behind the same flag.
+self-update = ["self_cmd/self-update"]
 
 [dependencies]
 serve = { path = "../serve" }
@@ -62,6 +66,12 @@ pool = { path = "../pool" }
 deka-modules = "0.3.0"
 deka-db = { path = "../deka_db" }
 pm = { workspace = true }
+# ambient_environment.rs cfg-gates its self_cmd::update/self_cmd::monitor
+# assertions behind the `self-update` feature (rather than forcing it on
+# here) precisely so this dev-dependency edge does NOT unify self-update
+# into every other cli test target in the same `cargo test -p cli`
+# invocation -- e.g. command_owners.rs's help-snapshot pin, which must see
+# the real default (no self-update) command surface to mean anything.
 self_cmd = { path = "../self_cmd" }
 deka-registry = { path = "../deka_registry" }
 deka-deploy = { path = "../deka_deploy" }
