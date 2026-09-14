@@ -1,3 +1,9 @@
+use super::specs::contains_dev_bytes;
+use super::vendor::{
+    HASHES, JSX_RUNTIME_CJS, JSX_RUNTIME_SHA, MINIFIED_HASHES, REACT_CJS, REACT_DOM_CJS,
+    REACT_DOM_CLIENT_CJS, REACT_DOM_CLIENT_SHA, REACT_DOM_SHA, REACT_SHA, SCHEDULER_CJS,
+    SCHEDULER_SHA, SERVER_BROWSER_CJS, SERVER_BROWSER_SHA, SERVER_LEGACY_CJS, SERVER_LEGACY_SHA,
+};
 use super::*;
 use std::collections::BTreeMap;
 
@@ -130,6 +136,105 @@ fn minified_server_esm_loads_in_node() {
 }
 
 #[test]
+fn island_ssr_prerenders_signal_read_inside_stamped_host() {
+    let dir = tempfile::tempdir().expect("tmp");
+    for file in [
+        "react.js",
+        "jsx-runtime.js",
+        "react-dom.js",
+        "react-dom-server-legacy.js",
+        "react-dom-server-browser.js",
+        "react-dom-server.js",
+        "scheduler.js",
+        "react-dom-client.js",
+    ] {
+        let esm = esm_for_file(file).expect(file);
+        std::fs::write(dir.path().join(file), esm).expect("write esm");
+    }
+    let runner = dir.path().join("boot-signal.mjs");
+    std::fs::write(
+        &runner,
+        r#"import { renderToString } from './react-dom-server.js';
+import { jsx } from './jsx-runtime.js';
+
+function createSignal(initial) {
+  let value = initial;
+  function read() { return value; }
+  function write(next) { value = next; }
+  read[0] = read;
+  read[1] = write;
+  read[Symbol.iterator] = function* () { yield read; yield write; };
+  return read;
+}
+function live(fn) {
+  return Object.freeze({ __live: true, read: fn });
+}
+
+function SignalCounter() {
+  const count = createSignal(0);
+  return jsx('button', { 'data-deka-id': 'test:Counter/i0', children: count() });
+}
+function LiveCounter() {
+  const count = createSignal(0);
+  return jsx('button', {
+    'data-deka-id': 'test:Counter/i0',
+    children: live(function () { return count(); }),
+  });
+}
+function StaticCounter() {
+  return jsx('button', { 'data-deka-id': 'test:Counter/i0', children: '0' });
+}
+
+function assertIsland(html, label) {
+  if (!html.includes('data-deka-island="')) throw new Error(label + ' missing island: ' + html);
+  if (!html.includes('data-deka-id="test:Counter/i0"')) throw new Error(label + ' missing stamp: ' + html);
+  if (!html.includes('>0</button>')) throw new Error(label + ' empty signal read: ' + html);
+}
+
+assertIsland(renderToString(jsx(SignalCounter, { 'client:load': true })), 'signal');
+assertIsland(renderToString(jsx(LiveCounter, { 'client:load': true })), 'live');
+assertIsland(renderToString(jsx(StaticCounter, { 'client:load': true })), 'static');
+
+const pair = createSignal(0);
+if (pair() !== 0) throw new Error('callable signal');
+if (pair[0]() !== 0) throw new Error('tuple get');
+pair[1](4);
+if (pair() !== 4) throw new Error('tuple set');
+const [get, set] = createSignal(1);
+if (get() !== 1) throw new Error('destructure get');
+set(2);
+if (get() !== 2) throw new Error('destructure set');
+
+function Boom() {
+  return jsx('button', {
+    children: live(function () { throw new Error('boom'); }),
+  });
+}
+let threw = false;
+try {
+  renderToString(jsx(Boom, { 'client:load': true }));
+} catch (e) {
+  threw = String(e && e.message ? e.message : e).includes('boom');
+}
+if (!threw) throw new Error('live throw was swallowed');
+console.log('ok');
+"#,
+    )
+    .expect("write boot");
+    let output = std::process::Command::new("node")
+        .arg(runner.to_str().expect("utf-8"))
+        .current_dir(dir.path())
+        .output()
+        .expect("node boot signal island");
+    assert!(
+        output.status.success(),
+        "island SSR signal prerender failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn minified_vendor_parses_in_node() {
     let dir = tempfile::tempdir().expect("tmp");
     for (name, source) in VENDOR_CJS {
@@ -232,6 +337,7 @@ fn production_wrappers_do_not_contain_dev_bytes() {
     let jsx = esm_for_file("jsx-runtime.js").unwrap();
     assert!(jsx.contains("exports.jsx"));
     assert!(jsx.contains("__dekaIslandJsx"));
+    assert!(jsx.contains("__dekaResolveChild"));
     assert!(jsx.contains("deka-island"));
     let server = esm_for_file("react-dom-server.js").unwrap();
     assert!(server.contains("renderToString"));

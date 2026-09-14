@@ -177,7 +177,20 @@ impl WorkerThread {
                         value = nextValue;
                         for (const ctx of Array.from(subscribers)) ctx.execute();
                     }
-                    return [read, write];
+                    // Callable pair: `const count = signal(0); count()` reads,
+                    // and `const [get, set] = signal(0)` still destructures.
+                    // JSX `{count()}` must prerender the initial value (dsc#82).
+                    // A Proxy around an array is not callable (apply traps
+                    // require a function target), so stamp the tuple onto the
+                    // getter itself.
+                    read[0] = read;
+                    read[1] = write;
+                    read[Symbol.iterator] = function* () { yield read; yield write; };
+                    return read;
+                }
+                function __dekaLive(fn) {
+                    if (typeof fn === "function") return fn();
+                    return fn;
                 }
                 function __dekaCreateEffect(fn) {
                     let userCleanup;
@@ -208,10 +221,12 @@ impl WorkerThread {
                 globalThis.createSignal = __dekaCreateSignal;
                 globalThis.createEffect = __dekaCreateEffect;
                 globalThis.createMemo = __dekaCreateMemo;
+                globalThis.live = __dekaLive;
                 globalThis.deka.ui = Object.freeze({
                     signal: __dekaCreateSignal,
                     effect: __dekaCreateEffect,
                     memo: __dekaCreateMemo,
+                    live: __dekaLive,
                     createSignal: __dekaCreateSignal,
                     createEffect: __dekaCreateEffect,
                     createMemo: __dekaCreateMemo,
