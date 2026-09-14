@@ -706,8 +706,10 @@ mod tests {
         );
         #[cfg(not(feature = "dev-server"))]
         {
-            assert!(!out.contains("__deka_refresh_preamble"));
-            assert!(!out.contains("__deka_react_importmap"));
+            // morph.js (always bundled in the HMR client) names the preamble
+            // element id; only the injected script TAGS must be absent here.
+            assert!(!out.contains("id=\"__deka_refresh_preamble\""));
+            assert!(!out.contains("id=\"__deka_react_importmap\""));
         }
         #[cfg(feature = "dev-server")]
         {
