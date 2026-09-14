@@ -21,6 +21,9 @@ pub enum RuntimeMode {
     Desktop,
 }
 
+/// Snapshot metadata written by `deka compile --desktop` (not a user asset).
+pub const DESKTOP_META_PATH: &str = "__deka_desktop.json";
+
 /// Individual file entry in the VFS
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileEntry {

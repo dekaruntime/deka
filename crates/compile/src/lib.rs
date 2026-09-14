@@ -1,6 +1,7 @@
 pub mod binary;
 pub mod command;
 pub mod config;
+mod desktop;
 pub mod vfs;
 
 pub use command::register;
@@ -17,8 +18,24 @@ pub fn run(context: &Context) {
 }
 
 fn compile(context: &Context) -> Result<(), String> {
+    if context
+        .args
+        .flags
+        .get("--desktop")
+        .copied()
+        .unwrap_or(false)
+    {
+        return desktop::compile_desktop(context);
+    }
+    compile_executable(context)
+}
+
+fn compile_executable(context: &Context) -> Result<(), String> {
     if context.args.positionals.len() != 1 {
-        return Err("usage: deka compile <entry.ds> [--outfile <executable>]".into());
+        return Err(
+            "usage: deka compile <entry.ds> [--outfile <executable>]  (or deka compile --desktop)"
+                .into(),
+        );
     }
     let entry = PathBuf::from(&context.args.positionals[0]);
     if entry.extension().and_then(|s| s.to_str()) != Some("ds") {

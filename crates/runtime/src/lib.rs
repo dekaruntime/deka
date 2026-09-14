@@ -12,6 +12,7 @@ mod build_values;
 mod command_platform;
 mod command_run;
 mod command_serve;
+mod desktop;
 mod dsc_transpile;
 mod extensions;
 mod js_pipeline;
@@ -99,8 +100,21 @@ pub fn platform(context: &Context) {
 
 pub fn serve_desktop(context: &Context) {
     let _ = context;
-    eprintln!("[desktop] desktop runtime mode is deferred in reboot MVP");
-    std::process::exit(1);
+    match read_embedded_vfs() {
+        Some(vfs) => {
+            if let Err(err) = desktop::run_desktop(vfs) {
+                stdio::error("desktop", &err);
+                std::process::exit(1);
+            }
+        }
+        None => {
+            stdio::error(
+                "desktop",
+                "no embedded desktop snapshot; produce one with deka compile --desktop",
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 const VFS_MAGIC: &[u8; 8] = b"DEKAVFS1";
@@ -144,7 +158,9 @@ fn find_embedded_vfs_metadata(path: &Path) -> Result<compile::binary::BinaryMeta
     }
 
     #[cfg(target_os = "macos")]
-    let file_len = compile::binary::signed_data_end(&mut file)?.unwrap_or(file_len).min(file_len);
+    let file_len = compile::binary::signed_data_end(&mut file)?
+        .unwrap_or(file_len)
+        .min(file_len);
     let scan_len = file_len.min(VFS_TAIL_SCAN_BYTES) as usize;
     let scan_start = file_len - scan_len as u64;
     file.seek(SeekFrom::Start(scan_start))
@@ -197,6 +213,9 @@ fn read_embedded_vfs_bytes(path: &Path) -> Result<Vec<u8>, String> {
 
 pub fn run_embedded_vfs(args: Vec<String>) -> Result<(), String> {
     let vfs = read_embedded_vfs().ok_or_else(|| "No embedded VFS found".to_string())?;
+    if vfs.mode == compile::vfs::RuntimeMode::Desktop {
+        return desktop::run_desktop(vfs);
+    }
     let temp_dir = tempfile::Builder::new()
         .prefix("deka-embedded-vfs-")
         .tempdir()
@@ -300,7 +319,8 @@ mod tests {
         );
         let bytes = vfs.to_bytes().unwrap();
         let mut image = std::fs::read(runtime_path).unwrap();
-        let metadata = BinaryMetadata::new(image.len() as u64, bytes.len() as u64, "index.phpx".into());
+        let metadata =
+            BinaryMetadata::new(image.len() as u64, bytes.len() as u64, "index.phpx".into());
         image.extend_from_slice(&bytes);
         image.extend_from_slice(&metadata.to_bytes());
         std::fs::write(&output_path, image).unwrap();
