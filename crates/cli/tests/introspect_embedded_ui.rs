@@ -90,7 +90,13 @@ fn release_cli_runs_introspect_without_source_ui() {
 
     assert_eq!(
         output.status.code(),
-        Some(1),
+        // deka#1010: missing required argument is a usage error (2), not a
+        // runtime failure (1). This assertion is still about the same
+        // thing it always was -- that introspect reaches its own command
+        // handler after loading the embedded UI, rather than failing
+        // earlier while still hunting for the source-tree UI -- just
+        // under the corrected exit code for that handler's own error path.
+        Some(2),
         "missing inspect handler should be the command error: {combined}"
     );
     assert!(
