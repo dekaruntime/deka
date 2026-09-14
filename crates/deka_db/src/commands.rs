@@ -45,4 +45,9 @@ fn cmd(_context: &Context) {
         "db",
         "missing subcommand. use: deka db migrate|info|flush",
     );
+    // Missing subcommand is a usage error (deka#1010): the CLI's documented
+    // convention is exit 2 for usage/parse errors, 1 for runtime failures.
+    // This handler previously fell through and returned 0 on the exact
+    // failure path it just printed an error for.
+    std::process::exit(2);
 }

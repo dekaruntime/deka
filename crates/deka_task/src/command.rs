@@ -68,6 +68,14 @@ pub fn cmd(context: &Context) {
     }
     if task_name.is_none() || context.args.flags.contains_key("--list") {
         print_task_list(&tasks);
+        if tasks.is_empty() {
+            // print_task_list already printed the error; deka.json exists
+            // but defines no tasks. That's environment state, not a bad
+            // argument: runtime failure, exit 1 (deka#1010). Previously
+            // this returned with no exit code set, so the process
+            // exited 0 on the exact failure it just reported.
+            std::process::exit(1);
+        }
         return;
     }
 
@@ -240,7 +248,10 @@ fn print_task_json(tasks: &BTreeMap<String, TaskDef>) {
     let json = tasks_to_json(tasks);
     match serde_json::to_string_pretty(&json) {
         Ok(text) => raw(&text),
-        Err(err) => stdio::error("task", &format!("failed to format tasks: {}", err)),
+        Err(err) => {
+            stdio::error("task", &format!("failed to format tasks: {}", err));
+            std::process::exit(1);
+        }
     }
 }
 

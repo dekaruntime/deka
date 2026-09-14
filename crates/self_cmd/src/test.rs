@@ -13,18 +13,25 @@ const COLOR_RESET: &str = "\x1b[0m";
 
 pub fn cmd(context: &Context) {
     let suite = context.args.positionals.get(0).map(|s| s.as_str());
-    let result = match suite {
-        Some("php") => run_php_suite(context),
+    // usage_error distinguishes a bad/missing argument (exit 2) from a
+    // failure that only surfaces once we actually try to run something —
+    // suite fetch, pairing, or the runner subprocess itself (exit 1).
+    // Same rule as the rest of the CLI (deka#1010): usage=2, runtime=1.
+    let (result, usage_error) = match suite {
+        Some("php") => (run_php_suite(context), false),
         Some(name) => match targets::by_name(name) {
-            Some(target) => run_content_suite(context, target),
-            None => Err(format!("unknown self test suite '{}'", name)),
+            Some(target) => (run_content_suite(context, target), false),
+            None => (Err(format!("unknown self test suite '{}'", name)), true),
         },
-        None => Err("missing suite name (php, suite, tour)".to_string()),
+        None => (
+            Err("missing suite name (php, suite, tour)".to_string()),
+            true,
+        ),
     };
 
     if let Err(message) = result {
         stdio::error("self test", &message);
-        std::process::exit(1);
+        std::process::exit(if usage_error { 2 } else { 1 });
     }
 }
 

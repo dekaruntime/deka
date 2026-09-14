@@ -134,23 +134,25 @@ fn cmd_signup(context: &Context) {
         })
         .unwrap_or_else(|| "http://localhost:8508".to_string());
 
+    // Missing/invalid credentials are usage errors (deka#1010): exit 2.
+    // Network/registry failures below are runtime failures: exit 1.
     let Some(username_raw) = username_raw else {
         stdio::error("auth", "missing username");
-        return;
+        std::process::exit(2);
     };
     let Some(email) = email else {
         stdio::error("auth", "missing email");
-        return;
+        std::process::exit(2);
     };
     let Some(password) = password else {
         stdio::error("auth", "missing password");
-        return;
+        std::process::exit(2);
     };
 
     let username = normalize_username(&username_raw);
     if !is_valid_username(&username) {
         stdio::error("auth", "invalid --username (expected @username)");
-        return;
+        std::process::exit(2);
     }
 
     let endpoint = format!("{}/api/auth/signup", registry_url.trim_end_matches('/'));
@@ -192,8 +194,12 @@ fn cmd_signup(context: &Context) {
                 .and_then(|v| v.as_str())
                 .unwrap_or("signup failed");
             stdio::error("auth", msg);
+            std::process::exit(1);
         }
-        Err(err) => stdio::error("auth", &format!("signup request failed: {}", err)),
+        Err(err) => {
+            stdio::error("auth", &format!("signup request failed: {}", err));
+            std::process::exit(1);
+        }
     }
 }
 
@@ -228,15 +234,16 @@ fn cmd_login(context: &Context) {
         })
         .unwrap_or_else(|| "http://localhost:8508".to_string());
 
+    // Missing/invalid credentials: usage error, exit 2 (deka#1010).
     let Some(username_raw) = username_raw else {
         stdio::error("auth", "missing username (expected @username)");
-        return;
+        std::process::exit(2);
     };
 
     let username = normalize_username(&username_raw);
     if !is_valid_username(&username) {
         stdio::error("auth", "invalid --username (expected @username)");
-        return;
+        std::process::exit(2);
     }
 
     let token = if let Some(token) = token_from_param {
@@ -244,13 +251,15 @@ fn cmd_login(context: &Context) {
     } else if let Some(password) = password {
         if password.trim().is_empty() {
             stdio::error("auth", "missing token or password");
-            return;
+            std::process::exit(2);
         }
         match login_with_password(&registry_url, &username, &password) {
             Ok(t) => t,
             Err(err) => {
+                // Reaching the registry to exchange credentials is a
+                // runtime failure, not a usage error: exit 1.
                 stdio::error("auth", &format!("login failed: {}", err));
-                return;
+                std::process::exit(1);
             }
         }
     } else {
@@ -258,7 +267,7 @@ fn cmd_login(context: &Context) {
             Some(v) => v,
             None => {
                 stdio::error("auth", "missing token");
-                return;
+                std::process::exit(2);
             }
         }
     };
@@ -271,17 +280,21 @@ fn cmd_login(context: &Context) {
 
     if let Err(err) = auth_store::save(&profile) {
         stdio::error("auth", &format!("failed to persist auth profile: {}", err));
-        return;
+        std::process::exit(1);
     }
 
     stdio::log("auth", &format!("logged in as {}", username));
 }
 
 fn cmd_logout(_context: &Context) {
+    // Local profile-store failures are runtime failures: exit 1 (deka#1010).
     match auth_store::clear() {
         Ok(true) => stdio::log("auth", "logged out"),
         Ok(false) => stdio::log("auth", "no active auth profile"),
-        Err(err) => stdio::error("auth", &format!("failed to clear auth profile: {}", err)),
+        Err(err) => {
+            stdio::error("auth", &format!("failed to clear auth profile: {}", err));
+            std::process::exit(1);
+        }
     }
 }
 
@@ -293,8 +306,16 @@ fn cmd_whoami(_context: &Context) {
                 &format!("{} ({})", profile.username, profile.registry_url),
             );
         }
-        Ok(None) => stdio::error("auth", "not logged in (run `deka login`)"),
-        Err(err) => stdio::error("auth", &format!("failed to read auth profile: {}", err)),
+        // Not logged in is state, not a bad argument: exit 1 (deka#1010),
+        // same treatment as `self test`'s "not fetched" case.
+        Ok(None) => {
+            stdio::error("auth", "not logged in (run `deka login`)");
+            std::process::exit(1);
+        }
+        Err(err) => {
+            stdio::error("auth", &format!("failed to read auth profile: {}", err));
+            std::process::exit(1);
+        }
     }
 }
 
