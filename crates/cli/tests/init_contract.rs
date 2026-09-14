@@ -52,6 +52,22 @@ fn assert_scaffold(root: &Path) {
     assert!(config["serve"].get("entry").is_none());
     assert_eq!(config["tasks"]["dev"], "deka serve --dev");
 
+    // deka#973: the scaffold declares RFD-53 phase-aware permissions, not the
+    // legacy `security` shape — dev gets a working grant with zero manual
+    // editing, prod stays fully denied (declared, not implicit).
+    assert!(
+        config.get("security").is_none(),
+        "scaffold must not use the legacy security shape: {config}"
+    );
+    assert_eq!(config["permissions"]["dev"]["read"], true);
+    assert!(config["permissions"]["dev"]["write"].is_array());
+    assert_eq!(config["permissions"]["dev"]["wasm"], true);
+    assert_eq!(
+        config["permissions"]["prod"],
+        serde_json::json!({}),
+        "prod permissions must be declared and empty (fully denied)"
+    );
+
     let page = fs::read_to_string(root.join("app/page.dsx")).unwrap();
     assert!(page.contains("export fn Page()"), "{page}");
     assert!(page.contains("<h1>Deka App</h1>"), "{page}");
@@ -255,4 +271,162 @@ fn fresh_init_serves_html_and_css_without_exposing_project_files() {
             404
         );
     }
+}
+
+/// deka#973: `deka dev` on a freshly `deka init`'d project must serve HTTP
+/// 200 with zero manual `deka.json` editing — the scaffold's declared
+/// `permissions.dev` block (RFD 53) is what makes this work, not an
+/// undocumented runtime special case.
+#[test]
+fn fresh_init_dev_serves_without_manual_permission_edits() {
+    use std::net::TcpListener;
+    use std::process::{Child, Stdio};
+    use std::time::{Duration, Instant};
+
+    struct Server(Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let project = tempfile::tempdir().unwrap();
+    assert!(Command::new(cli_bin())
+        .arg("init")
+        .current_dir(project.path())
+        .status()
+        .unwrap()
+        .success());
+
+    let port = TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let log_path = project.path().join("dev.log");
+    let log = fs::File::create(&log_path).unwrap();
+    let mut dev = Command::new(cli_bin());
+    dev.args(["dev", "--port", &port.to_string(), "--no-prompt"])
+        .current_dir(project.path())
+        .stdout(Stdio::from(log.try_clone().unwrap()))
+        .stderr(Stdio::from(log));
+    wire_dsc(&mut dev);
+    let _server = Server(dev.spawn().unwrap());
+
+    let http = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let base = format!("http://127.0.0.1:{port}");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut last = String::new();
+    let body = loop {
+        match http.get(format!("{base}/")).send() {
+            Ok(response) if response.status().as_u16() == 200 => {
+                break response.text().unwrap();
+            }
+            Ok(response) => {
+                last = format!(
+                    "status {} {}",
+                    response.status(),
+                    response.text().unwrap_or_default()
+                );
+                if Instant::now() >= deadline {
+                    panic!(
+                        "deka dev did not serve 200: {last}\n{}",
+                        fs::read_to_string(&log_path).unwrap()
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+            Err(err) => panic!(
+                "deka dev did not listen: {err}\n{last}\n{}",
+                fs::read_to_string(&log_path).unwrap()
+            ),
+        }
+    };
+    assert!(body.contains("Deka App"), "{body}");
+    assert!(body.contains("Hello, World."), "{body}");
+
+    let log_contents = fs::read_to_string(&log_path).unwrap();
+    assert!(
+        !log_contents.to_ascii_lowercase().contains("permission denied")
+            && !log_contents.contains("invalid security policy")
+            && !log_contents.contains("invalid permissions"),
+        "deka dev must not hit the permission wall on a fresh scaffold:\n{log_contents}"
+    );
+}
+
+/// deka#973: a project with NO declared permissions at all (predating RFD 53,
+/// or a manifest edited by hand) still falls back to implicit dev defaults —
+/// but that widening must never be silent. It has to say what it granted and
+/// how to make it an explicit `permissions.dev` block.
+#[test]
+fn dev_without_declared_permissions_prints_an_implicit_grant_notice() {
+    use std::net::TcpListener;
+    use std::process::{Child, Stdio};
+    use std::time::{Duration, Instant};
+
+    struct Server(Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let project = tempfile::tempdir().unwrap();
+    assert!(Command::new(cli_bin())
+        .arg("init")
+        .current_dir(project.path())
+        .status()
+        .unwrap()
+        .success());
+    // Strip the scaffold's declared permissions to simulate a pre-RFD-53
+    // manifest that never went through `deka init` with this fix.
+    fs::write(
+        project.path().join("deka.json"),
+        r#"{ "name": "legacy", "type": "serve", "serve": { "mode": "ds" } }"#,
+    )
+    .unwrap();
+
+    let port = TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let log_path = project.path().join("dev.log");
+    let log = fs::File::create(&log_path).unwrap();
+    let mut dev = Command::new(cli_bin());
+    dev.args(["dev", "--port", &port.to_string(), "--no-prompt"])
+        .current_dir(project.path())
+        .stdout(Stdio::from(log.try_clone().unwrap()))
+        .stderr(Stdio::from(log));
+    wire_dsc(&mut dev);
+    let _server = Server(dev.spawn().unwrap());
+
+    let http = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let base = format!("http://127.0.0.1:{port}");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        match http.get(format!("{base}/")).send() {
+            Ok(response) if response.status().as_u16() == 200 => break,
+            _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+            _ => panic!(
+                "deka dev did not serve 200: {}",
+                fs::read_to_string(&log_path).unwrap()
+            ),
+        }
+    }
+
+    let log_contents = fs::read_to_string(&log_path).unwrap();
+    assert!(
+        log_contents.contains("implicitly granted") && log_contents.contains("permissions.dev"),
+        "the implicit dev-default grant must be announced, not silent:\n{log_contents}"
+    );
 }

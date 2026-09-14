@@ -148,9 +148,17 @@ fn path_display(path: &Path) -> String {
     }
 }
 
+/// The scaffold declares RFD-53 phase-aware `permissions` (deka#757) rather
+/// than the legacy `security` shape: `dev` grants exactly what a hello-world
+/// app-router project needs to read and serve itself locally (project files,
+/// its own build cache, wasm) so `deka dev` / `deka serve --dev` work with
+/// zero manual manifest editing (deka#973); `prod` is left empty, i.e.
+/// fully denied — production default-deny is unchanged and the emptiness is
+/// visible right here rather than hidden behind a manifest the user has no
+/// reason to open.
 fn default_deka_json(name: &str) -> String {
     format!(
-        "{{\n  \"name\": \"{name}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"mode\": \"ds\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"security\": {{\n    \"allow\": {{}},\n    \"deny\": {{}},\n    \"prompt\": true\n  }}\n}}\n"
+        "{{\n  \"name\": \"{name}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"mode\": \"ds\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"permissions\": {{\n    \"dev\": {{\n      \"read\": true,\n      \"write\": [\".cache\", \"ds_modules/.cache\"],\n      \"wasm\": true\n    }},\n    \"prod\": {{}}\n  }}\n}}\n"
     )
 }
 
@@ -223,5 +231,56 @@ mod tests {
         assert!(gitignore.contains("dist/"));
         assert!(gitignore.contains(".deka.json-backup-*"));
         assert!(gitignore.contains(".deka.lock-backup-*"));
+    }
+
+    /// deka#973: the scaffold must declare RFD-53 phase-aware permissions
+    /// (not the legacy `security` shape), granting dev exactly what a
+    /// hello-world app-router project needs while leaving prod fully denied
+    /// — so a fresh `deka init` needs zero manual manifest editing to serve
+    /// in dev, and production default-deny is untouched.
+    #[test]
+    fn default_scaffold_declares_phase_aware_dev_permissions_and_denies_prod() {
+        use permissions::permissions::{Capabilities, ExecutionPhase, FsGrant, parse_permissions};
+
+        let json: serde_json::Value = serde_json::from_str(&default_deka_json("demo")).unwrap();
+        assert!(
+            json.get("security").is_none(),
+            "scaffold must not use the legacy security shape: {json}"
+        );
+
+        let outcome = parse_permissions(&json);
+        assert!(!outcome.has_errors(), "{:?}", outcome.diagnostics);
+        let permissions = outcome
+            .permissions
+            .expect("scaffold must declare phase-aware permissions.dev/prod");
+
+        assert_eq!(permissions.dev.caps.read, FsGrant::WorkingDir);
+        assert!(matches!(permissions.dev.caps.write, FsGrant::Paths(_)));
+        if let FsGrant::Paths(paths) = &permissions.dev.caps.write {
+            assert!(paths.iter().any(|p| p == ".cache"));
+            assert!(paths.iter().any(|p| p == "ds_modules/.cache"));
+        }
+        assert!(permissions.dev.caps.wasm);
+
+        assert!(
+            permissions.prod.caps.is_fully_denied(),
+            "prod must stay default-deny: {:?}",
+            permissions.prod.caps
+        );
+        assert_eq!(permissions.prod.caps, Capabilities::default());
+
+        // Resolve() must produce a working dev grant and a fully-denied prod
+        // grant for the exact working directory a served project would use.
+        let working_dir = std::path::Path::new("/tmp/does-not-need-to-exist");
+        let dev_policy = permissions.resolve(ExecutionPhase::DevRequest, working_dir);
+        assert_ne!(
+            dev_policy.allow.read,
+            ::security::security_policy::RuleList::None
+        );
+        let prod_policy = permissions.resolve(ExecutionPhase::ProdRequest, working_dir);
+        assert_eq!(
+            prod_policy.allow.read,
+            ::security::security_policy::RuleList::None
+        );
     }
 }

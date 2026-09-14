@@ -239,12 +239,24 @@ pub fn resolve_platform_security_for_root(
     Ok(resolved_security)
 }
 
+/// Legacy fallback for manifests that declare no permissions at all (a loose
+/// file, or a `deka.json` predating the RFD-53 `permissions` block): `deka
+/// dev` / `serve --dev` still need to read the project and write its build
+/// cache to be usable, so this widens the three narrowest gaps rather than
+/// leaving a scaffold-less project fully denied. This is an IMPLICIT grant —
+/// nothing in the manifest documents it — so every widening prints a one-line
+/// notice naming exactly what was granted and the manifest line that makes it
+/// explicit (deka#973). Production (`ExecutionPhase::ProdRequest`) never
+/// calls this function; the default-deny posture there is unconditional.
 fn apply_dev_defaults(
     policy: &mut ::security::security_policy::SecurityPolicy,
     root: &std::path::Path,
 ) {
+    let mut granted: Vec<&'static str> = Vec::new();
+
     if matches!(policy.allow.read, RuleList::None) {
         policy.allow.read = RuleList::List(vec![root.to_string_lossy().to_string()]);
+        granted.push("read the project directory");
     }
     if matches!(policy.allow.write, RuleList::None) {
         let cache_dirs = vec![root.join(".cache"), root.join(MODULES_DIR).join(".cache")];
@@ -253,9 +265,18 @@ fn apply_dev_defaults(
             .map(|path| path.to_string_lossy().to_string())
             .collect();
         policy.allow.write = RuleList::List(entries);
+        granted.push("write the build cache");
     }
     if matches!(policy.allow.wasm, RuleList::None) {
         policy.allow.wasm = RuleList::All;
+        granted.push("load wasm");
+    }
+
+    if !granted.is_empty() {
+        stdio::note(&format!(
+            "dev mode implicitly granted {} (no `permissions.dev` in deka.json) — declare it explicitly with `deka init` or a `permissions.dev` block to make this permanent and visible; production stays default-deny",
+            granted.join(", ")
+        ));
     }
 }
 
