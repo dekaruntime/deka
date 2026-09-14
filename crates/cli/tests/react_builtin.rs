@@ -229,6 +229,95 @@ fn build_bundle_inlines_prod_react_without_dev_bytes() {
 }
 
 #[test]
+fn explicit_jsx_runtime_without_jsx_literals_builds_and_executes() {
+    assert_jsx_runtime_bundle(
+        "manual-jsx.ds",
+        r#"
+const many = bundle.manualMany();
+assert.equal(many.type, Symbol.for("react.fragment"));
+assert.deepEqual(many.props.children, ["one", "two"]);
+assert.equal(many.key, "7");
+"#,
+    );
+}
+
+#[test]
+fn explicit_jsx_runtime_with_jsx_literals_builds_and_executes() {
+    assert_jsx_runtime_bundle(
+        "mixed-jsx.dsx",
+        r#"
+assert.equal(element.key, "manual-key");
+const aliased = bundle.aliasedJsx();
+assert.equal(aliased.type, "aside");
+assert.equal(aliased.props.children, "aliased jsx");
+const literal = literalJsx();
+assert.equal(literal.type, "section");
+assert.equal(literal.props.children, "literal jsx");
+"#,
+    );
+}
+
+fn assert_jsx_runtime_bundle(fixture: &str, extra_assertions: &str) {
+    let root = tempfile::tempdir().expect("temp project");
+    copy_fixture(root.path());
+    fs::copy(fixture_src().join(fixture), root.path().join(fixture))
+        .expect("copy manual JSX fixture");
+    let out = root.path().join("manual-jsx.bundle.mjs");
+    let output = Command::new(cli_bin())
+        .args(["build", fixture, "--bundle", "--out"])
+        .arg(&out)
+        .current_dir(root.path())
+        .env("DEKA_DSC", pinned_dsc())
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("deka build manual JSX");
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bundle = fs::read_to_string(&out).expect("emitted bundle");
+    assert!(bundle.contains("__deka_js_builtins[\"react/jsx-runtime\"]"));
+    assert!(!bundle.contains("__deka_js_builtin_react_jsx_runtime"));
+    assert!(!root
+        .path()
+        .join("__deka_js_builtin_react_jsx_runtime.ds")
+        .exists());
+    let runner = root.path().join("run-manual.mjs");
+    fs::write(
+        &runner,
+        format!(
+            r#"
+import {{ strict as assert }} from "node:assert";
+import * as bundle from "./manual-jsx.bundle.mjs";
+const {{ manualJsx, literalJsx }} = bundle;
+const element = manualJsx();
+assert.equal(element.type, "p");
+assert.equal(element.props.children, "manual jsx");
+{extra_assertions}
+console.log("manual jsx: p / manual jsx");
+"#
+        ),
+    )
+    .expect("write runner");
+    let run = Command::new("node")
+        .arg(&runner)
+        .output()
+        .expect("execute bundle");
+    assert!(
+        run.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).trim(),
+        "manual jsx: p / manual jsx"
+    );
+}
+
+#[test]
 fn probe_ds_compiles_with_pinned_dsc() {
     let root = tempfile::tempdir().expect("temp project");
     copy_fixture(root.path());

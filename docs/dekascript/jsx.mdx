@@ -96,3 +96,23 @@ Emitted modules are registered for React Fast Refresh. Editing a component's
 JSX hot-swaps it in the browser without losing sibling or own state when
 react-refresh allows it; otherwise the page reloads. See
 [Fast Refresh](./fast-refresh.mdx).
+
+## Explicit JSX factory calls in bundles
+
+`deka build entry.ds --bundle --out entry.mjs` preserves explicit imports
+from the production `@js/react/jsx-runtime` builtin, including files that
+call a factory without any JSX literals:
+
+```ts
+import { jsx } from "@js/react/jsx-runtime"
+
+export fn greeting() ReactNode {
+  return jsx("p", { children: "Hello" })
+}
+```
+
+The bundled `greeting()` returns a React element whose `type` is `"p"` and
+whose `props.children` is `"Hello"`. Named aliases and JSX literals in the
+same `.dsx` file also work. No package installation is required for this
+runtime builtin. Direct `dsc transpile` still rejects this runtime subpath;
+use `deka build` for the host-managed bundle.
