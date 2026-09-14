@@ -446,6 +446,99 @@ fn hmr_payload_html_update_then_island_reload() {
     assert_eq!(reload["type"], "reload");
 }
 
+/// deka#956 reopened: the merged fix (e46c57bd) only ever exercised edits to
+/// `app/page.dsx`; `app/layout.dsx` — a server component just like the page —
+/// went untested. Assert the root layout gets the same html-update morph
+/// treatment, not a full reload.
+#[test]
+fn hmr_payload_layout_edit_morphs_without_full_reload() {
+    let root = tempfile::tempdir().expect("temp project");
+    copy_tree(&fixture_src(), root.path());
+    let port = free_port();
+    let server = spawn_dev(root.path(), port);
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .no_proxy()
+        .build()
+        .expect("http client");
+    let url = format!("http://127.0.0.1:{port}/");
+    let body = wait_body(&client, &url, &server.log_path);
+    assert!(body.contains("hello server"), "expected SSR page:\n{body}");
+
+    let mut ws = connect_hmr(port);
+    fs::write(
+        root.path().join("app/layout.dsx"),
+        r#"import { Counter } from "../src/ui/Counter.dsx"
+
+interface LayoutProps {
+  children: ReactNode
+}
+
+export fn Layout(props: LayoutProps) ReactNode {
+  return <div>
+      <Counter client:load />
+      <main id="layout-marker" data-refreshed="yes">{props.children}</main>
+    </div>
+}
+"#,
+    )
+    .unwrap();
+
+    let message = wait_hmr_message(&mut ws, Duration::from_secs(45), |value| {
+        let ty = value.get("type").and_then(|v| v.as_str());
+        ty == Some("html-update") || ty == Some("reload")
+    });
+    assert_eq!(
+        message["type"], "html-update",
+        "editing app/layout.dsx must morph like any other server component, not full-reload; \
+         got {message:?}\ndev.log:\n{}",
+        fs::read_to_string(&server.log_path).unwrap_or_default()
+    );
+    assert!(
+        message["html"]
+            .as_str()
+            .is_some_and(|html| html.contains("layout-marker")),
+        "html-update payload must carry the refreshed layout markup: {message:?}"
+    );
+}
+
+/// deka#1048: editing the root `index.html` document shell must not be a
+/// silent no-op. The shell lives outside `#app`, so the existing #app-only
+/// morph can never reflect it — the correct behavior is the same full-reload
+/// fallback already used for island-module edits, not doing nothing.
+#[test]
+fn hmr_payload_index_html_edit_triggers_reload() {
+    let root = tempfile::tempdir().expect("temp project");
+    copy_tree(&fixture_src(), root.path());
+    let port = free_port();
+    let server = spawn_dev(root.path(), port);
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .no_proxy()
+        .build()
+        .expect("http client");
+    let url = format!("http://127.0.0.1:{port}/");
+    let _ = wait_body(&client, &url, &server.log_path);
+
+    let mut ws = connect_hmr(port);
+    let index_html = fs::read_to_string(root.path().join("index.html")).unwrap();
+    fs::write(
+        root.path().join("index.html"),
+        index_html.replace("<title>Server Fast Refresh</title>", "<title>Edited Shell</title>"),
+    )
+    .unwrap();
+
+    let message = wait_hmr_message(&mut ws, Duration::from_secs(45), |value| {
+        value.get("type").and_then(|v| v.as_str()) == Some("reload")
+    });
+    assert_eq!(
+        message["type"], "reload",
+        "editing index.html must trigger a full reload rather than a no-op; \
+         dev.log:\n{}",
+        fs::read_to_string(&server.log_path).unwrap_or_default()
+    );
+}
+
 #[test]
 fn cdp_morph_preserves_island_state_and_island_edit_reloads() {
     let root = tempfile::tempdir().expect("temp project");

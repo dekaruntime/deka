@@ -39,6 +39,15 @@ pub fn js_update_payload(changed: &[String]) -> Option<String> {
     if island_source_changed(&ctx.project_root, changed) {
         return Some(crate::websocket::island_reload_payload(changed));
     }
+    // The root index.html document shell (title, head, <script> tags, the
+    // wrapper markup around #app) lives outside the div the html-update path
+    // morphs. That path re-fetches the current route and patches only #app,
+    // so a shell-only edit produced no visible change at all — not even a
+    // reload (deka#1048). The shell can't be morphed in place; full-reload is
+    // the same honest fallback already used for island-module edits.
+    if document_shell_changed(&ctx.project_root, changed) {
+        return Some(crate::websocket::document_reload_payload(changed));
+    }
     // App-router .ds/.dsx without a client: boundary is server HTML. The
     // watch loop falls through to html-update + DOM morph.
     if is_app_router_server_source_change(&ctx.project_root, changed) {
@@ -132,6 +141,27 @@ pub fn island_source_changed(project_root: &Path, changed: &[String]) -> bool {
         }
     }
     false
+}
+
+/// Whether `changed` includes the project's root `index.html` — the document
+/// shell `resolve_app_router_index_html` bakes into `serve-entry.dsx` (see
+/// `runtime_core::dist::codegen::serve`). Shell content sits outside `#app`,
+/// so no morph path can reach it; the file identity is the only signal that
+/// matters here, unlike `is_ds_source_path` which only cares about extension.
+fn document_shell_changed(project_root: &Path, changed: &[String]) -> bool {
+    if project_root.as_os_str().is_empty() {
+        return false;
+    }
+    let index_html = project_root.join("index.html");
+    if !index_html.is_file() {
+        return false;
+    }
+    let index_abs = std::fs::canonicalize(&index_html).unwrap_or(index_html);
+    changed.iter().any(|path| {
+        let changed_abs =
+            std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path.as_str()));
+        paths_match(&changed_abs, &index_abs)
+    })
 }
 
 fn is_app_router_server_source_change(project_root: &Path, changed: &[String]) -> bool {

@@ -409,6 +409,20 @@ pub(crate) fn island_reload_payload(changed_paths: &[String]) -> String {
     .to_string()
 }
 
+/// Full reload for a root `index.html` document-shell edit (deka#1048). The
+/// shell (title, head, wrapper markup, <script> tags) lives outside the
+/// `#app` container the html-update path morphs, so it cannot be reflected
+/// by patching in place — a real navigation is the only way to pick it up.
+pub(crate) fn document_reload_payload(changed_paths: &[String]) -> String {
+    serde_json::json!({
+        "type": "reload",
+        "schema": 1,
+        "reason": "document-source",
+        "paths": changed_paths,
+    })
+    .to_string()
+}
+
 fn extract_container_inner_html(html: &str, id: &str) -> Option<String> {
     let needle_a = format!("id=\"{}\"", id);
     let needle_b = format!("id='{}'", id);
