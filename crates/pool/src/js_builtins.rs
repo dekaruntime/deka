@@ -270,9 +270,10 @@ pub fn source_imports_builtins(js: &str) -> bool {
 
 /// dsc 0.52 has no `--external` flag. Explicit `@js/react*` imports are
 /// treated as undeclared summoned packages and fail `dsc transpile` before
-/// emit. Compiler-known hooks/JSX re-inject `@js/react` and
-/// `@js/react/jsx-runtime`; `@js/react-dom/server` is rewritten to a sibling
-/// stub and restored after emit so host inlining still sees the specifier.
+/// emit. Compiler-known hooks re-inject `@js/react`. Other imports use
+/// temporary compiler declarations, restored after emit so host inlining
+/// sees the real runtime specifier. Explicit JSX helpers must retain their
+/// bindings even when the source contains no JSX literals.
 pub struct DscTranspileRewrite {
     pub source: String,
     pub stubs: Vec<DscExternalStub>,
@@ -312,7 +313,11 @@ pub fn rewrite_for_dsc_transpile(source: &str) -> DscTranspileRewrite {
         out.push_str(&retarget_import_decl(decl, &spec, &relative));
         if !stubs.iter().any(|stub| stub.spec == spec) {
             stubs.push(DscExternalStub {
-                body: stub_module_body(&names),
+                body: if spec == "@js/react/jsx-runtime" {
+                    jsx_runtime_declarations()
+                } else {
+                    stub_module_body(&names)
+                },
                 spec,
                 filename,
             });
@@ -324,7 +329,21 @@ pub fn rewrite_for_dsc_transpile(source: &str) -> DscTranspileRewrite {
 }
 
 fn dsc_reinjects(spec: &str) -> bool {
-    spec == "@js/react" || spec == "@js/react/jsx-runtime"
+    spec == "@js/react"
+}
+
+fn jsx_runtime_declarations() -> String {
+    // Like the other compiler adapters below, this module supplies types
+    // only. restore_js replaces its import before execution; React's real
+    // factories supply the implementation. Generic props preserve the
+    // caller's object shape without pretending props are ReactNode values.
+    let mut body = String::from("export const Fragment: ReactNode = \"\"\n");
+    for name in ["jsx", "jsxs"] {
+        body.push_str(&format!(
+            "export fn {name}<T, P>(tag: T, props: P, key: ReactNode = \"\") ReactNode {{\n  return \"\"\n}}\n"
+        ));
+    }
+    body
 }
 
 fn stub_ds_filename(spec: &str) -> String {
