@@ -17,7 +17,7 @@ pub mod context;
 /// registers, which is how per-command help resolves a flag by its actual
 /// owner instead of the first same-named entry anywhere in the registry
 /// (deka#996 review).
-fn register_fns() -> Vec<fn(&mut Registry)> {
+pub fn register_fns() -> Vec<fn(&mut Registry)> {
     let mut fns: Vec<fn(&mut Registry)> = vec![
         cli::register_global_flags,
         cli::register_global_params,
@@ -87,7 +87,7 @@ pub fn build_registry() -> Registry {
 /// [`core::help::build_ownership_index`] for how this avoids the
 /// first-match-wins bug a name-only lookup against the shared registry
 /// would have (deka#996 review).
-pub fn command_flag_index() -> std::collections::HashMap<&'static str, core::help::CommandFlags> {
+pub fn command_flag_index() -> core::help::OwnershipIndex {
     core::help::build_ownership_index(&register_fns())
 }
 
@@ -121,7 +121,7 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
 
     let parsed = core::Args::collect(args, &registry);
     if !parsed.errors.is_empty() {
-        let message = cli::format_parse_errors(&registry, &ownership_index, &parsed.errors);
+        let message = cli::format_parse_errors(&ownership_index, &parsed.errors);
         cli::error(Some(message.as_str()));
         let output = stdio::end_capture();
         return WasmRunOutput { code: 1, output };
@@ -133,7 +133,7 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
         match registry.command_named(&cmd.commands[0]) {
             Some(command) => {
                 let index = command_flag_index();
-                cli::command_help(command, index.get(command.name));
+                cli::command_help(command, index.flags.get(command.name));
             }
             None => cli::help(&registry),
         }
