@@ -1,3 +1,4 @@
+use engine::config as runtime_config;
 use serve::config::{ServeConfig, ServeMode, StaticServeConfig};
 use std::path::{Path, PathBuf};
 
@@ -73,114 +74,57 @@ pub struct ResolvedHandler {
 }
 
 pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
-    let path = Path::new(path);
-    let abs_path = if path.is_absolute() {
-        path.to_path_buf()
+    let resolved = runtime_config::resolve_handler_path(path)?;
+    let handler_dir = if resolved.path.is_dir() {
+        resolved.path.clone()
     } else {
-        let cwd = std::env::current_dir().map_err(|e| format!("Failed to get cwd: {}", e))?;
-        cwd.join(path)
+        resolved
+            .path
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     };
-
-    let abs_path = if abs_path.exists() {
-        abs_path.canonicalize().unwrap_or(abs_path)
-    } else {
-        abs_path
-    };
-
-    let is_dir = abs_path.is_dir();
-    let (handler_dir, serve_config) = if is_dir {
-        let config = ServeConfig::load(&abs_path);
-        (abs_path.clone(), config)
-    } else if let Some(parent) = abs_path.parent() {
-        let config = ServeConfig::load(parent);
-        (parent.to_path_buf(), config)
-    } else {
-        (PathBuf::from("."), ServeConfig::default())
-    };
-
-    if !is_dir {
-        let mode = serve_config
-            .mode
-            .clone()
-            .unwrap_or_else(|| detect_mode(&abs_path));
-        return Ok(ResolvedHandler {
-            path: abs_path,
-            directory: handler_dir,
-            mode,
-            config: serve_config,
-        });
-    }
-
-    if let Some(ref entry) = serve_config.entry {
-        let entry_path = if Path::new(entry).is_absolute() {
-            PathBuf::from(entry)
-        } else {
-            handler_dir.join(entry)
-        };
-
-        if !entry_path.exists() {
-            return Err(format!("Entry file not found: {}", entry_path.display()));
-        }
-
-        let mode = serve_config
-            .mode
-            .clone()
-            .unwrap_or_else(|| detect_mode(&entry_path));
-        return Ok(ResolvedHandler {
-            path: entry_path,
-            directory: handler_dir,
-            mode,
-            config: serve_config,
-        });
-    }
-
-    // Convention: if an app/ folder exists, default to PHP app routing mode.
-    let app_dir = abs_path.join("app");
-    if app_dir.is_dir() {
-        return Ok(ResolvedHandler {
-            path: abs_path.clone(),
-            directory: handler_dir,
-            mode: serve_config.mode.clone().unwrap_or(ServeMode::Php),
-            config: serve_config,
-        });
-    }
-
-    let index_files = [
-        "index.ds",
-        "index.dsx",
-        "index.js",
-        "index.mjs",
-        "index.php",
-        "index.phpx",
-        "index.html",
-        "main.php",
-        "main.phpx",
-        "handler.php",
-        "handler.phpx",
-    ];
-
-    for index_file in &index_files {
-        let index_path = abs_path.join(index_file);
-        if index_path.exists() {
-            let mode = serve_config
-                .mode
-                .clone()
-                .unwrap_or_else(|| detect_mode(&index_path));
-            return Ok(ResolvedHandler {
-                path: index_path,
-                directory: handler_dir,
-                mode,
-                config: serve_config,
-            });
-        }
-    }
+    let mode = serve_mode_for_runtime_resolver(&resolved, &handler_dir);
 
     Ok(ResolvedHandler {
-        path: abs_path,
+        path: resolved.path,
         directory: handler_dir,
-        mode: serve_config.mode.clone().unwrap_or(ServeMode::Static),
-        config: serve_config,
+        mode,
+        config: as_legacy_serve_config(resolved.config),
     })
+}
+
+fn serve_mode_for_runtime_resolver(
+    resolved: &runtime_config::ResolvedHandler,
+    handler_dir: &Path,
+) -> ServeMode {
+    if let Some(mode) = resolved.config.mode.clone() {
+        return match mode {
+            runtime_config::ServeMode::Static => ServeMode::Static,
+            runtime_config::ServeMode::Php => ServeMode::Php,
+        };
+    }
+
+    if resolved.path.is_dir() {
+        if handler_dir.join("app").is_dir() {
+            return ServeMode::Php;
+        }
+        return ServeMode::Static;
+    }
+
+    detect_mode(&resolved.path)
+}
+
+fn as_legacy_serve_config(
+    config: runtime_config::ServeConfig,
+) -> ServeConfig {
+    ServeConfig {
+        mode: config.mode.map(|mode| match mode {
+            runtime_config::ServeMode::Static => ServeMode::Static,
+            runtime_config::ServeMode::Php => ServeMode::Php,
+        }),
+        entry: config.entry,
+        directory_listing: config.directory_listing,
+    }
 }
 
 fn detect_mode(path: &Path) -> ServeMode {
