@@ -24,7 +24,7 @@ fn cli_bin() -> &'static str {
 /// dependency package and the app imports thin wrappers. The manifest field
 /// is deliberately absent: a dependency's `host.kinds` is untrusted and
 /// ignored; the grant table entry (DEKA_HOST_GRANTS) is the only authority.
-const FIXTUREFS_SOURCE: &str = "export async fn read_file(p: string) Promise<Result<bytes, string>> {\n  return await bridge fs.read_file(p)\n}\n\nexport async fn read_dir(p: string) Promise<Result<Array<string>, string>> {\n  return await bridge fs.read_dir(p)\n}\n";
+const FIXTUREFS_SOURCE: &str = "export async fn read_file(p: string) Promise<Result<bytes, string>> {\n  const raw = await bridge fs.read_file(p)\n  return match (unsafe<Result<bytes, string>> { raw }) {\n    Ok(v) => v,\n    Err(e) => Err(\"fixturefs: read_file cast failed\")\n  }\n}\n\nexport async fn read_dir(p: string) Promise<Result<Array<string>, string>> {\n  const raw = await bridge fs.read_dir(p)\n  return match (unsafe<Result<Array<string>, string>> { raw }) {\n    Ok(v) => v,\n    Err(e) => Err(\"fixturefs: read_dir cast failed\")\n  }\n}\n";
 
 /// Writes the fixture package into the project's ds_modules/, pins its
 /// fsGraph digest in deka.lock (the same shape `deka install` writes), and
@@ -491,7 +491,7 @@ async fn slugs() Promise<Result<Array<PostParam>, string>> {
   const picked = await read_file("data/picked.txt")
   return match (listed) {
     Ok(entries) => match (picked) {
-      Ok(bytes) => match (unsafe { String(entries.length) + "/" + String(bytes.length) }) {
+      Ok(bytes) => match (unsafe<string> { String(entries.length) + "/" + String(bytes.length) }) {
         Ok(text) => Ok([PostParam { slug: text }]),
         Err(e) => Err("shape failed")
       },
@@ -504,7 +504,7 @@ export const staticParams: Array<PostParam> = build {
   return await slugs()
 }
 export fn marker() string {
-  return match (unsafe { staticParams[0].slug }) { Ok(v) => v, Err(e) => "?" }
+  return match (unsafe<string> { staticParams[0].slug }) { Ok(v) => v, Err(e) => "?" }
 }
 "#,
     );
