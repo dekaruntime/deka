@@ -61,8 +61,8 @@ export fn Page() ReactNode {
 }
 ```
 
-With a `Counter` that renders a button containing its initial count, the served
-HTML is:
+With a `Counter` that renders a button containing its initial count — including
+a live signal read such as `{count()}` — the served HTML is:
 
 ```html
 <deka-island data-deka-island="Counter" data-deka-directive="load" data-deka-props="{&quot;start&quot;:5}" style="display:contents"><button data-deka-id="Counter:Counter/i0" type="button">5</button></deka-island>

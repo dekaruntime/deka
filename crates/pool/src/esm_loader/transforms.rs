@@ -17,7 +17,7 @@ use deno_core::ModuleSourceCode;
 /// left with the framework extraction, so the wrapper imports nothing.
 /// Generate the loader-owned entry wrapper executed for every entry.
 pub fn entry_wrapper_source(entry_specifier: &str) -> String {
-    let template = "if (\"__ENTRY__\".includes(\"serve-entry\")) {\n\
+    let template = "if (\"__ENTRY__\".includes(\"serve-entry\") || \"__ENTRY__\".includes(\".dsx\")) {\n\
   await import(\"deka:///js/react-dom-server.js\");\n\
 }\n\
 const __dekaMain = await import(\"__ENTRY__\");\n\
@@ -115,6 +115,23 @@ mod tests {
         let source = entry_wrapper_source("file:///main.ds");
         assert!(source.contains("__dekaMain.App"));
         assert!(source.contains("file:///main.ds"));
+        assert!(
+            source.contains(".dsx"),
+            "wrapper must gate React SSR on .dsx entries: {source}"
+        );
+    }
+
+    #[test]
+    fn wrapper_loads_react_ssr_for_dsx_and_serve_entry() {
+        let dsx = entry_wrapper_source("file:///tmp/Counter.dsx");
+        assert!(
+            dsx.contains("react-dom-server.js"),
+            "deka run of .dsx must initialize deka.ui.renderToString: {dsx}"
+        );
+        assert!(dsx.contains("file:///tmp/Counter.dsx"));
+        let serve = entry_wrapper_source("file:///proj/.cache/dekascript/serve-entry.dsx");
+        assert!(serve.contains("react-dom-server.js"));
+        assert!(serve.contains("serve-entry"));
     }
 
     #[test]
