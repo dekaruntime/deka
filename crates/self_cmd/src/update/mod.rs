@@ -1,6 +1,12 @@
 //! One-shot updater for the cargo-via-universe distribution model, split
 //! into submodules by concern (deka#976 / rfd#61 file-size gate; deka#990
-//! moved `deka self update`'s handler onto the real check):
+//! moved `deka self update`'s handler onto the real check).
+//!
+//! deka#992: this whole module tree only exists behind the non-default
+//! `self-update` cargo feature (see `self_cmd`'s and `pm`'s `Cargo.toml`).
+//! Self-update is deferred until closer to MVP -- a default build compiles
+//! none of this, and `self_cmd::lib`'s command registry does not mention
+//! `self update` / `self monitor` when the feature is off.
 //!
 //! - [`check`]: `deka self update`'s real handler (deka#976 / deka#990) --
 //!   checks the public release manifest and reports plainly whether the

@@ -21,6 +21,10 @@ native = [
 ]
 dev-server = ["native", "dev/dev-server"]
 lsp = ["compiler/lsp"]
+# deka#992: self-update is deferred until closer to MVP; off by default.
+# Forwards to self_cmd, which gates `self update`/`self monitor` and the
+# pm::releases check-latest path behind the same flag.
+self-update = ["self_cmd/self-update"]
 
 [dependencies]
 serve = { path = "../serve" }
@@ -62,7 +66,11 @@ pool = { path = "../pool" }
 deka-modules = "0.3.0"
 deka-db = { path = "../deka_db" }
 pm = { workspace = true }
-self_cmd = { path = "../self_cmd" }
+# ambient_environment.rs pins self_cmd::update/self_cmd::monitor config
+# resolution directly, so this test-only edge enables the feature even
+# though the shipped `cli` binary (built without --features self-update)
+# does not compile those modules in.
+self_cmd = { path = "../self_cmd", features = ["self-update"] }
 deka-registry = { path = "../deka_registry" }
 deka-deploy = { path = "../deka_deploy" }
 deka-cache = { path = "../deka_cache" }

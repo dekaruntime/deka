@@ -223,8 +223,6 @@ pub fn version(verbose: bool) {
         raw(&format!("react: {}", react));
     }
     raw("");
-    raw("to check for updates run: deka self update");
-    raw("");
 }
 
 pub fn error(msg: Option<&str>) {
