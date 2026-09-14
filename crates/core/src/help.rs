@@ -178,9 +178,11 @@ fn command_flag_names(name: &str) -> &'static [&'static str] {
             "--yes",
             "--dry-run",
         ],
-        "self" => &[
-            "--deka", "--dsc", "--filter", "-f", "--jobs", "--list", "-l",
-        ],
+        // "-l" is only an alias on --list (self_cmd), not a separately
+        // registered name — leaving it out of this list avoids resolving to
+        // introspect's unrelated, separately-registered "-l" param ("limit
+        // number of rows") by name collision. --list already covers it.
+        "self" => &["--deka", "--dsc", "--filter", "-f", "--jobs", "--list"],
         "wasm" => &["--root"],
         _ => &[],
     }
