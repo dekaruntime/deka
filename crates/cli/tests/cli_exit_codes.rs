@@ -40,6 +40,71 @@ fn help_exits_zero() {
     assert_eq!(exit_code(&["--help"]), Some(0));
 }
 
+#[test]
+fn duplicate_typo_suggestions_are_deduplicated_and_disambiguated() {
+    let output = std::process::Command::new(cli_bin())
+        .args(["--instal"])
+        .output()
+        .expect("run deka");
+    assert_eq!(output.status.code(), Some(2));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+    assert!(text.contains("did you mean"));
+    let suggestions = text
+        .split("did you mean ")
+        .nth(1)
+        .and_then(|tail| tail.split('?').next())
+        .unwrap_or("");
+    let parsed = suggestions
+        .split(", ")
+        .map(|value| value.trim().trim_matches('\''))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    assert!(
+        parsed.contains(&"install"),
+        "expected install in suggestions: {parsed:?}"
+    );
+    assert!(
+        parsed.contains(&"pkg install"),
+        "expected subcommand context in suggestions: {parsed:?}"
+    );
+    let mut deduped = parsed.clone();
+    deduped.sort_unstable();
+    deduped.dedup();
+    assert_eq!(
+        parsed.len(),
+        deduped.len(),
+        "did-you-mean suggestions should be deduplicated: {parsed:?}"
+    );
+}
+
+#[test]
+fn suggestion_list_is_capped() {
+    let output = std::process::Command::new(cli_bin())
+        .args(["--hel"])
+        .output()
+        .expect("run deka");
+    assert_eq!(output.status.code(), Some(2));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+    let suggestions = text
+        .split("did you mean ")
+        .nth(1)
+        .and_then(|tail| tail.split('?').next())
+        .unwrap_or("")
+        .split(", ")
+        .map(|value| value.trim().trim_matches('\''))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    assert!(suggestions.len() <= 3, "{suggestions:?}");
+}
+
 // deka#975: assert the process status, including non-1 child failures carried
 // through dependency and wildcard execution in the task owner crate.
 #[test]

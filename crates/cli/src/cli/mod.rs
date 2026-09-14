@@ -227,7 +227,7 @@ pub fn execute(registry: &Registry) -> i32 {
 
     let parsed = core::parse_env(registry);
     if !parsed.errors.is_empty() {
-        let message = format_parse_errors(&parsed.errors);
+        let message = format_parse_errors(registry, &parsed.errors);
         error(Some(message.as_str()));
         return 2;
     }
@@ -267,7 +267,7 @@ pub fn execute(registry: &Registry) -> i32 {
     let context = match crate::context::from_env(registry) {
         Ok(context) => context,
         Err(crate::context::ContextError::Parse(errors)) => {
-            let message = format_parse_errors(&errors);
+            let message = format_parse_errors(registry, &errors);
             error(Some(message.as_str()));
             return 2;
         }
@@ -341,7 +341,12 @@ pub(crate) fn single_command_wants_help(args: &core::Args) -> bool {
         || args.flags.contains_key("help")
 }
 
-pub fn format_parse_errors(errors: &[ParseError]) -> String {
+/// Render parse-error messages from real CLI parse outcomes.
+///
+/// Keep this in CLI-owned output formatting so suggestions can be disambiguated
+/// for duplicate names from multiple registering crates.
+pub fn format_parse_errors(registry: &Registry, errors: &[ParseError]) -> String {
+    const SUGGESTION_LIMIT: usize = 3;
     let mut output = String::new();
     for error in errors {
         match &error.kind {
@@ -349,7 +354,8 @@ pub fn format_parse_errors(errors: &[ParseError]) -> String {
                 output.push_str(&format!("unknown argument '{}'", error.token));
                 if !error.suggestions.is_empty() {
                     output.push_str(". did you mean ");
-                    output.push_str(&format_suggestions(&error.suggestions));
+                    let suggestions = expand_suggestions(registry, &error.suggestions);
+                    output.push_str(&format_suggestions(&suggestions, SUGGESTION_LIMIT));
                     output.push('?');
                 }
                 output.push('\n');
@@ -362,9 +368,43 @@ pub fn format_parse_errors(errors: &[ParseError]) -> String {
     output
 }
 
-fn format_suggestions(suggestions: &[String]) -> String {
+fn expand_suggestions(registry: &Registry, suggestions: &[String]) -> Vec<String> {
+    let mut expanded = Vec::new();
+    for suggestion in suggestions {
+        let mut added = false;
+        for command in registry.commands() {
+            if command.name == suggestion
+                || command.aliases.contains(&suggestion.as_str())
+            {
+                push_if_missing(&mut expanded, command.name);
+                added = true;
+            }
+            for subcommand in command.subcommands {
+                if subcommand.name == suggestion
+                    || subcommand.aliases.contains(&suggestion.as_str())
+                {
+                    push_if_missing(&mut expanded, &format!("{} {}", command.name, subcommand.name));
+                    added = true;
+                }
+            }
+        }
+        if !added {
+            push_if_missing(&mut expanded, suggestion);
+        }
+    }
+    expanded
+}
+
+fn push_if_missing(list: &mut Vec<String>, value: &str) {
+    if !list.iter().any(|item| item == value) {
+        list.push(value.to_string());
+    }
+}
+
+fn format_suggestions(suggestions: &[String], max: usize) -> String {
     suggestions
         .iter()
+        .take(max)
         .map(|suggestion| format!("'{}'", suggestion))
         .collect::<Vec<String>>()
         .join(", ")
