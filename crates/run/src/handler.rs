@@ -337,10 +337,29 @@ mod tests {
     // and wrote a cache file into the project on every invocation.
     #[test]
     fn app_router_resolution_does_not_materialize_a_cache_entry() {
+        // QA finding: runtime_core::dist::is_source_app_router_project
+        // requires BOTH deka.json and app/page.dsx (or app/page.ds) --
+        // an app/ directory with only a .phpx page never satisfies it, so
+        // the fixture never entered the materializing branch this test
+        // claims to guard (QA proved this by reverting the production fix
+        // entirely and watching the test still pass). Use the real gate.
         let dir = temp_dir("deka_handler_app_router_readonly");
+        fs::write(dir.join("deka.json"), r#"{"name":"app-router-readonly-fixture"}"#)
+            .expect("write deka.json");
         let app_dir = dir.join("app");
         fs::create_dir_all(&app_dir).expect("mkdir app");
-        fs::write(app_dir.join("page.phpx"), "<?php echo 'ok';").expect("write page");
+        fs::write(
+            app_dir.join("page.dsx"),
+            r#"export default fn Page() any { return <div>ok</div> }
+"#,
+        )
+        .expect("write page");
+        fs::write(
+            app_dir.join("layout.dsx"),
+            r#"export default fn Layout({ children }: { children: any }) any { return children }
+"#,
+        )
+        .expect("write layout");
 
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         assert!(matches!(resolved.mode, ServeMode::Php));
