@@ -295,10 +295,13 @@ fn run_php_install_in_transaction(
     #[cfg(test)]
     pause_for_kill_test("after-lock");
 
-    transaction
+    let cleanup_warnings = transaction
         .take()
         .expect("transaction was initialized before lock commit")
         .finish()?;
+    if !cleanup_warnings.is_empty() {
+        recovery_report::emit_cleanup_warnings(&cleanup_warnings);
+    }
 
     let duration = Instant::now().duration_since(start);
     emit_summary(installed.len(), duration.as_millis() as u64, quiet)?;
@@ -676,9 +679,9 @@ fn install_staging_path(destination: &Path) -> Result<PathBuf> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct InstallJournal {
+pub(crate) struct InstallJournal {
     lock_path: PathBuf,
-    lock_backup: Option<PathBuf>,
+    pub(crate) lock_backup: Option<PathBuf>,
     /// deka#797: grant table snapshot, restored on recovery (see `crate::grants`).
     #[serde(default)]
     grant: grants::GrantTableSnapshot,
@@ -697,7 +700,7 @@ struct InstallJournalPackage {
 
 pub(crate) struct InstallTransaction {
     journal_path: PathBuf,
-    journal: InstallJournal,
+    pub(crate) journal: InstallJournal,
 }
 
 impl InstallTransaction {
@@ -759,9 +762,10 @@ impl InstallTransaction {
         self.persist()
     }
 
-    pub(crate) fn finish(self) -> Result<()> {
+    pub(crate) fn finish(self) -> Result<Vec<String>> {
         // Clearing the journal is the commit point. Cleanup after this point
         // is best-effort and cannot make the live package/lock inconsistent.
+        let mut cleanup_warnings = Vec::new();
         fs::remove_file(&self.journal_path)?;
         lock::sync_directory(
             self.journal_path
@@ -769,11 +773,15 @@ impl InstallTransaction {
                 .ok_or_else(|| anyhow!("transaction journal has no parent"))?,
         )?;
         if let Some(backup) = self.journal.lock_backup {
-            let _ = fs::remove_file(backup);
+            if let Err(error) = fs::remove_file(&backup) {
+                cleanup_warnings.push(recovery_report::backup_removal_warning(&backup, &error));
+            }
         }
         self.journal.grant.discard();
         if let Some((_, Some(backup))) = self.journal.manifest {
-            let _ = fs::remove_file(backup);
+            if let Err(error) = fs::remove_file(&backup) {
+                cleanup_warnings.push(recovery_report::backup_removal_warning(&backup, &error));
+            }
         }
         for package in self.journal.packages {
             let _ = fs::remove_file(package.destination.join(STAGED_MARKER));
@@ -783,7 +791,7 @@ impl InstallTransaction {
                 let _ = fs::remove_dir_all(root);
             }
         }
-        Ok(())
+        Ok(cleanup_warnings)
     }
 
     #[cfg(test)]
