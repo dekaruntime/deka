@@ -168,34 +168,6 @@ pub(crate) fn unique_suffix() -> u128 {
         .unwrap_or_default()
 }
 
-pub(crate) fn recovery_backups_report(project_dir: &Path) -> String {
-    let cache_dir = project_dir.join(".cache");
-    let Ok(entries) = std::fs::read_dir(&cache_dir) else {
-        return String::new();
-    };
-
-    let mut files = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let path = entry.path().display().to_string();
-        if name.starts_with(".deka.json-backup-") {
-            files.push(format!("  - {} (recovery backup of previous deka.json)", path));
-        } else if name.starts_with(".deka.lock-backup-") {
-            files.push(format!("  - {} (recovery backup of previous deka.lock)", path));
-        }
-    }
-
-    if files.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "\nA recovery backup was left behind and can be used to restore prior state:\n{}",
-            files.join("\n")
-        )
-    }
-}
-
 pub(crate) fn sync_directory(path: &Path) -> Result<()> {
     fs::File::open(path)
         .with_context(|| format!("failed to open directory {} for sync", path.display()))?

@@ -18,6 +18,7 @@ pub mod install;
 pub mod links;
 pub mod lock;
 pub mod payload;
+mod recovery_report;
 pub mod registry;
 #[cfg(feature = "self-update")]
 pub mod releases;

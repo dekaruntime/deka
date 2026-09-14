@@ -1,7 +1,7 @@
 use crate::{
     grants, lock,
     payload::InstallPayload,
-    registry,
+    recovery_report, registry,
     spec::{parse_package_spec, strip_semver_range_prefix},
 };
 use anyhow::{Context, Result, anyhow, bail};
@@ -42,13 +42,17 @@ fn run_php_install_in(specs: Vec<String>, quiet: bool, locked: bool, cwd: &Path)
     recover_install_transaction(cwd)?;
     let result = run_php_install_in_transaction(specs, quiet, locked, cwd);
     if let Err(error) = result {
+        // Read the journal before recovery runs: recovery restores and
+        // removes these backups (via rename) as part of a normal rollback,
+        // so capturing them afterward would always see nothing. See
+        // `recovery_report` for why this replaces a `.cache` directory scan.
+        let journal_backups = recovery_report::journal_backup_paths(cwd);
         let recovery = recover_install_transaction(cwd);
-        let details = lock::recovery_backups_report(cwd);
         return match recovery {
-            Ok(()) => Err(anyhow!("{error}{details}")),
+            Ok(()) => Err(error),
             Err(recovery_error) => Err(anyhow!(
                 "install failed: {error}; rollback failed: {recovery_error}{}",
-                details
+                recovery_report::format_backups(&journal_backups)
             )),
         };
     }
@@ -242,7 +246,12 @@ fn run_php_install_in_transaction(
                 },
             })
         };
-        let transaction = transaction.get_or_insert(InstallTransaction::begin(cwd, &lock_path)?);
+        if transaction.is_none() {
+            transaction = Some(InstallTransaction::begin(cwd, &lock_path)?);
+        }
+        let transaction = transaction
+            .as_mut()
+            .expect("transaction was just initialized above");
         transaction.commit_package(&staging, &destination)?;
         installed.insert(
             name.clone(),
@@ -264,7 +273,9 @@ fn run_php_install_in_transaction(
         }
     }
 
-    transaction.get_or_insert(InstallTransaction::begin(cwd, &lock_path)?);
+    if transaction.is_none() {
+        transaction = Some(InstallTransaction::begin(cwd, &lock_path)?);
+    }
 
     // The lockfile represents exactly the resolved transitive graph. This
     // also removes stale dependencies that are no longer declared by a release.

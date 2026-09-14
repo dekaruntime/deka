@@ -187,6 +187,23 @@ fn lock_package_names(project: &Path) -> Vec<String> {
     names
 }
 
+fn count_root_backups(project: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(project) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().contains("-backup-"))
+        .count()
+}
+
+fn count_cache_entries(project: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(project.join(".cache")) else {
+        return 0;
+    };
+    entries.count()
+}
+
 /// A fresh project scaffolded with the real `deka init`, then walked through
 /// `deka install` exactly as a new user following the docs would: add one
 /// stdlib package, then add a second one in a separate call, then import
@@ -353,5 +370,148 @@ fn caret_and_tilde_ranges_in_manifest_resolve_through_bare_install() {
         lock["packages"]["@deka/greet"][0].as_str(),
         Some("@deka/greet@1.2.3"),
         "the locked version must be the stripped base version, not the literal range string"
+    );
+}
+
+#[test]
+fn repeated_installs_do_not_accumulate_install_backups_or_cache_entries() {
+    let work = tempfile::tempdir().expect("work dir");
+    let mut packages = std::collections::BTreeMap::new();
+    packages.insert(
+        "greet",
+        (
+            "1.0.0",
+            pack_fixture_package(
+                work.path(),
+                "greet",
+                "1.0.0",
+                "export fn greet() string { return \"hello\" }\n",
+            ),
+        ),
+    );
+    packages.insert(
+        "shout",
+        (
+            "2.0.0",
+            pack_fixture_package(
+                work.path(),
+                "shout",
+                "2.0.0",
+                "export fn shout() string { return \"shout\" }\n",
+            ),
+        ),
+    );
+    let registry = FixtureRegistry::start(packages);
+
+    let project = work.path().join("app");
+    fs::create_dir_all(&project).expect("mkdir project");
+    let (success, output) = run_cli(&project, &["init"], registry.address);
+    assert!(success, "deka init must succeed: {output}");
+
+    let baseline_backups = count_root_backups(&project);
+    let baseline_cache_files = count_cache_entries(&project);
+    let operations = vec![
+        vec!["install", "greet"],
+        vec!["install", "shout"],
+        vec!["install"],
+    ];
+    for args in operations {
+        let (success, output) = run_cli(&project, &args, registry.address);
+        assert!(success, "repeated install command should succeed: {output}");
+        assert_eq!(
+            count_root_backups(&project),
+            baseline_backups,
+            "install back-ups should not accumulate across repeated commands"
+        );
+        assert_eq!(
+            count_cache_entries(&project),
+            baseline_cache_files,
+            ".cache entries should not accumulate across repeated commands"
+        );
+    }
+}
+
+/// deka#1012 / deka#1014: a failing `install` that runs after a successful
+/// one must (a) restore `deka.lock` / `deka.json` / `deka.grants.json` to
+/// exactly what they were before the failing call, byte for byte, and (b)
+/// leave zero recovery-backup litter behind in either the project root or
+/// `.cache` -- not just "no more than before", genuinely none. A normal
+/// rollback fully consumes its own backups (restoring them into place and
+/// removing the copy), so a failure report naming leftover backups is only
+/// meaningful when rollback itself fails; that path is covered at the unit
+/// level in `pm::recovery_report`, not by forcing a real rollback failure
+/// through the CLI here.
+#[test]
+fn failed_install_restores_prior_state_and_leaves_no_backup_litter() {
+    let work = tempfile::tempdir().expect("work dir");
+    let mut packages = std::collections::BTreeMap::new();
+    packages.insert(
+        "fs",
+        (
+            "1.0.0",
+            pack_fixture_package(
+                work.path(),
+                "fs",
+                "1.0.0",
+                "export fn fsOk() string { return \"fs\" }\n",
+            ),
+        ),
+    );
+    let registry = FixtureRegistry::start(packages);
+
+    let project = work.path().join("app");
+    fs::create_dir_all(&project).expect("mkdir project");
+    let (success, output) = run_cli(&project, &["init"], registry.address);
+    assert!(success, "deka init must succeed: {output}");
+
+    let (success, output) = run_cli(&project, &["install", "fs"], registry.address);
+    assert!(success, "initial install must succeed: {output}");
+    assert!(project.join("deka.grants.json").is_file(), "grant table must be written");
+
+    let lock_before = fs::read_to_string(project.join("deka.lock")).expect("lock before");
+    let manifest_before = fs::read_to_string(project.join("deka.json")).expect("manifest before");
+    let grants_before = fs::read_to_string(project.join("deka.grants.json")).expect("grants before");
+    assert_eq!(count_root_backups(&project), 0, "clean before the failing call");
+    assert_eq!(count_cache_entries(&project), 0, "clean before the failing call");
+
+    // "does-not-exist" maps to @deka/does-not-exist (bare names map to
+    // @deka/*) and the fixture registry serves no such package, so the
+    // installer resolves an empty/source-less artifact and rejects it --
+    // after "fs" (already locked) has run through the same per-package loop
+    // and opened a transaction ahead of it.
+    let (success, output) = run_cli(&project, &["install", "fs", "does-not-exist"], registry.address);
+    assert!(
+        !success,
+        "install with a missing package should fail after a partial successful install: {output}"
+    );
+    assert!(
+        output.contains("does-not-exist"),
+        "failure should name the offending package: {output}"
+    );
+
+    assert_eq!(
+        fs::read_to_string(project.join("deka.lock")).expect("lock after"),
+        lock_before,
+        "deka.lock must be restored to its exact pre-failure content"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("deka.json")).expect("manifest after"),
+        manifest_before,
+        "deka.json must be restored to its exact pre-failure content"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("deka.grants.json")).expect("grants after"),
+        grants_before,
+        "deka.grants.json must be restored to its exact pre-failure content"
+    );
+    assert_eq!(
+        count_root_backups(&project),
+        0,
+        "no backup litter in the project root after a successful rollback"
+    );
+    assert_eq!(
+        count_cache_entries(&project),
+        0,
+        "no backup litter left in .cache after a successful rollback"
     );
 }

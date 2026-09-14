@@ -104,8 +104,6 @@ fn assert_scaffold(root: &Path) {
     let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
     assert!(gitignore.contains("ds_modules/"), "{gitignore}");
     assert!(gitignore.contains("dist/"), "{gitignore}");
-    assert!(gitignore.contains(".deka.json-backup-*"), "{gitignore}");
-    assert!(gitignore.contains(".deka.lock-backup-*"), "{gitignore}");
 }
 
 fn wire_dsc(command: &mut Command) {
