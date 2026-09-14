@@ -39,3 +39,4 @@ libc = "0.2"
 
 [dev-dependencies]
 axum = "0.7"
+security = { path = "../security" }
