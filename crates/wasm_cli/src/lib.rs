@@ -53,9 +53,11 @@ fn cmd_default(_context: &Context) {
 }
 
 fn cmd_init(context: &Context) {
+    // Bad/missing argument: usage error, exit 2 (deka#1010). Everything
+    // past a valid module spec is a runtime failure: exit 1.
     let Some(spec) = context.args.positionals.get(0) else {
         stdio::error("wasm", "missing module spec (e.g. @user/hello)");
-        return;
+        std::process::exit(2);
     };
 
     let root = project_root(context);
@@ -63,19 +65,19 @@ fn cmd_init(context: &Context) {
         Ok(value) => value,
         Err(message) => {
             stdio::error("wasm", &message);
-            return;
+            std::process::exit(2);
         }
     };
 
     let module_path = module_spec_path(&root, &module_spec);
     if module_path.exists() {
         stdio::error("wasm", "module already exists");
-        return;
+        std::process::exit(1);
     }
 
     if let Err(err) = std::fs::create_dir_all(&module_path) {
         stdio::error("wasm", &format!("failed to create module dir: {err}"));
-        return;
+        std::process::exit(1);
     }
 
     let module_name = module_spec
@@ -89,29 +91,29 @@ fn cmd_init(context: &Context) {
 
     if let Err(err) = write_deka_manifest(&module_path, &crate_name, &world_name) {
         stdio::error("wasm", &format!("failed to write deka.json: {err}"));
-        return;
+        std::process::exit(1);
     }
 
     if let Err(err) = write_wit_file(&module_path, &package_name, &world_name) {
         stdio::error("wasm", &format!("failed to write module.wit: {err}"));
-        return;
+        std::process::exit(1);
     }
 
     let rust_dir = module_path.join("rust");
     if let Err(err) = std::fs::create_dir_all(rust_dir.join("src")) {
         stdio::error("wasm", &format!("failed to create rust crate: {err}"));
-        return;
+        std::process::exit(1);
     }
 
     if let Err(err) = write_rust_crate(&rust_dir, &crate_name, &module_spec.namespace, &world_name)
     {
         stdio::error("wasm", &format!("failed to write rust crate: {err}"));
-        return;
+        std::process::exit(1);
     }
 
     if let Err(err) = write_readme(&module_path, &module_spec.raw) {
         stdio::error("wasm", &format!("failed to write README: {err}"));
-        return;
+        std::process::exit(1);
     }
 
     stdio::log("wasm", "scaffolded module");
@@ -119,9 +121,10 @@ fn cmd_init(context: &Context) {
 }
 
 fn cmd_build(context: &Context) {
+    // Bad/missing argument: usage error, exit 2 (deka#1010).
     let Some(spec) = context.args.positionals.get(0) else {
         stdio::error("wasm", "missing module spec (e.g. @user/hello)");
-        return;
+        std::process::exit(2);
     };
 
     let root = project_root(context);
@@ -129,7 +132,7 @@ fn cmd_build(context: &Context) {
         Ok(value) => value,
         Err(message) => {
             stdio::error("wasm", &message);
-            return;
+            std::process::exit(2);
         }
     };
 
@@ -137,14 +140,14 @@ fn cmd_build(context: &Context) {
     let manifest_path = module_path.join("deka.json");
     if !manifest_path.exists() {
         stdio::error("wasm", "missing deka.json in module directory");
-        return;
+        std::process::exit(1);
     }
 
     let manifest = match read_manifest(&manifest_path) {
         Ok(value) => value,
         Err(message) => {
             stdio::error("wasm", &message);
-            return;
+            std::process::exit(1);
         }
     };
 
@@ -157,7 +160,7 @@ fn cmd_build(context: &Context) {
     let crate_manifest = crate_dir.join("Cargo.toml");
     if !crate_manifest.exists() {
         stdio::error("wasm", "missing Cargo.toml for wasm crate");
-        return;
+        std::process::exit(1);
     }
 
     let crate_name = manifest
@@ -179,11 +182,11 @@ fn cmd_build(context: &Context) {
         Ok(status) if status.success() => {}
         Ok(status) => {
             stdio::error("wasm", &format!("cargo build failed (status {status})"));
-            return;
+            std::process::exit(1);
         }
         Err(err) => {
             stdio::error("wasm", &format!("failed to run cargo build: {err}"));
-            return;
+            std::process::exit(1);
         }
     }
 
@@ -203,13 +206,13 @@ fn cmd_build(context: &Context) {
             "wasm",
             &format!("missing wasm output at {}", wasm_path.display()),
         );
-        return;
+        std::process::exit(1);
     }
 
     let output_path = module_path.join(manifest.module_path.as_deref().unwrap_or("module.wasm"));
     if let Err(err) = std::fs::copy(&wasm_path, &output_path) {
         stdio::error("wasm", &format!("failed to copy wasm: {err}"));
-        return;
+        std::process::exit(1);
     }
 
     if let Err(message) = run_stub_generation(&root, Some(&module_path)) {
@@ -230,13 +233,17 @@ fn cmd_stubs(context: &Context) {
 
     if let Some(Some(path)) = module_dir {
         if let Err(message) = run_stub_generation(&root, Some(&path)) {
+            // Stub generation failure is a runtime failure, not a usage
+            // error: exit 1 (deka#1010).
             stdio::error("wasm", &message);
+            std::process::exit(1);
         }
         return;
     }
 
     if let Err(message) = run_stub_generation(&root, None) {
         stdio::error("wasm", &message);
+        std::process::exit(1);
     }
 }
 

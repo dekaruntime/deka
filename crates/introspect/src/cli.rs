@@ -82,6 +82,10 @@ fn materialize_ui() -> UiAssets {
     match UiAssets::materialize() {
         Ok(assets) => assets,
         Err(message) => {
+            // Runtime failure, not a usage error: the embedded UI assets
+            // failed to extract to disk (permissions, disk space, a
+            // corrupt build). The caller passed valid arguments; exit 1
+            // (deka#1010).
             stdio::error("introspect", &message);
             std::process::exit(1);
         }
@@ -197,8 +201,11 @@ pub fn cmd_inspect(context: &Context) {
 
     let handler = context.args.positionals.get(0).cloned().unwrap_or_default();
     if handler.is_empty() {
+        // Missing required argument is a usage error (deka#1010): exit 2,
+        // matching the CLI-wide convention. Distinct from the asset
+        // materialization failure above, which is a runtime failure (1).
         stdio::error("introspect", "inspect requires a handler argument");
-        std::process::exit(1);
+        std::process::exit(2);
     }
 
     let mut args = vec!["inspect".to_string(), handler];
@@ -226,8 +233,9 @@ pub fn cmd_kill(context: &Context) {
 
     let handler = context.args.positionals.get(0).cloned().unwrap_or_default();
     if handler.is_empty() {
+        // Missing required argument: usage error, exit 2 (deka#1010).
         stdio::error("introspect", "kill requires a handler argument");
-        std::process::exit(1);
+        std::process::exit(2);
     }
 
     let mut args = vec!["kill".to_string(), handler];

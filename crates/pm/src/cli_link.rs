@@ -29,15 +29,16 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd_link(context: &Context) {
+    // Argument-shape checks (deka#1010: usage error, exit 2) run before the
+    // closure below, which owns everything that can only fail once we
+    // actually try to link (runtime failure, exit 1).
+    if context.args.positionals.len() != 1 {
+        stdio::error("link", "usage: deka link <package-directory>");
+        std::process::exit(2);
+    }
+
     let result = (|| {
-        let package_dir = context
-            .args
-            .positionals
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("usage: deka link <package-directory>"))?;
-        if context.args.positionals.len() != 1 {
-            anyhow::bail!("usage: deka link <package-directory>");
-        }
+        let package_dir = &context.args.positionals[0];
         let project_dir = discover_project_root()?;
         let name = link_package_at(&project_dir, &PathBuf::from(package_dir))?;
         Ok::<_, anyhow::Error>(name)
@@ -53,15 +54,13 @@ pub fn cmd_link(context: &Context) {
 }
 
 pub fn cmd_unlink(context: &Context) {
+    if context.args.positionals.len() != 1 {
+        stdio::error("unlink", "usage: deka unlink <package-name>");
+        std::process::exit(2);
+    }
+
     let result = (|| {
-        let package = context
-            .args
-            .positionals
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("usage: deka unlink <package-name>"))?;
-        if context.args.positionals.len() != 1 {
-            anyhow::bail!("usage: deka unlink <package-name>");
-        }
+        let package = &context.args.positionals[0];
         let project_dir = discover_project_root()?;
         let target = unlink_package_at(&project_dir, package)?;
         Ok::<_, anyhow::Error>((package.clone(), target))

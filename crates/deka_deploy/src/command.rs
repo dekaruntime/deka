@@ -63,11 +63,14 @@ fn run_cmd(context: &Context) {
     } else if context.args.positionals.is_empty() && context.args.commands.len() > 2 {
         context.args.commands[2].clone()
     } else {
+        // Missing required argument: usage error, exit 2 (deka#1010). This
+        // handler previously returned without setting an exit code at all,
+        // so the process exited 0 on the exact failure it just printed.
         stdio::error(
             "deploy",
             "missing pipeline file path. Usage: deka deploy run <linkhash.yaml>",
         );
-        return;
+        std::process::exit(2);
     };
 
     let (gild_socket, bearer_token) = resolve_gild_endpoint(&context.args.params);
@@ -88,16 +91,22 @@ fn run_cmd(context: &Context) {
     let pipeline = match crate::pipeline_yaml::parse_pipeline_yaml(&pipeline_path) {
         Ok(p) => p,
         Err(e) => {
+            // A syntactically bad pipeline file is a runtime failure, not a
+            // usage error: the argument itself (a path) was fine, its
+            // contents were not. Exit 1 (deka#1010). Previously returned
+            // with no exit code set, exiting 0.
             stdio::error("deploy", &format!("failed to parse pipeline: {}", e));
-            return;
+            std::process::exit(1);
         }
     };
 
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(r) => r,
         Err(e) => {
+            // Environment failure (tokio runtime init), not a usage error:
+            // exit 1. Previously returned with no exit code set, exiting 0.
             stdio::error("deploy", &format!("failed to start runtime: {}", e));
-            return;
+            std::process::exit(1);
         }
     };
 

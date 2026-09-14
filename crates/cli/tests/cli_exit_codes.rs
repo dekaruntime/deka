@@ -186,3 +186,148 @@ fn task_propagates_child_exit_codes() {
         "failed dependency must stop its parent"
     );
 }
+
+// deka#1010: usage errors exit 2 and runtime failures exit 1, consistently
+// across the CLI and every owner crate — not just the top-level dispatch
+// path exercised above. These tests drive the real built binary and assert
+// the exit code, not just the printed message.
+
+#[test]
+#[cfg(feature = "native")]
+fn db_bare_is_a_usage_error() {
+    // Missing subcommand: usage error, exit 2. Previously exited 0 despite
+    // printing "missing subcommand".
+    let output = Command::new(cli_bin())
+        .args(["db"])
+        .output()
+        .expect("run deka db");
+    assert_eq!(output.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("missing subcommand"), "{text}");
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn db_unknown_subcommand_lists_available_subcommands() {
+    // Restores the specific-hint behavior displaced by #1008's generic
+    // unknown-subcommand message (deka#1010).
+    let output = Command::new(cli_bin())
+        .args(["db", "bogus"])
+        .output()
+        .expect("run deka db bogus");
+    assert_eq!(output.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("'db migrate'"), "{text}");
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn cache_unknown_subcommand_restores_specific_clear_hint() {
+    // deka#1010: `cache bogus` lost its specific "clear" hint when #1008's
+    // generic unknown-subcommand message took over. No fuzzy match exists
+    // between "bogus" and "clear", so the fallback (available subcommands)
+    // is what restores it.
+    let output = Command::new(cli_bin())
+        .args(["cache", "bogus"])
+        .output()
+        .expect("run deka cache bogus");
+    assert_eq!(output.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("'cache clear'"), "{text}");
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn self_test_missing_suite_name_is_a_usage_error() {
+    let output = Command::new(cli_bin())
+        .args(["self", "test", "--list"])
+        .output()
+        .expect("run deka self test --list");
+    assert_eq!(output.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("missing suite name"), "{text}");
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn self_test_unknown_suite_is_a_usage_error() {
+    let output = Command::new(cli_bin())
+        .args(["self", "test", "bogus-suite"])
+        .output()
+        .expect("run deka self test bogus-suite");
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn introspect_inspect_missing_handler_is_a_usage_error() {
+    let output = Command::new(cli_bin())
+        .args(["introspect", "inspect"])
+        .output()
+        .expect("run deka introspect inspect");
+    assert_eq!(output.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("requires a handler argument"), "{text}");
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn introspect_kill_missing_handler_is_a_usage_error() {
+    let output = Command::new(cli_bin())
+        .args(["introspect", "kill"])
+        .output()
+        .expect("run deka introspect kill");
+    assert_eq!(output.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("requires a handler argument"), "{text}");
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn link_missing_argument_is_a_usage_error() {
+    let output = Command::new(cli_bin())
+        .args(["link"])
+        .output()
+        .expect("run deka link");
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn link_outside_a_project_is_a_runtime_failure() {
+    // A well-formed argument (a real directory) but no deka.json anywhere
+    // in the ancestor chain: the argument was fine, the environment
+    // wasn't. Runtime failure, exit 1 (deka#1010).
+    let project = tempfile::tempdir().expect("link project");
+    let target = project.path().join("pkg");
+    std::fs::create_dir_all(&target).unwrap();
+    let output = Command::new(cli_bin())
+        .args(["link", target.to_str().unwrap()])
+        .current_dir(project.path())
+        .output()
+        .expect("run deka link");
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn deploy_run_missing_pipeline_path_is_a_usage_error() {
+    let output = Command::new(cli_bin())
+        .args(["deploy", "run"])
+        .output()
+        .expect("run deka deploy run");
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn deploy_run_unparsable_pipeline_is_a_runtime_failure() {
+    let project = tempfile::tempdir().expect("deploy project");
+    let pipeline = project.path().join("linkhash.yaml");
+    std::fs::write(&pipeline, "not: [valid, yaml: for-a-pipeline").unwrap();
+    let output = Command::new(cli_bin())
+        .args(["deploy", "run", pipeline.to_str().unwrap()])
+        .output()
+        .expect("run deka deploy run");
+    assert_eq!(output.status.code(), Some(1));
+}

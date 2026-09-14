@@ -14,12 +14,18 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn cmd(context: &Context) {
+    // Argument-shape check runs before the closure (deka#1010: usage
+    // error, exit 2); everything the closure can fail on is a runtime
+    // failure (exit 1).
+    let [source] = context.args.positionals.as_slice() else {
+        stdio::error(
+            "summon",
+            "usage: deka summon <url|jsr:@scope/name[@version]> (JavaScript, .tgz or JSR; infer is a later stage)",
+        );
+        std::process::exit(2);
+    };
+
     let result = (|| {
-        let [source] = context.args.positionals.as_slice() else {
-            anyhow::bail!(
-                "usage: deka summon <url|jsr:@scope/name[@version]> (JavaScript, .tgz or JSR; infer is a later stage)"
-            );
-        };
         let cwd = std::env::current_dir()?;
         let project = cwd
             .ancestors()

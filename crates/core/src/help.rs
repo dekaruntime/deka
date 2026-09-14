@@ -450,6 +450,15 @@ pub fn suggestion_candidates(
 
 /// Build the full usage message for an unknown subcommand, including
 /// suggestions when we can compute any.
+///
+/// When no fuzzy suggestion is close enough to offer (`cache bogus` is
+/// nowhere near `clear`), fall back to listing the command's actual
+/// subcommands. Before deka#1008 generalized this dispatch path, a few
+/// commands (`cache` among them) printed that specific hint by hand; the
+/// generic message that replaced them dropped it (deka#1010). Doing it
+/// here once, from the registry, restores the specific hint for every
+/// command with subcommands instead of re-introducing a one-off per
+/// command.
 pub fn unknown_subcommand_message(
     registry: &Registry,
     ownership_index: &OwnershipIndex,
@@ -463,6 +472,17 @@ pub fn unknown_subcommand_message(
         message.push_str(". did you mean ");
         message.push_str(&format_suggestions(&suggestions, max_suggestions));
         message.push('?');
+    } else if let Some(command) = registry.command_named(command_name) {
+        if !command.subcommands.is_empty() {
+            let available = command
+                .subcommands
+                .iter()
+                .map(|sub| format!("'{command_name} {}'", sub.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            message.push_str(". available: ");
+            message.push_str(&available);
+        }
     }
     message
 }

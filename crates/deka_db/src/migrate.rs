@@ -18,14 +18,14 @@ pub(super) fn cmd_migrate(_context: &Context) {
             "db migrate",
             "db/migrations directory not found. run `deka db generate <models>` first",
         );
-        return;
+        std::process::exit(1);
     }
 
     let mut migration_files = match collect_migration_files(&migrations_dir) {
         Ok(value) => value,
         Err(message) => {
             error("db migrate", &message);
-            return;
+            std::process::exit(1);
         }
     };
     migration_files.sort();
@@ -44,7 +44,7 @@ pub(super) fn cmd_migrate(_context: &Context) {
                         "db migrate",
                         &format!("failed to connect to postgres: {}", err),
                     );
-                    return;
+                    std::process::exit(1);
                 }
             };
 
@@ -53,7 +53,7 @@ pub(super) fn cmd_migrate(_context: &Context) {
                     "db migrate",
                     &format!("failed to ensure migration table: {}", err),
                 );
-                return;
+                std::process::exit(1);
             }
 
             let applied = match load_applied_migrations(&mut client) {
@@ -63,7 +63,7 @@ pub(super) fn cmd_migrate(_context: &Context) {
                         "db migrate",
                         &format!("failed to read applied migrations: {}", err),
                     );
-                    return;
+                    std::process::exit(1);
                 }
             };
 
@@ -77,6 +77,7 @@ pub(super) fn cmd_migrate(_context: &Context) {
                                 "db migrate",
                                 &format!("migration state write failed: {}", err),
                             );
+                            std::process::exit(1);
                         }
                     }
                     log(
@@ -87,7 +88,10 @@ pub(super) fn cmd_migrate(_context: &Context) {
                         ),
                     );
                 }
-                Err(message) => error("db migrate", &message),
+                Err(message) => {
+                    error("db migrate", &message);
+                    std::process::exit(1);
+                }
             }
         }
         DbEngine::Sqlite => {
@@ -98,7 +102,7 @@ pub(super) fn cmd_migrate(_context: &Context) {
                         "db migrate",
                         &format!("failed to open sqlite database {}: {}", cfg.location, err),
                     );
-                    return;
+                    std::process::exit(1);
                 }
             };
 
@@ -107,7 +111,7 @@ pub(super) fn cmd_migrate(_context: &Context) {
                     "db migrate",
                     &format!("failed to ensure migration table: {}", err),
                 );
-                return;
+                std::process::exit(1);
             }
 
             let applied = match load_applied_migrations_sqlite(&conn) {
@@ -117,7 +121,7 @@ pub(super) fn cmd_migrate(_context: &Context) {
                         "db migrate",
                         &format!("failed to read applied migrations: {}", err),
                     );
-                    return;
+                    std::process::exit(1);
                 }
             };
 
@@ -131,6 +135,7 @@ pub(super) fn cmd_migrate(_context: &Context) {
                                 "db migrate",
                                 &format!("migration state write failed: {}", err),
                             );
+                            std::process::exit(1);
                         }
                     }
                     log(
@@ -141,7 +146,10 @@ pub(super) fn cmd_migrate(_context: &Context) {
                         ),
                     );
                 }
-                Err(message) => error("db migrate", &message),
+                Err(message) => {
+                    error("db migrate", &message);
+                    std::process::exit(1);
+                }
             }
         }
     }
@@ -158,7 +166,7 @@ pub(super) fn cmd_info(_context: &Context) {
             "db info",
             "db/_state.json not found. run `deka db generate <models>` first",
         );
-        return;
+        std::process::exit(1);
     }
 
     let state_text = match fs::read_to_string(&state_path) {
@@ -168,7 +176,7 @@ pub(super) fn cmd_info(_context: &Context) {
                 "db info",
                 &format!("failed to read {}: {}", state_path.display(), err),
             );
-            return;
+            std::process::exit(1);
         }
     };
     let parsed: serde_json::Value = match serde_json::from_str(&state_text) {
@@ -178,7 +186,7 @@ pub(super) fn cmd_info(_context: &Context) {
                 "db info",
                 &format!("failed to parse {}: {}", state_path.display(), err),
             );
-            return;
+            std::process::exit(1);
         }
     };
 
@@ -253,14 +261,14 @@ pub(super) fn cmd_flush(_context: &Context) {
             "db flush",
             "db/migrations directory not found. run `deka db generate <models>` first",
         );
-        return;
+        std::process::exit(1);
     }
 
     let mut migration_files = match collect_migration_files(&migrations_dir) {
         Ok(value) => value,
         Err(message) => {
             error("db flush", &message);
-            return;
+            std::process::exit(1);
         }
     };
     migration_files.sort();
@@ -275,7 +283,7 @@ pub(super) fn cmd_flush(_context: &Context) {
                         "db flush",
                         &format!("failed to connect to postgres: {}", err),
                     );
-                    return;
+                    std::process::exit(1);
                 }
             };
 
@@ -283,14 +291,14 @@ pub(super) fn cmd_flush(_context: &Context) {
                 client.batch_execute("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;")
             {
                 error("db flush", &format!("failed to reset schema: {}", err));
-                return;
+                std::process::exit(1);
             }
             if let Err(err) = ensure_migrations_table(&mut client) {
                 error(
                     "db flush",
                     &format!("failed to initialize migration table: {}", err),
                 );
-                return;
+                std::process::exit(1);
             }
 
             let none_applied = std::collections::HashSet::new();
@@ -304,7 +312,10 @@ pub(super) fn cmd_flush(_context: &Context) {
                         ),
                     );
                 }
-                Err(message) => error("db flush", &message),
+                Err(message) => {
+                    error("db flush", &message);
+                    std::process::exit(1);
+                }
             }
         }
         DbEngine::Sqlite => {
@@ -315,7 +326,7 @@ pub(super) fn cmd_flush(_context: &Context) {
                         "db flush",
                         &format!("failed to open sqlite database {}: {}", cfg.location, err),
                     );
-                    return;
+                    std::process::exit(1);
                 }
             };
 
@@ -324,14 +335,14 @@ pub(super) fn cmd_flush(_context: &Context) {
                     "db flush",
                     &format!("failed to reset sqlite schema: {}", err),
                 );
-                return;
+                std::process::exit(1);
             }
             if let Err(err) = ensure_migrations_table_sqlite(&mut conn) {
                 error(
                     "db flush",
                     &format!("failed to initialize migration table: {}", err),
                 );
-                return;
+                std::process::exit(1);
             }
 
             let none_applied = std::collections::HashSet::new();
@@ -345,7 +356,10 @@ pub(super) fn cmd_flush(_context: &Context) {
                         ),
                     );
                 }
-                Err(message) => error("db flush", &message),
+                Err(message) => {
+                    error("db flush", &message);
+                    std::process::exit(1);
+                }
             }
         }
     }
