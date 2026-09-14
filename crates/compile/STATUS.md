@@ -15,16 +15,7 @@ We've successfully implemented the `deka compile` command that creates single-fi
 - File metadata tracking (size, type, compression status)
 - ✅ 2 unit tests passing
 
-### 2. File Embedder
-**File:** `src/embed.rs`
-
-- Recursive directory scanning
-- Pattern-based inclusion/exclusion
-- Automatic entry point detection (handler.js, app.php, main.js, etc.)
-- Smart compression based on file type
-- ✅ 1 unit test passing
-
-### 3. Binary Embedder
+### 2. Binary Embedder
 **File:** `src/binary.rs`
 
 - VFS embedding into runtime binary
@@ -34,7 +25,7 @@ We've successfully implemented the `deka compile` command that creates single-fi
 - Executable permissions setting (Unix)
 - ✅ 1 unit test passing
 
-### 4. CLI Integration
+### 3. CLI Integration
 **File:** `src/lib.rs`, `crates/cli/src/cli/compile.rs`
 
 - Registered as "project" category command (alongside `init`)
@@ -42,7 +33,7 @@ We've successfully implemented the `deka compile` command that creates single-fi
 - User-friendly error messages
 - Progress reporting
 
-### 5. Integration Tests
+### 4. Integration Tests
 **File:** `tests/integration_test.rs`
 
 - Full compile cycle verification
@@ -53,8 +44,8 @@ We've successfully implemented the `deka compile` command that creates single-fi
 ## Test Results
 
 ```
-✓ 6/6 tests passing
-  - 4 unit tests (vfs, embed, binary)
+✓ 5/5 tests passing
+  - 3 unit tests (vfs, binary)
   - 2 integration tests (full cycle, permissions)
 ```
 
@@ -199,7 +190,6 @@ A  crates/compile/                    (new crate)
    ├── src/
    │   ├── lib.rs
    │   ├── vfs.rs
-   │   ├── embed.rs
    │   └── binary.rs
    └── tests/
        └── integration_test.rs
