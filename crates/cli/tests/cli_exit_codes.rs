@@ -187,6 +187,31 @@ fn task_propagates_child_exit_codes() {
     );
 }
 
+#[test]
+#[cfg(feature = "native")]
+fn task_json_empty_manifest_is_a_runtime_failure() {
+    let project = tempfile::tempdir().expect("task project");
+    std::fs::write(
+        project.path().join("deka.json"),
+        serde_json::json!({}).to_string(),
+    )
+    .unwrap();
+    let output = Command::new(cli_bin())
+        .args(["task", "--json"])
+        .current_dir(project.path())
+        .output()
+        .expect("run deka task --json");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "task --json: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("no tasks found in deka.json"), "{text}");
+}
+
 // deka#1010: usage errors exit 2 and runtime failures exit 1, consistently
 // across the CLI and every owner crate — not just the top-level dispatch
 // path exercised above. These tests drive the real built binary and assert

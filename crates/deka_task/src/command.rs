@@ -63,6 +63,10 @@ pub fn cmd(context: &Context) {
 
     let task_name = requested_task_name(context);
     if context.args.flags.contains_key("--json") {
+        if tasks.is_empty() {
+            stdio::error("task", "no tasks found in deka.json");
+            std::process::exit(1);
+        }
         print_task_json(&tasks);
         return;
     }
