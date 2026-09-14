@@ -137,7 +137,11 @@ pub fn summon_at(
             serde_json::to_string_pretty(&manifest)? + "\n",
         )?;
         fs::File::open(&manifest_path)?.sync_all()?;
-        transaction.finish()
+        let cleanup_warnings = transaction.finish()?;
+        if !cleanup_warnings.is_empty() {
+            crate::install::emit_install_cleanup_warnings(&cleanup_warnings);
+        }
+        Ok(())
     })();
     if let Err(error) = result {
         recover_install_transaction(&project).context("summon rollback failed")?;
