@@ -110,20 +110,27 @@ component's JSX, confirm the counter does not reset.
 
 ## Building the dev server
 
-Source builds enable the development server explicitly:
+Release binaries and default source builds include the development server:
 
 ```sh
-cargo build --release -p cli --features dev-server
+cargo build --release -p cli
 ```
 
-The default `cargo build --release -p cli` retains `deka serve` and excludes
-the vendored development React code. Both builds list `deka dev` and
-`--dev` in help; invoking `deka dev` or `deka serve --dev` without the feature
-reports "this build lacks the dev server; rebuild with --features dev-server".
-The CLI feature forwards to the dev and HTTP crates; production-only builds
-should build the CLI package rather than the entire workspace, where Cargo
-unifies dependency features. `scripts/check-prod-react-bytes.sh` verifies the
-production release binary against the frozen React DOM client source.
+`deka dev` and `deka serve --dev` are available out of the box. Development
+React is used for Fast Refresh; production builds still emit production React.
+
+For a native-only CLI without the development server, build the CLI package
+explicitly rather than the workspace (where Cargo unifies dependency features):
+
+```sh
+cargo build --release -p cli --no-default-features --features native
+```
+
+This optional build retains `deka serve`, but invoking `deka dev` or
+`deka serve --dev` reports the missing feature. `scripts/check-prod-react-bytes.sh`
+checks that this native-only binary excludes the frozen development React DOM
+source; the CLI's `react_builtin` integration tests check emitted production
+JavaScript independently of which features the CLI includes.
 
 In development mode, `/_deka/` vendor, module, and HMR WebSocket requests
 bypass the per-IP rate limiter without consuming application request tokens.
