@@ -117,9 +117,14 @@ fn assert_scaffold(root: &Path) {
     );
 
     let index = fs::read_to_string(root.join("index.html")).unwrap();
-    assert!(index.contains("<!--deka-app-->"), "{index}");
-    assert!(index.contains("<!--deka-head-->"), "{index}");
-    assert!(index.contains("<!--deka-scripts-->"), "{index}");
+    // deka#1047: the scaffold is a clean, Vite-shaped document — no hole
+    // markers, no explicit entry <script>. The split points (</head>,
+    // <div id="app">, before </body>) are inferred structurally at SSR time.
+    assert!(!index.contains("<!--deka-app-->"), "{index}");
+    assert!(!index.contains("<!--deka-head-->"), "{index}");
+    assert!(!index.contains("<!--deka-scripts-->"), "{index}");
+    assert!(!index.contains("<script"), "{index}");
+    assert!(index.contains("<div id=\"app\"></div>"), "{index}");
 
     let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
     assert!(gitignore.contains("ds_modules/"), "{gitignore}");

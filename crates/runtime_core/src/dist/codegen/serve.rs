@@ -335,20 +335,64 @@ export {{ App }}
 "#
     ))
 }
+/// Splits a document into its head/mid/tail parts for streaming (head HTML
+/// goes in `doc_head..doc_mid`, app HTML in `doc_mid..doc_tail`). Each of the
+/// three holes is resolved independently: the literal marker wins wherever
+/// it is present in the document (hand-written override), and otherwise the
+/// split point is inferred structurally — `</head>` for the head hole, the
+/// `<div id="app">` element for the app hole, immediately before `</body>`
+/// for scripts. `deka` never generates the markers; this keeps documents
+/// that carry them (or only some of them) working unchanged.
 pub(super) fn split_document(index_html: &str, scripts: &str) -> (String, String, String) {
-    let no_scripts = index_html.replace(DEKA_SCRIPTS_HOLE, scripts);
-    let (before_app, after_app) = match no_scripts.split_once(DEKA_APP_HOLE) {
-        Some((a, b)) => (a, b),
-        None => (no_scripts.as_str(), ""),
-    };
-    if let Some((before_head, after_head)) = before_app.split_once(DEKA_HEAD_HOLE) {
-        (
-            before_head.to_string(),
-            after_head.to_string(),
-            after_app.to_string(),
-        )
-    } else {
-        (before_app.to_string(), String::new(), after_app.to_string())
+    let no_scripts = inject_scripts(index_html, scripts);
+    let (before_app, after_app) = split_app_hole(&no_scripts);
+    let (before_head, after_head) = split_head_hole(&before_app);
+    (before_head, after_head, after_app)
+}
+
+fn inject_scripts(index_html: &str, scripts: &str) -> String {
+    if index_html.contains(DEKA_SCRIPTS_HOLE) {
+        return index_html.replace(DEKA_SCRIPTS_HOLE, scripts);
+    }
+    if scripts.is_empty() {
+        return index_html.to_string();
+    }
+    match index_html.rfind("</body>") {
+        Some(idx) => format!("{}{}{}", &index_html[..idx], scripts, &index_html[idx..]),
+        None => format!("{index_html}{scripts}"),
+    }
+}
+
+fn split_app_hole(html: &str) -> (String, String) {
+    if let Some((a, b)) = html.split_once(DEKA_APP_HOLE) {
+        return (a.to_string(), b.to_string());
+    }
+    match find_app_div_open_end(html) {
+        Some(idx) => (html[..idx].to_string(), html[idx..].to_string()),
+        None => (html.to_string(), String::new()),
+    }
+}
+
+/// Finds the byte offset immediately after the `>` that closes the opening
+/// tag of the element carrying `id="app"` — i.e. where content streamed
+/// into `<div id="app">` should be inserted.
+fn find_app_div_open_end(html: &str) -> Option<usize> {
+    let attr_idx = html.find(r#"id="app""#)?;
+    let tag_start = html[..attr_idx].rfind('<')?;
+    if html[tag_start..].starts_with("</") {
+        return None;
+    }
+    let tag_close = html[attr_idx..].find('>')?;
+    Some(attr_idx + tag_close + 1)
+}
+
+fn split_head_hole(html: &str) -> (String, String) {
+    if let Some((a, b)) = html.split_once(DEKA_HEAD_HOLE) {
+        return (a.to_string(), b.to_string());
+    }
+    match html.find("</head>") {
+        Some(idx) => (html[..idx].to_string(), html[idx..].to_string()),
+        None => (html.to_string(), String::new()),
     }
 }
 pub(super) fn path_condition(route: &str) -> Result<String, String> {
