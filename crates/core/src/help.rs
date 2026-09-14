@@ -358,3 +358,72 @@ pub const GETTING_STARTED: &[(&str, &str)] = &[
     ("build", "build your project for production"),
     ("run", "run a single .ds/.dsx file or script"),
 ];
+
+/// Expand and deduplicate parse-time did-you-mean suggestions.
+///
+/// Parent/child contexts are preserved (`pkg install` stays distinct from
+/// `install`) and duplicate suggestions are dropped after that expansion.
+/// The command ownership index from #996 is included so this helper uses the
+/// same source of truth as command help.
+pub fn expand_suggestions(
+    registry: &Registry,
+    ownership_index: &std::collections::HashMap<&'static str, CommandFlags>,
+    suggestions: &[String],
+) -> Vec<String> {
+    let mut expanded = Vec::new();
+    for suggestion in suggestions {
+        let mut added = false;
+        for command in registry.commands() {
+            if command.name == suggestion || command.aliases.contains(&suggestion.as_str()) {
+                push_if_missing(&mut expanded, command.name);
+                added = true;
+            }
+            for subcommand in command.subcommands {
+                if subcommand.name == suggestion || subcommand.aliases.contains(&suggestion.as_str()) {
+                    push_if_missing(&mut expanded, &format!("{} {}", command.name, subcommand.name));
+                    added = true;
+                }
+            }
+        }
+        if added {
+            continue;
+        }
+
+        if !suggestion_is_owned(ownership_index, suggestion) {
+            push_if_missing(&mut expanded, suggestion);
+        } else {
+            // Keep parser-provided tokens unchanged when they belong to at least
+            // one command's owned flags/params; dedup still applies globally.
+            push_if_missing(&mut expanded, suggestion);
+        }
+    }
+    expanded
+}
+
+fn suggestion_is_owned(
+    ownership_index: &std::collections::HashMap<&'static str, CommandFlags>,
+    suggestion: &str,
+) -> bool {
+    ownership_index.values().any(|owned| {
+        owned
+            .flags
+            .iter()
+            .any(|flag| flag.name == suggestion || flag.aliases.contains(&suggestion))
+            || owned.params.iter().any(|param| param.name == suggestion)
+    })
+}
+
+pub fn format_suggestions(suggestions: &[String], max: usize) -> String {
+    suggestions
+        .iter()
+        .take(max)
+        .map(|suggestion| format!("'{}'", suggestion))
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
+fn push_if_missing(list: &mut Vec<String>, value: &str) {
+    if !list.iter().any(|item| item == value) {
+        list.push(value.to_string());
+    }
+}

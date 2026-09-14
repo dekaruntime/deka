@@ -116,11 +116,12 @@ struct WasmRunOutput {
 #[cfg(target_arch = "wasm32")]
 fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
     let registry = build_registry();
+    let ownership_index = command_flag_index();
     stdio::begin_capture();
 
     let parsed = core::Args::collect(args, &registry);
     if !parsed.errors.is_empty() {
-        let message = cli::format_parse_errors(&parsed.errors);
+        let message = cli::format_parse_errors(&registry, &ownership_index, &parsed.errors);
         cli::error(Some(message.as_str()));
         let output = stdio::end_capture();
         return WasmRunOutput { code: 1, output };

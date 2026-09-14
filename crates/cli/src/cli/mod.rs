@@ -225,9 +225,10 @@ pub fn execute(registry: &Registry) -> i32 {
         }
     }
 
+    let ownership_index = crate::command_flag_index();
     let parsed = core::parse_env(registry);
     if !parsed.errors.is_empty() {
-        let message = format_parse_errors(&parsed.errors);
+        let message = format_parse_errors(registry, &ownership_index, &parsed.errors);
         error(Some(message.as_str()));
         return 2;
     }
@@ -267,7 +268,7 @@ pub fn execute(registry: &Registry) -> i32 {
     let context = match crate::context::from_env(registry) {
         Ok(context) => context,
         Err(crate::context::ContextError::Parse(errors)) => {
-            let message = format_parse_errors(&errors);
+            let message = format_parse_errors(registry, &ownership_index, &errors);
             error(Some(message.as_str()));
             return 2;
         }
@@ -341,7 +342,13 @@ pub(crate) fn single_command_wants_help(args: &core::Args) -> bool {
         || args.flags.contains_key("help")
 }
 
-pub fn format_parse_errors(errors: &[ParseError]) -> String {
+/// Render parse-error messages from real CLI parse outcomes.
+pub fn format_parse_errors(
+    registry: &Registry,
+    ownership_index: &std::collections::HashMap<&'static str, core::help::CommandFlags>,
+    errors: &[ParseError],
+) -> String {
+    const SUGGESTION_LIMIT: usize = 3;
     let mut output = String::new();
     for error in errors {
         match &error.kind {
@@ -349,7 +356,15 @@ pub fn format_parse_errors(errors: &[ParseError]) -> String {
                 output.push_str(&format!("unknown argument '{}'", error.token));
                 if !error.suggestions.is_empty() {
                     output.push_str(". did you mean ");
-                    output.push_str(&format_suggestions(&error.suggestions));
+                    let suggestions = core::help::expand_suggestions(
+                        registry,
+                        ownership_index,
+                        &error.suggestions,
+                    );
+                    output.push_str(&core::help::format_suggestions(
+                        &suggestions,
+                        SUGGESTION_LIMIT,
+                    ));
                     output.push('?');
                 }
                 output.push('\n');
@@ -360,12 +375,4 @@ pub fn format_parse_errors(errors: &[ParseError]) -> String {
         }
     }
     output
-}
-
-fn format_suggestions(suggestions: &[String]) -> String {
-    suggestions
-        .iter()
-        .map(|suggestion| format!("'{}'", suggestion))
-        .collect::<Vec<String>>()
-        .join(", ")
 }
