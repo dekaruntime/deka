@@ -13,80 +13,16 @@
 //! 7. Restart configured managed services.
 
 use deka_cli_core::Context;
-use serde::Deserialize;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use stdio;
 
-// ---------------------------------------------------------------------------
-// Update-check for `deka --update` (deka#976 / rfd#61)
-// ---------------------------------------------------------------------------
-//
-// This is deliberately independent of `run_update` below: `run_update`
-// resolves against a linkhash registry URL (default
-// `http://localhost:9418`) that is the retired self-hosted registry and is
-// not reachable in the current distribution model (see CLAUDE.md, "Issue
-// Tracking" and "Distribution"). `check_latest` does not call it, does not
-// touch `resolve_latest_version`, and performs no download or binary swap
-// -- it only reads the public, unauthenticated release manifest that the
-// release workflow already publishes to R2, and reports the result. It
-// used to live inline in `cli::update()`; moved here because self_cmd
-// already owns `deka self update` and cli is composition-only (rfd#61).
-
-/// Checks `https://releases.deka.gg/latest.json` (via `pm::releases`) and
-/// prints plainly whether the running binary is current, or the newer
-/// version plus a direct download URL. Never downloads or replaces
-/// anything.
-pub fn check_latest() {
-    let current_version = env!("CARGO_PKG_VERSION");
-    let manifest_url = pm::releases::releases_url();
-    match compose_update_status(current_version, &manifest_url) {
-        Ok(lines) => {
-            for line in lines {
-                stdio::raw(&line);
-            }
-        }
-        Err(err) => {
-            stdio::error(
-                "self update",
-                &format!("could not check for updates: {}", err),
-            );
-        }
-    }
-}
-
-/// The testable core of `check_latest`: given the running version and a
-/// manifest URL, returns the lines it would print. Kept separate from
-/// `check_latest` so tests inject a local fixture URL directly at this
-/// seam instead of going through process env or stdout capture.
-fn compose_update_status(current_version: &str, manifest_url: &str) -> Result<Vec<String>, String> {
-    let latest =
-        pm::releases::fetch_latest_release_from(manifest_url).map_err(|err| err.to_string())?;
-    if pm::releases::is_newer(current_version, &latest.version) {
-        let mut lines = vec![format!(
-            "a newer deka is available: {} -> {}",
-            current_version, latest.version
-        )];
-        lines.push(match pm::releases::download_url(manifest_url, &latest) {
-            Some(url) => format!("download: {}", url),
-            None => "no prebuilt binary is published for this platform; see https://releases.deka.gg/latest.json".to_string(),
-        });
-        Ok(lines)
-    } else {
-        Ok(vec![format!("deka {} is up to date", current_version)])
-    }
-}
+use super::resolve::{is_newer, resolve_latest_version};
 
 // ---------------------------------------------------------------------------
 // Public shared core (callable from deka self monitor)
 // ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct LatestVersionInfo {
-    pub version: String,
-    pub digest: String,
-}
 
 #[derive(Debug, Clone)]
 pub struct UpdateConfig {
@@ -105,37 +41,6 @@ pub struct UpdateResult {
     pub new_version: String,
     pub snapshot_path: PathBuf,
     pub restarted_units: Vec<String>,
-}
-
-/// Resolve the latest published version from the linkhash registry.
-///
-/// The query path is isolated in this small function so it is easy to repoint
-/// at the live endpoint once Samira deploys it.
-pub fn resolve_latest_version(
-    registry_url: &str,
-    token: Option<&str>,
-) -> Result<LatestVersionInfo, String> {
-    let client = reqwest::blocking::Client::new();
-    let url = format!(
-        "{}/api/v1/packages/cargo/deka/latest",
-        registry_url.trim_end_matches('/')
-    );
-    let mut request = client.get(&url);
-    if let Some(t) = token {
-        request = request.bearer_auth(t);
-    }
-    let response = request
-        .send()
-        .map_err(|e| format!("version resolution request failed: {}", e))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().unwrap_or_default();
-        return Err(format!("version resolution failed ({}): {}", status, body));
-    }
-    let info: LatestVersionInfo = response
-        .json()
-        .map_err(|e| format!("failed to parse version response: {}", e))?;
-    Ok(info)
 }
 
 /// Run the full update flow with safety rails.
@@ -376,24 +281,6 @@ pub fn get_registry_config(context: &Context) -> (String, Option<String>, Option
     (registry, token, registry_index_url)
 }
 
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = v.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next()?.parse().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some((major, minor, patch))
-}
-
-fn is_newer(latest: &str, current: &str) -> bool {
-    match (parse_version(latest), parse_version(current)) {
-        (Some(l), Some(c)) => l > c,
-        _ => latest != current,
-    }
-}
-
 fn snapshot_binary(binary: &Path) -> Result<PathBuf, String> {
     let parent = binary.parent().unwrap_or_else(|| Path::new("."));
     let stem = binary
@@ -446,7 +333,7 @@ fn verify_binary_digest(binary: &Path, expected_digest: &str) -> Result<(), Stri
     Ok(())
 }
 
-pub(super) fn validate_managed_unit_name(unit: &str) -> Result<(), String> {
+pub(crate) fn validate_managed_unit_name(unit: &str) -> Result<(), String> {
     if unit.is_empty() {
         return Err("managed unit name is empty".to_string());
     }
@@ -785,10 +672,6 @@ fn prompt_yes_no(prompt: &str, default_yes: bool) -> Option<bool> {
     Some(default_yes)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -821,31 +704,6 @@ mod tests {
                 serve_config_path: None,
             });
         context
-    }
-
-    #[test]
-    fn parse_version_valid() {
-        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
-        assert_eq!(parse_version("0.0.1"), Some((0, 0, 1)));
-        assert_eq!(parse_version("10.20.30"), Some((10, 20, 30)));
-    }
-
-    #[test]
-    fn parse_version_invalid() {
-        assert_eq!(parse_version("1.2"), None);
-        assert_eq!(parse_version("1.2.3.4"), None);
-        assert_eq!(parse_version("a.b.c"), None);
-        assert_eq!(parse_version(""), None);
-    }
-
-    #[test]
-    fn is_newer_comparison() {
-        assert!(is_newer("1.0.0", "0.9.9"));
-        assert!(is_newer("0.2.0", "0.1.99"));
-        assert!(is_newer("0.0.2", "0.0.1"));
-        assert!(!is_newer("0.0.1", "0.0.2"));
-        assert!(!is_newer("1.0.0", "1.0.0"));
-        assert!(!is_newer("1.0.0", "2.0.0"));
     }
 
     #[test]
@@ -984,30 +842,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_latest_version_url_shape() {
-        // Contract test: verify the URL is built exactly as expected.
-        let url = "http://localhost:9418";
-        let constructed = format!(
-            "{}/api/v1/packages/cargo/deka/latest",
-            url.trim_end_matches('/')
-        );
-        assert_eq!(
-            constructed,
-            "http://localhost:9418/api/v1/packages/cargo/deka/latest"
-        );
-
-        let url2 = "http://localhost:9418/";
-        let constructed2 = format!(
-            "{}/api/v1/packages/cargo/deka/latest",
-            url2.trim_end_matches('/')
-        );
-        assert_eq!(
-            constructed2,
-            "http://localhost:9418/api/v1/packages/cargo/deka/latest"
-        );
-    }
-
-    #[test]
     fn build_cargo_install_args_pins_version_and_index() {
         let temp = std::env::temp_dir().join("deka-test-args");
         let args = build_cargo_install_args(&temp, "1.2.3", Some("https://example.com/index"));
@@ -1136,75 +970,5 @@ mod tests {
         assert_eq!(index, Some("https://index.example.com".to_string()));
 
         let _ = std::fs::remove_dir(&dir);
-    }
-
-    // check_latest wiring (deka#976 / rfd#61): pm::releases itself is
-    // covered directly in crates/pm/src/releases.rs; these exercise that
-    // self_cmd's own composition (compose_update_status) reaches it and
-    // produces the right lines. Injected at the same kind of seam as
-    // pm::releases's own tests — an explicit URL, not env vars or stdout
-    // capture (stdio::begin_capture/end_capture are wasm32-only).
-
-    fn spawn_manifest_server(body: serde_json::Value) -> (String, tokio::runtime::Runtime) {
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-        let address = rt.block_on(async {
-            let app = axum::Router::new().route(
-                "/latest.json",
-                axum::routing::get(move || async move { axum::Json(body) }),
-            );
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .expect("bind fixture listener");
-            let address = listener.local_addr().expect("fixture address");
-            tokio::spawn(async move {
-                axum::serve(listener, app).await.expect("fixture server");
-            });
-            address
-        });
-        (format!("http://{}/latest.json", address), rt)
-    }
-
-    #[test]
-    fn compose_update_status_reports_up_to_date() {
-        let key = pm::releases::platform_key().expect("test host has a published platform key");
-        let current = env!("CARGO_PKG_VERSION");
-        let body = serde_json::json!({
-            "version": current,
-            "tag": format!("v{}", current),
-            "binaries": { key: { "name": format!("deka-{}", key), "sha256": "deadbeef" } }
-        });
-        let (url, _rt) = spawn_manifest_server(body);
-        let lines = compose_update_status(current, &url).expect("compose status");
-        assert_eq!(lines, vec![format!("deka {} is up to date", current)]);
-    }
-
-    #[test]
-    fn compose_update_status_reports_newer_version_and_download_url() {
-        let key = pm::releases::platform_key().expect("test host has a published platform key");
-        let current = env!("CARGO_PKG_VERSION");
-        let body = serde_json::json!({
-            "version": "99.0.0",
-            "tag": "v99.0.0",
-            "binaries": { key: { "name": format!("deka-{}", key), "sha256": "deadbeef" } }
-        });
-        let (url, _rt) = spawn_manifest_server(body);
-        let lines = compose_update_status(current, &url).expect("compose status");
-        assert_eq!(
-            lines[0],
-            format!("a newer deka is available: {} -> 99.0.0", current)
-        );
-        let expected_base = url.trim_end_matches("/latest.json");
-        assert_eq!(
-            lines[1],
-            format!("download: {}/99.0.0/deka-{}", expected_base, key)
-        );
-    }
-
-    #[test]
-    fn compose_update_status_surfaces_unreachable_manifest_as_an_error() {
-        let current = env!("CARGO_PKG_VERSION");
-        let err = compose_update_status(current, "http://127.0.0.1:0/latest.json")
-            .expect_err("unreachable manifest should error, not silently succeed");
-        assert!(!err.is_empty());
     }
 }
