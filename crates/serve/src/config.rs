@@ -94,22 +94,6 @@ pub struct HeaderEntry {
     pub value: Option<String>,
 }
 
-impl ServeConfig {
-    pub fn load(directory: &Path) -> Self {
-        let config_path = directory.join("serve.json");
-        if !config_path.exists() {
-            return Self::default();
-        }
-
-        let contents = match std::fs::read_to_string(&config_path) {
-            Ok(contents) => contents,
-            Err(_) => return Self::default(),
-        };
-
-        serde_json::from_str::<ServeConfig>(&contents).unwrap_or_default()
-    }
-}
-
 impl Default for StaticServeConfig {
     fn default() -> Self {
         Self {
@@ -129,16 +113,31 @@ impl Default for StaticServeConfig {
 }
 
 impl StaticServeConfig {
-    pub fn load(directory: &Path) -> Self {
+    /// Load `serve.json`'s static-serve fields (`headers`, `rewrites`,
+    /// `redirects`, ...). A missing file is a normal default configuration.
+    /// A present-but-malformed file is a hard error, not a silent default
+    /// (deka#1034, same class as #1017/#1020): a typo in a `headers` block
+    /// used to fall back to `StaticServeConfig::default()` with no
+    /// diagnostic, so a project's declared headers/rewrites/redirects were
+    /// simply never applied and nobody was told why.
+    pub fn load(directory: &Path) -> Result<Self, String> {
         let config_path = directory.join("serve.json");
         if !config_path.exists() {
-            return Self::default();
+            return Ok(Self::default());
         }
 
-        match std::fs::read_to_string(&config_path) {
-            Ok(content) => serde_json::from_str::<StaticServeConfig>(&content).unwrap_or_default(),
-            Err(_) => Self::default(),
-        }
+        let contents = std::fs::read_to_string(&config_path).map_err(|err| {
+            format!("failed to read {}: {err}", config_path.display())
+        })?;
+
+        serde_json::from_str::<StaticServeConfig>(&contents).map_err(|err| {
+            format!(
+                "{}: invalid serve config: {}. Check `headers`, `rewrites`, `redirects`, \
+                 `clean_urls`, and `directory_listing` against the serve.json schema.",
+                config_path.display(),
+                err
+            )
+        })
     }
 }
 
@@ -156,4 +155,86 @@ fn default_unlisted() -> Vec<String> {
 
 fn default_redirect_type() -> u16 {
     301
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(prefix: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("{}_{}", prefix, nonce));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn missing_serve_json_loads_defaults() {
+        let dir = temp_dir("serve_config_missing");
+        let config = StaticServeConfig::load(&dir).expect("no serve.json is not an error");
+        assert!(config.headers.is_empty());
+        assert!(config.rewrites.is_empty());
+        assert!(config.redirects.is_empty());
+    }
+
+    #[test]
+    fn malformed_headers_block_is_a_hard_error_not_a_silent_default() {
+        // deka#1034: a `headers` entry of the wrong shape used to be caught
+        // by `unwrap_or_default()` and silently discarded — the project's
+        // declared headers, rewrites and redirects all reverted to empty
+        // with no diagnostic. That must now be a hard, named error.
+        let dir = temp_dir("serve_config_malformed_headers");
+        std::fs::write(
+            dir.join("serve.json"),
+            r#"{"headers":[{"source":"**/*.html","headers":"oops-not-an-array"}]}"#,
+        )
+        .unwrap();
+
+        let err = StaticServeConfig::load(&dir)
+            .expect_err("malformed headers block must fail to load, not silently default");
+        assert!(err.contains("invalid serve config"), "{err}");
+        assert!(err.contains("serve.json"), "{err}");
+    }
+
+    #[test]
+    fn malformed_json_syntax_is_a_hard_error() {
+        let dir = temp_dir("serve_config_malformed_syntax");
+        std::fs::write(dir.join("serve.json"), r#"{"headers": [}"#).unwrap();
+
+        let err = StaticServeConfig::load(&dir)
+            .expect_err("syntactically invalid JSON must fail to load");
+        assert!(err.contains("invalid serve config"), "{err}");
+    }
+
+    #[test]
+    fn valid_headers_rewrites_and_redirects_round_trip() {
+        let dir = temp_dir("serve_config_valid");
+        std::fs::write(
+            dir.join("serve.json"),
+            r#"{
+                "headers": [
+                    {"source": "**/*.html", "headers": [{"key": "X-Test", "value": "1"}]}
+                ],
+                "rewrites": [
+                    {"source": "/foo", "destination": "/index.html"}
+                ],
+                "redirects": [
+                    {"source": "/old", "destination": "/index.html"}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let config = StaticServeConfig::load(&dir).expect("valid serve.json must load");
+        assert_eq!(config.headers.len(), 1);
+        assert_eq!(config.headers[0].source, "**/*.html");
+        assert_eq!(config.headers[0].headers[0].key, "X-Test");
+        assert_eq!(config.rewrites.len(), 1);
+        assert_eq!(config.rewrites[0].destination, "/index.html");
+        assert_eq!(config.redirects.len(), 1);
+        assert_eq!(config.redirects[0].r#type, 301);
+    }
 }

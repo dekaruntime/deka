@@ -28,7 +28,8 @@ fn prepare(mut context: Context) -> Result<Context, ContextError> {
                 .any(|cmd| matches!(cmd.as_str(), "test" | "self" | "link" | "unlink" | "pkg"))
             {
                 let resolved = resolve_handler_path(".").map_err(ContextError::HandlerResolve)?;
-                let static_config = StaticServeConfig::load(&resolved.directory);
+                let static_config = StaticServeConfig::load(&resolved.directory)
+                    .map_err(ContextError::HandlerResolve)?;
                 let serve_config_path = resolved.directory.join("serve.json");
                 HandlerSnapshot {
                     input: ".".to_string(),

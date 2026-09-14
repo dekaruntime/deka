@@ -160,7 +160,7 @@ impl HandlerSnapshot {
         let (input, _) = handler_input_with(positionals, &|key| std::env::var(key).ok());
 
         let resolved = resolve_handler_path(&input)?;
-        let static_config = StaticServeConfig::load(&resolved.directory);
+        let static_config = StaticServeConfig::load(&resolved.directory)?;
         let serve_config_path = resolved.directory.join("serve.json");
 
         Ok(Self {

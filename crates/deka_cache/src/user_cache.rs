@@ -477,7 +477,7 @@ pub fn rewrite_context_for_artifact(context: &Context, artifact: &Path) -> Resul
         *first = input.clone();
     }
     let resolved = ::run::handler::resolve_handler_path(&input)?;
-    let static_config = ::serve::config::StaticServeConfig::load(&resolved.directory);
+    let static_config = ::serve::config::StaticServeConfig::load(&resolved.directory)?;
     let serve_config_path = resolved.directory.join("serve.json");
     prepared
         .extensions_mut()
