@@ -212,6 +212,67 @@ fn task_json_empty_manifest_is_a_runtime_failure() {
     assert!(text.contains("no tasks found in deka.json"), "{text}");
 }
 
+// deka#1025: bare `deka task` (and `--list`) on the same empty manifest
+// must report the identical condition with the identical exit code as
+// `task --json` above -- not a different one, which is the exact defect
+// #1010 exists to catch. Both are classified as a runtime failure (1),
+// not a usage error (2): the invocation itself was correct, it's the
+// project that has no tasks to run, which is project/environment state
+// rather than a bad argument -- same reasoning already applied to
+// `self test`'s "not fetched" and `auth whoami`'s "not logged in".
+#[test]
+#[cfg(feature = "native")]
+fn task_bare_empty_manifest_matches_json_mode_exit_code() {
+    let project = tempfile::tempdir().expect("task project");
+    std::fs::write(
+        project.path().join("deka.json"),
+        serde_json::json!({}).to_string(),
+    )
+    .unwrap();
+
+    let bare = Command::new(cli_bin())
+        .arg("task")
+        .current_dir(project.path())
+        .output()
+        .expect("run deka task");
+    assert_eq!(
+        bare.status.code(),
+        Some(1),
+        "bare task: stdout={} stderr={}",
+        String::from_utf8_lossy(&bare.stdout),
+        String::from_utf8_lossy(&bare.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&bare.stderr).contains("no tasks found in deka.json"),
+        "{}",
+        String::from_utf8_lossy(&bare.stderr)
+    );
+
+    let list = Command::new(cli_bin())
+        .args(["task", "--list"])
+        .current_dir(project.path())
+        .output()
+        .expect("run deka task --list");
+    assert_eq!(
+        list.status.code(),
+        Some(1),
+        "task --list: stdout={} stderr={}",
+        String::from_utf8_lossy(&list.stdout),
+        String::from_utf8_lossy(&list.stderr)
+    );
+
+    let json = Command::new(cli_bin())
+        .args(["task", "--json"])
+        .current_dir(project.path())
+        .output()
+        .expect("run deka task --json");
+    assert_eq!(
+        bare.status.code(),
+        json.status.code(),
+        "bare task and task --json must report the same condition with the same exit code"
+    );
+}
+
 // deka#1010: usage errors exit 2 and runtime failures exit 1, consistently
 // across the CLI and every owner crate — not just the top-level dispatch
 // path exercised above. These tests drive the real built binary and assert
