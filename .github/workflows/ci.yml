@@ -103,23 +103,25 @@ jobs:
   lockfile-check:
     name: Lockfile consistency
     needs: [changes]
-    # Cargo.lock changes always also flip `rust=true` (they match the rust
-    # regex too), so the Cargo step below only ever runs when the full Rust
-    # suite's `cargo check --locked` (rust-check) is NOT already covering it.
+    # deka#1029 audit: there is deliberately no Cargo-specific step in this
+    # job. Every file pattern that sets `lockfile=true` (`Cargo.lock`,
+    # `crates/*/Cargo.toml`) is a strict subset of the `rust` regex, so
+    # `lockfile == 'true'` implies `rust == 'true'` unconditionally — a step
+    # gated on `lockfile == 'true' && rust != 'true'` can never run (this was
+    # deka#1028's original bug, and reappeared here in step form when #1026
+    # fixed only the job-level condition and left the step commented as
+    # future work). Cargo's `--locked` guarantee is fully covered instead by
+    # rust-check's `cargo check --locked --workspace --all-targets`, which
+    # runs on every PR where `lockfile == 'true'` because that implication is
+    # exactly why the dead step's guard could never fire. Deleted rather than
+    # patched: a working substitute already exists, so a repaired condition
+    # here would just be a second copy of rust-check's check.
     # bun.lock has no such stand-in elsewhere, so its step runs independently
     # of the rust flag — see the bun_lockfile branch below.
     if: needs.changes.outputs.lockfile == 'true' || needs.changes.outputs.bun_lockfile == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      - name: Setup Rust
-        if: needs.changes.outputs.lockfile == 'true' && needs.changes.outputs.rust != 'true'
-        uses: dtolnay/rust-toolchain@1.96.0
-
-      - name: Verify Cargo.lock matches workspace manifests
-        if: needs.changes.outputs.lockfile == 'true' && needs.changes.outputs.rust != 'true'
-        run: cargo update --workspace --locked
 
       # deka#1006: `bun install` (no flag) treats an unreadable lockfile as a
       # warning, not a failure — it prints "Ignoring lockfile" and silently
