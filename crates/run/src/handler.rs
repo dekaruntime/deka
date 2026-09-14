@@ -349,4 +349,75 @@ mod tests {
             ".cache must not be created by a non-serving resolve"
         );
     }
+
+    // deka#1021 QA finding (second round): resolving a directory that
+    // happens to contain a `dist/build-manifest.json` must not validate it
+    // as a built artifact unless the caller is actually about to run it.
+    // `deka verify` reads dist/build-manifest.json itself and never asked
+    // this resolver about it -- but it broke anyway once every command's
+    // context-prep started routing through the artifact-checking resolver.
+    // A `compat.targets` that omits "native" (this fixture's fixture
+    // manifest, and any manifest built for a different target) must not
+    // fail a command that isn't trying to run the artifact.
+    #[test]
+    fn readonly_resolve_ignores_an_incompatible_built_artifact() {
+        use runtime_core::dist::{
+            ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactProducer,
+            ArtifactServer, MODULE_FORMAT, RUNTIME_ABI,
+        };
+
+        let dir = temp_dir("deka_handler_readonly_stale_artifact");
+        let dist = dir.join("dist");
+        fs::create_dir_all(dist.join("server")).expect("mkdir dist/server");
+        fs::create_dir_all(dist.join("client")).expect("mkdir dist/client");
+        fs::write(
+            dist.join("client").join("index.html"),
+            "<!doctype html>
+<html></html>
+",
+        )
+        .expect("write index.html");
+
+        let mut manifest = ArtifactManifestV2 {
+            format: ARTIFACT_FORMAT.to_string(),
+            origin: "handler-test-fixture".to_string(),
+            producer: ArtifactProducer {
+                deka: "fixture".to_string(),
+                dsc: "fixture".to_string(),
+                plan_version: 2,
+            },
+            compat: ArtifactCompat {
+                runtime_abi: RUNTIME_ABI,
+                module_format: MODULE_FORMAT.to_string(),
+                // Deliberately omits "native" -- this is the condition
+                // that made deka verify fail outright before this fix.
+                targets: Vec::new(),
+                host_imports: Vec::new(),
+            },
+            client: ArtifactClient {
+                root: "client".to_string(),
+                index: Some("client/index.html".to_string()),
+                trailing_slash: false,
+            },
+            server: ArtifactServer {
+                root: "server".to_string(),
+                entries: Vec::new(),
+            },
+            worker: None,
+            routes: Vec::new(),
+            slots: Vec::new(),
+            payloads: Vec::new(),
+            payload_root: String::new(),
+        };
+        manifest.record_payloads(&dist).expect("record payloads");
+        manifest.write_into(&dist).expect("write manifest");
+
+        // resolve_handler_path (this crate's public entry point, which is
+        // what HandlerSnapshot::from_positionals uses for every command's
+        // context-prep) must resolve this directory without touching or
+        // validating dist/ at all.
+        let resolved = resolve_handler_path(dir.to_str().expect("path"))
+            .expect("a non-serving resolve must not fail on a stale/incompatible dist/");
+        assert!(resolved.path.is_dir() || resolved.path.starts_with(&dir));
+    }
 }
