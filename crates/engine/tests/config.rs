@@ -195,3 +195,39 @@ fn incomplete_authored_dist_is_terminal_with_both_remedies() {
     assert!(err.contains("deka build"), "{err}");
     assert!(err.contains("deka dev"), "{err}");
 }
+
+#[test]
+fn app_router_project_respects_explicit_serve_mode_override() {
+    // deka#985: `serve.mode` in deka.json must actually select the handler
+    // mode for app-router projects, not just for loose files/index files.
+    // Scaffolded projects emit `"serve": {"mode": "ds"}`, which is the same
+    // value the app-router branch defaults to when the key is absent — so a
+    // naive test using the default value alone cannot tell "wired" apart
+    // from "decorative and ignored". Overriding to a *different* mode here
+    // is the only way to prove the field is actually consulted: if a future
+    // change hardcodes `ServeMode::Php` for app-router regardless of config
+    // (reintroducing the exact defect this issue investigated), this test
+    // fails.
+    let dir = temp_dir("engine_test_app_router_mode_override");
+    fs::create_dir(dir.join("app")).unwrap();
+    fs::write(dir.join("app").join("page.dsx"), "").unwrap();
+    fs::write(dir.join("app").join("layout.dsx"), "").unwrap();
+    fs::write(dir.join("deka.json"), r#"{"serve": {"mode": "static"}}"#).unwrap();
+    let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
+    assert!(matches!(resolved.mode, engine::config::ServeMode::Static));
+}
+
+#[test]
+fn app_router_project_defaults_to_php_mode_without_explicit_override() {
+    // Companion to the override test above: with no `serve.mode` key at all,
+    // an app-router project still resolves to `ServeMode::Php` (DekaScript
+    // execution), matching what `deka init` relies on implicitly when a
+    // project's `deka.json` omits the key.
+    let dir = temp_dir("engine_test_app_router_mode_default");
+    fs::create_dir(dir.join("app")).unwrap();
+    fs::write(dir.join("app").join("page.dsx"), "").unwrap();
+    fs::write(dir.join("app").join("layout.dsx"), "").unwrap();
+    fs::write(dir.join("deka.json"), r#"{"type": "serve"}"#).unwrap();
+    let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
+    assert!(matches!(resolved.mode, engine::config::ServeMode::Php));
+}
