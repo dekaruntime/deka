@@ -251,6 +251,11 @@ fn jsx_element_body(src: &str, start: usize) -> Option<(usize, usize)> {
     let mut depth = 1usize;
     let mut i = open_end;
     while i < bytes.len() {
+        // Only slice at an ASCII delimiter, never inside a UTF-8 sequence.
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
         let rest = &src[i..];
         if rest.starts_with("</") {
             depth -= 1;
@@ -258,14 +263,12 @@ fn jsx_element_body(src: &str, start: usize) -> Option<(usize, usize)> {
                 return Some((open_end, i));
             }
             i += 2;
-        } else if rest.starts_with('<') {
+        } else {
             let end = rest.find('>')? + i + 1;
             if !src[i..end].trim_end().ends_with("/>") {
                 depth += 1;
             }
             i = end;
-        } else {
-            i += 1;
         }
     }
     None
@@ -352,6 +355,44 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn defer_lints_handle_non_ascii_jsx() {
+        let tmp = tmp_dir("defer_unicode");
+        for ext in ["ds", "dsx"] {
+            let page = tmp.join(format!("page.{ext}"));
+            // Include the issue's client directive and Unicode prop, plus text
+            // that the element-body scan must cross byte by byte.
+            for text in ["😀", "漢字", "e\u{301}", "☃ — ‘😀漢字e\u{301}’"] {
+                let src = format!(
+                    "export function Page() {{ return <main><Card client:load label=\"{text}\">{text}</Card></main>; }}"
+                );
+                let start = src.find("<main>").unwrap();
+                let (body_start, body_end) = jsx_element_body(&src, start).unwrap();
+                assert_eq!(
+                    &src[body_start..body_end],
+                    format!("<Card client:load label=\"{text}\">{text}</Card>")
+                );
+                std::fs::write(&page, &src).unwrap();
+                assert!(scan_defer_lints(&tmp).is_empty());
+
+                // Exercise deferred children, fallback slicing, and skipping
+                // past a nested element before scanning its next sibling.
+                std::fs::write(
+                    &page,
+                    format!(
+                        "export function Page() {{ return <main><Card server:defer label=\"{text}\"><span slot=\"fallback\">{text}</span></Card><Other server:defer><i slot=\"fallback\">{text}</i></Other></main>; }}"
+                    ),
+                )
+                .unwrap();
+                let lints = scan_defer_lints(&tmp);
+                assert_eq!(lints.len(), 1, "{lints:?}");
+                assert_eq!(lints[0].level, DeferLintLevel::Warning);
+            }
+            std::fs::remove_file(page).unwrap();
+        }
+        std::fs::remove_dir_all(tmp).unwrap();
     }
 
     #[test]
