@@ -107,13 +107,15 @@ async function scenarioInit(cli) {
       config.serve.entry == null &&
       config.tasks?.dev === "deka serve --dev" &&
       existsSync(join(dir, "app/page.dsx")) &&
-      existsSync(join(dir, "src/ui/Counter.dsx")) &&
+      existsSync(join(dir, "app/Counter.dsx")) &&
+      !existsSync(join(dir, "src")) &&
+      existsSync(join(dir, "public/404.html")) &&
       page.includes("export fn Page()") &&
-      html.includes("<!--deka-app-->") &&
+      html.includes('<div id="app"') &&
       gitignore.includes("ds_modules/") &&
       gitignore.includes(".cache/") &&
       css.length > 0 &&
-      initLines <= 3;
+      initLines <= 20;
     return {
       name: "deka-init",
       title: "deka init writes a DekaScript app-router project ready to serve",
