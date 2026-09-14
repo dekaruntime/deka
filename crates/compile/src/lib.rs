@@ -2,7 +2,6 @@ pub mod binary;
 pub mod command;
 pub mod config;
 mod desktop;
-pub mod embed;
 pub mod vfs;
 
 pub use command::register;
