@@ -250,7 +250,7 @@ fn every_commands_help_shows_only_that_commands_own_flag_descriptions() {
     let index = cli::command_flag_index();
 
     for command in registry.commands() {
-        let Some(owned) = index.get(command.name) else {
+        let Some(owned) = index.flags.get(command.name) else {
             continue;
         };
         let rendered = core::help::render_command_help(command, Some(owned)).join(
@@ -290,7 +290,7 @@ fn every_commands_help_shows_only_that_commands_own_flag_descriptions() {
     // colliding name is later renamed away.
     let mut descriptions_by_name: std::collections::HashMap<&str, std::collections::HashSet<&str>> =
         std::collections::HashMap::new();
-    for owned in index.values() {
+    for owned in index.flags.values() {
         for flag in &owned.flags {
             descriptions_by_name
                 .entry(flag.name)
@@ -308,4 +308,79 @@ fn every_commands_help_shows_only_that_commands_own_flag_descriptions() {
         descriptions_by_name.values().any(|d| d.len() > 1),
         "expected at least one flag/param name registered with more than one distinct          description across different commands, to actually exercise cross-command          resolution — if that's no longer true this test needs a new fixture"
     );
+}
+
+/// deka#1004: the property test above compares `command_flag_index()` to
+/// its own rendering, which only proves `render_command_help` is faithful
+/// to whatever the index says — a bug in how the index itself is *built*
+/// (exactly the bug class #996 fixed) is invisible to it. QA proved this
+/// by sabotaging `build_ownership_index` to reintroduce the original
+/// contamination: the four named regression tests above failed, and the
+/// property test passed unchanged.
+///
+/// This test gets its ground truth a different way: it replays each
+/// registration function against its own fresh `Registry` right here, not
+/// by calling `build_ownership_index`, and diffs that directly against
+/// the index's own reported ownership. A regression in how the index is
+/// assembled changes what the index reports without changing what any
+/// registration function actually adds, so — unlike the test above — this
+/// one can see it.
+#[test]
+fn ownership_index_matches_independently_replayed_registration() {
+    let index = cli::command_flag_index();
+
+    for register_fn in cli::register_fns() {
+        let mut scratch = core::Registry::new();
+        register_fn(&mut scratch);
+        if scratch.commands().is_empty() {
+            continue;
+        }
+
+        let expected_flags: std::collections::HashSet<(&str, &str)> = scratch
+            .flags()
+            .iter()
+            .map(|flag| (flag.name, flag.description))
+            .collect();
+        let expected_params: std::collections::HashSet<(&str, &str)> = scratch
+            .params()
+            .iter()
+            .map(|param| (param.name, param.description))
+            .collect();
+
+        for command in scratch.commands() {
+            let owned = index.flags.get(command.name).unwrap_or_else(|| {
+                panic!(
+                    "ownership index has no entry for `{}`, but its own \
+                     registration function adds it",
+                    command.name
+                )
+            });
+
+            let actual_flags: std::collections::HashSet<(&str, &str)> = owned
+                .flags
+                .iter()
+                .map(|flag| (flag.name, flag.description))
+                .collect();
+            let actual_params: std::collections::HashSet<(&str, &str)> = owned
+                .params
+                .iter()
+                .map(|param| (param.name, param.description))
+                .collect();
+
+            assert_eq!(
+                actual_flags, expected_flags,
+                "ownership index's flags for `{}` diverge from replaying its own \
+                 registration function directly — the index was built wrong, not \
+                 just rendered wrong",
+                command.name
+            );
+            assert_eq!(
+                actual_params, expected_params,
+                "ownership index's params for `{}` diverge from replaying its own \
+                 registration function directly — the index was built wrong, not \
+                 just rendered wrong",
+                command.name
+            );
+        }
+    }
 }

@@ -230,7 +230,7 @@ pub fn execute(registry: &Registry) -> i32 {
     let ownership_index = crate::command_flag_index();
     let parsed = core::parse_env(registry);
     if !parsed.errors.is_empty() {
-        let message = format_parse_errors(registry, &ownership_index, &parsed.errors);
+        let message = format_parse_errors(&ownership_index, &parsed.errors);
         error(Some(message.as_str()));
         return 2;
     }
@@ -245,7 +245,7 @@ pub fn execute(registry: &Registry) -> i32 {
         match registry.command_named(&args.commands[0]) {
             Some(command) => {
                 let index = crate::command_flag_index();
-                command_help(command, index.get(command.name));
+                command_help(command, index.flags.get(command.name));
             }
             None => help(registry),
         }
@@ -270,7 +270,7 @@ pub fn execute(registry: &Registry) -> i32 {
     let context = match crate::context::from_env(registry) {
         Ok(context) => context,
         Err(crate::context::ContextError::Parse(errors)) => {
-            let message = format_parse_errors(registry, &ownership_index, &errors);
+            let message = format_parse_errors(&ownership_index, &errors);
             error(Some(message.as_str()));
             return 2;
         }
@@ -365,8 +365,7 @@ pub(crate) fn single_command_wants_help(args: &core::Args) -> bool {
 
 /// Render parse-error messages from real CLI parse outcomes.
 pub fn format_parse_errors(
-    registry: &Registry,
-    ownership_index: &std::collections::HashMap<&'static str, core::help::CommandFlags>,
+    ownership_index: &core::help::OwnershipIndex,
     errors: &[ParseError],
 ) -> String {
     let mut output = String::new();
@@ -376,11 +375,8 @@ pub fn format_parse_errors(
                 output.push_str(&format!("unknown argument '{}'", error.token));
                 if !error.suggestions.is_empty() {
                     output.push_str(". did you mean ");
-                    let suggestions = core::help::expand_suggestions(
-                        registry,
-                        ownership_index,
-                        &error.suggestions,
-                    );
+                    let suggestions =
+                        core::help::expand_suggestions(ownership_index, &error.suggestions);
                     output.push_str(&core::help::format_suggestions(
                         &suggestions,
                         SUGGESTION_LIMIT,

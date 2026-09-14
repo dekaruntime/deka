@@ -26,6 +26,16 @@
 //! function adds, uncontaminated by every other command sharing the real
 //! registry. [`render_command_help`] renders only from that per-command
 //! result, never from a global name search.
+//!
+//! deka#1007: the same contamination risk applies to *command/subcommand*
+//! name resolution, not just flags — a bare `install` can refer to a
+//! top-level command or to `pkg install`'s subcommand, and something has
+//! to decide which qualified form(s) to show in a did-you-mean suggestion.
+//! [`build_ownership_index`] derives that too, from the exact same re-run,
+//! into [`OwnershipIndex::qualified_names`]. [`expand_suggestions`] reads
+//! it directly instead of re-walking the registry a second time, so there
+//! is one technique, one function, and one result describing who owns a
+//! name — never two mechanisms that can drift apart the way #996 found.
 
 use crate::{CommandSpec, FlagSpec, ParamSpec, Registry};
 
@@ -134,10 +144,29 @@ pub struct CommandFlags {
     pub params: Vec<ParamSpec>,
 }
 
+/// Everything [`build_ownership_index`] derives about who owns a name, all
+/// from the same per-function registration re-run:
+///
+/// - `flags` — per-command flag/param ownership, keyed by command name,
+///   for [`render_command_help`] (deka#996).
+/// - `qualified_names` — every name a user might type (a command's own
+///   name, one of its aliases, a subcommand name, or a subcommand alias)
+///   mapped to the parent-qualified form(s) it should expand to in a
+///   did-you-mean suggestion (deka#1007). A name can map to more than one
+///   qualified form — `install` is both a top-level command and `pkg
+///   install`'s subcommand name, and a real ambiguity should show both.
+#[derive(Default, Clone)]
+pub struct OwnershipIndex {
+    pub flags: std::collections::HashMap<&'static str, CommandFlags>,
+    pub qualified_names: std::collections::HashMap<&'static str, Vec<String>>,
+}
+
 /// Derive, for every command a registration function adds, exactly the
 /// flags/params *that same function* adds — never a different command's,
 /// even when both register a flag or param by the same name (`--version`,
-/// `--token`, `--yes`, `--registry`, `--json`, `--list`, ...).
+/// `--token`, `--yes`, `--registry`, `--json`, `--list`, ...) — plus the
+/// parent-qualified display name for every name (command, alias,
+/// subcommand, subcommand alias) that function registers.
 ///
 /// Each function in `register_fns` is a pure sequence of `add_command`/
 /// `add_flag`/`add_param` calls (true of every registration function in
@@ -149,10 +178,17 @@ pub struct CommandFlags {
 /// that same set; a function that registers no commands (the two global
 /// registration functions) contributes nothing here — its flags/params are
 /// global, not owned by any one command, and stay out of this index.
-pub fn build_ownership_index(
-    register_fns: &[fn(&mut Registry)],
-) -> std::collections::HashMap<&'static str, CommandFlags> {
-    let mut index = std::collections::HashMap::new();
+pub fn build_ownership_index(register_fns: &[fn(&mut Registry)]) -> OwnershipIndex {
+    let mut flags_index = std::collections::HashMap::new();
+    let mut qualified_names: std::collections::HashMap<&'static str, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut add_name = |name: &'static str, qualified: String| {
+        let names = qualified_names.entry(name).or_default();
+        if !names.contains(&qualified) {
+            names.push(qualified);
+        }
+    };
+
     for register_fn in register_fns {
         let mut scratch = Registry::new();
         register_fn(&mut scratch);
@@ -164,10 +200,25 @@ pub fn build_ownership_index(
             params: scratch.params().to_vec(),
         };
         for command in scratch.commands() {
-            index.insert(command.name, owned.clone());
+            flags_index.insert(command.name, owned.clone());
+
+            add_name(command.name, command.name.to_string());
+            for alias in command.aliases {
+                add_name(alias, command.name.to_string());
+            }
+            for subcommand in command.subcommands {
+                let qualified = format!("{} {}", command.name, subcommand.name);
+                add_name(subcommand.name, qualified.clone());
+                for alias in subcommand.aliases {
+                    add_name(alias, qualified.clone());
+                }
+            }
         }
     }
-    index
+    OwnershipIndex {
+        flags: flags_index,
+        qualified_names,
+    }
 }
 
 /// Flag names that apply across every command (permissions, `--help`,
@@ -362,39 +413,22 @@ pub const GETTING_STARTED: &[(&str, &str)] = &[
 /// Expand and deduplicate parse-time did-you-mean suggestions.
 ///
 /// Parent/child contexts are preserved (`pkg install` stays distinct from
-/// `install`) and duplicate suggestions are dropped after that expansion.
-/// The command ownership index from #996 is included so this helper uses the
-/// same source of truth as command help.
-pub fn expand_suggestions(
-    registry: &Registry,
-    ownership_index: &std::collections::HashMap<&'static str, CommandFlags>,
-    suggestions: &[String],
-) -> Vec<String> {
+/// `install`) by reading [`OwnershipIndex::qualified_names`] — the same
+/// per-registration-function re-run that builds `flags`, not a second,
+/// independent walk of the registry (deka#1007). A suggestion with no
+/// entry in the index (a flag/param name, or anything else that isn't a
+/// command/subcommand) passes through unchanged; duplicate suggestions are
+/// dropped after expansion.
+pub fn expand_suggestions(ownership_index: &OwnershipIndex, suggestions: &[String]) -> Vec<String> {
     let mut expanded = Vec::new();
     for suggestion in suggestions {
-        let mut added = false;
-        for command in registry.commands() {
-            if command.name == suggestion || command.aliases.contains(&suggestion.as_str()) {
-                push_if_missing(&mut expanded, command.name);
-                added = true;
-            }
-            for subcommand in command.subcommands {
-                if subcommand.name == suggestion || subcommand.aliases.contains(&suggestion.as_str()) {
-                    push_if_missing(&mut expanded, &format!("{} {}", command.name, subcommand.name));
-                    added = true;
+        match ownership_index.qualified_names.get(suggestion.as_str()) {
+            Some(qualified_forms) => {
+                for qualified in qualified_forms {
+                    push_if_missing(&mut expanded, qualified);
                 }
             }
-        }
-        if added {
-            continue;
-        }
-
-        if !suggestion_is_owned(ownership_index, suggestion) {
-            push_if_missing(&mut expanded, suggestion);
-        } else {
-            // Keep parser-provided tokens unchanged when they belong to at least
-            // one command's owned flags/params; dedup still applies globally.
-            push_if_missing(&mut expanded, suggestion);
+            None => push_if_missing(&mut expanded, suggestion),
         }
     }
     expanded
@@ -404,20 +438,21 @@ pub fn expand_suggestions(
 /// into the same parent-qualified forms used for command dispatch hints.
 pub fn suggestion_candidates(
     registry: &Registry,
-    ownership_index: &std::collections::HashMap<&'static str, CommandFlags>,
+    ownership_index: &OwnershipIndex,
     token: &str,
 ) -> Vec<String> {
     let parsed = crate::Args::collect(vec![token.to_string()], registry);
-    parsed.errors.first().map_or_else(Vec::new, |error| {
-        expand_suggestions(registry, ownership_index, &error.suggestions)
-    })
+    parsed
+        .errors
+        .first()
+        .map_or_else(Vec::new, |error| expand_suggestions(ownership_index, &error.suggestions))
 }
 
 /// Build the full usage message for an unknown subcommand, including
 /// suggestions when we can compute any.
 pub fn unknown_subcommand_message(
     registry: &Registry,
-    ownership_index: &std::collections::HashMap<&'static str, CommandFlags>,
+    ownership_index: &OwnershipIndex,
     command_name: &str,
     sub_name: &str,
     max_suggestions: usize,
@@ -430,19 +465,6 @@ pub fn unknown_subcommand_message(
         message.push('?');
     }
     message
-}
-
-fn suggestion_is_owned(
-    ownership_index: &std::collections::HashMap<&'static str, CommandFlags>,
-    suggestion: &str,
-) -> bool {
-    ownership_index.values().any(|owned| {
-        owned
-            .flags
-            .iter()
-            .any(|flag| flag.name == suggestion || flag.aliases.contains(&suggestion))
-            || owned.params.iter().any(|param| param.name == suggestion)
-    })
 }
 
 pub fn format_suggestions(suggestions: &[String], max: usize) -> String {
