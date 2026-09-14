@@ -2,21 +2,50 @@
 title: Initialize a project
 ---
 
-`deka init` creates a static starter site. Run these commands in an empty directory:
+`deka init` scaffolds a DekaScript app-router project. Run these commands in an empty directory:
 
 ```sh
 deka init
 deka serve
 ```
 
-The home page responds with HTTP 200 and displays **Deka App** and **Project
-initialized.** Its stylesheet is served at `/style.css`.
+Init prints at most three lines: a ready note, then `deka serve` and `deka dev`
+(or `cd <dir>` then `deka serve` when you passed a directory). The home page
+responds with HTTP 200, displays **Deka App**, greets **Hello, World.**, and
+hydrates a counter island.
+Its stylesheet is served at `/style.css`.
 
-Edit `public/index.html` and `public/style.css` to change the site. The generated
-`deka.json` selects static serving with `public/` as its entry directory; project
-configuration and source files outside that directory are not public. The
-`app/`, `api/`, and `src/` directories are created empty for future development.
+The tree matches RFD 24:
+
+```
+.
+├── app/
+│   ├── layout.dsx      # required chrome into #app
+│   ├── page.dsx        # the `/` screen
+│   └── not-found.dsx   # 404 inside the layout
+├── src/
+│   └── ui/
+│       └── Counter.dsx # client island (`useState` + JSX)
+├── public/
+│   └── style.css       # copied to the site root as-is
+├── index.html          # the document (holes for head / app / scripts)
+├── deka.json           # type serve, mode ds
+├── deka.lock
+└── .gitignore
+```
+
+`deka.json` selects DekaScript serving (`serve.mode: "ds"`). There is no
+`serve.entry`: the app-router matcher is the entry. Edit `app/page.dsx` to
+change the page. The `dev` task is `deka serve --dev`.
+
+`public/index.html` is a compile error — it collides with the root document.
+`api/` is the server-handler tree; init does not create it empty. Add
+`api/<name>/route.ds` when you need a route.
+
 Running `deka init` again preserves existing files.
+
+The generated `.gitignore` covers `ds_modules/`, `dist/`, `.cache/`, and the
+package-manager backup files `.deka.json-backup-*` / `.deka.lock-backup-*`.
 
 The starter does not use JSX page rendering, layouts, islands, hydration, or
 prerendering. Those framework features are paused while the component foundation
