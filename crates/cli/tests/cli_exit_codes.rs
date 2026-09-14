@@ -41,6 +41,38 @@ fn help_exits_zero() {
 }
 
 #[test]
+fn unknown_top_level_command_exits_non_zero() {
+    let output = std::process::Command::new(cli_bin())
+        .args(["n0t-a-command"])
+        .output()
+        .expect("run deka");
+    assert_eq!(output.status.code(), Some(2));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+    assert!(text.contains("unknown argument 'n0t-a-command'"));
+}
+
+#[test]
+fn unknown_subcommand_exits_non_zero_with_suggestion() {
+    let output = std::process::Command::new(cli_bin())
+        .args(["self", "fetchh"])
+        .output()
+        .expect("run deka");
+    assert_eq!(output.status.code(), Some(2));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+    assert!(text.contains("unknown subcommand 'fetchh' for 'self'"));
+    assert!(text.contains("did you mean"));
+    assert!(text.contains("self fetch"));
+}
+
+#[test]
 fn duplicate_typo_suggestions_are_deduplicated_and_disambiguated() {
     let output = std::process::Command::new(cli_bin())
         .args(["--instal"])
