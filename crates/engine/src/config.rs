@@ -7,12 +7,31 @@ pub struct RuntimeConfig {
     pub introspect: Option<IntrospectConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServeMode {
     Static,
+    // `"js"` is an accepted alias, not a distinct mode (deka#1020 CI
+    // finding): unlike the *other* `ServeMode` in `serve::config` (which
+    // genuinely distinguishes `Js` from `Php` for security-policy purposes),
+    // this engine-level enum has never treated plain JS entries differently
+    // from DekaScript ones — `detect_mode` below already maps `.js`/`.mjs`/
+    // `.cjs` extensions to `Php`, same as `.ds`/`.dsx`. So "js" here means
+    // exactly what "ds" means: run through the engine, not served as bytes.
     #[serde(alias = "ds")]
+    #[serde(alias = "js")]
     Php,
+}
+
+impl ServeMode {
+    /// Canonical label for diagnostics — the same spelling accepted on input
+    /// (`"static"`, `"ds"`), never the internal `Php` variant name.
+    fn label(&self) -> &'static str {
+        match self {
+            ServeMode::Static => "static",
+            ServeMode::Php => "ds",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -35,28 +54,36 @@ pub struct ServeConfig {
 }
 
 impl ServeConfig {
-    pub fn load(directory: &std::path::Path) -> Self {
+    /// Loads `serve` config from `deka.json` (or the legacy `serve.json`).
+    ///
+    /// A missing config file, or a config file with no `serve`-shaped keys
+    /// at all, is a normal case and resolves to defaults. A config file that
+    /// exists and *does* set `serve` keys but fails to parse them — most
+    /// commonly an unrecognized `mode`/`kind` value, i.e. a typo — is a hard
+    /// error (deka#1017): the whole block silently reverting to defaults on
+    /// a bad value is how a typo turns into a wrong, working-looking server.
+    pub fn load(directory: &std::path::Path) -> Result<Self, String> {
         let deka_json_path = directory.join("deka.json");
-        if let Some(config) = load_serve_from_deka_json(&deka_json_path) {
-            return config;
+        if let Some(config) = load_serve_from_deka_json(&deka_json_path)? {
+            return Ok(config);
         }
 
         // Backward compatibility: keep reading serve.json if present.
         let legacy_path = directory.join("serve.json");
-        load_legacy_serve_json(&legacy_path).unwrap_or_default()
+        Ok(load_legacy_serve_json(&legacy_path)?.unwrap_or_default())
     }
 }
 
-fn load_serve_from_deka_json(path: &std::path::Path) -> Option<ServeConfig> {
+fn load_serve_from_deka_json(path: &std::path::Path) -> Result<Option<ServeConfig>, String> {
     if !path.exists() {
-        return None;
+        return Ok(None);
     }
 
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(err) => {
             tracing::warn!("Failed to read {}: {}", path.display(), err);
-            return None;
+            return Ok(None);
         }
     };
 
@@ -64,55 +91,80 @@ fn load_serve_from_deka_json(path: &std::path::Path) -> Option<ServeConfig> {
         Ok(value) => value,
         Err(err) => {
             tracing::warn!("Failed to parse {}: {}", path.display(), err);
-            return None;
+            return Ok(None);
         }
     };
 
     if let Some(serve) = root.get("serve") {
-        match serde_json::from_value::<ServeConfig>(serve.clone()) {
-            Ok(config) => return Some(config),
-            Err(err) => {
-                tracing::warn!("Failed to parse {}.serve: {}", path.display(), err);
-                return None;
-            }
-        }
+        return serde_json::from_value::<ServeConfig>(serve.clone())
+            .map(Some)
+            .map_err(|err| {
+                format!(
+                    "{}: invalid `serve` config: {}. `serve.mode` accepts \"static\" or \"ds\" \
+                     (also written \"php\" or \"js\"); `serve.kind` accepts \"static\" or \"worker\".",
+                    path.display(),
+                    err
+                )
+            });
     }
 
     // Optional convenience: allow top-level serve keys in deka.json.
-    match serde_json::from_value::<ServeConfig>(root) {
+    match serde_json::from_value::<ServeConfig>(root.clone()) {
         Ok(config)
             if config.entry.is_some()
                 || config.mode.is_some()
                 || config.directory_listing.is_some() =>
         {
-            Some(config)
+            Ok(Some(config))
         }
-        _ => None,
+        Ok(_) => Ok(None),
+        Err(err) => {
+            // Only escalate to a hard error when the file was plainly trying
+            // to set one of these keys at the top level (deka#1017) — a
+            // deka.json with unrelated top-level keys that merely fails to
+            // coerce into ServeConfig is not a serve-config typo.
+            let looks_like_serve_config = root
+                .as_object()
+                .is_some_and(|obj| obj.contains_key("mode") || obj.contains_key("entry"));
+            if looks_like_serve_config {
+                Err(format!(
+                    "{}: invalid top-level serve config: {}. `mode` accepts \"static\" or \"ds\" \
+                     (also written \"php\" or \"js\").",
+                    path.display(),
+                    err
+                ))
+            } else {
+                Ok(None)
+            }
+        }
     }
 }
 
-fn load_legacy_serve_json(path: &std::path::Path) -> Option<ServeConfig> {
+fn load_legacy_serve_json(path: &std::path::Path) -> Result<Option<ServeConfig>, String> {
     if !path.exists() {
-        return None;
+        return Ok(None);
     }
 
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(err) => {
             tracing::warn!("Failed to read {}: {}", path.display(), err);
-            return None;
+            return Ok(None);
         }
     };
 
-    match serde_json::from_str::<ServeConfig>(&contents) {
-        Ok(config) => Some(config),
-        Err(err) => {
-            tracing::warn!("Failed to parse {}: {}", path.display(), err);
-            None
-        }
-    }
+    serde_json::from_str::<ServeConfig>(&contents)
+        .map(Some)
+        .map_err(|err| {
+            format!(
+                "{}: invalid serve config: {}. `mode` accepts \"static\" or \"ds\" (also written \"php\" or \"js\").",
+                path.display(),
+                err
+            )
+        })
 }
 
+#[derive(Debug)]
 pub struct ResolvedHandler {
     pub path: PathBuf,
     pub mode: ServeMode,
@@ -151,10 +203,10 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
     }
 
     let (handler_dir, serve_config) = if is_dir {
-        let config = ServeConfig::load(&abs_path);
+        let config = ServeConfig::load(&abs_path)?;
         (abs_path.clone(), config)
     } else if let Some(parent) = abs_path.parent() {
-        let config = ServeConfig::load(parent);
+        let config = ServeConfig::load(parent)?;
         (parent.to_path_buf(), config)
     } else {
         (PathBuf::from("."), ServeConfig::default())
@@ -196,10 +248,31 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
     }
 
     if runtime_core::dist::is_source_app_router_project(&handler_dir) {
+        // App-router (`app/`) projects have exactly one valid mode: `Php`
+        // ("ds"). The entry `resolve_handler_path` hands back is a generated
+        // `.dsx` router that imports the project's page/layout modules — it
+        // must be compiled and executed, never handed to the client as
+        // bytes. `ServeMode::Static` on this project shape used to resolve
+        // "successfully" and serve that router source verbatim over HTTP
+        // with a 200 (deka#1017): a config typo that reads as a working
+        // server while leaking server source. Fail at startup instead, with
+        // the conflict and the fix named explicitly.
+        let mode = serve_config.mode.clone().unwrap_or(ServeMode::Php);
+        if mode != ServeMode::Php {
+            return Err(format!(
+                "{} has an app/ directory (app-router project), but serve.mode is set to \"{}\". \
+                 App-router projects must render through the DekaScript engine — set serve.mode \
+                 to \"ds\" or remove the key. (\"{}\" mode serves files as raw bytes, which would \
+                 hand the router's source to the client instead of rendering it.)",
+                handler_dir.display(),
+                mode.label(),
+                mode.label(),
+            ));
+        }
         let entry_path = runtime_core::dist::write_app_router_entry(&handler_dir)?;
         return Ok(ResolvedHandler {
             path: entry_path,
-            mode: serve_config.mode.clone().unwrap_or(ServeMode::Php),
+            mode,
             config: serve_config,
         });
     }
