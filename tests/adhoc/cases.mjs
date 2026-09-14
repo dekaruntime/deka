@@ -111,7 +111,7 @@ async function scenarioInit(cli) {
       page.includes("export fn Page()") &&
       html.includes("<!--deka-app-->") &&
       gitignore.includes("ds_modules/") &&
-      gitignore.includes(".deka.json-backup-*") &&
+      gitignore.includes(".cache/") &&
       css.length > 0 &&
       initLines <= 3;
     return {

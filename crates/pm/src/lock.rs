@@ -132,14 +132,20 @@ pub fn update_lock_entry_at(
 }
 
 /// Snapshot one project file for install-transaction recovery: returns the
-/// path and, when the file exists, a durable backup copy beside it. Shared by
-/// the lockfile and the grant table (`deka.grants.json`), which the installer
-/// rewrites together inside one transaction (deka#797).
+/// path and, when the file exists, a durable backup copy in the project
+/// `.cache` directory. Shared by the lockfile and the grant table
+/// (`deka.grants.json`), which the installer rewrites together inside one
+/// transaction (deka#797).
 pub(crate) fn snapshot_file(path: PathBuf) -> Result<(PathBuf, Option<PathBuf>)> {
     if !path.exists() {
         return Ok((path, None));
     }
-    let backup = path.with_file_name(format!(
+    let backup_dir = path
+        .parent()
+        .ok_or_else(|| anyhow!("snapshot source has no parent"))?
+        .join(".cache");
+    fs::create_dir_all(&backup_dir)?;
+    let backup = backup_dir.join(format!(
         ".{}-backup-{}-{}",
         path.file_name()
             .and_then(|name| name.to_str())

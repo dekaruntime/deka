@@ -44,8 +44,9 @@ change the page. The `dev` task is `deka serve --dev`.
 
 Running `deka init` again preserves existing files.
 
-The generated `.gitignore` covers `ds_modules/`, `dist/`, `.cache/`, and the
-package-manager backup files `.deka.json-backup-*` / `.deka.lock-backup-*`.
+The generated `.gitignore` covers `ds_modules/`, `dist/`, and `.cache/` (which
+also holds `deka add`/`deka install` recovery backups, so they never need
+their own pattern).
 
 The starter does not use JSX page rendering, layouts, islands, hydration, or
 prerendering. Those framework features are paused while the component foundation
