@@ -1,6 +1,8 @@
 use core::{FlagSpec, ParamSpec, ParseError, ParseErrorKind, Registry};
 use stdio::{ascii, error as stdio_error, raw};
 
+const SUGGESTION_LIMIT: usize = 3;
+
 pub fn register_global_flags(registry: &mut Registry) {
     registry.add_flag(FlagSpec {
         name: "--help",
@@ -312,13 +314,32 @@ pub fn execute(registry: &Registry) -> i32 {
         };
 
         if cmd.commands.len() == 1 {
+            if !command.subcommands.is_empty() && !cmd.positionals.is_empty() {
+                let sub_name = &cmd.positionals[0];
+                let message = core::help::unknown_subcommand_message(
+                    registry,
+                    &ownership_index,
+                    cmd_name,
+                    sub_name,
+                    SUGGESTION_LIMIT,
+                );
+                error(Some(message.as_str()));
+                return 2;
+            }
             (command.handler)(&context);
             return 0;
         }
 
         let sub_name = &cmd.commands[1];
         let Some(subcommand) = registry.subcommand_named(command, sub_name) else {
-            error(None);
+            let message = core::help::unknown_subcommand_message(
+                registry,
+                &ownership_index,
+                cmd_name,
+                sub_name,
+                SUGGESTION_LIMIT,
+            );
+            error(Some(message.as_str()));
             return 2;
         };
 
@@ -348,7 +369,6 @@ pub fn format_parse_errors(
     ownership_index: &std::collections::HashMap<&'static str, core::help::CommandFlags>,
     errors: &[ParseError],
 ) -> String {
-    const SUGGESTION_LIMIT: usize = 3;
     let mut output = String::new();
     for error in errors {
         match &error.kind {

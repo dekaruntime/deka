@@ -400,6 +400,38 @@ pub fn expand_suggestions(
     expanded
 }
 
+/// Compute parser-style did-you-mean candidates for one token and expand them
+/// into the same parent-qualified forms used for command dispatch hints.
+pub fn suggestion_candidates(
+    registry: &Registry,
+    ownership_index: &std::collections::HashMap<&'static str, CommandFlags>,
+    token: &str,
+) -> Vec<String> {
+    let parsed = crate::Args::collect(vec![token.to_string()], registry);
+    parsed.errors.first().map_or_else(Vec::new, |error| {
+        expand_suggestions(registry, ownership_index, &error.suggestions)
+    })
+}
+
+/// Build the full usage message for an unknown subcommand, including
+/// suggestions when we can compute any.
+pub fn unknown_subcommand_message(
+    registry: &Registry,
+    ownership_index: &std::collections::HashMap<&'static str, CommandFlags>,
+    command_name: &str,
+    sub_name: &str,
+    max_suggestions: usize,
+) -> String {
+    let mut message = format!("unknown subcommand '{sub_name}' for '{command_name}'");
+    let suggestions = suggestion_candidates(registry, ownership_index, sub_name);
+    if !suggestions.is_empty() {
+        message.push_str(". did you mean ");
+        message.push_str(&format_suggestions(&suggestions, max_suggestions));
+        message.push('?');
+    }
+    message
+}
+
 fn suggestion_is_owned(
     ownership_index: &std::collections::HashMap<&'static str, CommandFlags>,
     suggestion: &str,
