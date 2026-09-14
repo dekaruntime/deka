@@ -232,34 +232,31 @@ pub fn version(verbose: bool) {
     raw("");
 }
 
-/// Checks the published release manifest and reports plainly whether the
-/// running binary is current. Does NOT download or replace anything — see
-/// PUBLISH.md for the manual install path. Landed for deka#976: the footer
-/// on every command used to point here, and this used to print "not yet
-/// implemented."
+/// Dispatch only (rfd#61: cli is composition, not implementation). The
+/// real check lives in `self_cmd::update::check_latest` — self_cmd already
+/// owns `deka self update`, and it talks to the public release manifest via
+/// `pm::releases`. deka#976: this used to inline the check here and print
+/// "not yet implemented."
+#[cfg(feature = "native")]
+pub fn update() {
+    self_cmd::update::check_latest();
+}
+
+/// Non-native builds (e.g. the wasm32 in-browser CLI) don't link self_cmd,
+/// so this calls the same public release-manifest data source directly
+/// rather than going silent.
+#[cfg(not(feature = "native"))]
 pub fn update() {
     let current_version = env!("CARGO_PKG_VERSION");
-    let manifest_url = pm::releases::releases_url();
-    match pm::releases::fetch_latest_release_from(&manifest_url) {
-        Ok(latest) => {
-            if pm::releases::is_newer(current_version, &latest.version) {
-                raw(&format!(
-                    "a newer deka is available: {} -> {}",
-                    current_version, latest.version
-                ));
-                match pm::releases::download_url(&manifest_url, &latest) {
-                    Some(url) => raw(&format!("download: {}", url)),
-                    None => raw(
-                        "no prebuilt binary is published for this platform; see https://releases.deka.gg/latest.json",
-                    ),
-                }
-            } else {
-                raw(&format!("deka {} is up to date", current_version));
-            }
+    match pm::releases::fetch_latest_release_from(&pm::releases::releases_url()) {
+        Ok(latest) if pm::releases::is_newer(current_version, &latest.version) => {
+            raw(&format!(
+                "a newer deka is available: {} -> {}",
+                current_version, latest.version
+            ));
         }
-        Err(err) => {
-            stdio_error("cli", &format!("could not check for updates: {}", err));
-        }
+        Ok(_) => raw(&format!("deka {} is up to date", current_version)),
+        Err(err) => stdio_error("cli", &format!("could not check for updates: {}", err)),
     }
 }
 

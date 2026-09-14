@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 deka-cli-core = { version = "0.5.0", default-features = false, features = ["registry"] }
 compiler = { path = "../compiler" }
+pm = { path = "../pm" }
 stdio = "0.4.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -20,3 +21,5 @@ libc = "0.2"
 [dev-dependencies]
 run = { path = "../run" }
 serve = { path = "../serve" }
+axum = "0.7"
+tokio = { workspace = true }
