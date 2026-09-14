@@ -104,7 +104,10 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
     let cmd = &parsed.args;
 
     if cli::single_command_wants_help(cmd) {
-        cli::help(&registry);
+        match registry.command_named(&cmd.commands[0]) {
+            Some(command) => cli::command_help(&registry, command),
+            None => cli::help(&registry),
+        }
         let output = stdio::end_capture();
         return WasmRunOutput { code: 0, output };
     }
