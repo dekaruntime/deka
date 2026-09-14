@@ -14,7 +14,7 @@ fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
-// Pin the source app-router shape independently of the static init template.
+// Pin the source app-router shape independently of the init template.
 #[path = "support/app_router.rs"]
 mod app_router;
 use app_router::init_project;

@@ -76,7 +76,7 @@ fn add_fixturefs(project: &Path) -> String {
     grants
 }
 
-// Pin the source app-router shape independently of the static init template.
+// Pin the source app-router shape independently of the init template.
 #[path = "support/app_router.rs"]
 mod app_router;
 use app_router::init_project;

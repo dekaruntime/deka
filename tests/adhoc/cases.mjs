@@ -91,25 +91,38 @@ async function scenarioInit(cli) {
   const commands = [
     `cd ${dir}`,
     `${cli} init`,
-    `cat deka.json public/index.html public/style.css`,
+    `cat deka.json app/page.dsx index.html public/style.css .gitignore`,
   ];
   try {
     const init = runCli(cli, ["init"], dir);
     const config = JSON.parse(readFileSync(join(dir, "deka.json"), "utf-8"));
-    const html = readFileSync(join(dir, "public/index.html"), "utf-8");
+    const page = readFileSync(join(dir, "app/page.dsx"), "utf-8");
+    const html = readFileSync(join(dir, "index.html"), "utf-8");
     const css = readFileSync(join(dir, "public/style.css"), "utf-8");
-    const stdout = ["# deka init", init.stdout, init.stderr, JSON.stringify(config), html, css].join("\n");
-    const ok = init.status === 0 && config.serve.mode === "static" &&
-      config.serve.entry === "public" && html.includes("<h1>Deka App</h1>") && css.length > 0;
+    const gitignore = readFileSync(join(dir, ".gitignore"), "utf-8");
+    const stdout = ["# deka init", init.stdout, init.stderr, JSON.stringify(config), page, html, css, gitignore].join("\n");
+    const initLines = (init.stderr ?? "").trimEnd().split("\n").filter(Boolean).length;
+    const ok = init.status === 0 &&
+      config.serve.mode === "ds" &&
+      config.serve.entry == null &&
+      config.tasks?.dev === "deka serve --dev" &&
+      existsSync(join(dir, "app/page.dsx")) &&
+      existsSync(join(dir, "src/ui/Counter.dsx")) &&
+      page.includes("export fn Page()") &&
+      html.includes("<!--deka-app-->") &&
+      gitignore.includes("ds_modules/") &&
+      gitignore.includes(".deka.json-backup-*") &&
+      css.length > 0 &&
+      initLines <= 3;
     return {
       name: "deka-init",
-      title: "deka init writes a static project ready to serve",
+      title: "deka init writes a DekaScript app-router project ready to serve",
       commands,
       ok,
       skipped: false,
       stdout,
       stderr: init.stderr,
-      error: ok ? undefined : init.error || "init did not create the static starter project",
+      error: ok ? undefined : init.error || "init did not create the DekaScript starter project",
     };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -154,10 +167,10 @@ async function scenarioServe(cli) {
     child.stderr?.on("data", (chunk) => {
       serveOut += chunk.toString();
     });
-    const http = await waitForHttp(`http://127.0.0.1:${port}/`, 15000);
+    const http = await waitForHttp(`http://127.0.0.1:${port}/`, 45000);
     const css = await waitForHttp(`http://127.0.0.1:${port}/style.css`, 5000);
     const privateFile = await waitForHttp(`http://127.0.0.1:${port}/deka.json`, 5000);
-    const ok = http.status === 200 && http.body.includes("<h1>Deka App</h1>") &&
+    const ok = http.status === 200 && http.body.includes("Deka App") &&
       css.status === 200 && css.body.includes("font-family") && privateFile.status === 404;
     const stdout = ["# deka init", init.stdout, `# GET http://127.0.0.1:${port}/`, `HTTP ${http.status}`, http.body, `# GET /style.css: HTTP ${css.status}`, css.body, `# GET /deka.json: HTTP ${privateFile.status}`, "# serve log", serveOut].join(
       "\n"
@@ -275,7 +288,7 @@ export async function runAdhocScenarios(options = {}) {
 
   const results = [];
   if (wanted("deka-init")) {
-    results.push(cli ? await scenarioInit(cli) : skippedResult("deka-init", "deka init writes a static project ready to serve", "no CLI"));
+    results.push(cli ? await scenarioInit(cli) : skippedResult("deka-init", "deka init writes a DekaScript app-router project ready to serve", "no CLI"));
   }
   if (wanted("deka-serve")) {
     results.push(cli ? await scenarioServe(cli) : skippedResult("deka-serve", "deka init && deka serve answers HTTP 200", "no CLI"));

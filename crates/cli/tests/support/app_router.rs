@@ -1,5 +1,5 @@
 //! Explicit source app-router fixture for surviving build/codegen tests.
-//! The default `deka init` project is static while framework rendering is paused.
+//! Independent of `deka init` so build tests can pin a known tree.
 
 use std::{fs, path::Path};
 
