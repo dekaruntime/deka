@@ -9,8 +9,8 @@
 use std::sync::OnceLock;
 
 /// Handler paths the dispatch layer resolved for this process. Replaces the
-/// `HANDLER_PATH` / `DEKA_MODULE_ROOT` process-environment reads in the
-/// PHPX-legacy bridge (deka#801).
+/// `HANDLER_PATH` process-environment read in the PHPX-legacy bridge
+/// (deka#801); `DEKA_MODULE_ROOT` itself is gone entirely (deka#229).
 #[derive(Debug, Clone, Default)]
 pub struct HandlerPaths {
     /// Path of the handler entry the dispatch layer is serving or running.
