@@ -84,7 +84,10 @@ function sameIdentity(live, incoming) {
   }
   if (live.nodeType === 8) {
     if (isIslandStartComment(live) || isIslandStartComment(incoming)) {
-      return String(live.data || "") === String(incoming.data || "");
+      // Compare marker signatures, not raw data: a volatile cache token
+      // must not read as a different island (that would insert a clone of
+      // an already-hydrated island and delete the live one).
+      return islandMarkerSignature(live.data) === islandMarkerSignature(incoming.data);
     }
     return true;
   }
@@ -147,6 +150,69 @@ function skipIslandCommentRange(node) {
   return node;
 }
 
+// Stable identity of an island start marker, ignoring volatile fields.
+// Grammar: "deka-island start:<b64 name> directive:<b64> [props:<b64>]
+// [id:<b64>] [cache:<b64>] ..." — cache tokens may change per render and
+// must not read as an island change, so they stay out of the signature.
+function islandMarkerSignature(data) {
+  return String(data || "")
+    .split(" ")
+    .filter(function (field) {
+      return field.indexOf("cache:") !== 0;
+    })
+    .join(" ");
+}
+
+// Island signature sequence in document order (comment markers and
+// <deka-island> elements). The morph can only preserve hydrated islands
+// when the incoming markup references the exact same islands with the exact
+// same props; a server-component edit that changes an island's props,
+// directive, set, or order cannot be morphed in (hydrateRoot owns that
+// subtree), so the caller full-reloads instead of keeping a stale island.
+function collectIslandSignatures(root) {
+  var signatures = [];
+  (function walk(node) {
+    var child = node.firstChild;
+    while (child) {
+      var next = child.nextSibling;
+      if (child.nodeType === 8 && isIslandStartComment(child)) {
+        signatures.push("c:" + islandMarkerSignature(child.data));
+        next = skipIslandCommentRange(child).nextSibling;
+      } else if (isIslandElement(child)) {
+        signatures.push(
+          "e:" +
+            child.tagName +
+            "|" +
+            islandKey(child) +
+            "|" +
+            (child.getAttribute("data-deka-directive") || "") +
+            "|" +
+            (child.getAttribute("data-deka-props") || "")
+        );
+      } else if (child.nodeType === 1) {
+        walk(child);
+      }
+      child = next;
+    }
+  })(root);
+  return signatures;
+}
+
+function islandSignaturesEqual(live, incoming) {
+  if (!Array.isArray(live) || !Array.isArray(incoming)) {
+    return false;
+  }
+  if (live.length !== incoming.length) {
+    return false;
+  }
+  for (var i = 0; i < live.length; i++) {
+    if (live[i] !== incoming[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function morphNode(live, incoming) {
   if (!live || !incoming) {
     return;
@@ -196,7 +262,15 @@ function morphChildren(liveParent, incomingParent) {
       continue;
     }
     if (liveNode && isIslandStartComment(liveNode) && isIslandStartComment(incomingNode)) {
-      if (String(liveNode.data || "") === String(incomingNode.data || "")) {
+      if (
+        islandMarkerSignature(liveNode.data) === islandMarkerSignature(incomingNode.data)
+      ) {
+        // Same island, possibly refreshed cache token: sync the marker so
+        // the skipped range stays paired with the incoming markup, then
+        // leave the hydrated body untouched.
+        if (liveNode.data !== incomingNode.data) {
+          liveNode.data = incomingNode.data;
+        }
         liveNode = skipIslandCommentRange(liveNode).nextSibling;
         incomingNode = nextIncoming;
         continue;
@@ -277,6 +351,21 @@ function applyHtmlUpdate(message) {
   var fieldStates = captureFormFieldValues();
   var template = document.createElement("template");
   template.innerHTML = normalizeShadowRootMode(html);
+  // An html-update can only preserve hydrated islands when the edit left
+  // the island boundary untouched. A server-component edit that changed an
+  // island's props/directive or added/removed/reordered one cannot be
+  // reflected by morphing (hydrateRoot owns that subtree), so take the same
+  // honest full-reload fallback used for island-source edits — a silent
+  // stale island is worse than a reload.
+  if (
+    !islandSignaturesEqual(
+      collectIslandSignatures(live),
+      collectIslandSignatures(template.content)
+    )
+  ) {
+    location.reload();
+    return;
+  }
   morphChildren(live, template.content);
   window.scrollTo(0, scrollY);
   restoreFormFieldValues(fieldStates);

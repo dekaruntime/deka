@@ -348,6 +348,39 @@ jobs:
             target/**/gn_out
           cache-on-failure: true
 
+      # deka#1027: the release build-cli-darwin-x64 job (macos-15-intel) had no
+      # PR-time equivalent, so an Intel-only compile error (target-gated cfg,
+      # x86-only dependency resolution) passed every PR and broke the release.
+      # A check-only cross-compile from the arm64 host is sufficient: build
+      # scripts run on the host (git/protoc only), and the v8 crate selects
+      # its prebuilt static lib and bindings by TARGET, so no macos-15-intel
+      # runner is needed for this signal.
+      - name: Add x86_64-apple-darwin target
+        run: rustup target add x86_64-apple-darwin
+
+      # The job's sccache bucket is derived from the host arch (darwin-arm64);
+      # x86_64 objects belong in the darwin-x64 bucket instead, matching the
+      # release matrix (deka#655) and warming the cache the release build uses.
+      # SCCACHE_BUCKET is read by the sccache *server* at startup (it spawns
+      # lazily with the first client compile), so a step-level env override
+      # alone would silently re-bucket every later arm64 compile in this job.
+      # Stop the server first so the check spawns it with the x64 bucket, then
+      # stop it again so the next compile respawns it with the job's
+      # darwin-arm64 bucket. The --show-stats lines before/after are the
+      # CI-log proof that each phase used its own bucket.
+      - name: Check darwin-x64 target
+        run: |
+          echo "=== sccache before darwin-x64 check (expect deka-sccache-darwin-arm64) ==="
+          sccache --show-stats
+          sccache --stop-server || true
+          SCCACHE_BUCKET=deka-sccache-darwin-x64 \
+            cargo check --locked --workspace --all-targets --target x86_64-apple-darwin
+          echo "=== sccache after darwin-x64 check (expect deka-sccache-darwin-x64) ==="
+          sccache --show-stats
+          sccache --stop-server || true
+          echo "=== sccache after restart (expect deka-sccache-darwin-arm64 again) ==="
+          sccache --show-stats
+
       # Build the release CLI before the workspace test so pm's
       # real_cli_invocation_recovers_each_atomic_swap_boundary test can find
       # target/release/cli (deka#521).
@@ -455,6 +488,18 @@ jobs:
           DEKA_DSC: ${{ github.workspace }}/.ci/dsc
           DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
         run: bun tests/dump/scripts/fast-refresh-e2e.mjs
+
+      # deka#939: the hand-authored .js e2e above never reaches the real
+      # jsxDEV path. This one serves the .dsx fixture through deka dev, whose
+      # Fast Refresh compile runs the pinned `dsc transpile --dev` (jsxDEV +
+      # DS source locations), and asserts effects: a server-text edit morphs
+      # the page (heading updates, hydrated island state and form input
+      # survive, no navigation) while editing the island module full-reloads.
+      - name: Browser server Fast Refresh morph regression (dsc --dev jsxDEV)
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
+          DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
+        run: bun tests/dump/scripts/server-fast-refresh-e2e.mjs
 
       - name: Report sccache usage
         if: ${{ always() && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}

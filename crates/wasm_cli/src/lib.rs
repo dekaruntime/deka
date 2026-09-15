@@ -1,6 +1,6 @@
 #![allow(clippy::all)]
 
-use core::{CommandSpec, Context, ParamSpec, Registry, SubcommandSpec};
+use dcore::{CommandSpec, Context, ParamSpec, Registry, SubcommandSpec};
 use std::path::{Path, PathBuf};
 
 const COMMAND: CommandSpec = CommandSpec {

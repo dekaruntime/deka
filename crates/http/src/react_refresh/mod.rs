@@ -290,6 +290,20 @@ mod tests {
     }
 
     #[test]
+    fn shipped_morph_client_island_signature_contract() {
+        let output = std::process::Command::new("node")
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/morph_client.mjs"))
+            .output()
+            .expect("run morph client contract");
+        assert!(
+            output.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn server_handler_edit_does_not_claim_fast_refresh() {
         assert!(js_update_payload(&["/proj/index.html".to_string()]).is_none());
         let _lock = crate::react_refresh::compile::TEST_LOCK

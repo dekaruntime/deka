@@ -122,7 +122,7 @@ at its new location, and now compares `build-manifest.sha256` too.
   "routes": [
     {
       "template": "/posts/[slug]",
-      "mode": "static_params",       // static | static_params | request_time | api
+      "mode": "static_params",       // static | static_params | partial_defer | request_time | api
       "instances": ["/posts/hello"], // static_params only, sorted
       "outputs": ["client/posts/hello/index.html"],  // static + static_params
       "entry": null,                 // required for request_time and api; null otherwise

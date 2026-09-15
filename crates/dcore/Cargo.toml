@@ -1,5 +1,5 @@
 [package]
-name = "core"
+name = "dcore"
 version.workspace = true
 edition = "2024"
 

@@ -10,7 +10,7 @@ run = { path = "../run" }
 serve = { path = "../serve" }
 security = { path = "../security" }
 permissions = { path = "../permissions" }
-core = { path = "../core" }
+dcore = { path = "../dcore" }
 runtime_core = { path = "../runtime_core" }
 platform = { path = "../platform" }
 platform_server = { path = "../platform_server" }

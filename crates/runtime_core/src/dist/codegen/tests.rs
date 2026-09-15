@@ -355,3 +355,54 @@ fn generated_serve_response_matches_golden() {
     );
     std::fs::remove_dir_all(tmp).unwrap();
 }
+
+#[test]
+fn generated_serve_entry_preserves_defer_shell_wiring() {
+    // deka#718 Phase A: classifying the route ◐ must not disturb the defer
+    // wiring the document already had — the shell still loads the defer
+    // asset, binds the request to the defer secret/session, and generates
+    // the /_deka/defer batch entry alongside the serve entry.
+    let tmp = tmp_dir("defer_serve");
+    std::fs::create_dir_all(tmp.join("app")).unwrap();
+    std::fs::write(
+        tmp.join("index.html"),
+        "<!doctype html><html><head></head><body><div id=\"app\"></div></body></html>\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("app/layout.dsx"),
+        "interface LayoutProps { children: ReactNode }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("app/page.dsx"),
+        "export fn Page() {\n    return <Cart server:defer><CartSkeleton slot=\"fallback\" /></Cart>;\n}\n",
+    )
+    .unwrap();
+
+    let entry = write_app_router_entry(&tmp).expect("generate serve-entry");
+    let source = std::fs::read_to_string(&entry).expect("read serve-entry");
+    assert!(
+        source.contains("/assets/islands-defer.js"),
+        "the document must keep loading the defer asset: {source}"
+    );
+    assert!(
+        source.contains("bindDefer"),
+        "the request must stay bound to the defer secret/session: {source}"
+    );
+
+    // The /_deka/defer batch entry is generated next to the serve entry and
+    // still binds the deferred component registry.
+    let defer_entry = crate::dist::compiler_cache_dir(&tmp).join("defer-entry.dsx");
+    assert!(defer_entry.is_file(), "defer-entry.dsx must be generated");
+    let defer_source = std::fs::read_to_string(&defer_entry).expect("read defer-entry");
+    assert!(
+        defer_source.contains("runDeferBatch"),
+        "defer entry must still run the batch: {defer_source}"
+    );
+    assert!(
+        defer_source.contains(r#"{ "Cart": Defer_0 }"#),
+        "defer entry must register the Cart island: {defer_source}"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}

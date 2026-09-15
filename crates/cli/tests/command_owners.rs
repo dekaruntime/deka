@@ -79,7 +79,7 @@ fn help_lists_every_registered_command() {
 /// version banner). Insertion order within each category is load-bearing.
 ///
 /// Getting Started and the flags filter/dedup come straight from
-/// `core::help` (the same code the real `deka --help` renders through) so
+/// `dcore::help` (the same code the real `deka --help` renders through) so
 /// this snapshot can't silently drift from production behavior (deka#978).
 #[cfg(not(feature = "self-update"))]
 fn help_surface() -> String {
@@ -89,7 +89,7 @@ fn help_surface() -> String {
     let known: std::collections::HashSet<&str> =
         registry.commands().iter().map(|c| c.name).collect();
     out.push_str("[getting started]\n");
-    for (name, blurb) in core::help::GETTING_STARTED {
+    for (name, blurb) in dcore::help::GETTING_STARTED {
         if known.contains(name) {
             out.push_str(&format!("{name}\t\t{blurb}\n"));
         }
@@ -120,7 +120,7 @@ fn help_surface() -> String {
         out.push('\n');
     }
     out.push_str("[flags]\n");
-    for flag in core::help::global_flags(&registry) {
+    for flag in dcore::help::global_flags(&registry) {
         out.push_str(&format!("{}\t\t{}\n", flag.name, flag.description));
     }
     out

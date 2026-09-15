@@ -7,7 +7,7 @@ pub mod vfs;
 pub use command::register;
 pub use config::{DekaConfig, WindowConfig};
 
-use core::Context;
+use dcore::Context;
 use std::{fs, path::PathBuf, process::Command};
 
 pub fn run(context: &Context) {

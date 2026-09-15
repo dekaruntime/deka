@@ -44,9 +44,9 @@ summon-non-function
 summon-opaque-hold
 summon-void-exempt
 
-# Documented per-host difference (deka#927 / deka#928): native accepts
-# `new URL("://invalid")`; Chromium rejects it.
-unsafe-unsafe-url-err
+# deka#932: the native URL polyfill now rejects `new URL("://invalid")` with
+# TypeError, matching Chromium; unsafe-unsafe-url-err agrees on both hosts and
+# is deliberately no longer listed.
 
 # deka#931: native @deka/crypto install fails in the dump env (artifact repaired
 # + republished 2026-09-12; row persists — possibly CDN-cached old tarball or

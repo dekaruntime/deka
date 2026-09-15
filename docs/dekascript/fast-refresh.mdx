@@ -77,7 +77,12 @@ copy of React shipped with `deka dev`.
    and **leaves hydrated `<deka-island>` subtrees untouched**, so island
    React state, scroll position, focus, and form values outside islands
    survive. Editing an island's own module (`client:load` / `idle` /
-   `visible`) full-reloads — morphing cannot refresh `hydrateRoot`.
+   `visible`) full-reloads — morphing cannot refresh `hydrateRoot`. The
+   same full-reload fallback applies when a server-component edit changes
+   an island's boundary — its props or directive, or which islands render:
+   the morph compares the island signature sequence of the live document
+   against the incoming markup and reloads instead of keeping a stale
+   island (or inserting an unhydrated clone).
 
 Generated app-router HTML responses include `Content-Type: text/html`, so
 `deka dev` can inject its HMR client. Fragment responses use
@@ -102,7 +107,10 @@ and server-HTML morph (`crates/cli/tests/server_fast_refresh.rs`): edit a
 server-rendered heading while a `client:load` counter is at 3 and a form
 input outside the island holds a typed value — the heading updates, the
 counter stays 3, the input keeps its value, and CDP records no frame
-navigation. Editing the island module itself full-reloads.
+navigation. Editing the island module itself full-reloads, and so does a
+server-component edit that changes the island boundary (props, directive,
+or island set) — the client compares island signatures before morphing
+(`crates/http/tests/morph_client.mjs`).
 
 To see client Fast Refresh: `deka dev` on a project that mounts a
 component from `/_deka/hmr/module/...`, click a counter, edit a sibling

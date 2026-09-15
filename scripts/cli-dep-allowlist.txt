@@ -1,8 +1,8 @@
-# crates/cli may depend only on core, stdio, and owner crates (rfd#61).
+# crates/cli may depend only on dcore, stdio, and owner crates (rfd#61).
 # Implementation crates (reqwest, postgres, yaml, db drivers) belong in owners.
 # Format: one cargo package name per line.
 
-core
+dcore
 stdio
 wasm_cli
 pm

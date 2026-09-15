@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::extensions::extensions_for_mode;
 use crate::security::resolve_security_policy;
-use core::Context;
+use dcore::Context;
 use deka_host::validation::{format_validation_error, modules::validate_module_resolution};
 use engine::{RuntimeEngine, config as runtime_config, set_engine};
 use platform::Platform;
