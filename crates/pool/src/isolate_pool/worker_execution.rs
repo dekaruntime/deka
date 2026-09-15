@@ -256,93 +256,9 @@ impl WorkerThread {
                     };
                 }
 
-                // Minimal URL polyfill for parsing URLs
-                if (typeof globalThis.URL === 'undefined') {
-                    globalThis.URL = class URL {
-                        constructor(url, base) {
-                            url = String(url);
-                            // WHATWG: without a scheme a URL only parses
-                            // against a base; scheme-less input is invalid.
-                            if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) {
-                                if (base === undefined) throw new TypeError('Invalid URL');
-                                const baseUrl = new URL(String(base));
-                                const root = baseUrl.protocol + '//' + baseUrl.host;
-                                if (url.startsWith('//')) url = baseUrl.protocol + url;
-                                else if (url.startsWith('/')) url = root + url;
-                                else if (url.startsWith('?')) url = root + (baseUrl.pathname || '/') + url;
-                                else if (url.startsWith('#')) url = root + (baseUrl.pathname || '/') + baseUrl.search + url;
-                                else url = root + (baseUrl.pathname || '/').replace(/\/[^/]*$/, '/') + url;
-                            }
-                            this.href = url;
-
-                            // Parse protocol
-                            const schemeMatch = url.match(/^([a-z][a-z0-9+.-]*):/i);
-                            const scheme = schemeMatch[1].toLowerCase();
-                            this.protocol = scheme + ':';
-                            // WHATWG special schemes; file is special too but
-                            // uniquely permits an empty host, so it is excluded.
-                            const special = /^(https?|wss?|ftp)$/.test(scheme);
-
-                            let rest = url.slice(schemeMatch[0].length);
-                            if (rest.startsWith('//')) {
-                                rest = rest.slice(2);
-                                // WHATWG collapses redundant slashes for
-                                // special schemes (http:///path names host
-                                // "path").
-                                if (special) rest = rest.replace(/^\/+/, '');
-                            } else if (special) {
-                                // http:/path and http:path still name a host
-                                // for special schemes.
-                                rest = rest.replace(/^\/+/, '');
-                            } else {
-                                // Non-special schemes (mailto:, a:, ...) carry
-                                // an opaque path with no host.
-                                this.host = '';
-                                rest = null;
-                            }
-
-                            if (rest !== null) {
-                                // Remove hostname/port (everything before first /, ?, or #)
-                                const hostMatch = rest.match(/^([^/?#]*)/);
-                                this.host = hostMatch ? hostMatch[1] : '';
-                                rest = rest.slice(this.host.length);
-
-                                // WHATWG: a special scheme with an empty or
-                                // malformed host is invalid.
-                                if (special) {
-                                    if (!this.host) throw new TypeError('Invalid URL');
-                                    const hostPort = this.host.slice(this.host.lastIndexOf('@') + 1);
-                                    const portIdx = hostPort[0] === '[' ? -1 : hostPort.lastIndexOf(':');
-                                    if (portIdx !== -1) {
-                                        const port = hostPort.slice(portIdx + 1);
-                                        if (port && !/^\d+$/.test(port)) throw new TypeError('Invalid URL');
-                                    }
-                                    if (/\s/.test(this.host)) throw new TypeError('Invalid URL');
-                                }
-                            }
-
-                            // If nothing left after host, pathname is '/'
-                            if (!rest) {
-                                this.pathname = '/';
-                                this.search = '';
-                                this.hash = '';
-                                return;
-                            }
-
-                            // Extract pathname, search, and hash
-                            const pathMatch = rest.match(/^([^?#]*)(\?[^#]*)?(#.*)?$/);
-                            if (pathMatch) {
-                                this.pathname = pathMatch[1] || '/';
-                                this.search = pathMatch[2] || '';
-                                this.hash = pathMatch[3] || '';
-                            } else {
-                                this.pathname = '/';
-                                this.search = '';
-                                this.hash = '';
-                            }
-                        }
-                    };
-                }
+                // Minimal URL polyfill for parsing URLs lives in wintertc.js
+                // (inlined by the WinterTC marker further down); keeping it out
+                // of this file preserves the file-size gate baseline (deka#391).
 
                 // Runtime bridge helpers for PHPX stdlib (JS runtime path)
                 if (typeof globalThis.function_exists !== 'function') {
