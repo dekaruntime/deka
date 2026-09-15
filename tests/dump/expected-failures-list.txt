@@ -27,6 +27,45 @@
 # corpus-v0.53.0 + dsc v0.53.1 (see PR body for the run). 71 entries, matching
 # the release run this ratchet was introduced to unblock (run 34909498831:
 # overall(pass=824 fail=71 divergent=25 skip=0)).
+#
+# Updated 2026-09-15 (refs #1059): @deka/crypto 0.4.2 and @deka/time 0.3.2
+# annotated their own bridge-wrapping exports with explicit return types
+# (dsc#223 <infer>-assignability fix), and @deka/tcp 0.2.1 / @deka/tls 0.2.1
+# did the same -- but the tcp/tls fix was invisible until a second,
+# unrelated bug was also fixed: deka.gg's served registry index
+# (public/api/registry/*.json in dekaruntime/website) is a checked-in probe
+# snapshot, decoupled from the candidate-version list in data/registry.ts,
+# and the version-list commit was never followed by a probe regen -- so
+# production kept 404ing on tcp/tls 0.2.1 even after the tarballs landed in
+# R2 (website#154 fixed this).
+#
+# Net effect on this baseline: only 5 of the 71 entries actually cleared,
+# NOT the 31 predicted for the whole <infer> group. Verified with a real
+# native+wasm dump run (bun tests/dump/scripts/dump-results.mjs) against the
+# now-current registry: overall(pass=829 fail=66 divergent=25 skip=0).
+# Removed below: crypto-digest-unknown, crypto-random-bytes-length,
+# crypto-random-bytes-rejects-zero, tcp-listen-then-close,
+# tcp-set-deadline-zero.
+#
+# Why the other 26 <infer> fixtures in the original group did NOT clear:
+# @deka/jwt 0.4.1 and @deka/http 0.4.1 declare EXACT (not ranged) internal
+# dependency pins -- jwt's deka.json pins "@deka/crypto": "0.4.1" and http's
+# pins "@deka/tcp"/"@deka/tls": "0.2.0". Republishing crypto/tcp/tls does not
+# cascade to them; jwt/http still transitively install the old, unfixed
+# leaf versions until THEIR OWN manifests are bumped and republished. This
+# falsifies the "http and jwt need no changes; they resolve transitively"
+# assumption in the #1059 diagnosis -- confirmed by inspecting the published
+# tarballs' deka.json directly. The remaining crypto-* failures split into
+# two different causes: crypto-aes-roundtrip / crypto-sha256-abc / (and
+# fs-hello-utf8, a different package) fail on a LOCAL bare `unsafe {}` block
+# inside the fixture's own .ds source, not the stdlib package -- a
+# testsuite-repo fix, out of scope here. time-sleep-ms-* now fail on a
+# DIFFERENT, previously-masked error ("expected argument type `string`,
+# found type `number`") from `echo()` in @deka/io receiving the numeric
+# match-arm result of the now-Result-wrapped `sleep_ms` -- a second,
+# unrelated bug uncovered once the <infer> error stopped hiding it. Per
+# task scope, none of these are fixed here -- only the 5 confirmed-passing
+# slugs are removed.
 components-jsx-boolean-attribute
 components-jsx-duplicate-attribute
 components-jsx-dynamic-tag
@@ -37,11 +76,8 @@ components-jsx-undefined-variable-in-attribute-fail
 crypto-aes-roundtrip
 crypto-bcrypt-verify-ok
 crypto-bcrypt-verify-wrong
-crypto-digest-unknown
 crypto-hmac-sha256-vector
 crypto-hs256-matches-hmac
-crypto-random-bytes-length
-crypto-random-bytes-rejects-zero
 crypto-random-hex-length
 crypto-secure-compare-equal
 crypto-secure-compare-unequal
@@ -93,8 +129,6 @@ jwt-reject-wrong-key
 jwt-three-parts
 jwt-unsupported-alg-option
 jwt-verify-roundtrip-sub
-tcp-listen-then-close
-tcp-set-deadline-zero
 time-sleep-ms-returns-ms
 time-sleep-ms-returns-zero
 time-sleep-ms-three
