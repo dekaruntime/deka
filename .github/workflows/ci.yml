@@ -177,8 +177,8 @@ jobs:
       - name: Configure sccache bucket
         run: |
           if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$SCCACHE_ENDPOINT" ]; then
-            echo "::notice::R2 cache is not configured for this run; building without sccache."
-            exit 0
+            echo "::error::R2 sccache credentials are missing. SCCACHE IS REQUIRED FOR ALL RUST COMPILATION."
+            exit 1
           fi
           # Keep the Linux check cache separate from Darwin artifacts. These
           # names match scripts/populate-sccache.sh and deka#655.
@@ -186,19 +186,20 @@ jobs:
           echo "sccache bucket: deka-sccache-linux-x64"
 
       - name: Run sccache-cache
-        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Enable sccache compiler wrapper
         run: |
           if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$SCCACHE_ENDPOINT" ]; then
-            exit 0
+            echo "::error::R2 sccache credentials are missing. SCCACHE IS REQUIRED FOR ALL RUST COMPILATION."
+            exit 1
           fi
           if command -v sccache >/dev/null 2>&1; then
             echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
             echo "sccache enabled, bucket: $SCCACHE_BUCKET"
           else
-            echo "::warning::sccache not found on PATH - building without a compiler cache."
+            echo "::error::sccache is not on PATH. SCCACHE IS REQUIRED FOR ALL RUST COMPILATION. Reinstall it on this runner (cargo install sccache --locked), see deka#656."
+            exit 1
           fi
 
       - name: Cache Rust dependencies
@@ -300,8 +301,8 @@ jobs:
       - name: Configure sccache bucket
         run: |
           if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$SCCACHE_ENDPOINT" ]; then
-            echo "::notice::R2 cache is not configured for this run; building without sccache."
-            exit 0
+            echo "::error::R2 sccache credentials are missing. SCCACHE IS REQUIRED FOR ALL RUST COMPILATION."
+            exit 1
           fi
           # Bucket is architecture-specific; derive it from the host rather than
           # restating it per job (see scripts/populate-sccache.sh, deka#655).
@@ -317,26 +318,27 @@ jobs:
       # The action installs the binary. It receives the R2 bucket selected
       # above, rather than an incomplete cache configuration.
       - name: Run sccache-cache
-        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Enable sccache compiler wrapper
         run: |
           if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$SCCACHE_ENDPOINT" ]; then
-            exit 0
+            echo "::error::R2 sccache credentials are missing. SCCACHE IS REQUIRED FOR ALL RUST COMPILATION."
+            exit 1
           fi
           # The rust-toolchain action reinstalls rustup, which wipes
           # cargo-installed binaries out of ~/.cargo/bin - sccache included.
           # Setting RUSTC_WRAPPER to a binary that is not there makes every
           # cargo invocation die with ENOENT before it compiles anything, which
           # reads as a code failure and is not one. Only enable the wrapper if
-          # the binary actually exists; a cold build is worse than a cached one
-          # and far better than a false red.
+          # the binary actually exists, and fail loudly when it does not: a cold
+          # build hides a broken runner, and sccache is required.
           if command -v sccache >/dev/null 2>&1; then
             echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
             echo "sccache enabled, bucket: $SCCACHE_BUCKET"
           else
-            echo "::warning::sccache not found on PATH - building without a compiler cache. Reinstall it on this runner (cargo install sccache --locked); see deka#656."
+            echo "::error::sccache is not on PATH. SCCACHE IS REQUIRED FOR ALL RUST COMPILATION. Reinstall it on this runner (cargo install sccache --locked), see deka#656."
+            exit 1
           fi
 
       - name: Cache Rust dependencies
