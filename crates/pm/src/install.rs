@@ -140,12 +140,8 @@ fn run_php_install_in_transaction(
         // @deka stdlib packages are now served from deka.gg metadata + R2 tarballs.
         // Legacy linkhash/harar registry support has been removed.
         let install_source = if is_deka_package(&name) {
-            // deka#1011: fold the underlying message into this one with
-            // `map_err` rather than `with_context`. The CLI's top-level
-            // error handler prints `err.to_string()` (the outermost anyhow
-            // frame only), so a `with_context` wrapper here would silently
-            // swallow a range-resolution failure's "available versions"
-            // detail behind a generic "failed to install" message.
+            // deka#1011: map_err (not with_context) so the CLI's
+            // `err.to_string()` still shows the range diagnostic.
             install_from_registry(&name, locked_pkg.as_ref(), requested_version, &staging)
                 .map_err(|err| anyhow!("failed to install {} from deka.gg: {}", name, err))?
         } else {
@@ -345,22 +341,13 @@ struct UnsatisfiedRequirement {
     requested_by: String,
 }
 
-/// deka#1011: this used to be a literal string comparison, so a `^1.2.0`
-/// constraint from one dependent could never be satisfied by the `1.4.0`
-/// another dependent's resolution actually picked, even though `1.4.0` is
-/// exactly what `^1.2.0` means. Delegates to the same range grammar
-/// `registry::select_version` resolves against, so selection and
-/// satisfaction can't drift apart.
-fn version_satisfies(range: &str, version: &str) -> bool {
-    version_range::satisfies(range, version)
-}
-
 fn first_unsatisfied_requirement(
     requirements: &[VersionRequirement],
     version: &str,
 ) -> Option<UnsatisfiedRequirement> {
     for req in requirements {
-        if !version_satisfies(&req.range, version) {
+        // deka#1011: shares `version_range`'s grammar with select_version.
+        if !version_range::satisfies(&req.range, version) {
             return Some(UnsatisfiedRequirement {
                 range: req.range.clone(),
                 requested_by: req.requested_by.clone(),
@@ -542,11 +529,7 @@ fn install_from_registry(
 
     let version = match locked {
         Some(locked) => locked.version.clone(),
-        // deka#1011: `map_err` (not `with_context`) so the underlying
-        // "no published version satisfies ... available versions: ..."
-        // diagnostic from `select_version` survives into the message the
-        // CLI actually prints, instead of being replaced by this generic
-        // wrapper.
+        // deka#1011: map_err preserves select_version's diagnostic.
         None => registry::select_version(&registry, requested)
             .map_err(|err| anyhow!("failed to select a version for {}: {}", name, err))?,
     };
@@ -1009,11 +992,8 @@ fn collect_deka_json_deps_in(project_dir: &Path) -> Result<Vec<String>> {
             continue;
         }
         let spec = if let Some(version) = version.as_str() {
-            // deka#1011: the full range string (`^0.3.1`, `~0.3.1`,
-            // `>=0.3.1`, ...) is preserved and passed through to the real
-            // resolver in `registry::select_version` -- it used to be
-            // stripped to a bare literal here, which is what caused range
-            // syntax to be silently reinterpreted as an exact pin.
+            // deka#1011: range string passed through unmangled to the
+            // real resolver in registry::select_version.
             let version = version.trim();
             if version.is_empty() || version == "*" || version == "latest" {
                 name.to_string()
