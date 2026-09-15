@@ -1,3 +1,6 @@
+# SCCACHE IS REQUIRED FOR ALL RUST COMPILATION.
+# EVERY CARGO BUILD/TEST/CHECK MUST RUN WITH RUSTC_WRAPPER=sccache. NO EXCEPTIONS.
+
 name: Published stdlib typeck
 
 # Not a required PR check: json/jwt/http still use v1 `object` and will fail

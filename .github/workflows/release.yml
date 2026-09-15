@@ -1,3 +1,6 @@
+# SCCACHE IS REQUIRED FOR ALL RUST COMPILATION.
+# EVERY CARGO BUILD/TEST/CHECK MUST RUN WITH RUSTC_WRAPPER=sccache. NO EXCEPTIONS.
+
 name: Release
 
 on:
@@ -35,6 +38,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       CARGO_INCREMENTAL: 0
+      # Every cargo step in this job goes through sccache. Set here, not per step,
+      # so a new step cannot silently build cold (the smoke test did, deka#1081).
+      RUSTC_WRAPPER: sccache
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
       SCCACHE_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
@@ -93,13 +99,9 @@ jobs:
           bun test.ts
 
       - name: Build tested crates
-        env:
-          RUSTC_WRAPPER: sccache
         run: cargo build -p deka_http -p pool -p engine
 
       - name: Run Rust tests
-        env:
-          RUSTC_WRAPPER: sccache
         run: |
           cargo test -p deka_http
           cargo test -p pool
@@ -112,7 +114,6 @@ jobs:
 
       - name: Smoke test host-target executable compilation
         env:
-          RUSTC_WRAPPER: sccache
           DEKA_DSC: ${{ github.workspace }}/.ci/dsc
           NO_COLOR: "1"
           FORCE_COLOR: "0"
