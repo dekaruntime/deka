@@ -49,13 +49,15 @@ async function waitFor(label, probe, timeoutMs = 90_000) {
 }
 
 const pageSource = (title) => `export fn Page() ReactNode {
-  return <section>
+  return (
+    <section>
       <h1 id="server-title">${title}</h1>
       <form>
         <input id="outside-input" name="note" value="initial" />
       </form>
       <div id="spacer" class="spacer"></div>
     </section>
+  )
 }
 `
 
@@ -139,9 +141,11 @@ async function main() {
   const pair = useState(10)
   const n = pair[0]
   const setN = pair[1]
-  return <button type="button" id="counter" onClick={fn() void {
+  return (
+    <button type="button" id="counter" onClick={fn() void {
       setN(n + 1)
     }}>{n}</button>
+  )
 }
 `,
     )
