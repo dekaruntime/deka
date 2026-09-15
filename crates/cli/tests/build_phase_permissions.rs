@@ -592,6 +592,10 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
             "--port",
             &port.to_string(),
             "--no-prompt",
+            // deka#1069: Sami's ruling is that default output is one line,
+            // `[hmr] changed <path>`; the build-slot invalidation/replan
+            // bookkeeping this test asserts on now only prints in --debug.
+            "--debug",
         ])
         .current_dir(project.path())
         .env("DEKA_HOST_GRANTS", &grants)
@@ -723,6 +727,10 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
             "--port",
             &port.to_string(),
             "--no-prompt",
+            // deka#1069: Sami's ruling is that default output is one line,
+            // `[hmr] changed <path>`; the build-slot invalidation/replan
+            // bookkeeping this test asserts on now only prints in --debug.
+            "--debug",
         ])
         .current_dir(project.path())
         .env("DEKA_HOST_GRANTS", &grants)
@@ -858,6 +866,10 @@ fn dev_watch_invalidates_slots_under_phase_aware_permissions() {
             "--port",
             &port.to_string(),
             "--no-prompt",
+            // deka#1069: Sami's ruling is that default output is one line,
+            // `[hmr] changed <path>`; the build-slot invalidation/replan
+            // bookkeeping this test asserts on now only prints in --debug.
+            "--debug",
         ])
         .current_dir(project.path())
         .env("DEKA_HOST_GRANTS", &grants)

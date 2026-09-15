@@ -136,12 +136,12 @@ pub(crate) fn start_watch(
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
             let evicted = engine.pool().evict_all().await;
-            if evicted > 0 {
-                // Real work: a non-zero eviction is the deka#731 contract
-                // watch_reload.rs asserts on directly — always visible, same
-                // category as the build-slot decision lines in build_watch.rs
-                // (deka#1069 coordinator review: gating this behind --debug
-                // silently broke that pre-existing test).
+            if evicted > 0 && verbose {
+                // Sami's ruling (deka#1069): default output for a file change
+                // is exactly one line, `[hmr] changed <path>`. This is
+                // bookkeeping relative to that line, so it moves behind
+                // --debug. The deka#731 contract watch_reload.rs asserts on
+                // is preserved: that test now reads it through --debug.
                 stdio_log::log("watch", &format!("evicted {}", evicted));
             }
             if dev_mode {

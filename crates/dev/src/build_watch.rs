@@ -101,27 +101,27 @@ pub fn on_watch_event(
         replan_files: invalidation.source_files.iter().cloned().collect(),
     };
     if invalidation.coarse {
-        // Real work: every planned slot is about to rematerialize because no
-        // manifest proved otherwise. Kept visible by default — it is a
-        // deliberate, logged decision that something is about to happen, the
-        // same category as the two branches below (Codex review of deka#729;
-        // reasserted by deka#1069's coordinator review, which caught that
-        // gating this behind --debug silently broke the existing
-        // build_phase_permissions.rs contract for these three lines).
-        stdio::log(
-            "watch",
-            &format!(
-                "coarse build invalidation: rematerializing all build slots ({})",
-                changed.join(", ")
-            ),
-        );
+        // Sami's ruling (deka#1069): default output for a file change is
+        // exactly one line, `[hmr] changed <path>`. Everything here is
+        // internal bookkeeping relative to that line — real, deliberate work
+        // (this branch) as much as a no-op (the branch below) — so all of it
+        // moves behind --debug uniformly. The invalidation-is-deliberate
+        // contract build_phase_permissions.rs asserts on is preserved: those
+        // tests now read it through --debug output instead of default stdout.
+        if verbose {
+            stdio::log(
+                "watch",
+                &format!(
+                    "coarse build invalidation: rematerializing all build slots ({})",
+                    changed.join(", ")
+                ),
+            );
+        }
     } else if request.slots.is_empty() && request.replan_files.is_empty() {
         // Pure no-op bookkeeping (deka#1067): a layout/component edit with no
-        // `build {}` block legitimately touches no slot, and nothing is about
-        // to happen as a result. Unlike the other branches here, this is not
-        // a deliberate action — it's the absence of one — so it stays behind
-        // --debug. The user-facing signal for the edit is still the
-        // `[hmr] changed` line the caller always prints.
+        // `build {}` block legitimately touches no slot. The user-facing
+        // signal for the edit is still the `[hmr] changed` line the caller
+        // always prints.
         if verbose {
             stdio::log(
                 "watch",
@@ -130,10 +130,12 @@ pub fn on_watch_event(
         }
         return false;
     } else {
-        // Real work: these slots are about to rematerialize. This is the
+        // Real work, but per Sami's ruling still bookkeeping relative to the
+        // one default-visible `[hmr] changed` line — behind --debug. The
         // "targeted invalidation must be a deliberate, logged decision"
-        // contract build_phase_permissions.rs asserts on — always visible.
-        if !request.slots.is_empty() {
+        // contract build_phase_permissions.rs asserts on now reads this
+        // through --debug output rather than default stdout.
+        if !request.slots.is_empty() && verbose {
             stdio::log(
                 "watch",
                 &format!(
@@ -143,7 +145,7 @@ pub fn on_watch_event(
                 ),
             );
         }
-        if !request.replan_files.is_empty() {
+        if !request.replan_files.is_empty() && verbose {
             stdio::log(
                 "watch",
                 &format!(

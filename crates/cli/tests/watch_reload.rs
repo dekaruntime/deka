@@ -69,7 +69,13 @@ fn watched_edit_changes_served_output_and_evicts_the_serving_pool() {
     write_handler(root.path(), "before edit");
 
     let port = free_port();
-    let log_path = root.path().join("serve.log");
+    // deka#1069: `.cache/` is the one path segment the production watcher
+    // always ignores (see fast_refresh.rs's spawn_dev). A log path inside
+    // the project root would make the dev server watch its own output file
+    // — a self-triggering feedback loop discovered the hard way in
+    // build_phase_permissions.rs.
+    fs::create_dir_all(root.path().join(".cache")).expect("mkdir .cache");
+    let log_path = root.path().join(".cache").join("serve.log");
     let log = fs::File::create(&log_path).expect("create serve log");
     let mut command = Command::new(cli_bin());
     command
@@ -80,6 +86,10 @@ fn watched_edit_changes_served_output_and_evicts_the_serving_pool() {
             "--port",
             &port.to_string(),
             "--no-prompt",
+            // deka#1069: default output is one line, `[hmr] changed <path>`;
+            // this test needs the `[watch] evicted N` bookkeeping line, which
+            // now only prints in --debug.
+            "--debug",
         ])
         .current_dir(root.path())
         .stdout(Stdio::from(log.try_clone().expect("clone serve log")))

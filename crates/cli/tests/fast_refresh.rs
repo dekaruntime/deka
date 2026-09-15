@@ -498,20 +498,14 @@ fn atomic_rename_save_produces_exactly_one_hmr_cycle() {
         layout_notifications
     );
 
-    // The terminal-facing side of the same bug: exactly one `[hmr] changed`
-    // line for the save (deka#1067 part A), and the pure no-op bookkeeping
-    // line suppressed because `--debug` was not passed (deka#1067 part B).
-    //
-    // `[watch] evicted N` is deliberately NOT asserted absent here: a
-    // coordinator review of the first version of this PR caught that
-    // build_phase_permissions.rs and watch_reload.rs already treat
-    // `[watch] evicted`/`invalidating build slots`/`replanning build slots`
-    // as a deliberate, logged-by-default contract (not incidental noise),
-    // so those stay visible. Only the true no-op line — logged when an edit
-    // touches no build slot at all, i.e. nothing is about to happen — stays
-    // behind --debug. Asserting eviction is *exactly once* here still proves
-    // the dedup fix: the pre-fix code would have logged it 2-5 times for
-    // this one save.
+    // The terminal-facing side of the same bug, per Sami's ruling on
+    // deka#1069: default output for a file change is exactly ONE line,
+    // `[hmr] changed <path>`. `[watch] evicted`, `invalidating build slots`,
+    // `replanning build slots`, `coarse build invalidation`, and the pure
+    // no-op line all move behind `--debug` — this process was not passed
+    // that flag, so none of them may appear. The invalidation/eviction
+    // contracts themselves are not weakened: build_phase_permissions.rs and
+    // watch_reload.rs pass `--debug` and assert on them there.
     let log = fs::read_to_string(root.path().join(".cache/dev.log")).unwrap_or_default();
     let hmr_lines: Vec<&str> = log
         .lines()
@@ -522,17 +516,13 @@ fn atomic_rename_save_produces_exactly_one_hmr_cycle() {
         1,
         "expected exactly one [hmr] changed line for the save, got: {hmr_lines:?}\nfull log:\n{log}"
     );
-    let evicted_lines: Vec<&str> = log
+    let watch_lines: Vec<&str> = log
         .lines()
-        .filter(|line| line.contains("[watch] evicted"))
+        .filter(|line| line.contains("[watch]"))
         .collect();
     assert!(
-        evicted_lines.len() <= 1,
-        "one save must evict at most once, got {}: {evicted_lines:?}\nfull log:\n{log}",
-        evicted_lines.len()
-    );
-    assert!(
-        !log.contains("no build slots affected"),
-        "the pure no-op bookkeeping line must stay behind --debug:\n{log}"
+        watch_lines.is_empty(),
+        "default output for one save must be exactly the one [hmr] line, no [watch] bookkeeping \
+         without --debug; got: {watch_lines:?}\nfull log:\n{log}"
     );
 }
