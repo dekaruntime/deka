@@ -15,6 +15,8 @@ mod cli_summon;
 pub mod cache;
 pub mod grants;
 pub mod install;
+#[cfg(test)]
+mod install_fixture_registry;
 pub mod links;
 pub mod lock;
 pub mod payload;
