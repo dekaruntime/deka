@@ -112,6 +112,7 @@ jobs:
 
       - name: Smoke test host-target executable compilation
         env:
+          RUSTC_WRAPPER: sccache
           DEKA_DSC: ${{ github.workspace }}/.ci/dsc
           NO_COLOR: "1"
           FORCE_COLOR: "0"
