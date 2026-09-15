@@ -5,10 +5,12 @@ interface LayoutProps {
 }
 
 export fn Layout(props: LayoutProps) ReactNode {
-  return <div>
+  return (
+    <div>
       <header>
         <HelloBadge client:load />
       </header>
       <main>{props.children}</main>
     </div>
+  )
 }

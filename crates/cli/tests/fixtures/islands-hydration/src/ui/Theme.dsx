@@ -16,11 +16,13 @@ export fn ThemeToggle() ReactNode {
   if (theme == "dark") {
     label = "Light"
   }
-  return <button type="button" id="theme-toggle" class="theme-toggle" data-theme={theme} onClick={fn() void {
+  return (
+    <button type="button" id="theme-toggle" class="theme-toggle" data-theme={theme} onClick={fn() void {
       if (theme == "dark") {
         setTheme("light")
       } else {
         setTheme("dark")
       }
     }}>{label}</button>
+  )
 }

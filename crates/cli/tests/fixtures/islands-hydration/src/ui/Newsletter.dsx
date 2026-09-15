@@ -11,7 +11,8 @@ export fn NewsletterSignup() ReactNode {
   if (sent == true) {
     status = "Thanks — we will not actually email " + email + "."
   }
-  return <form class="nl-form" id="newsletter" onSubmit={fn(event: Any) void {
+  return (
+    <form class="nl-form" id="newsletter" onSubmit={fn(event: Any) void {
       const _ = unsafe {
         event.preventDefault()
         return 1
@@ -27,4 +28,5 @@ export fn NewsletterSignup() ReactNode {
       <button class="nl-btn" type="submit" id="nl-submit">Subscribe</button>
       <p class="nl-status" id="nl-status">{status}</p>
     </form>
+  )
 }

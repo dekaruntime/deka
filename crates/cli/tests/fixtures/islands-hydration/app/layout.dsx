@@ -6,7 +6,8 @@ interface LayoutProps {
 }
 
 export fn Layout(props: LayoutProps) ReactNode {
-  return <div>
+  return (
+    <div>
       <header>
         <ThemeToggle client:load />
       </header>
@@ -15,4 +16,5 @@ export fn Layout(props: LayoutProps) ReactNode {
         <NewsletterSignup client:load />
       </footer>
     </div>
+  )
 }

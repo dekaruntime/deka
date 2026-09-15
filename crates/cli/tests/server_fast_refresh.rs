@@ -406,13 +406,15 @@ fn hmr_payload_html_update_then_island_reload() {
     fs::write(
         root.path().join("app/page.dsx"),
         r#"export fn Page() ReactNode {
-  return <section>
+  return (
+    <section>
       <h1 id="server-title">hello refreshed</h1>
       <form>
         <input id="outside-input" name="note" value="initial" />
       </form>
       <div id="spacer" class="spacer"></div>
     </section>
+  )
 }
 "#,
     )
@@ -432,9 +434,11 @@ fn hmr_payload_html_update_then_island_reload() {
   const pair = useState(10)
   const n = pair[0]
   const setN = pair[1]
-  return <button type="button" id="counter" onClick={fn() void {
+  return (
+    <button type="button" id="counter" onClick={fn() void {
       setN(n + 1)
     }}>{n}</button>
+  )
 }
 "#,
     )
@@ -475,10 +479,12 @@ interface LayoutProps {
 }
 
 export fn Layout(props: LayoutProps) ReactNode {
-  return <div>
+  return (
+    <div>
       <Counter client:load />
       <main id="layout-marker" data-refreshed="yes">{props.children}</main>
     </div>
+  )
 }
 "#,
     )
@@ -612,13 +618,15 @@ fn cdp_morph_preserves_island_state_and_island_edit_reloads() {
     fs::write(
         root.path().join("app/page.dsx"),
         r#"export fn Page() ReactNode {
-  return <section>
+  return (
+    <section>
       <h1 id="server-title">hello refreshed</h1>
       <form>
         <input id="outside-input" name="note" value="initial" />
       </form>
       <div id="spacer" class="spacer"></div>
     </section>
+  )
 }
 "#,
     )
@@ -662,9 +670,11 @@ fn cdp_morph_preserves_island_state_and_island_edit_reloads() {
   const pair = useState(10)
   const n = pair[0]
   const setN = pair[1]
-  return <button type="button" id="counter" onClick={fn() void {
+  return (
+    <button type="button" id="counter" onClick={fn() void {
       setN(n + 1)
     }}>{n}</button>
+  )
 }
 "#,
     )
