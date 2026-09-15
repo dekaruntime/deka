@@ -66,7 +66,12 @@ async function main() {
   const scratch = path.join(repoRoot, 'scripts', '.run-tmp')
   mkdirSync(scratch, { recursive: true })
   const project = await mkdtemp(path.join(scratch, 'deka-hmr-browser-'))
-  const logPath = path.join(project, 'dev.log')
+  // deka#1069: `.cache/` is the one path segment the production watcher
+  // always ignores. A log path inside the project root would make the dev
+  // server watch its own output file — a self-triggering feedback loop
+  // found the hard way in the Rust build_phase_permissions.rs suite.
+  mkdirSync(path.join(project, '.cache'), { recursive: true })
+  const logPath = path.join(project, '.cache', 'dev.log')
   const logFd = openSync(logPath, 'w')
   let server
   let browser
@@ -76,7 +81,10 @@ async function main() {
     await writeHandler(project, 'HMR initial page')
 
     const port = await freePort()
-    server = spawn(cli, ['dev', '.', '--port', String(port), '--no-prompt'], {
+    // deka#1069: default output is one line, `[hmr] changed <path>`; the
+    // `[watch] evicted N` line this script asserts on below now only prints
+    // with --debug.
+    server = spawn(cli, ['dev', '.', '--port', String(port), '--no-prompt', '--debug'], {
       cwd: project,
       stdio: ['ignore', logFd, logFd],
     })

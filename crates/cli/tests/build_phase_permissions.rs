@@ -575,7 +575,15 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
     fs::write(data.join("other.txt"), "other").expect("write other");
 
     let port = free_port();
-    let log_path = project.path().join("dev.log");
+    // deka#1069: `.cache/` is the one path segment the production watcher
+    // always ignores (see fast_refresh.rs's spawn_dev). Piping this
+    // process's own log into the project root instead of `.cache/` makes the
+    // dev server watch its own output file: every log line is a filesystem
+    // write the watcher sees, which logs another line, which triggers
+    // another cycle, forever — a self-sustaining feedback loop that starved
+    // out this test's real filesystem edits under load.
+    fs::create_dir_all(project.path().join(".cache")).expect("mkdir .cache");
+    let log_path = project.path().join(".cache").join("dev.log");
     let log = fs::File::create(&log_path).expect("dev.log");
     let child = Command::new(cli_bin())
         .args([
@@ -584,6 +592,10 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
             "--port",
             &port.to_string(),
             "--no-prompt",
+            // deka#1069: Sami's ruling is that default output is one line,
+            // `[hmr] changed <path>`; the build-slot invalidation/replan
+            // bookkeeping this test asserts on now only prints in --debug.
+            "--debug",
         ])
         .current_dir(project.path())
         .env("DEKA_HOST_GRANTS", &grants)
@@ -698,7 +710,15 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
     fs::write(data.join("other.txt"), "other").expect("write other");
 
     let port = free_port();
-    let log_path = project.path().join("dev.log");
+    // deka#1069: `.cache/` is the one path segment the production watcher
+    // always ignores (see fast_refresh.rs's spawn_dev). Piping this
+    // process's own log into the project root instead of `.cache/` makes the
+    // dev server watch its own output file: every log line is a filesystem
+    // write the watcher sees, which logs another line, which triggers
+    // another cycle, forever — a self-sustaining feedback loop that starved
+    // out this test's real filesystem edits under load.
+    fs::create_dir_all(project.path().join(".cache")).expect("mkdir .cache");
+    let log_path = project.path().join(".cache").join("dev.log");
     let log = fs::File::create(&log_path).expect("dev.log");
     let child = Command::new(cli_bin())
         .args([
@@ -707,6 +727,10 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
             "--port",
             &port.to_string(),
             "--no-prompt",
+            // deka#1069: Sami's ruling is that default output is one line,
+            // `[hmr] changed <path>`; the build-slot invalidation/replan
+            // bookkeeping this test asserts on now only prints in --debug.
+            "--debug",
         ])
         .current_dir(project.path())
         .env("DEKA_HOST_GRANTS", &grants)
@@ -825,7 +849,15 @@ fn dev_watch_invalidates_slots_under_phase_aware_permissions() {
     fs::write(data.join("other.txt"), "other").expect("write other");
 
     let port = free_port();
-    let log_path = project.path().join("dev.log");
+    // deka#1069: `.cache/` is the one path segment the production watcher
+    // always ignores (see fast_refresh.rs's spawn_dev). Piping this
+    // process's own log into the project root instead of `.cache/` makes the
+    // dev server watch its own output file: every log line is a filesystem
+    // write the watcher sees, which logs another line, which triggers
+    // another cycle, forever — a self-sustaining feedback loop that starved
+    // out this test's real filesystem edits under load.
+    fs::create_dir_all(project.path().join(".cache")).expect("mkdir .cache");
+    let log_path = project.path().join(".cache").join("dev.log");
     let log = fs::File::create(&log_path).expect("dev.log");
     let child = Command::new(cli_bin())
         .args([
@@ -834,6 +866,10 @@ fn dev_watch_invalidates_slots_under_phase_aware_permissions() {
             "--port",
             &port.to_string(),
             "--no-prompt",
+            // deka#1069: Sami's ruling is that default output is one line,
+            // `[hmr] changed <path>`; the build-slot invalidation/replan
+            // bookkeeping this test asserts on now only prints in --debug.
+            "--debug",
         ])
         .current_dir(project.path())
         .env("DEKA_HOST_GRANTS", &grants)

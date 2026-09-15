@@ -14,13 +14,20 @@ pub fn serve_with_dsc(context: &Context, dsc: Option<PathBuf>) {
         .build()
         .expect("failed to start tokio runtime");
 
-    if let Err(err) = rt.block_on(serve_async(context, dsc)) {
+    // `--debug` gates the watcher's internal bookkeeping lines (build-slot
+    // decisions, eviction counts); `[hmr] changed <path>` always prints
+    // (deka#1067).
+    let verbose = context.args.flags.contains_key("--debug")
+        || context.args.flags.contains_key("-d")
+        || context.args.flags.contains_key("debug");
+
+    if let Err(err) = rt.block_on(serve_async(context, dsc, verbose)) {
         stdio::error("serve", &err);
         std::process::exit(1);
     }
 }
 
-async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), String> {
+async fn serve_async(context: &Context, dsc: Option<PathBuf>, verbose: bool) -> Result<(), String> {
     crate::banner::prepare(
         true,
         &context
@@ -61,6 +68,7 @@ async fn serve_async(context: &Context, dsc: Option<PathBuf>) -> Result<(), Stri
         &prepared.handler_path,
         Arc::clone(&prepared.state.engine),
         true,
+        verbose,
     ) {
         tracing::warn!("watch mode failed: {}", err);
     }
