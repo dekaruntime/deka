@@ -90,11 +90,11 @@ fn compile_ds(ctx: &RefreshContext, abs: &Path) -> Result<String, String> {
         .dsc
         .as_ref()
         .ok_or_else(|| "dsc is required to compile DekaScript for Fast Refresh".to_string())?;
-    let out = ctx
-        .project_root
-        .join("ds_modules")
-        .join(".cache")
-        .join("dev")
+    // deka#1065: route through the same shared helper every other compiler
+    // cache consumer uses, so there is genuinely one resolution path for
+    // "where does the dev cache live" instead of a second hardcoded literal
+    // that could drift from it.
+    let out = runtime_core::dist::compiler_cache_dir_with(&ctx.project_root, true)
         .join("refresh-modules");
     let stamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

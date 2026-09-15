@@ -112,10 +112,9 @@ fn run_with_args(dir: &Path, args: &[&str], _host_grants: &str) -> (bool, String
 }
 
 fn manifest_path(project: &Path) -> PathBuf {
-    project
-        .join(".cache")
-        .join("dekascript")
-        .join("build-manifest.json")
+    // Caching lives under ds_modules only (deka#1065) — compiler_cache_dir()
+    // (dev_mode=false) resolves to ds_modules/.cache/prod.
+    runtime_core::dist::compiler_cache_dir(project).join("build-manifest.json")
 }
 
 fn manifest_json(project: &Path) -> serde_json::Value {
@@ -656,6 +655,8 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
     );
 
     // The dev manifest records the observations the invalidation used.
+    // deka#1065: the compiler cache nests under ds_modules/.cache -- never
+    // a second, top-level root.
     let dev_manifest_path = project
         .path()
         .join("ds_modules")
@@ -740,6 +741,8 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
         .expect("spawn deka dev");
     let mut child = KillOnDrop(Some(child));
     let dev_log = || fs::read_to_string(&log_path).unwrap_or_default();
+    // deka#1065: the compiler cache nests under ds_modules/.cache -- never
+    // a second, top-level root.
     let dev_manifest_path = project
         .path()
         .join("ds_modules")

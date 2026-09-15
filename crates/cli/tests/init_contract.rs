@@ -17,6 +17,22 @@ fn printed_line_count(output: &std::process::Output) -> usize {
         .count()
 }
 
+/// deka#1065: ds_modules legitimately exists once the compiler cache has
+/// been used (it nests under ds_modules/.cache/{dev,prod}), but a project
+/// that installed nothing must have zero installed-package content there
+/// -- exactly the property
+/// deka_host::validation::modules::has_installed_modules protects.
+fn ds_modules_has_only_cache(root: &Path) -> bool {
+    let ds_modules = root.join("ds_modules");
+    if !ds_modules.is_dir() {
+        return true;
+    }
+    fs::read_dir(&ds_modules)
+        .expect("read ds_modules")
+        .filter_map(|entry| entry.ok())
+        .all(|entry| entry.file_name() == ".cache")
+}
+
 fn assert_scaffold(root: &Path) {
     assert!(
         root.join("app/page.dsx").is_file(),
@@ -56,6 +72,18 @@ fn assert_scaffold(root: &Path) {
     );
     assert!(root.join("public/style.css").is_file());
     assert!(root.join(".gitignore").is_file());
+    assert!(
+        root.join("public/favicon.ico").is_file(),
+        "init must write a default favicon: deka#1066"
+    );
+    assert!(
+        !root.join(".cache").exists(),
+        "init writes files but must never execute the compiler, so no cache directory should exist yet: deka#1065"
+    );
+    assert!(
+        !root.join("ds_modules").exists(),
+        "init must not materialize ds_modules — a fresh scaffold has zero installed packages: deka#1065"
+    );
 
     // deka#1046 / deka#1000: the scaffolded style.css must be readable,
     // properly formatted CSS, not a single escaped line.
@@ -125,6 +153,10 @@ fn assert_scaffold(root: &Path) {
     assert!(!index.contains("<!--deka-scripts-->"), "{index}");
     assert!(!index.contains("<script"), "{index}");
     assert!(index.contains("<div id=\"app\"></div>"), "{index}");
+    assert!(
+        index.contains("rel=\"icon\"") && index.contains("href=\"/favicon.ico\""),
+        "index.html must link the default favicon (deka#1066): {index}"
+    );
 
     let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
     assert!(gitignore.contains("ds_modules/"), "{gitignore}");
@@ -177,8 +209,16 @@ fn init_creates_dekascript_app_and_preserves_existing_files() {
 
     let printed = String::from_utf8_lossy(&output.stderr);
     assert!(
-        printed.contains("deka serve"),
-        "init must tell the user to run deka serve:\n{printed}"
+        printed.contains("deka dev"),
+        "init must tell the user to run deka dev: deka#1064\n{printed}"
+    );
+    assert!(
+        !printed.contains("deka serve"),
+        "init must recommend deka dev, not deka serve: deka#1064\n{printed}"
+    );
+    assert!(
+        printed.contains("Next steps:"),
+        "init's closing block must read as instructions under a Next steps heading: deka#1064\n{printed}"
     );
 
     // deka#1042: the ASCII banner (restored to stdio in #698) must appear on
@@ -195,6 +235,7 @@ fn init_creates_dekascript_app_and_preserves_existing_files() {
         "[create] app/page.dsx",
         "[create] app/Counter.dsx",
         "[create] public/404.html",
+        "[create] public/favicon.ico",
     ] {
         assert!(
             printed.contains(expected),
@@ -348,6 +389,24 @@ fn fresh_init_serves_html_and_css_without_exposing_project_files() {
             404
         );
     }
+
+    // deka#1065: the compiler cache nests under ds_modules/.cache -- never
+    // a top-level .cache (Sami: "i do not want to pollute the root project
+    // folder unnecessarily") -- and a scaffold with no installed packages
+    // must have zero installed-package content in ds_modules, even though
+    // ds_modules itself now legitimately exists to hold the cache.
+    assert!(
+        !project.path().join(".cache").exists(),
+        "deka serve must not create a top-level .cache: deka#1065"
+    );
+    assert!(
+        project.path().join("ds_modules").join(".cache").is_dir(),
+        "deka serve must use the canonical ds_modules/.cache root"
+    );
+    assert!(
+        ds_modules_has_only_cache(project.path()),
+        "deka serve on a dependency-free scaffold must not add installed-package content to ds_modules: deka#1065"
+    );
 }
 
 /// deka#973: `deka dev` on a freshly `deka init`'d project must serve HTTP
@@ -433,6 +492,23 @@ fn fresh_init_dev_serves_without_manual_permission_edits() {
             && !log_contents.contains("invalid security policy")
             && !log_contents.contains("invalid permissions"),
         "deka dev must not hit the permission wall on a fresh scaffold:\n{log_contents}"
+    );
+
+    // deka#1065: same invariant for deka dev -- one canonical
+    // ds_modules/.cache root, never a top-level .cache, and no
+    // installed-package content added to ds_modules for a dependency-free
+    // scaffold.
+    assert!(
+        !project.path().join(".cache").exists(),
+        "deka dev must not create a top-level .cache: deka#1065"
+    );
+    assert!(
+        project.path().join("ds_modules").join(".cache").is_dir(),
+        "deka dev must use the canonical ds_modules/.cache root"
+    );
+    assert!(
+        ds_modules_has_only_cache(project.path()),
+        "deka dev on a dependency-free scaffold must not add installed-package content to ds_modules: deka#1065"
     );
 }
 

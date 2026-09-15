@@ -1,4 +1,5 @@
 pub mod imports;
+pub mod module_roots;
 pub mod modules;
 
 use serde::Serialize;

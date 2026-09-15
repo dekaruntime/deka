@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
+use runtime_core::dist::compiler_cache_dir;
 
 pub fn compile_graph(
     project_root: &Path,
@@ -45,7 +46,7 @@ pub fn compile_graph_with_dsc(
         project_root.join(entry)
     };
 
-    let out = compile_root.join(".cache").join("dsc-modules");
+    let out = compiler_cache_dir(compile_root).join("dsc-modules");
     if out.exists() {
         let _ = fs::remove_dir_all(&out);
     }

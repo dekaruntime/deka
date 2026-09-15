@@ -99,9 +99,9 @@ fn run_build(dir: &Path, dsc: &Path) -> (bool, String) {
 }
 
 fn serve_entry(root: &Path) -> PathBuf {
-    root.join(".cache")
-        .join("dekascript")
-        .join("serve-entry.dsx")
+    // Caching lives under ds_modules only (deka#1065) — compiler_cache_dir()
+    // (dev_mode=false) resolves to ds_modules/.cache/prod.
+    runtime_core::dist::compiler_cache_dir(root).join("serve-entry.dsx")
 }
 
 fn read_serve_entry(root: &Path) -> String {

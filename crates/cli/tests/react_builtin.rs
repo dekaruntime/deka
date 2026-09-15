@@ -1,9 +1,15 @@
 //! deka#943: pinned production React is a runtime builtin.
 //!
 //! Real topology: the CLI binary serves a fixture that imports `@js/react*`
-//! with no `ds_modules/`, no `js_modules/`, and no network. A second path
-//! runs `deka build --bundle` on a real `.ds` app and asserts the emitted
-//! bundle runs with production React only.
+//! with no installed packages and no network. A second path runs `deka
+//! build --bundle` on a real `.ds` app and asserts the emitted bundle runs
+//! with production React only.
+//!
+//! deka#1065: the compiler cache nests under `ds_modules/.cache`, so
+//! `ds_modules` legitimately exists once the compiler runs even with zero
+//! installed packages -- these tests assert the property that actually
+//! matters (no installed-package content, i.e. no @js/react* materialized
+//! as a real dependency), not bare directory existence.
 
 use std::fs;
 use std::net::TcpListener;
@@ -15,6 +21,22 @@ use reqwest::blocking::Client;
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
+}
+
+/// deka#1065: ds_modules holds the compiler cache (ds_modules/.cache), so
+/// its bare existence no longer means "packages were installed". The
+/// property this suite actually guards is that pinned production React
+/// resolves as a runtime builtin with zero installed-package content --
+/// mirrors deka_host::validation::modules::has_installed_modules.
+fn ds_modules_has_no_installed_packages(root: &Path) -> bool {
+    let ds_modules = root.join("ds_modules");
+    if !ds_modules.is_dir() {
+        return true;
+    }
+    fs::read_dir(&ds_modules)
+        .expect("read ds_modules")
+        .filter_map(|entry| entry.ok())
+        .all(|entry| entry.file_name() == ".cache")
 }
 
 fn fixture_src() -> PathBuf {
@@ -167,7 +189,14 @@ fn serve_ssr_fixture_without_ds_modules_or_network() {
             "served SSR leaked development React bytes ({probe}): {body}"
         );
     }
-    assert!(!root.path().join("ds_modules").exists());
+    // deka#1065: ds_modules now legitimately exists to hold the compiler
+    // cache -- the property this test actually guards is that serving the
+    // fixture never installed @js/react* (or anything else) as a real
+    // package.
+    assert!(
+        ds_modules_has_no_installed_packages(root.path()),
+        "serving a pure-builtin fixture must not add installed-package content to ds_modules"
+    );
     assert!(!root.path().join("js_modules").exists());
 }
 
@@ -246,7 +275,12 @@ fn build_bundle_inlines_prod_react_without_dev_bytes() {
         "prod bundle file bytes contain a chunk of the frozen dev-React vendor source"
     );
 
-    assert!(!root.path().join("ds_modules").exists());
+    // deka#1065: ds_modules now legitimately exists to hold the compiler
+    // cache -- assert no installed-package content, not bare absence.
+    assert!(
+        ds_modules_has_no_installed_packages(root.path()),
+        "building the bundle must not add installed-package content to ds_modules"
+    );
 
     let runner = root.path().join("run-bundle.mjs");
     fs::write(

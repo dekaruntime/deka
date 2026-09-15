@@ -49,12 +49,29 @@ pub fn compiler_cache_dir(project_root: &Path) -> PathBuf {
     compiler_cache_dir_with(project_root, false)
 }
 
+/// deka#1065 found the compiler cache split across two physical roots at
+/// once: `write_app_router_entry` always wrote `serve-entry.dsx` etc. to a
+/// top-level `<root>/.cache/dekascript` regardless of dev/prod, while dev's
+/// build-manifest/build-values tracking (crates/dev, deka_build::slots)
+/// wrote to `<root>/ds_modules/.cache/dev` -- two roots existing
+/// simultaneously during one `deka dev` session, which is exactly the bug
+/// report.
+///
+/// Sami's call: the cache lives under `ds_modules/.cache` (never a
+/// top-level `<root>/.cache` -- that pollutes the project root), and both
+/// dev and prod resolve through this one function so there is exactly one
+/// canonical root, never two. `ds_modules`'s existence still has to mean
+/// "has installed packages" elsewhere (module-root / security-policy
+/// resolution, and what `deka build` ships into `dist/server/ds_modules`)
+/// -- that is handled by making those call sites test for actual installed
+/// content rather than bare directory existence
+/// (deka_host::validation::modules::existing_populated_modules_dirs) and by
+/// having `deka build`'s `ds_modules` copy skip `.cache`
+/// (deka_build::command::copy_dir_recursive), not by keeping the cache out
+/// of `ds_modules`.
 pub fn compiler_cache_dir_with(project_root: &Path, dev_mode: bool) -> PathBuf {
-    if dev_mode {
-        project_root.join(MODULES_DIR).join(".cache").join("dev")
-    } else {
-        project_root.join(".cache").join("dekascript")
-    }
+    let variant = if dev_mode { "dev" } else { "prod" };
+    project_root.join(MODULES_DIR).join(".cache").join(variant)
 }
 pub use artifact_manifest::{
     ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactPayload,
@@ -94,20 +111,43 @@ mod cache_dir_tests {
     use std::path::Path;
 
     #[test]
-    fn compiler_cache_dir_defaults_to_legacy_path() {
+    fn compiler_cache_dir_prod_nests_under_ds_modules() {
         let root = Path::new("/tmp/proj");
         assert_eq!(
             compiler_cache_dir_with(root, false),
-            root.join(".cache").join("dekascript")
+            root.join("ds_modules").join(".cache").join("prod")
         );
     }
 
     #[test]
-    fn compiler_cache_dir_uses_ds_modules_when_dev() {
+    fn compiler_cache_dir_dev_nests_under_ds_modules() {
         let root = Path::new("/tmp/proj");
         assert_eq!(
             compiler_cache_dir_with(root, true),
             root.join("ds_modules").join(".cache").join("dev")
         );
+    }
+
+    /// deka#1065: exactly one cache root, never a second one at the
+    /// project's top level -- Sami does not want the cache polluting the
+    /// project root. Both dev and prod resolve under the same
+    /// `ds_modules/.cache` parent, split only by subdirectory.
+    #[test]
+    fn compiler_cache_dir_never_lands_at_project_root() {
+        let root = Path::new("/tmp/proj");
+        for dev_mode in [true, false] {
+            let dir = compiler_cache_dir_with(root, dev_mode);
+            assert!(
+                dir.starts_with(root.join("ds_modules").join(".cache")),
+                "cache dir must nest under ds_modules/.cache, got {}",
+                dir.display()
+            );
+            assert_ne!(
+                dir.parent().map(|p| p.to_path_buf()),
+                Some(root.to_path_buf()),
+                "cache dir must never be a direct child of the project root, got {}",
+                dir.display()
+            );
+        }
     }
 }

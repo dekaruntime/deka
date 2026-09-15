@@ -110,11 +110,18 @@ async function scenarioInit(cli) {
       existsSync(join(dir, "app/Counter.dsx")) &&
       !existsSync(join(dir, "src")) &&
       existsSync(join(dir, "public/404.html")) &&
+      existsSync(join(dir, "public/favicon.ico")) &&
+      !existsSync(join(dir, ".cache")) &&
       page.includes("export fn Page()") &&
       html.includes('<div id="app"') &&
+      html.includes('rel="icon"') &&
+      html.includes('href="/favicon.ico"') &&
       gitignore.includes("ds_modules/") &&
       gitignore.includes(".cache/") &&
       css.length > 0 &&
+      (init.stderr ?? "").includes("Next steps:") &&
+      (init.stderr ?? "").includes("deka dev") &&
+      !(init.stderr ?? "").includes("deka serve") &&
       initLines <= 20;
     return {
       name: "deka-init",

@@ -8,10 +8,9 @@ use deka_modules::module_spec::{
     closed_stdlib_module_exports, closed_stdlib_module_id, ds_module_id_from_rel,
     ds_source_candidates, is_ds_source_path, module_spec_aliases,
 };
-use deka_modules::modules::{
-    MODULES_DIR, existing_modules_dirs, is_modules_dir_name, links_path, read_linked_modules,
-};
+use deka_modules::modules::{MODULES_DIR, is_modules_dir_name, links_path, read_linked_modules};
 
+use super::module_roots::existing_populated_modules_dirs;
 use super::{ErrorKind, Severity, ValidationError};
 use crate::validation::imports::{
     ImportKind, ImportSpec, consume_comment_line, is_ident, parse_import_line,
@@ -480,7 +479,7 @@ pub(crate) fn resolve_modules_root(file_path: &str) -> Option<PathBuf> {
 
 /// `module_root_override` is an explicit ds_modules project root supplied by
 /// the caller; there is deliberately no environment fallback (deka#801).
-fn resolve_modules_root_with(
+pub(crate) fn resolve_modules_root_with(
     file_path: &str,
     module_root_override: Option<&str>,
 ) -> Option<PathBuf> {
@@ -491,7 +490,7 @@ fn resolve_modules_root_with(
         path.parent()?.to_path_buf()
     };
     if let Some(root) = find_project_root(&dir) {
-        if let Some(candidate) = existing_modules_dirs(&root).into_iter().next() {
+        if let Some(candidate) = existing_populated_modules_dirs(&root).into_iter().next() {
             return Some(candidate);
         }
     }
@@ -499,7 +498,7 @@ fn resolve_modules_root_with(
     if let Some(override_root) = module_root_override {
         let root = PathBuf::from(override_root);
         if root.join("deka.lock").exists() {
-            if let Some(candidate) = existing_modules_dirs(&root).into_iter().next() {
+            if let Some(candidate) = existing_populated_modules_dirs(&root).into_iter().next() {
                 return Some(candidate);
             }
         }
@@ -523,19 +522,19 @@ fn resolve_modules_root_with(
         {
             return Some(ancestor.to_path_buf());
         }
-        if let Some(candidate) = existing_modules_dirs(ancestor).into_iter().next() {
+        if let Some(candidate) = existing_populated_modules_dirs(ancestor).into_iter().next() {
             return Some(candidate);
         }
     }
 
     if let Ok(current_dir) = std::env::current_dir() {
         if let Some(root) = find_project_root(&current_dir) {
-            if let Some(candidate) = existing_modules_dirs(&root).into_iter().next() {
+            if let Some(candidate) = existing_populated_modules_dirs(&root).into_iter().next() {
                 return Some(candidate);
             }
         }
         for ancestor in current_dir.ancestors() {
-            if let Some(candidate) = existing_modules_dirs(ancestor).into_iter().next() {
+            if let Some(candidate) = existing_populated_modules_dirs(ancestor).into_iter().next() {
                 return Some(candidate);
             }
         }
