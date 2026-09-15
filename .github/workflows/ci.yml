@@ -456,6 +456,18 @@ jobs:
           DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
         run: bun tests/dump/scripts/fast-refresh-e2e.mjs
 
+      # deka#939: the hand-authored .js e2e above never reaches the real
+      # jsxDEV path. This one serves the .dsx fixture through deka dev, whose
+      # Fast Refresh compile runs the pinned `dsc transpile --dev` (jsxDEV +
+      # DS source locations), and asserts effects: a server-text edit morphs
+      # the page (heading updates, hydrated island state and form input
+      # survive, no navigation) while editing the island module full-reloads.
+      - name: Browser server Fast Refresh morph regression (dsc --dev jsxDEV)
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
+          DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
+        run: bun tests/dump/scripts/server-fast-refresh-e2e.mjs
+
       - name: Report sccache usage
         if: ${{ always() && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
         run: |
