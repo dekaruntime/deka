@@ -508,6 +508,125 @@ export fn Layout(props: LayoutProps) ReactNode {
     );
 }
 
+/// deka#956: an app-router server-component edit that changes a hydrated
+/// island's boundary — here `app/layout.dsx` switching the island directive
+/// `client:load` -> `client:idle` — cannot be morphed in place: the
+/// `<deka-island>` subtree is owned by `hydrateRoot` and the morph
+/// deliberately skips it. The honest fallback is the same full reload used
+/// for island-module edits; a silent stale morph (no navigation, island keeps
+/// the old directive) means the edit never reached the user.
+#[test]
+fn cdp_island_boundary_edit_reloads_instead_of_stale_morph() {
+    let root = tempfile::tempdir().expect("temp project");
+    copy_tree(&fixture_src(), root.path());
+    let port = free_port();
+    let server = spawn_dev(root.path(), port);
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .no_proxy()
+        .build()
+        .expect("http client");
+    let url = format!("http://127.0.0.1:{port}/");
+    let body = wait_body(&client, &url, &server.log_path);
+    assert!(body.contains("hello server"), "expected SSR page:\n{body}");
+
+    let debug_port = free_port();
+    let chrome_dir = tempfile::tempdir().expect("chrome profile dir");
+    let _chrome = spawn_chrome(debug_port, chrome_dir.path());
+    let mut cdp = Cdp::connect(debug_port);
+    cdp.navigate(&url);
+    cdp.wait_eval_eq(
+        "document.querySelector('#server-title') && document.querySelector('#server-title').textContent",
+        "hello server",
+        Duration::from_secs(45),
+    );
+    cdp.wait_eval_eq(
+        "document.querySelector('#counter') ? 'yes' : 'no'",
+        "yes",
+        Duration::from_secs(30),
+    );
+    assert_eq!(
+        cdp.eval_string(
+            "document.querySelector('[data-deka-island]') && document.querySelector('[data-deka-island]').getAttribute('data-deka-directive')",
+        ),
+        "load",
+        "fixture island must hydrate with the client:load directive",
+    );
+
+    let click_deadline = Instant::now() + Duration::from_secs(30);
+    let mut count = String::new();
+    while Instant::now() < click_deadline {
+        let _ = cdp.eval("document.getElementById('counter') && document.getElementById('counter').click()");
+        count = cdp.eval_string(
+            "document.getElementById('counter') && document.getElementById('counter').textContent",
+        );
+        if count == "3" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(count, "3", "pre-edit clicks must stick in island React state");
+
+    cdp.navigations = 0;
+    cdp.drain();
+
+    // Server-component edit (layout.dsx, not the island module) that changes
+    // the island's hydration directive. The morph cannot reach inside the
+    // hydrated island, so the client must take the reload fallback.
+    fs::write(
+        root.path().join("app/layout.dsx"),
+        r#"import { Counter } from "../src/ui/Counter.dsx"
+
+interface LayoutProps {
+  children: ReactNode
+}
+
+export fn Layout(props: LayoutProps) ReactNode {
+  return (
+    <div>
+      <Counter client:idle />
+      <main>{props.children}</main>
+    </div>
+  )
+}
+"#,
+    )
+    .unwrap();
+
+    let nav_deadline = Instant::now() + Duration::from_secs(45);
+    while Instant::now() < nav_deadline && cdp.navigations == 0 {
+        cdp.drain();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        cdp.navigations >= 1,
+        "an island-boundary edit must full-reload (frame navigation), not silently keep \
+         the stale island; log:\n{}",
+        fs::read_to_string(&server.log_path).unwrap_or_default()
+    );
+
+    // The reloaded page must be live with the new directive applied.
+    cdp.wait_eval_eq(
+        "document.querySelector('#server-title') && document.querySelector('#server-title').textContent",
+        "hello server",
+        Duration::from_secs(45),
+    );
+    assert_eq!(
+        cdp.eval_string(
+            "document.querySelector('[data-deka-island]') && document.querySelector('[data-deka-island]').getAttribute('data-deka-directive')",
+        ),
+        "idle",
+        "the reloaded page must carry the edited client:idle directive",
+    );
+    assert_eq!(
+        cdp.eval_string(
+            "document.getElementById('counter') && document.getElementById('counter').textContent",
+        ),
+        "0",
+        "a full reload resets the island to its SSR state",
+    );
+}
+
 /// deka#1048: editing the root `index.html` document shell must not be a
 /// silent no-op. The shell lives outside `#app`, so the existing #app-only
 /// morph can never reflect it — the correct behavior is the same full-reload
