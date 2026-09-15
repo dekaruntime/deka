@@ -101,19 +101,27 @@ pub fn on_watch_event(
         replan_files: invalidation.source_files.iter().cloned().collect(),
     };
     if invalidation.coarse {
-        if verbose {
-            stdio::log(
-                "watch",
-                &format!(
-                    "coarse build invalidation: rematerializing all build slots ({})",
-                    changed.join(", ")
-                ),
-            );
-        }
+        // Real work: every planned slot is about to rematerialize because no
+        // manifest proved otherwise. Kept visible by default — it is a
+        // deliberate, logged decision that something is about to happen, the
+        // same category as the two branches below (Codex review of deka#729;
+        // reasserted by deka#1069's coordinator review, which caught that
+        // gating this behind --debug silently broke the existing
+        // build_phase_permissions.rs contract for these three lines).
+        stdio::log(
+            "watch",
+            &format!(
+                "coarse build invalidation: rematerializing all build slots ({})",
+                changed.join(", ")
+            ),
+        );
     } else if request.slots.is_empty() && request.replan_files.is_empty() {
-        // Internal bookkeeping (deka#1067): a layout/component edit with no
-        // `build {}` block legitimately touches no slot. Only user-facing
-        // signal here is the `[hmr] changed` line the caller still prints.
+        // Pure no-op bookkeeping (deka#1067): a layout/component edit with no
+        // `build {}` block legitimately touches no slot, and nothing is about
+        // to happen as a result. Unlike the other branches here, this is not
+        // a deliberate action — it's the absence of one — so it stays behind
+        // --debug. The user-facing signal for the edit is still the
+        // `[hmr] changed` line the caller always prints.
         if verbose {
             stdio::log(
                 "watch",
@@ -122,7 +130,10 @@ pub fn on_watch_event(
         }
         return false;
     } else {
-        if !request.slots.is_empty() && verbose {
+        // Real work: these slots are about to rematerialize. This is the
+        // "targeted invalidation must be a deliberate, logged decision"
+        // contract build_phase_permissions.rs asserts on — always visible.
+        if !request.slots.is_empty() {
             stdio::log(
                 "watch",
                 &format!(
@@ -132,7 +143,7 @@ pub fn on_watch_event(
                 ),
             );
         }
-        if !request.replan_files.is_empty() && verbose {
+        if !request.replan_files.is_empty() {
             stdio::log(
                 "watch",
                 &format!(

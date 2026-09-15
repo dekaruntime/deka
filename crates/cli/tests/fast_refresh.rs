@@ -499,8 +499,19 @@ fn atomic_rename_save_produces_exactly_one_hmr_cycle() {
     );
 
     // The terminal-facing side of the same bug: exactly one `[hmr] changed`
-    // line for the save, and the `[watch]` bookkeeping lines suppressed
-    // because `--debug` was not passed (deka#1067 part B).
+    // line for the save (deka#1067 part A), and the pure no-op bookkeeping
+    // line suppressed because `--debug` was not passed (deka#1067 part B).
+    //
+    // `[watch] evicted N` is deliberately NOT asserted absent here: a
+    // coordinator review of the first version of this PR caught that
+    // build_phase_permissions.rs and watch_reload.rs already treat
+    // `[watch] evicted`/`invalidating build slots`/`replanning build slots`
+    // as a deliberate, logged-by-default contract (not incidental noise),
+    // so those stay visible. Only the true no-op line — logged when an edit
+    // touches no build slot at all, i.e. nothing is about to happen — stays
+    // behind --debug. Asserting eviction is *exactly once* here still proves
+    // the dedup fix: the pre-fix code would have logged it 2-5 times for
+    // this one save.
     let log = fs::read_to_string(root.path().join(".cache/dev.log")).unwrap_or_default();
     let hmr_lines: Vec<&str> = log
         .lines()
@@ -511,8 +522,17 @@ fn atomic_rename_save_produces_exactly_one_hmr_cycle() {
         1,
         "expected exactly one [hmr] changed line for the save, got: {hmr_lines:?}\nfull log:\n{log}"
     );
+    let evicted_lines: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains("[watch] evicted"))
+        .collect();
     assert!(
-        !log.contains("[watch] evicted"),
-        "bookkeeping must stay behind --debug, not print by default:\n{log}"
+        evicted_lines.len() <= 1,
+        "one save must evict at most once, got {}: {evicted_lines:?}\nfull log:\n{log}",
+        evicted_lines.len()
+    );
+    assert!(
+        !log.contains("no build slots affected"),
+        "the pure no-op bookkeeping line must stay behind --debug:\n{log}"
     );
 }

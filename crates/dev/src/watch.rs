@@ -19,6 +19,17 @@ static WATCHER_GUARDS: OnceLock<Mutex<Vec<notify::RecommendedWatcher>>> = OnceLo
 /// window.
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(50);
 
+/// Hard ceiling on how long a single batch may keep draining, independent of
+/// `WATCH_DEBOUNCE`'s rolling per-event quiet gap. Without this, a directory
+/// that keeps self-triggering faster than the quiet gap (e.g. a log file the
+/// watched tree itself writes to, discovered via a livelock in
+/// build_phase_permissions.rs's dev-log-inside-project-root test setup)
+/// would never see 50ms of silence and the batch would never flush — a
+/// livelock, not just extra latency. Capping total collection time guarantees
+/// forward progress: the batch flushes and the loop comes back around even
+/// under a sustained event storm.
+const WATCH_DEBOUNCE_MAX: Duration = Duration::from_millis(250);
+
 pub(crate) fn start_watch(
     handler_path: &str,
     engine: Arc<RuntimeEngine>,
@@ -54,10 +65,22 @@ pub(crate) fn start_watch(
 
             // Drain whatever else lands within the debounce window so one
             // save collapses into one cycle (deka#1067) instead of one per
-            // raw filesystem event.
+            // raw filesystem event — but never past WATCH_DEBOUNCE_MAX total,
+            // so a sustained event storm still flushes periodically instead
+            // of stalling the loop forever.
             let mut batch = vec![first];
-            while let Ok(Some(event)) = tokio::time::timeout(WATCH_DEBOUNCE, rx.recv()).await {
-                batch.push(event);
+            let batch_deadline = tokio::time::Instant::now() + WATCH_DEBOUNCE_MAX;
+            loop {
+                let remaining_total =
+                    batch_deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining_total.is_zero() {
+                    break;
+                }
+                let wait = WATCH_DEBOUNCE.min(remaining_total);
+                match tokio::time::timeout(wait, rx.recv()).await {
+                    Ok(Some(event)) => batch.push(event),
+                    _ => break,
+                }
             }
 
             let mut changed: Vec<String> = Vec::new();
@@ -113,7 +136,12 @@ pub(crate) fn start_watch(
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
             let evicted = engine.pool().evict_all().await;
-            if evicted > 0 && verbose {
+            if evicted > 0 {
+                // Real work: a non-zero eviction is the deka#731 contract
+                // watch_reload.rs asserts on directly — always visible, same
+                // category as the build-slot decision lines in build_watch.rs
+                // (deka#1069 coordinator review: gating this behind --debug
+                // silently broke that pre-existing test).
                 stdio_log::log("watch", &format!("evicted {}", evicted));
             }
             if dev_mode {
