@@ -361,10 +361,25 @@ jobs:
       # The job's sccache bucket is derived from the host arch (darwin-arm64);
       # x86_64 objects belong in the darwin-x64 bucket instead, matching the
       # release matrix (deka#655) and warming the cache the release build uses.
+      # SCCACHE_BUCKET is read by the sccache *server* at startup (it spawns
+      # lazily with the first client compile), so a step-level env override
+      # alone would silently re-bucket every later arm64 compile in this job.
+      # Stop the server first so the check spawns it with the x64 bucket, then
+      # stop it again so the next compile respawns it with the job's
+      # darwin-arm64 bucket. The --show-stats lines before/after are the
+      # CI-log proof that each phase used its own bucket.
       - name: Check darwin-x64 target
-        env:
-          SCCACHE_BUCKET: deka-sccache-darwin-x64
-        run: cargo check --locked --workspace --all-targets --target x86_64-apple-darwin
+        run: |
+          echo "=== sccache before darwin-x64 check (expect deka-sccache-darwin-arm64) ==="
+          sccache --show-stats
+          sccache --stop-server || true
+          SCCACHE_BUCKET=deka-sccache-darwin-x64 \
+            cargo check --locked --workspace --all-targets --target x86_64-apple-darwin
+          echo "=== sccache after darwin-x64 check (expect deka-sccache-darwin-x64) ==="
+          sccache --show-stats
+          sccache --stop-server || true
+          echo "=== sccache after restart (expect deka-sccache-darwin-arm64 again) ==="
+          sccache --show-stats
 
       # Build the release CLI before the workspace test so pm's
       # real_cli_invocation_recovers_each_atomic_swap_boundary test can find
