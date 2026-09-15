@@ -650,3 +650,149 @@ fn static_params_record_one_entry_per_template() {
     assert!(table.contains("● /posts/world"), "{table}");
     assert!(table.lines().filter(|line| line.starts_with('●')).count() == 2, "{table}");
 }
+
+/// deka#718 Phase A: a real fixture project whose static page carries a
+/// `server:defer` island. Returns the tempdir (keep it alive) and the
+/// absolute page path.
+fn defer_fixture(page_src: &str) -> (tempfile::TempDir, String) {
+    let project = tempfile::tempdir().expect("tempdir");
+    let page_file = project.path().join("app/dashboard/page.dsx");
+    std::fs::create_dir_all(page_file.parent().expect("parent")).expect("mkdir");
+    std::fs::write(&page_file, page_src).expect("write page");
+    (
+        project,
+        page_file.to_string_lossy().into_owned(),
+    )
+}
+
+const DEFER_PAGE: &str =
+    "export fn Page() {\n    return <Cart server:defer><CartSkeleton slot=\"fallback\" /></Cart>;\n}\n";
+
+#[test]
+fn server_defer_marks_otherwise_static_route_partial() {
+    let (project, page_file) = defer_fixture(DEFER_PAGE);
+    let manifest = BuildManifest::plan(
+        project.path(),
+        &[],
+        None,
+        &app(&[page("/dashboard", &page_file)]),
+        &[],
+    )
+    .expect("plan builds");
+
+    let route = manifest
+        .routes
+        .iter()
+        .find(|route| route.template == "/dashboard")
+        .expect("route recorded");
+    assert_eq!(route.mode, RouteMode::PartialDefer);
+    assert_eq!(route.deferred, vec!["Cart".to_string()]);
+
+    // The table names the mechanism and the island — never "streaming".
+    let table = manifest.render_route_table();
+    assert!(table.contains('◐'), "{table}");
+    assert!(table.contains("◐ /dashboard"), "{table}");
+    assert!(table.contains("partial: server:defer (Cart)"), "{table}");
+    assert!(!table.to_lowercase().contains("streaming"), "{table}");
+
+    // The serialized contract carries the new mode spelling.
+    let json = manifest.canonical_json().expect("json");
+    assert!(json.contains("\"mode\":\"partial_defer\""), "{json}");
+    assert!(json.contains("\"deferred\":[\"Cart\"]"), "{json}");
+}
+
+#[test]
+fn server_defer_records_names_without_flipping_request_time_routes() {
+    // `prerender = false` already renders at request time; defer adds nothing
+    // to delivery there, so the mode stays ƒ while the plan still records
+    // the directive (deka#718: the plan records every server:defer).
+    let (project, page_file) = defer_fixture(DEFER_PAGE);
+    let mut p = plan(2, vec![]);
+    p.prerender = Some(false);
+    let manifest = BuildManifest::plan(
+        project.path(),
+        &[PlannedSource {
+            file: page_file.clone(),
+            plan: p,
+        }],
+        None,
+        &app(&[page("/dashboard", &page_file)]),
+        &[],
+    )
+    .expect("plan builds");
+
+    let route = manifest
+        .routes
+        .iter()
+        .find(|route| route.template == "/dashboard")
+        .expect("route recorded");
+    assert_eq!(route.mode, RouteMode::RequestTime);
+    assert_eq!(route.deferred, vec!["Cart".to_string()]);
+    let table = manifest.render_route_table();
+    assert!(table.contains("ƒ /dashboard"), "{table}");
+    assert!(!table.contains('◐'), "{table}");
+}
+
+#[test]
+fn server_defer_records_names_on_static_params_routes() {
+    // A staticParams-expanded shell can still carry deferred islands: the
+    // directive is recorded, and the ◐ mode lands with Phase A's otherwise-
+    // static scope (mode stays ● so instances keep expanding).
+    let (project, page_file) = defer_fixture(DEFER_PAGE);
+    let p = plan(
+        2,
+        vec![slot(
+            "s1",
+            "staticParams",
+            &page_file,
+            params_descriptor(&[("slug", "string")]),
+        )],
+    );
+    let mut manifest = BuildManifest::plan(
+        project.path(),
+        &[PlannedSource {
+            file: page_file.clone(),
+            plan: p,
+        }],
+        None,
+        &app(&[page("/posts/[slug]", &page_file)]),
+        &[],
+    )
+    .expect("plan builds");
+    manifest
+        .expand_static_params(&BTreeMap::from([(
+            "s1".to_string(),
+            serde_json::json!([{"slug": "hello"}]),
+        )]))
+        .expect("expands");
+
+    let route = manifest
+        .routes
+        .iter()
+        .find(|route| route.template == "/posts/[slug]")
+        .expect("route recorded");
+    assert_eq!(route.mode, RouteMode::StaticParams);
+    assert_eq!(route.deferred, vec!["Cart".to_string()]);
+    let table = manifest.render_route_table();
+    assert!(table.contains("● /posts/hello"), "{table}");
+    assert!(!table.contains('◐'), "{table}");
+}
+
+#[test]
+fn manifest_is_deterministic_with_deferred_islands() {
+    let (project, page_file) = defer_fixture(DEFER_PAGE);
+    let pages = [page("/", "app/page.dsx"), page("/dashboard", &page_file)];
+    let mut manifests = Vec::new();
+    for _ in 0..3 {
+        manifests.push(
+            BuildManifest::plan(project.path(), &[], None, &app(&pages), &[])
+                .expect("plan builds")
+                .canonical_json()
+                .expect("json"),
+        );
+    }
+    assert!(
+        manifests.windows(2).all(|pair| pair[0] == pair[1]),
+        "identical inputs must produce identical manifest bytes"
+    );
+}

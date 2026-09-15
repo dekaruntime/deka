@@ -114,6 +114,10 @@ pub enum RouteMode {
     Static,
     /// `●` static page expanded from `staticParams`.
     StaticParams,
+    /// `◐` partial page (deka#718): a static fallback shell whose
+    /// `server:defer` islands render later against `/_deka/defer`. The
+    /// mechanism is client-triggered defer, NOT streaming.
+    PartialDefer,
     /// `ƒ` request-time page (`prerender = false`).
     RequestTime,
     /// `λ` API handler.
@@ -125,6 +129,7 @@ impl RouteMode {
         match self {
             RouteMode::Static => "○",
             RouteMode::StaticParams => "●",
+            RouteMode::PartialDefer => "◐",
             RouteMode::RequestTime => "ƒ",
             RouteMode::Api => "λ",
         }
@@ -134,9 +139,21 @@ impl RouteMode {
         match self {
             RouteMode::Static => "static",
             RouteMode::StaticParams => "static: staticParams",
+            RouteMode::PartialDefer => "partial: server:defer",
             RouteMode::RequestTime => "prerender = false",
             RouteMode::Api => "api",
         }
+    }
+}
+
+/// The route-table detail column: the mode's fixed phrase, plus the deferred
+/// island names for `◐` rows (deka#718 wants the table to name the mechanism
+/// AND the islands, e.g. `partial: server:defer (Cart)`).
+fn route_detail(route: &ManifestRoute) -> String {
+    if route.mode == RouteMode::PartialDefer && !route.deferred.is_empty() {
+        format!("partial: server:defer ({})", route.deferred.join(", "))
+    } else {
+        route.mode.detail().to_string()
     }
 }
 
@@ -333,6 +350,23 @@ impl BuildManifest {
         validate_plans(planned)?;
         let all_slots: Vec<&BuildPlanSlot> =
             planned.iter().flat_map(|source| source.plan.slots.iter()).collect();
+
+        // deka#718: `server:defer` islands on a page make an otherwise-static
+        // route ◐ partial. Scan once and group component names by
+        // project-relative source file (sorted, deduped: the manifest is
+        // byte-compared across builds).
+        let mut deferred_by_file: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for island in super::defer::scan_server_defer(&project_root.join("app")) {
+            let file = project_relative(project_root, &island.file);
+            let names = deferred_by_file.entry(file).or_default();
+            if !names.contains(&island.component) {
+                names.push(island.component);
+            }
+        }
+        for names in deferred_by_file.values_mut() {
+            names.sort();
+        }
+
         // Per-file route disposition: `prerender = false` as reported by
         // each file's plan (v2+). A v1 plan entry means "no disposition".
         let prerender_by_file: BTreeMap<String, Option<bool>> = planned
@@ -394,15 +428,24 @@ impl BuildManifest {
                 .find(|slot| slot.binding == "staticParams");
             let params = bracket_params(&template);
             let prerender_false = prerender_by_file.get(&file) == Some(&Some(false));
+            // deka#718: the route plan records every `server:defer` directive
+            // on the page; an otherwise-static page with deferred islands is
+            // ◐ partial. Request-time and staticParams pages keep their mode —
+            // defer changes nothing about delivery there.
+            let deferred = deferred_by_file.get(&file).cloned().unwrap_or_default();
 
             let route = match (params.is_empty(), params_slot, prerender_false) {
                 (true, None, false) => ManifestRoute {
                     template,
                     instances: Vec::new(),
-                    mode: RouteMode::Static,
+                    mode: if deferred.is_empty() {
+                        RouteMode::Static
+                    } else {
+                        RouteMode::PartialDefer
+                    },
                     source_file: file.clone(),
                     slot: None,
-                    deferred: Vec::new(),
+                    deferred,
                 },
                 (true, None, true) => ManifestRoute {
                     template,
@@ -410,7 +453,7 @@ impl BuildManifest {
                     mode: RouteMode::RequestTime,
                     source_file: file.clone(),
                     slot: None,
-                    deferred: Vec::new(),
+                    deferred,
                 },
                 (true, Some(slot), _) => {
                     return Err(format!(
@@ -426,7 +469,7 @@ impl BuildManifest {
                         mode: RouteMode::StaticParams,
                         source_file: file.clone(),
                         slot: Some(slot.id.clone()),
-                        deferred: Vec::new(),
+                        deferred,
                     }
                 }
                 (false, Some(slot), true) => {
@@ -441,7 +484,7 @@ impl BuildManifest {
                     mode: RouteMode::RequestTime,
                     source_file: file.clone(),
                     slot: None,
-                    deferred: Vec::new(),
+                    deferred,
                 },
                 (false, None, false) => {
                     // A v1 plan carries no disposition: the route may well
@@ -717,20 +760,20 @@ impl BuildManifest {
     /// one row per concrete instance (the manifest stores one entry per
     /// template — deka#738 F6 — so the instances expand here).
     pub fn render_route_table(&self) -> String {
-        let mut rows: Vec<(&str, String, &str)> = Vec::new();
+        let mut rows: Vec<(&str, String, String)> = Vec::new();
         for route in &self.routes {
             if route.instances.is_empty() {
                 rows.push((
                     route.mode.glyph(),
                     route.template.clone(),
-                    route.mode.detail(),
+                    route_detail(route),
                 ));
             } else {
                 for instance in &route.instances {
                     rows.push((
                         route.mode.glyph(),
                         instance.clone(),
-                        route.mode.detail(),
+                        route_detail(route),
                     ));
                 }
             }
