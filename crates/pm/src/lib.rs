@@ -23,6 +23,7 @@ pub mod registry;
 #[cfg(feature = "self-update")]
 pub mod releases;
 pub mod spec;
+pub mod version_range;
 
 pub mod registry_integrity;
 

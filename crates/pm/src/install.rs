@@ -1,8 +1,6 @@
 use crate::{
-    grants, lock,
-    payload::InstallPayload,
-    recovery_report, registry,
-    spec::{parse_package_spec, strip_semver_range_prefix},
+    grants, lock, payload::InstallPayload, recovery_report, registry, spec::parse_package_spec,
+    version_range,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use deka_host::integrity::compute_package_integrity;
@@ -142,8 +140,14 @@ fn run_php_install_in_transaction(
         // @deka stdlib packages are now served from deka.gg metadata + R2 tarballs.
         // Legacy linkhash/harar registry support has been removed.
         let install_source = if is_deka_package(&name) {
+            // deka#1011: fold the underlying message into this one with
+            // `map_err` rather than `with_context`. The CLI's top-level
+            // error handler prints `err.to_string()` (the outermost anyhow
+            // frame only), so a `with_context` wrapper here would silently
+            // swallow a range-resolution failure's "available versions"
+            // detail behind a generic "failed to install" message.
             install_from_registry(&name, locked_pkg.as_ref(), requested_version, &staging)
-                .with_context(|| format!("failed to install {} from deka.gg", name))?
+                .map_err(|err| anyhow!("failed to install {} from deka.gg: {}", name, err))?
         } else {
             bail!(
                 "package {} cannot be installed: legacy linkhash/harar registry support has been removed. Use @deka/* stdlib packages or publish to GitHub.",
@@ -341,14 +345,14 @@ struct UnsatisfiedRequirement {
     requested_by: String,
 }
 
+/// deka#1011: this used to be a literal string comparison, so a `^1.2.0`
+/// constraint from one dependent could never be satisfied by the `1.4.0`
+/// another dependent's resolution actually picked, even though `1.4.0` is
+/// exactly what `^1.2.0` means. Delegates to the same range grammar
+/// `registry::select_version` resolves against, so selection and
+/// satisfaction can't drift apart.
 fn version_satisfies(range: &str, version: &str) -> bool {
-    let range = range.trim();
-    if range.is_empty() || range == "latest" || range == "*" {
-        return true;
-    }
-    let range = range.trim_start_matches('v');
-    let version = version.trim_start_matches('v');
-    range == version
+    version_range::satisfies(range, version)
 }
 
 fn first_unsatisfied_requirement(
@@ -538,8 +542,13 @@ fn install_from_registry(
 
     let version = match locked {
         Some(locked) => locked.version.clone(),
+        // deka#1011: `map_err` (not `with_context`) so the underlying
+        // "no published version satisfies ... available versions: ..."
+        // diagnostic from `select_version` survives into the message the
+        // CLI actually prints, instead of being replaced by this generic
+        // wrapper.
         None => registry::select_version(&registry, requested)
-            .with_context(|| format!("failed to select a version for {}", name))?,
+            .map_err(|err| anyhow!("failed to select a version for {}: {}", name, err))?,
     };
 
     let repo_url = format!(
@@ -1000,7 +1009,12 @@ fn collect_deka_json_deps_in(project_dir: &Path) -> Result<Vec<String>> {
             continue;
         }
         let spec = if let Some(version) = version.as_str() {
-            let version = strip_semver_range_prefix(version.trim());
+            // deka#1011: the full range string (`^0.3.1`, `~0.3.1`,
+            // `>=0.3.1`, ...) is preserved and passed through to the real
+            // resolver in `registry::select_version` -- it used to be
+            // stripped to a bare literal here, which is what caused range
+            // syntax to be silently reinterpreted as an exact pin.
+            let version = version.trim();
             if version.is_empty() || version == "*" || version == "latest" {
                 name.to_string()
             } else {
@@ -1508,14 +1522,15 @@ mod tests {
         .expect("write deka.json");
 
         let specs = collect_project_install_specs(tmp.path()).expect("specs");
-        // deka#971: the installer has no range resolver -- every version
-        // string is matched literally against the registry. A `^0.1.0`
-        // range in deka.json must resolve to the pinned base version
-        // `0.1.0`, not fail to find a release literally named `^0.1.0`.
+        // deka#1011: the full `^0.1.0` range string must survive into the
+        // install spec unmangled -- it used to be stripped to a bare
+        // `0.1.0` literal here, which is what caused range syntax to be
+        // silently reinterpreted as an exact pin instead of resolved by
+        // `registry::select_version`.
         assert_eq!(
             specs,
             vec![
-                "@deka/core@0.1.0".to_string(),
+                "@deka/core@^0.1.0".to_string(),
                 "@deka/encoding".to_string()
             ]
         );
@@ -1588,13 +1603,15 @@ mod tests {
         .expect("write lock");
 
         let specs = collect_project_install_specs(tmp.path()).expect("specs");
-        // deka#971: same range-stripping rule applies when a manifest dep
-        // overlaps with an already-locked package.
+        // deka#1011: the manifest's `^0.2.0` range wins over the locked
+        // `0.1.0` spec (the manifest reader runs second and overwrites by
+        // name) and must survive unmangled so the real resolver picks the
+        // highest 0.2.x release, not a literal `0.2.0`.
         assert_eq!(
             specs,
             vec![
                 "@deka/core@0.1.0".to_string(),
-                "@deka/encoding@0.2.0".to_string()
+                "@deka/encoding@^0.2.0".to_string()
             ]
         );
     }
