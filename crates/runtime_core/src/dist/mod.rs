@@ -16,7 +16,6 @@
 
 use std::path::{Path, PathBuf};
 
-use deka_modules::modules::MODULES_DIR;
 
 mod artifact_manifest;
 mod build_invalidation;
@@ -49,14 +48,30 @@ pub fn compiler_cache_dir(project_root: &Path) -> PathBuf {
     compiler_cache_dir_with(project_root, false)
 }
 
-/// Caching lives inside `ds_modules/.cache` only (deka#1065) — never at the
-/// project root. `ds_modules/` is already the one directory the module
-/// resolver and `.gitignore` treat as generated/writable state, so both the
-/// dev and prod compiler caches nest under it, split by subdirectory rather
-/// than by top-level location.
+/// deka#1065 found the compiler cache split across two physical roots at
+/// once: `write_app_router_entry` always wrote `serve-entry.dsx` etc. to a
+/// top-level `<root>/.cache/dekascript` regardless of dev/prod, while dev's
+/// build-manifest/build-values tracking (crates/dev, deka_build::slots)
+/// wrote to `<root>/ds_modules/.cache/dev` -- two roots existing
+/// simultaneously during one `deka dev` session, which is exactly the bug
+/// report.
+///
+/// The fix is ONE canonical root, not "move it into ds_modules": `ds_modules`
+/// is not an inert folder name. deka-modules::existing_modules_dirs() gates
+/// module-root/security-policy resolution on `ds_modules` existing on disk,
+/// and `deka build` ships the entire `ds_modules/` tree verbatim into
+/// `dist/server/ds_modules` to package installed dependencies with the
+/// artifact. Nesting the compiler's own scratch/cache state inside
+/// `ds_modules` makes `ds_modules` appear for projects with zero installed
+/// packages -- which crates/cli/tests/react_builtin.rs asserts never happens
+/// for a pure-builtin (`@js/react*`) project as a deliberate, tested
+/// guarantee ("no ds_modules/, no js_modules/, and no network"). Both dev
+/// and prod variants therefore nest under one top-level `<root>/.cache`
+/// instead, split by subdirectory: never inside `ds_modules`, never two
+/// separate top-level roots.
 pub fn compiler_cache_dir_with(project_root: &Path, dev_mode: bool) -> PathBuf {
     let variant = if dev_mode { "dev" } else { "prod" };
-    project_root.join(MODULES_DIR).join(".cache").join(variant)
+    project_root.join(".cache").join(variant)
 }
 pub use artifact_manifest::{
     ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactPayload,
@@ -96,31 +111,43 @@ mod cache_dir_tests {
     use std::path::Path;
 
     #[test]
-    fn compiler_cache_dir_prod_nests_under_ds_modules() {
+    fn compiler_cache_dir_prod_is_top_level_cache() {
         let root = Path::new("/tmp/proj");
         assert_eq!(
             compiler_cache_dir_with(root, false),
-            root.join("ds_modules").join(".cache").join("prod")
+            root.join(".cache").join("prod")
         );
     }
 
     #[test]
-    fn compiler_cache_dir_uses_ds_modules_when_dev() {
+    fn compiler_cache_dir_dev_is_top_level_cache() {
         let root = Path::new("/tmp/proj");
         assert_eq!(
             compiler_cache_dir_with(root, true),
-            root.join("ds_modules").join(".cache").join("dev")
+            root.join(".cache").join("dev")
         );
     }
 
+    /// deka#1065 (react_builtin.rs CI failure): the compiler cache must
+    /// never nest under `ds_modules` -- that directory's mere existence is
+    /// load-bearing for module-root/security-policy resolution
+    /// (deka-modules::existing_modules_dirs) and for what `deka build`
+    /// ships into `dist/server/ds_modules`. A dependency-free project must
+    /// be able to use the compiler cache without `ds_modules` ever
+    /// appearing on disk.
     #[test]
-    fn compiler_cache_dir_never_lands_at_project_root() {
+    fn compiler_cache_dir_never_nests_under_ds_modules() {
         let root = Path::new("/tmp/proj");
         for dev_mode in [true, false] {
             let dir = compiler_cache_dir_with(root, dev_mode);
             assert!(
-                dir.starts_with(root.join("ds_modules")),
-                "cache dir must nest under ds_modules, got {}",
+                !dir.starts_with(root.join("ds_modules")),
+                "cache dir must never nest under ds_modules, got {}",
+                dir.display()
+            );
+            assert!(
+                dir.starts_with(root.join(".cache")),
+                "cache dir must nest under the single top-level .cache root, got {}",
                 dir.display()
             );
         }

@@ -62,7 +62,11 @@ fn assert_scaffold(root: &Path) {
     );
     assert!(
         !root.join(".cache").exists(),
-        "init must not create a top-level .cache — caching lives under ds_modules only: deka#1065"
+        "init writes files but must never execute the compiler, so no cache directory should exist yet: deka#1065"
+    );
+    assert!(
+        !root.join("ds_modules").exists(),
+        "init must not materialize ds_modules — a fresh scaffold has zero installed packages: deka#1065"
     );
 
     // deka#1046 / deka#1000: the scaffolded style.css must be readable,
@@ -370,9 +374,17 @@ fn fresh_init_serves_html_and_css_without_exposing_project_files() {
         );
     }
 
+    // deka#1065: the compiler cache is one canonical top-level .cache root
+    // (never nested under ds_modules -- see
+    // runtime_core::dist::compiler_cache_dir_with) -- and a scaffold with no
+    // installed packages must never materialize ds_modules just to serve.
     assert!(
-        !project.path().join(".cache").exists(),
-        "deka serve must not create a top-level .cache — caching lives under ds_modules only: deka#1065"
+        project.path().join(".cache").is_dir(),
+        "deka serve must use the single canonical .cache root"
+    );
+    assert!(
+        !project.path().join("ds_modules").exists(),
+        "deka serve on a dependency-free scaffold must not materialize ds_modules: deka#1065"
     );
 }
 
@@ -461,9 +473,15 @@ fn fresh_init_dev_serves_without_manual_permission_edits() {
         "deka dev must not hit the permission wall on a fresh scaffold:\n{log_contents}"
     );
 
+    // deka#1065: same invariant for deka dev — one canonical .cache root,
+    // no ds_modules materialized for a dependency-free scaffold.
     assert!(
-        !project.path().join(".cache").exists(),
-        "deka dev must not create a top-level .cache — caching lives under ds_modules only: deka#1065"
+        project.path().join(".cache").is_dir(),
+        "deka dev must use the single canonical .cache root"
+    );
+    assert!(
+        !project.path().join("ds_modules").exists(),
+        "deka dev on a dependency-free scaffold must not materialize ds_modules: deka#1065"
     );
 }
 

@@ -643,9 +643,10 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
     );
 
     // The dev manifest records the observations the invalidation used.
+    // deka#1065: the compiler cache is a single top-level .cache root,
+    // never nested under ds_modules.
     let dev_manifest_path = project
         .path()
-        .join("ds_modules")
         .join(".cache")
         .join("dev")
         .join("build-manifest.json");
@@ -715,9 +716,10 @@ fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
         .expect("spawn deka dev");
     let mut child = KillOnDrop(Some(child));
     let dev_log = || fs::read_to_string(&log_path).unwrap_or_default();
+    // deka#1065: the compiler cache is a single top-level .cache root,
+    // never nested under ds_modules.
     let dev_manifest_path = project
         .path()
-        .join("ds_modules")
         .join(".cache")
         .join("dev")
         .join("build-manifest.json");

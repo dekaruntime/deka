@@ -258,15 +258,18 @@ fn project_run_is_unchanged_and_gets_no_advisory() {
         !text.contains(NOTE),
         "a project run must not print the not-a-project advisory: {text}"
     );
-    // Project behavior: the loader compiles into the project's own cache,
-    // nested under ds_modules — never a top-level .cache (deka#1065).
+    // Project behavior: the loader compiles into the project's own cache
+    // at the single canonical .cache/prod root (deka#1065) -- never inside
+    // ds_modules, whose mere existence is load-bearing elsewhere (module
+    // root / security-policy resolution, and what `deka build` ships into
+    // dist/server/ds_modules).
     assert!(
-        project.path().join("ds_modules").join(".cache").join("prod").join("dsc-modules").join("app.js").is_file(),
+        project.path().join(".cache").join("prod").join("dsc-modules").join("app.js").is_file(),
         "project compile cache missing; project behavior changed"
     );
     assert!(
-        !project.path().join(".cache").exists(),
-        "project run must not create a top-level .cache: deka#1065"
+        !project.path().join("ds_modules").exists(),
+        "project run with zero installed packages must not materialize ds_modules: deka#1065"
     );
     // And nothing went into the user cache.
     assert!(

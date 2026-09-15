@@ -1,5 +1,5 @@
 //! `deka` always enables HTTP + HMR, prints the stdio ascii banner with
-//! URL/cwd once at listen time, and caches under `ds_modules/.cache/dev`.
+//! URL/cwd once at listen time, and caches under the top-level `.cache/dev`.
 
 use reqwest::blocking::Client;
 use reqwest::redirect;
@@ -257,7 +257,7 @@ fn deka_dev_prints_banner_serves_http_and_hmr() {
         "HMR without upgrade must be 426"
     );
 
-    let cache = root.path().join("ds_modules").join(".cache").join("dev");
+    let cache = root.path().join(".cache").join("dev");
     assert!(
         cache.is_dir(),
         "expected dev compiler cache at {}\nlog:\n{log_text}",

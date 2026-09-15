@@ -6,7 +6,7 @@
   "permissions": {
     "dev": {
       "read": true,
-      "write": ["ds_modules/.cache"],
+      "write": [".cache"],
       "wasm": true
     },
     "prod": {}
