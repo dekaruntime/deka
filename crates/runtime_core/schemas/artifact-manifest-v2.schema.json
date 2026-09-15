@@ -131,7 +131,7 @@
         "required": ["template", "mode", "outputs", "entry", "source_file"],
         "properties": {
           "template": { "type": "string", "pattern": "^/" },
-          "mode": { "enum": ["static", "static_params", "request_time", "api"] },
+          "mode": { "enum": ["static", "static_params", "partial_defer", "request_time", "api"] },
           "instances": {
             "type": "array",
             "items": { "type": "string" },

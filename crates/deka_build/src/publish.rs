@@ -185,10 +185,14 @@ pub fn build_artifact_manifest(
             let entry = match route.mode {
                 RouteMode::RequestTime => Some(format!("page:{}", route.template)),
                 RouteMode::Api => Some(format!("api:{}", route.template)),
-                RouteMode::Static | RouteMode::StaticParams => None,
+                // ◐ partial (deka#718): the shell publishes exactly like a
+                // static page; only the defer fragment is request-time.
+                RouteMode::Static | RouteMode::StaticParams | RouteMode::PartialDefer => None,
             };
             let outputs = match route.mode {
-                RouteMode::Static => vec![client_output_path(&route.template)],
+                RouteMode::Static | RouteMode::PartialDefer => {
+                    vec![client_output_path(&route.template)]
+                }
                 RouteMode::StaticParams => route
                     .instances
                     .iter()
@@ -473,6 +477,70 @@ mod tests {
         assert!(
             project.path().join("dist.prev-1").join("stale.txt").exists(),
             "stray backups must be left alone while dist exists"
+        );
+    }
+
+    #[test]
+    fn partial_defer_route_publishes_like_static() {
+        // deka#718 Phase A: a ◐ route is a static fallback shell plus a
+        // deferred fragment. Classification must NOT flip shell emission: the
+        // artifact descriptor keeps the static client output and no page
+        // server entry, exactly like a fully static route.
+        use runtime_core::dist::RouteMode;
+
+        let project = tempfile::tempdir().unwrap();
+        write(
+            project.path(),
+            "app/dashboard/page.dsx",
+            "export fn Page() {\n    return <Cart server:defer><CartSkeleton slot=\"fallback\" /></Cart>;\n}\n",
+        );
+        let app_manifest = runtime_core::dist::scan_app_dir(&project.path().join("app"));
+        let api_entries = runtime_core::dist::scan_api_dir(&project.path().join("api"));
+        let manifest = runtime_core::dist::BuildManifest::plan(
+            project.path(),
+            &[],
+            None,
+            &app_manifest,
+            &api_entries,
+        )
+        .expect("plan builds");
+        let route = manifest
+            .routes
+            .iter()
+            .find(|route| route.template == "/dashboard")
+            .expect("route recorded");
+        assert_eq!(route.mode, RouteMode::PartialDefer, "fixture must classify ◐");
+
+        let artifact = build_artifact_manifest(
+            &manifest,
+            project.path(),
+            &project.path().join("dist"),
+            false,
+            false,
+            &app_manifest,
+            &api_entries,
+        )
+        .expect("artifact manifest builds");
+        let artifact_route = artifact
+            .routes
+            .iter()
+            .find(|route| route.template == "/dashboard")
+            .expect("route recorded");
+        assert_eq!(artifact_route.mode, RouteMode::PartialDefer);
+        assert_eq!(
+            artifact_route.outputs,
+            vec!["client/dashboard/index.html".to_string()],
+            "the static shell must still publish under client/: {:?}",
+            artifact_route.outputs
+        );
+        assert_eq!(
+            artifact_route.entry, None,
+            "a partial route has no page: server entry (the shell is static)"
+        );
+        assert_eq!(
+            artifact_route.deferred,
+            vec!["Cart".to_string()],
+            "the descriptor must carry the deferred island names"
         );
     }
 
