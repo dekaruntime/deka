@@ -156,6 +156,18 @@ pub fn satisfies(constraint_raw: &str, version_raw: &str) -> bool {
     let Ok(constraint) = parse_constraint(constraint_raw) else {
         return false;
     };
+    // `latest` / `*` / empty impose no real bound -- they are a preference
+    // used when SELECTING a version (`select_best` prefers stable, falling
+    // back to prerelease only when nothing stable was ever published), not
+    // a constraint an already-resolved version must clear. A dependent
+    // that wrote `latest` is satisfied by whatever version the package
+    // actually resolved to, prerelease included. Matches every other
+    // package manager's "no constraint" meaning of `latest`, and matches
+    // this function's own pre-deka#1011 behavior, which returned `true`
+    // unconditionally for these three spellings.
+    if matches!(constraint, Constraint::Any) {
+        return true;
+    }
     let trimmed = version_raw.trim().trim_start_matches('v');
     let Ok(version) = Version::parse(trimmed) else {
         return false;
@@ -324,5 +336,22 @@ mod tests {
         assert!(satisfies("1.2.3", "1.2.3"));
         assert!(!satisfies("1.2.3", "1.2.4"));
         assert!(satisfies("latest", "9.9.9"));
+    }
+
+    /// deka#1011 regression: a `latest` requirement from one dependent
+    /// (the common case is the implicit default when a package has no
+    /// explicit version in `deka.json`) must still be satisfied by
+    /// whatever concrete version the package actually resolved to, EVEN
+    /// when that version is a prerelease (e.g. a fixture registry
+    /// publishing `9.9.9-fixture`, or a real pre-1.0 stdlib release).
+    /// `latest` is a preference used at SELECTION time, not a bound
+    /// applied again at satisfaction-check time -- conflating the two
+    /// made every prerelease-versioned package fail its own default
+    /// `latest` requirement.
+    #[test]
+    fn latest_and_star_and_empty_satisfy_a_prerelease_resolved_version() {
+        assert!(satisfies("latest", "9.9.9-fixture"));
+        assert!(satisfies("*", "0.1.0-alpha.1"));
+        assert!(satisfies("", "2.0.0-rc.1"));
     }
 }
