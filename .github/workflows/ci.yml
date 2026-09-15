@@ -40,10 +40,15 @@ jobs:
           bun_lockfile=false
           utility_css=false
 
+          # deka#1074: crates/pm/scaffold/** is include_str!'d into the binary
+          # and asserted by cli/tests/init_contract.rs and the ADHOC deka-init
+          # scenario, but the files are .dsx/.css so they matched none of the
+          # extension patterns above. A scaffold-only change therefore shipped
+          # with the Rust suite SKIPPED — the same shape as deka#860.
           # Cargo.toml / Cargo.lock changes MUST run the Rust suite: a
           # dependency bump compiles different code, and dependabot PRs were
           # passing as CLEAN with typecheck+tests skipped (deka#860).
-          if echo "$files" | grep -qE '^(crates/.+\.rs|crates/.+\.js|crates/.+\.ts|crates/.+/build\.rs|assets/.+|scripts/.+|tests/.+|Cargo\.(toml|lock)|crates/.+/Cargo\.toml|\.github/workflows/(ci|release)\.yml)$'; then
+          if echo "$files" | grep -qE '^(crates/.+\.rs|crates/.+\.js|crates/.+\.ts|crates/.+/build\.rs|crates/pm/scaffold/.+|assets/.+|scripts/.+|tests/.+|Cargo\.(toml|lock)|crates/.+/Cargo\.toml|\.github/workflows/(ci|release)\.yml)$'; then
             rust=true
           fi
 
