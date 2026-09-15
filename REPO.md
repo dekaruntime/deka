@@ -121,7 +121,7 @@ deka fmt path/to/file.ds
    DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
    ```
 4. **Bump crate versions** and open a PR if the change is user-facing.
-5. **After merge**, cut a release tag to push artifacts to R2 and trigger downstream site rebuilds (see `PUBLISH.md`). `@deka/*` packages are a different pipeline (`STDLIB.md`): merge does not publish them.
+5. **After merge**, cut a release tag to push artifacts to R2 and trigger downstream site rebuilds (see `PUBLISH.md`). `@deka/*` packages are a different pipeline (`STDLIB.md`): merging a PR that bumps `version` in `deka.json` publishes them — no tag to cut.
 6. **Language fixtures** are owned by `dekaruntime/testsuite/corpus/` and `dekaruntime/tour`; this repo fetches checksummed pins of both in CI. The dual-host dump is `tests/dump`; a release uploads it.
 
 ## How downstream sites consume the runtime
