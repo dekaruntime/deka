@@ -259,17 +259,24 @@ fn project_run_is_unchanged_and_gets_no_advisory() {
         "a project run must not print the not-a-project advisory: {text}"
     );
     // Project behavior: the loader compiles into the project's own cache
-    // at the single canonical .cache/prod root (deka#1065) -- never inside
-    // ds_modules, whose mere existence is load-bearing elsewhere (module
-    // root / security-policy resolution, and what `deka build` ships into
-    // dist/server/ds_modules).
+    // at the single canonical ds_modules/.cache/prod root (deka#1065).
+    // ds_modules legitimately exists now (it holds the compiler cache),
+    // but it must carry zero installed-package content for a project that
+    // installed nothing -- that's the actual invariant
+    // deka_host::validation::modules::has_installed_modules protects.
     assert!(
-        project.path().join(".cache").join("prod").join("dsc-modules").join("app.js").is_file(),
+        project.path().join("ds_modules").join(".cache").join("prod").join("dsc-modules").join("app.js").is_file(),
         "project compile cache missing; project behavior changed"
     );
-    assert!(
-        !project.path().join("ds_modules").exists(),
-        "project run with zero installed packages must not materialize ds_modules: deka#1065"
+    let ds_modules_entries: Vec<_> = fs::read_dir(project.path().join("ds_modules"))
+        .expect("read ds_modules")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name())
+        .collect();
+    assert_eq!(
+        ds_modules_entries,
+        vec![std::ffi::OsString::from(".cache")],
+        "ds_modules must hold nothing but the compiler cache for a project with zero installed packages: deka#1065"
     );
     // And nothing went into the user cache.
     assert!(

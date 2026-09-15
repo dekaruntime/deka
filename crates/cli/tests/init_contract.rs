@@ -17,6 +17,22 @@ fn printed_line_count(output: &std::process::Output) -> usize {
         .count()
 }
 
+/// deka#1065: ds_modules legitimately exists once the compiler cache has
+/// been used (it nests under ds_modules/.cache/{dev,prod}), but a project
+/// that installed nothing must have zero installed-package content there
+/// -- exactly the property
+/// deka_host::validation::modules::has_installed_modules protects.
+fn ds_modules_has_only_cache(root: &Path) -> bool {
+    let ds_modules = root.join("ds_modules");
+    if !ds_modules.is_dir() {
+        return true;
+    }
+    fs::read_dir(&ds_modules)
+        .expect("read ds_modules")
+        .filter_map(|entry| entry.ok())
+        .all(|entry| entry.file_name() == ".cache")
+}
+
 fn assert_scaffold(root: &Path) {
     assert!(
         root.join("app/page.dsx").is_file(),
@@ -374,17 +390,22 @@ fn fresh_init_serves_html_and_css_without_exposing_project_files() {
         );
     }
 
-    // deka#1065: the compiler cache is one canonical top-level .cache root
-    // (never nested under ds_modules -- see
-    // runtime_core::dist::compiler_cache_dir_with) -- and a scaffold with no
-    // installed packages must never materialize ds_modules just to serve.
+    // deka#1065: the compiler cache nests under ds_modules/.cache -- never
+    // a top-level .cache (Sami: "i do not want to pollute the root project
+    // folder unnecessarily") -- and a scaffold with no installed packages
+    // must have zero installed-package content in ds_modules, even though
+    // ds_modules itself now legitimately exists to hold the cache.
     assert!(
-        project.path().join(".cache").is_dir(),
-        "deka serve must use the single canonical .cache root"
+        !project.path().join(".cache").exists(),
+        "deka serve must not create a top-level .cache: deka#1065"
     );
     assert!(
-        !project.path().join("ds_modules").exists(),
-        "deka serve on a dependency-free scaffold must not materialize ds_modules: deka#1065"
+        project.path().join("ds_modules").join(".cache").is_dir(),
+        "deka serve must use the canonical ds_modules/.cache root"
+    );
+    assert!(
+        ds_modules_has_only_cache(project.path()),
+        "deka serve on a dependency-free scaffold must not add installed-package content to ds_modules: deka#1065"
     );
 }
 
@@ -473,15 +494,21 @@ fn fresh_init_dev_serves_without_manual_permission_edits() {
         "deka dev must not hit the permission wall on a fresh scaffold:\n{log_contents}"
     );
 
-    // deka#1065: same invariant for deka dev — one canonical .cache root,
-    // no ds_modules materialized for a dependency-free scaffold.
+    // deka#1065: same invariant for deka dev -- one canonical
+    // ds_modules/.cache root, never a top-level .cache, and no
+    // installed-package content added to ds_modules for a dependency-free
+    // scaffold.
     assert!(
-        project.path().join(".cache").is_dir(),
-        "deka dev must use the single canonical .cache root"
+        !project.path().join(".cache").exists(),
+        "deka dev must not create a top-level .cache: deka#1065"
     );
     assert!(
-        !project.path().join("ds_modules").exists(),
-        "deka dev on a dependency-free scaffold must not materialize ds_modules: deka#1065"
+        project.path().join("ds_modules").join(".cache").is_dir(),
+        "deka dev must use the canonical ds_modules/.cache root"
+    );
+    assert!(
+        ds_modules_has_only_cache(project.path()),
+        "deka dev on a dependency-free scaffold must not add installed-package content to ds_modules: deka#1065"
     );
 }
 

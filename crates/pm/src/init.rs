@@ -275,14 +275,14 @@ mod tests {
         assert_eq!(permissions.dev.caps.read, FsGrant::WorkingDir);
         assert!(matches!(permissions.dev.caps.write, FsGrant::Paths(_)));
         if let FsGrant::Paths(paths) = &permissions.dev.caps.write {
-            // deka#1065: the compiler cache is one canonical top-level
-            // `.cache` root (never nested under ds_modules -- see
-            // runtime_core::dist::compiler_cache_dir_with), so that is the
+            // deka#1065: the compiler cache is one canonical root nested
+            // under ds_modules (never a top-level .cache -- Sami does not
+            // want the cache polluting the project root), so that is the
             // only write grant the scaffold needs to declare.
-            assert!(paths.iter().any(|p| p == ".cache"));
+            assert!(paths.iter().any(|p| p == "ds_modules/.cache"));
             assert!(
-                !paths.iter().any(|p| p == "ds_modules/.cache"),
-                "scaffold must not grant write to ds_modules/.cache — the compiler cache lives at the top-level .cache instead: deka#1065"
+                !paths.iter().any(|p| p == ".cache"),
+                "scaffold must not grant write to a top-level .cache — the compiler cache lives under ds_modules/.cache instead: deka#1065"
             );
         }
         assert!(permissions.dev.caps.wasm);

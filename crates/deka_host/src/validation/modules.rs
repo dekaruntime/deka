@@ -474,6 +474,46 @@ fn export_name_after_keyword(line: &str, keyword: &str) -> Option<String> {
     }
 }
 
+/// A `ds_modules` directory holding nothing but the compiler's own scratch
+/// cache (`ds_modules/.cache/{dev,prod}` -- see
+/// `runtime_core::dist::compiler_cache_dir_with`) must never register as a
+/// module-resolution root purely because the compiler wrote there: doing
+/// so would silently change module-root and security-policy resolution for
+/// a project that never installed anything.
+///
+/// An EMPTY `ds_modules` still counts as usable -- that predates this fix
+/// and is a legitimate state (a module root deka.lock was set up for, with
+/// nothing installed into it yet; `resolve_modules_root_with`'s own tests
+/// fix this exact directory shape). What must NOT count is a `ds_modules`
+/// whose entire on-disk content is the compiler's `.cache` scratch space.
+fn has_installed_modules(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut saw_any_entry = false;
+    let mut saw_non_cache_entry = false;
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        saw_any_entry = true;
+        if entry.file_name() != ".cache" {
+            saw_non_cache_entry = true;
+        }
+    }
+    !saw_any_entry || saw_non_cache_entry
+}
+
+/// Like `deka_modules::modules::existing_modules_dirs`, but filters out a
+/// `ds_modules` that exists on disk purely as the compiler's cache home
+/// (deka#1065). Every module-root / security-policy resolution call site
+/// in this file goes through this instead of the raw upstream helper so
+/// "ds_modules exists" and "ds_modules is a usable module root" can never
+/// drift back apart at a single call site.
+fn existing_populated_modules_dirs(project: &Path) -> Vec<PathBuf> {
+    existing_modules_dirs(project)
+        .into_iter()
+        .filter(|dir| has_installed_modules(dir))
+        .collect()
+}
+
 pub(crate) fn resolve_modules_root(file_path: &str) -> Option<PathBuf> {
     resolve_modules_root_with(file_path, None)
 }
@@ -491,7 +531,7 @@ fn resolve_modules_root_with(
         path.parent()?.to_path_buf()
     };
     if let Some(root) = find_project_root(&dir) {
-        if let Some(candidate) = existing_modules_dirs(&root).into_iter().next() {
+        if let Some(candidate) = existing_populated_modules_dirs(&root).into_iter().next() {
             return Some(candidate);
         }
     }
@@ -499,7 +539,7 @@ fn resolve_modules_root_with(
     if let Some(override_root) = module_root_override {
         let root = PathBuf::from(override_root);
         if root.join("deka.lock").exists() {
-            if let Some(candidate) = existing_modules_dirs(&root).into_iter().next() {
+            if let Some(candidate) = existing_populated_modules_dirs(&root).into_iter().next() {
                 return Some(candidate);
             }
         }
@@ -523,19 +563,19 @@ fn resolve_modules_root_with(
         {
             return Some(ancestor.to_path_buf());
         }
-        if let Some(candidate) = existing_modules_dirs(ancestor).into_iter().next() {
+        if let Some(candidate) = existing_populated_modules_dirs(ancestor).into_iter().next() {
             return Some(candidate);
         }
     }
 
     if let Ok(current_dir) = std::env::current_dir() {
         if let Some(root) = find_project_root(&current_dir) {
-            if let Some(candidate) = existing_modules_dirs(&root).into_iter().next() {
+            if let Some(candidate) = existing_populated_modules_dirs(&root).into_iter().next() {
                 return Some(candidate);
             }
         }
         for ancestor in current_dir.ancestors() {
-            if let Some(candidate) = existing_modules_dirs(ancestor).into_iter().next() {
+            if let Some(candidate) = existing_populated_modules_dirs(ancestor).into_iter().next() {
                 return Some(candidate);
             }
         }
@@ -1672,6 +1712,48 @@ mod tests {
         assert_eq!(resolved, global.join(MODULES_DIR));
         let _ = fs::remove_dir_all(global);
         let _ = fs::remove_file(outside);
+    }
+
+    /// deka#1065: a `ds_modules` that exists on disk purely as the
+    /// compiler's cache home must not resolve as a usable module root --
+    /// but a project resolving its *own* project-root ds_modules must
+    /// still win over a global fallback root that has real packages, and
+    /// the caller must fall through past a cache-only local ds_modules to
+    /// the populated global one when no local project root is found at
+    /// all.
+    #[test]
+    fn cache_only_ds_modules_does_not_count_as_a_usable_module_root() {
+        let local = make_temp_project("cache_only_local");
+        // Simulate the compiler cache (deka#1065) as the ONLY content of
+        // ds_modules -- no real packages installed.
+        fs::create_dir_all(local.join(MODULES_DIR).join(".cache").join("dev"))
+            .expect("create compiler cache dir");
+
+        let global = make_temp_modules_root("cache_only_global", true);
+        write_lock_for_packages(&global, &[]);
+        fs::create_dir_all(global.join(MODULES_DIR).join("@deka").join("crypto"))
+            .expect("create real package dir");
+
+        let outside_entry = local.join("app").join("main.phpx");
+        fs::create_dir_all(outside_entry.parent().expect("entry parent")).expect("mkdir app");
+        fs::write(&outside_entry, "import { foo } from 'a'
+").expect("write entry");
+
+        // `local`'s ds_modules holds only the compiler cache, so resolution
+        // must fall through to the populated global root instead of
+        // stopping at the cache-only local one.
+        let resolved = resolve_modules_root_with(
+            outside_entry.to_string_lossy().as_ref(),
+            Some(global.to_string_lossy().as_ref()),
+        );
+        assert_eq!(
+            resolved,
+            Some(global.join(MODULES_DIR)),
+            "a cache-only ds_modules must not win module-root resolution over a populated one"
+        );
+
+        let _ = fs::remove_dir_all(local);
+        let _ = fs::remove_dir_all(global);
     }
 
     #[test]

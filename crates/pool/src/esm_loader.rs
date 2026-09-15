@@ -696,10 +696,13 @@ mod tests {
             )
             .expect("client builtin");
         assert_eq!(client.as_str(), "deka:///js/react-dom-client.js");
-        // deka#1065: the compiler cache is a single top-level .cache
-        // root, never nested under ds_modules -- ds_modules must stay
-        // entirely absent for a project with zero installed packages.
-        assert!(!root.path().join("ds_modules").exists());
+        // deka#1065: the compiler cache nests under ds_modules/.cache, so
+        // ds_modules legitimately exists once the loader is constructed
+        // even with zero installed packages. The real invariant this test
+        // guards is "no package install happened" -- assert that instead
+        // of bare directory absence.
+        assert!(!root.path().join("ds_modules").join("@deka").exists());
+        assert!(!root.path().join("ds_modules").join("deka.lock").exists());
         assert!(!root.path().join("js_modules").exists());
 
         let source = match loader.load_source(&resolved) {
