@@ -14,6 +14,8 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
+use crate::version_range;
+
 const DEKA_REGISTRY_URL: &str = "https://deka.gg";
 const DEKA_STDLIB_CDN: &str = "https://pub-6d81db17678348abba85f93fde4b4400.r2.dev";
 
@@ -68,30 +70,18 @@ fn ensure_lookup_succeeded(name: &str, status: reqwest::StatusCode) -> Result<()
     Ok(())
 }
 
+/// Resolve a `deka.json` dependency's requested version (an exact pin, a
+/// `^`/`~`/`>=`/`>`/`<`/`<=`/`=` range, or `latest`/`*`/empty) against this
+/// package's published versions, choosing the HIGHEST version that
+/// satisfies it (deka#1011). See `version_range` for the constraint
+/// grammar, the prerelease policy, and why a shared module backs both
+/// selection here and satisfaction checks in `install.rs`.
 pub(crate) fn select_version(registry: &RegistryPackage, requested: &str) -> Result<String> {
-    let requested = requested.trim();
-    if requested != "latest" && requested != "*" && !requested.is_empty() {
-        return Ok(requested.trim_start_matches('v').to_string());
-    }
-    latest_version(&registry.versions)
-}
-
-fn latest_version(versions: &[String]) -> Result<String> {
-    let mut best: Option<(semver::Version, String)> = None;
-    for raw in versions {
-        let trimmed = raw.trim().trim_start_matches('v');
-        if trimmed.is_empty() {
-            continue;
-        }
-        let parsed = semver::Version::parse(trimmed)
-            .with_context(|| format!("registry version `{raw}` is not semver"))?;
-        match &best {
-            Some((current, _)) if parsed <= *current => {}
-            _ => best = Some((parsed, trimmed.to_string())),
-        }
-    }
-    best.map(|(_, version)| version)
-        .ok_or_else(|| anyhow!("registry listed no usable versions"))
+    // `select_best`'s own error already names the constraint and lists the
+    // available versions -- do not wrap it in additional `with_context`,
+    // which would push that detail into the anyhow cause chain where a
+    // plain `.to_string()` (as CLI error output uses) can't see it.
+    version_range::select_best(requested, &registry.versions)
 }
 
 #[cfg(test)]
@@ -134,6 +124,46 @@ mod tests {
             )
             .expect("catalog latest"),
             "0.1.0"
+        );
+    }
+
+    /// deka#1011: this is the exact bug -- `^0.3.1` must resolve to the
+    /// highest 0.3.x release published, not be treated as a literal pin.
+    #[test]
+    fn select_version_resolves_caret_range_to_highest_match() {
+        let registry = RegistryPackage {
+            versions: vec![
+                "0.3.0".into(),
+                "0.3.1".into(),
+                "0.3.4".into(),
+                "0.4.0".into(),
+            ],
+        };
+        assert_eq!(
+            select_version(&registry, "^0.3.1").expect("caret range"),
+            "0.3.4"
+        );
+    }
+
+    #[test]
+    fn select_version_reports_available_versions_when_a_range_matches_nothing() {
+        let registry = RegistryPackage {
+            versions: vec!["0.1.0".into(), "0.2.0".into()],
+        };
+        let err = select_version(&registry, "^1.0.0")
+            .expect_err("no 1.x release exists")
+            .to_string();
+        assert!(
+            err.contains("^1.0.0"),
+            "error should name the constraint: {err}"
+        );
+        assert!(
+            err.contains("0.1.0"),
+            "error should list what IS available: {err}"
+        );
+        assert!(
+            err.contains("0.2.0"),
+            "error should list what IS available: {err}"
         );
     }
 }

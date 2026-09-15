@@ -92,22 +92,22 @@ fn pack_fixture_package(work: &Path, name: &str, version: &str, source: &str) ->
 }
 
 #[derive(Clone)]
-struct FixtureState(Arc<std::collections::BTreeMap<&'static str, (&'static str, Vec<u8>)>>);
+struct FixtureState(Arc<std::collections::BTreeMap<&'static str, (Vec<&'static str>, Vec<u8>)>>);
 
 async fn registry_json(
     AxumPath(name): AxumPath<String>,
     State(state): State<FixtureState>,
 ) -> Json<serde_json::Value> {
     let name = name.trim_end_matches(".json");
-    let version = state
+    let versions: Vec<&str> = state
         .0
         .get(name)
-        .map(|(v, _)| *v)
-        .unwrap_or("0.0.0-missing");
+        .map(|(versions, _)| versions.clone())
+        .unwrap_or_else(|| vec!["0.0.0-missing"]);
     Json(serde_json::json!({
         "name": name,
         "description": "install_ds_modules_e2e fixture",
-        "versions": [version],
+        "versions": versions,
     }))
 }
 
@@ -129,7 +129,9 @@ struct FixtureRegistry {
 }
 
 impl FixtureRegistry {
-    fn start(packages: std::collections::BTreeMap<&'static str, (&'static str, Vec<u8>)>) -> Self {
+    fn start(
+        packages: std::collections::BTreeMap<&'static str, (Vec<&'static str>, Vec<u8>)>,
+    ) -> Self {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
         let state = FixtureState(Arc::new(packages));
         let address = runtime.block_on(async {
@@ -215,7 +217,7 @@ fn fresh_scaffold_installs_two_packages_and_resolves_the_import() {
     packages.insert(
         "greet",
         (
-            "1.0.0",
+            vec!["1.0.0"],
             pack_fixture_package(
                 work.path(),
                 "greet",
@@ -227,7 +229,7 @@ fn fresh_scaffold_installs_two_packages_and_resolves_the_import() {
     packages.insert(
         "shout",
         (
-            "2.0.0",
+            vec!["2.0.0"],
             pack_fixture_package(
                 work.path(),
                 "shout",
@@ -332,7 +334,7 @@ fn caret_and_tilde_ranges_in_manifest_resolve_through_bare_install() {
     packages.insert(
         "greet",
         (
-            "1.2.3",
+            vec!["1.2.3"],
             pack_fixture_package(
                 work.path(),
                 "greet",
@@ -373,6 +375,110 @@ fn caret_and_tilde_ranges_in_manifest_resolve_through_bare_install() {
     );
 }
 
+/// deka#1011: the actual bug was in the RESOLUTION PATH, not in a pure
+/// comparison helper -- `select_version` used to match the requested
+/// string literally against the registry, so `^0.3.1` only ever "worked"
+/// when the registry happened to publish exactly `0.3.1` and nothing
+/// higher. This drives a registry that publishes several 0.3.x/0.4.x
+/// releases through the real `deka install` child process and asserts the
+/// HIGHEST compatible one is what actually gets locked -- a test against
+/// the pure comparison function in isolation would not catch a bug in how
+/// `install_from_registry` wires the requested range into that function.
+#[test]
+fn caret_range_resolves_to_highest_published_compatible_version_through_real_install() {
+    let work = tempfile::tempdir().expect("work dir");
+    let mut packages = std::collections::BTreeMap::new();
+    packages.insert(
+        "greet",
+        (
+            vec!["0.3.0", "0.3.1", "0.3.4", "0.4.0"],
+            pack_fixture_package(
+                work.path(),
+                "greet",
+                "0.3.4",
+                "export fn greet() string { return \"hi\" }\n",
+            ),
+        ),
+    );
+    let registry = FixtureRegistry::start(packages);
+
+    let project = work.path().join("app");
+    fs::create_dir_all(&project).expect("mkdir project");
+    fs::write(
+        project.join("deka.json"),
+        serde_json::json!({
+            "name": "range-highest-e2e",
+            // ^0.3.1 must resolve to 0.3.4 (the highest 0.3.x release) --
+            // never 0.3.1 literally, and never 0.4.0 (caret on a 0.x
+            // version only floats the patch digit).
+            "dependencies": { "@deka/greet": "^0.3.1" }
+        })
+        .to_string(),
+    )
+    .expect("write manifest");
+
+    let (success, output) = run_cli(&project, &["install"], registry.address);
+    assert!(success, "a `^`-range install against a real multi-version registry must succeed: {output}");
+
+    let lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(project.join("deka.lock")).unwrap()).unwrap();
+    assert_eq!(
+        lock["packages"]["@deka/greet"][0].as_str(),
+        Some("@deka/greet@0.3.4"),
+        "`^0.3.1` against a registry publishing 0.3.0/0.3.1/0.3.4/0.4.0 must lock the HIGHEST \
+         compatible release (0.3.4), proving resolution runs through the real registry path"
+    );
+}
+
+/// deka#1011: a range matching nothing published must fail with a clear
+/// diagnostic naming the constraint and what IS available -- not a bare
+/// "not found" -- and it must fail through the real install path, not just
+/// the resolver called directly.
+#[test]
+fn range_matching_nothing_published_fails_with_a_clear_diagnostic() {
+    let work = tempfile::tempdir().expect("work dir");
+    let mut packages = std::collections::BTreeMap::new();
+    packages.insert(
+        "greet",
+        (
+            vec!["0.1.0", "0.2.0"],
+            pack_fixture_package(
+                work.path(),
+                "greet",
+                "0.2.0",
+                "export fn greet() string { return \"hi\" }\n",
+            ),
+        ),
+    );
+    let registry = FixtureRegistry::start(packages);
+
+    let project = work.path().join("app");
+    fs::create_dir_all(&project).expect("mkdir project");
+    fs::write(
+        project.join("deka.json"),
+        serde_json::json!({
+            "name": "range-no-match-e2e",
+            "dependencies": { "@deka/greet": "^1.0.0" }
+        })
+        .to_string(),
+    )
+    .expect("write manifest");
+
+    let (success, output) = run_cli(&project, &["install"], registry.address);
+    assert!(
+        !success,
+        "a range matching nothing published must fail, not silently succeed: {output}"
+    );
+    assert!(
+        output.contains("^1.0.0"),
+        "the diagnostic must name the unmet constraint: {output}"
+    );
+    assert!(
+        output.contains("0.1.0") && output.contains("0.2.0"),
+        "the diagnostic must list the versions that ARE available: {output}"
+    );
+}
+
 #[test]
 fn repeated_installs_do_not_accumulate_install_backups_or_cache_entries() {
     let work = tempfile::tempdir().expect("work dir");
@@ -380,7 +486,7 @@ fn repeated_installs_do_not_accumulate_install_backups_or_cache_entries() {
     packages.insert(
         "greet",
         (
-            "1.0.0",
+            vec!["1.0.0"],
             pack_fixture_package(
                 work.path(),
                 "greet",
@@ -392,7 +498,7 @@ fn repeated_installs_do_not_accumulate_install_backups_or_cache_entries() {
     packages.insert(
         "shout",
         (
-            "2.0.0",
+            vec!["2.0.0"],
             pack_fixture_package(
                 work.path(),
                 "shout",
@@ -448,7 +554,7 @@ fn failed_install_restores_prior_state_and_leaves_no_backup_litter() {
     packages.insert(
         "fs",
         (
-            "1.0.0",
+            vec!["1.0.0"],
             pack_fixture_package(
                 work.path(),
                 "fs",

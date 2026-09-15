@@ -2,7 +2,7 @@ use anyhow::Result;
 use deka_cli_core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
 use deka_modules::module_spec::canonical_php_package_spec;
 use deka_modules::modules::MODULES_DIR;
-use crate::{InstallPayload, run_install, spec::strip_semver_range_prefix};
+use crate::{InstallPayload, run_install};
 use std::path::{Path, PathBuf};
 use stdio;
 
@@ -275,8 +275,10 @@ fn collect_deka_json_deps() -> Vec<String> {
     deps.iter()
         .map(|(name, version)| {
             if let Some(v) = version.as_str() {
-                let clean = strip_semver_range_prefix(v);
-                format!("{}@{}", name, clean)
+                // deka#1011: pass the full range string through unmangled;
+                // `registry::select_version` (via `run_install`) is the
+                // real resolver now, not a literal-string match.
+                format!("{}@{}", name, v.trim())
             } else {
                 name.clone()
             }
