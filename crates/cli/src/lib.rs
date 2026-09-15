@@ -162,15 +162,10 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
     let handler = match ::run::handler::HandlerSnapshot::from_positionals(&cmd.positionals) {
         Ok(handler) => handler,
         Err(_) => match ::run::handler::resolve_handler_path(".") {
-            Ok(resolved) => {
-                let static_config = ::serve::config::StaticServeConfig::load(&resolved.directory);
-                ::run::handler::HandlerSnapshot {
-                    input: ".".to_string(),
-                    resolved,
-                    static_config,
-                    serve_config_path: None,
-                }
-            }
+            Ok(resolved) => ::run::handler::HandlerSnapshot {
+                input: ".".to_string(),
+                resolved,
+            },
             Err(message) => {
                 cli::error(Some(message.as_str()));
                 let output = stdio::end_capture();

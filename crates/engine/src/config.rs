@@ -54,7 +54,7 @@ pub struct ServeConfig {
 }
 
 impl ServeConfig {
-    /// Loads `serve` config from `deka.json` (or the legacy `serve.json`).
+    /// Loads `serve` config from `deka.json`.
     ///
     /// A missing config file, or a config file with no `serve`-shaped keys
     /// at all, is a normal case and resolves to defaults. A config file that
@@ -62,15 +62,14 @@ impl ServeConfig {
     /// commonly an unrecognized `mode`/`kind` value, i.e. a typo — is a hard
     /// error (deka#1017): the whole block silently reverting to defaults on
     /// a bad value is how a typo turns into a wrong, working-looking server.
+    ///
+    /// The separate `serve.json` file is no longer supported (deka#1038):
+    /// it never grew a runtime effect for `headers`/`rewrites`/`redirects`
+    /// (deka#1037), and its `mode`/`entry`/`directoryListing` keys live in
+    /// `deka.json`'s `serve` object instead.
     pub fn load(directory: &std::path::Path) -> Result<Self, String> {
         let deka_json_path = directory.join("deka.json");
-        if let Some(config) = load_serve_from_deka_json(&deka_json_path)? {
-            return Ok(config);
-        }
-
-        // Backward compatibility: keep reading serve.json if present.
-        let legacy_path = directory.join("serve.json");
-        Ok(load_legacy_serve_json(&legacy_path)?.unwrap_or_default())
+        Ok(load_serve_from_deka_json(&deka_json_path)?.unwrap_or_default())
     }
 }
 
@@ -138,30 +137,6 @@ fn load_serve_from_deka_json(path: &std::path::Path) -> Result<Option<ServeConfi
             }
         }
     }
-}
-
-fn load_legacy_serve_json(path: &std::path::Path) -> Result<Option<ServeConfig>, String> {
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let contents = match std::fs::read_to_string(path) {
-        Ok(contents) => contents,
-        Err(err) => {
-            tracing::warn!("Failed to read {}: {}", path.display(), err);
-            return Ok(None);
-        }
-    };
-
-    serde_json::from_str::<ServeConfig>(&contents)
-        .map(Some)
-        .map_err(|err| {
-            format!(
-                "{}: invalid serve config: {}. `mode` accepts \"static\" or \"ds\" (also written \"php\" or \"js\").",
-                path.display(),
-                err
-            )
-        })
 }
 
 #[derive(Debug)]
@@ -571,7 +546,7 @@ mod tests {
             "export function main() { return 'main'; }",
         )
         .expect("write configured");
-        fs::write(dir.join("serve.json"), r#"{"entry":"main.ds"}"#).expect("write config");
+        fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.ds"}}"#).expect("write config");
 
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         let resolved_canon = resolved.path.canonicalize().expect("resolved canonicalize");
