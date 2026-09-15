@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, FlagSpec, Registry};
+use core::{CommandSpec, Context, Registry};
 use security::security_policy::{
     RuleList, SecurityCliOverrides, merge_policy_with_cli_manifest_net_env,
     parse_deka_security_policy,
@@ -20,11 +20,6 @@ const COMMAND: CommandSpec = CommandSpec {
 
 pub fn register(registry: &mut Registry) {
     registry.add_command(COMMAND);
-    registry.add_flag(FlagSpec {
-        name: "--watch",
-        aliases: &["-W"],
-        description: "keep event loop alive (for long-running processes)",
-    });
 }
 
 pub fn cmd(context: &Context) {

@@ -198,19 +198,6 @@ jobs:
         with:
           cache-on-failure: true
 
-      # cargo check still runs rusty_v8's build script and needs the static
-      # archive, but it does not link it. Prefetch it so this cheap gate does
-      # not spend time downloading/building V8 itself.
-      - name: Pre-fetch V8 static lib
-        env:
-          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v150.4.0/librusty_v8_simdutf_release_x86_64-unknown-linux-gnu.a.gz
-        run: |
-          mkdir -p target/debug/gn_out/obj
-          curl -fsSL -w "HTTP %{http_code} - %{size_download} bytes downloaded\n" \
-            -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
-          ls -lh target/debug/gn_out/obj/librusty_v8.a.gz
-          echo "RUSTY_V8_ARCHIVE=${{ github.workspace }}/target/debug/gn_out/obj/librusty_v8.a.gz" >> "$GITHUB_ENV"
-
       - name: Check workspace
         run: cargo check --locked --workspace --all-targets
 
@@ -350,28 +337,6 @@ jobs:
           cache-directories: |
             target/**/gn_out
           cache-on-failure: true
-
-      - name: Pre-fetch V8 static lib
-        env:
-          V8_RELEASE: v150.4.0
-        run: |
-          # Derive the archive from the host. Hardcoding it per job is how a
-          # job that moved runners silently linked arm64 objects into an
-          # x86_64 build (deka#651, deka#654). Now that these jobs can land on
-          # either macOS machine, restating the architecture anywhere is a bug.
-          case "$(uname -s)-$(uname -m)" in
-            Darwin-arm64)  TRIPLE=aarch64-apple-darwin ;;
-            Darwin-x86_64) TRIPLE=x86_64-apple-darwin ;;
-            Linux-x86_64)  TRIPLE=x86_64-unknown-linux-gnu ;;
-            *) echo "unsupported V8 host: $(uname -sm)" >&2; exit 1 ;;
-          esac
-          V8_URL="https://github.com/denoland/rusty_v8/releases/download/${V8_RELEASE}/librusty_v8_simdutf_release_${TRIPLE}.a.gz"
-          echo "host $(uname -sm) -> $TRIPLE"
-          mkdir -p target/debug/gn_out/obj
-          curl -fsSL -w "HTTP %{http_code} - %{size_download} bytes downloaded\n" \
-            -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
-          ls -lh target/debug/gn_out/obj/librusty_v8.a.gz
-          echo "RUSTY_V8_ARCHIVE=${{ github.workspace }}/target/debug/gn_out/obj/librusty_v8.a.gz" >> "$GITHUB_ENV"
 
       # Build the release CLI before the workspace test so pm's
       # real_cli_invocation_recovers_each_atomic_swap_boundary test can find

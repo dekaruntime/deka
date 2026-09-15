@@ -92,12 +92,8 @@ fn curated_help(name: &str) -> Option<CommandHelp> {
                     The file does not need to belong to a project — a loose file \
                     compiles into a user-global cache and runs from there, without \
                     writing anything into your directory.",
-            // deka#996 review: --watch is registered on `run` but nothing in
-            // the handler reads it (grep for `"--watch"` across crates/*/src
-            // turns up only the registration), so it does not restart on
-            // file changes or do anything else observable yet. Don't
-            // document a capability that isn't implemented — drop the
-            // example until it is (or the flag is removed).
+            // deka#1002: `--watch`/`-W` were registered on `run` but never
+            // read anywhere — removed rather than documented or wired up.
             examples: &[("deka run app.ds", "run a single file")],
         }),
         "build" => Some(CommandHelp {
