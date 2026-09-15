@@ -49,12 +49,14 @@ pub fn compiler_cache_dir(project_root: &Path) -> PathBuf {
     compiler_cache_dir_with(project_root, false)
 }
 
+/// Caching lives inside `ds_modules/.cache` only (deka#1065) — never at the
+/// project root. `ds_modules/` is already the one directory the module
+/// resolver and `.gitignore` treat as generated/writable state, so both the
+/// dev and prod compiler caches nest under it, split by subdirectory rather
+/// than by top-level location.
 pub fn compiler_cache_dir_with(project_root: &Path, dev_mode: bool) -> PathBuf {
-    if dev_mode {
-        project_root.join(MODULES_DIR).join(".cache").join("dev")
-    } else {
-        project_root.join(".cache").join("dekascript")
-    }
+    let variant = if dev_mode { "dev" } else { "prod" };
+    project_root.join(MODULES_DIR).join(".cache").join(variant)
 }
 pub use artifact_manifest::{
     ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactPayload,
@@ -94,11 +96,11 @@ mod cache_dir_tests {
     use std::path::Path;
 
     #[test]
-    fn compiler_cache_dir_defaults_to_legacy_path() {
+    fn compiler_cache_dir_prod_nests_under_ds_modules() {
         let root = Path::new("/tmp/proj");
         assert_eq!(
             compiler_cache_dir_with(root, false),
-            root.join(".cache").join("dekascript")
+            root.join("ds_modules").join(".cache").join("prod")
         );
     }
 
@@ -109,5 +111,18 @@ mod cache_dir_tests {
             compiler_cache_dir_with(root, true),
             root.join("ds_modules").join(".cache").join("dev")
         );
+    }
+
+    #[test]
+    fn compiler_cache_dir_never_lands_at_project_root() {
+        let root = Path::new("/tmp/proj");
+        for dev_mode in [true, false] {
+            let dir = compiler_cache_dir_with(root, dev_mode);
+            assert!(
+                dir.starts_with(root.join("ds_modules")),
+                "cache dir must nest under ds_modules, got {}",
+                dir.display()
+            );
+        }
     }
 }

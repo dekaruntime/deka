@@ -112,18 +112,24 @@ fn write_scaffold(target: &Path) -> Result<Vec<String>, String> {
         include_str!("../scaffold/public/404.html").to_string(),
         &mut touched,
     )?;
+    ensure_file_bytes(
+        &target.join("public/favicon.ico"),
+        include_bytes!("../scaffold/public/favicon.ico"),
+        &mut touched,
+    )?;
     Ok(touched)
 }
 
 fn print_next_steps(dir_arg: Option<&str>) {
     raw("[init] DekaScript app ready");
+    raw("");
+    raw("  Next steps:");
     match dir_arg {
         Some(dir) if dir != "." && !dir.is_empty() => {
             raw(&format!("  cd {dir}"));
-            raw("  deka serve");
+            raw("  deka dev");
         }
         _ => {
-            raw("  deka serve");
             raw("  deka dev");
         }
     }
@@ -138,6 +144,22 @@ fn ensure_file(path: &Path, content: String, touched: &mut Vec<String>) -> Resul
             .map_err(|err| format!("failed to create {}: {}", parent.display(), err))?;
     }
     std::fs::write(path, content.as_bytes())
+        .map_err(|err| format!("failed to write {}: {}", path.display(), err))?;
+    let display = path_display(path);
+    log("create", &display);
+    touched.push(display);
+    Ok(())
+}
+
+fn ensure_file_bytes(path: &Path, content: &[u8], touched: &mut Vec<String>) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {}", parent.display(), err))?;
+    }
+    std::fs::write(path, content)
         .map_err(|err| format!("failed to write {}: {}", path.display(), err))?;
     let display = path_display(path);
     log("create", &display);
@@ -197,7 +219,12 @@ mod tests {
         assert!(!index.contains("<script"));
         assert!(index.contains("<div id=\"app\"></div>"));
         assert!(index.contains("href=\"/style.css\""));
+        assert!(index.contains("rel=\"icon\""));
+        assert!(index.contains("href=\"/favicon.ico\""));
         assert!(!index.contains("<h1>Deka App</h1>"));
+
+        let favicon: &[u8] = include_bytes!("../scaffold/public/favicon.ico");
+        assert!(!favicon.is_empty(), "favicon.ico must not be empty");
 
         let page = include_str!("../scaffold/app/page.dsx");
         assert!(page.contains("export fn Page()"));
@@ -248,8 +275,11 @@ mod tests {
         assert_eq!(permissions.dev.caps.read, FsGrant::WorkingDir);
         assert!(matches!(permissions.dev.caps.write, FsGrant::Paths(_)));
         if let FsGrant::Paths(paths) = &permissions.dev.caps.write {
-            assert!(paths.iter().any(|p| p == ".cache"));
             assert!(paths.iter().any(|p| p == "ds_modules/.cache"));
+            assert!(
+                !paths.iter().any(|p| p == ".cache"),
+                "scaffold must not grant write to a top-level .cache — caching lives under ds_modules only: deka#1065"
+            );
         }
         assert!(permissions.dev.caps.wasm);
 

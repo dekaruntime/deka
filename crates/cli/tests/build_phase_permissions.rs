@@ -112,10 +112,9 @@ fn run_with_args(dir: &Path, args: &[&str], _host_grants: &str) -> (bool, String
 }
 
 fn manifest_path(project: &Path) -> PathBuf {
-    project
-        .join(".cache")
-        .join("dekascript")
-        .join("build-manifest.json")
+    // Caching lives under ds_modules only (deka#1065) — compiler_cache_dir()
+    // (dev_mode=false) resolves to ds_modules/.cache/prod.
+    runtime_core::dist::compiler_cache_dir(project).join("build-manifest.json")
 }
 
 fn manifest_json(project: &Path) -> serde_json::Value {

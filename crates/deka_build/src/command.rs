@@ -448,6 +448,15 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
             .map_err(|err| format!("file_type error for {}: {}", src_path.display(), err))?;
 
         if file_type.is_dir() {
+            // deka#1065: ds_modules/.cache is the compiler's own scratch
+            // space (dsc's transpile dump, build manifests/values) — never
+            // part of the artifact. Shipping it duplicated dsc's raw,
+            // un-rewritten output into dist/server/ds_modules/.cache/...,
+            // which then failed the server-jail import-linkage check because
+            // that copy's specifiers were never rerooted.
+            if entry.file_name() == ".cache" {
+                continue;
+            }
             copy_dir_recursive(&src_path, &dst_path)?;
         } else if file_type.is_file() {
             if let Some(parent) = dst_path.parent() {

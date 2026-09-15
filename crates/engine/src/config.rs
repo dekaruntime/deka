@@ -174,7 +174,7 @@ pub struct ResolvedHandler {
 /// Resolve a handler path, detecting directories and index files, checking
 /// for an already-built artifact, and materializing the generated
 /// app-router entry to disk when the project shape needs one
-/// (`.cache/dekascript/serve-entry.dsx`). This is the serve/build-time
+/// (`ds_modules/.cache/prod/serve-entry.dsx`). This is the serve/build-time
 /// entry point -- callers that intend to actually run, serve, or compile
 /// the resolved handler.
 pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
@@ -186,7 +186,7 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
 /// meaningful to an actual run/serve/build:
 /// - it never writes to disk (an app-router project resolves to its
 ///   directory with mode `Php`, without materializing the generated router
-///   entry into `.cache/dekascript/`);
+///   entry into `ds_modules/.cache/`);
 /// - it never resolves or validates a `dist/build-manifest.json` as a built
 ///   artifact, so a stale or incompatible `dist/` (wrong `compat.targets`,
 ///   missing payloads, ...) does not fail an unrelated command.
@@ -197,7 +197,7 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
 /// the materializing/artifact-checking `resolve_handler_path` from a
 /// non-serving command path caused two separate regressions once
 /// `run::handler` started delegating here: (1) it silently wrote a compiled
-/// router entry into the project's `.cache/dekascript/` on every
+/// router entry into the project's `ds_modules/.cache/` on every
 /// invocation of `deka install`, `deka task`, etc.; (2) it made `deka
 /// verify` (and any other non-serving command) fail outright against a
 /// `dist/` artifact manifest that doesn't declare `native` in

@@ -56,6 +56,14 @@ fn assert_scaffold(root: &Path) {
     );
     assert!(root.join("public/style.css").is_file());
     assert!(root.join(".gitignore").is_file());
+    assert!(
+        root.join("public/favicon.ico").is_file(),
+        "init must write a default favicon: deka#1066"
+    );
+    assert!(
+        !root.join(".cache").exists(),
+        "init must not create a top-level .cache — caching lives under ds_modules only: deka#1065"
+    );
 
     // deka#1046 / deka#1000: the scaffolded style.css must be readable,
     // properly formatted CSS, not a single escaped line.
@@ -125,6 +133,10 @@ fn assert_scaffold(root: &Path) {
     assert!(!index.contains("<!--deka-scripts-->"), "{index}");
     assert!(!index.contains("<script"), "{index}");
     assert!(index.contains("<div id=\"app\"></div>"), "{index}");
+    assert!(
+        index.contains("rel=\"icon\"") && index.contains("href=\"/favicon.ico\""),
+        "index.html must link the default favicon (deka#1066): {index}"
+    );
 
     let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
     assert!(gitignore.contains("ds_modules/"), "{gitignore}");
@@ -177,8 +189,16 @@ fn init_creates_dekascript_app_and_preserves_existing_files() {
 
     let printed = String::from_utf8_lossy(&output.stderr);
     assert!(
-        printed.contains("deka serve"),
-        "init must tell the user to run deka serve:\n{printed}"
+        printed.contains("deka dev"),
+        "init must tell the user to run deka dev: deka#1064\n{printed}"
+    );
+    assert!(
+        !printed.contains("deka serve"),
+        "init must recommend deka dev, not deka serve: deka#1064\n{printed}"
+    );
+    assert!(
+        printed.contains("Next steps:"),
+        "init's closing block must read as instructions under a Next steps heading: deka#1064\n{printed}"
     );
 
     // deka#1042: the ASCII banner (restored to stdio in #698) must appear on
@@ -195,6 +215,7 @@ fn init_creates_dekascript_app_and_preserves_existing_files() {
         "[create] app/page.dsx",
         "[create] app/Counter.dsx",
         "[create] public/404.html",
+        "[create] public/favicon.ico",
     ] {
         assert!(
             printed.contains(expected),
@@ -348,6 +369,11 @@ fn fresh_init_serves_html_and_css_without_exposing_project_files() {
             404
         );
     }
+
+    assert!(
+        !project.path().join(".cache").exists(),
+        "deka serve must not create a top-level .cache — caching lives under ds_modules only: deka#1065"
+    );
 }
 
 /// deka#973: `deka dev` on a freshly `deka init`'d project must serve HTTP
@@ -433,6 +459,11 @@ fn fresh_init_dev_serves_without_manual_permission_edits() {
             && !log_contents.contains("invalid security policy")
             && !log_contents.contains("invalid permissions"),
         "deka dev must not hit the permission wall on a fresh scaffold:\n{log_contents}"
+    );
+
+    assert!(
+        !project.path().join(".cache").exists(),
+        "deka dev must not create a top-level .cache — caching lives under ds_modules only: deka#1065"
     );
 }
 

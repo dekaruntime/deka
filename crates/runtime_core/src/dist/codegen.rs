@@ -1,6 +1,6 @@
 //! Entry-source generation: manifest + document → generated `.ds`/`.dsx`
 //! entry modules under the serve/dev compiler cache
-//! (`.cache/dekascript` or `ds_modules/.cache/dev` when `DEKA_DEV` is set).
+//! (`ds_modules/.cache/prod` or `ds_modules/.cache/dev` when `DEKA_DEV` is set).
 //!
 //! Generation is still string templating. Every interpolated value goes
 //! through `json_str` so escaping is centralized.
