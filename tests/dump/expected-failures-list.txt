@@ -1,0 +1,100 @@
+# Known-failure ratchet for tests/dump (deka#906 follow-up).
+#
+# This is DEBT, not a suppression list. Every slug below is a fixture that
+# currently fails outright (summary.overall.fail) on the dump gate -- a
+# pre-existing backlog, not something newly broken. Listing it here means the
+# gate does not block release on this specific already-known set of failures.
+#
+# It does NOT mean "ignore forever":
+#   - A slug that starts PASSING must be removed from this file in the same
+#     PR that fixed it. A listed slug that now passes is a hard gate failure
+#     (a "stale" entry) -- exactly like the divergence ratchet in
+#     expected-failures.txt applies to divergences. The gate silently
+#     agreeing with debt that no longer exists is how bit rot hides.
+#   - A slug that fails and is NOT listed here is a hard gate failure (a new,
+#     unbudgeted failure). Only pre-existing failures get a pass.
+#
+# This file must never be grown casually to make CI green. Adding a slug here
+# to unblock an unrelated PR is band-aiding a regression, not managing debt --
+# fix the regression instead. Only add an entry alongside a comment/issue
+# explaining why it is pre-existing debt, not new breakage.
+#
+# This is a SEPARATE axis from expected-failures.txt (which tracks host
+# DIVERGENCES -- wasm and native disagreeing). This file tracks fixtures that
+# fail outright, independent of divergence. Do not merge the two lists.
+#
+# Generated 2026-09-14 from a real `bun run dump` against testsuite
+# corpus-v0.53.0 + dsc v0.53.1 (see PR body for the run). 71 entries, matching
+# the release run this ratchet was introduced to unblock (run 34909498831:
+# overall(pass=824 fail=71 divergent=25 skip=0)).
+components-jsx-boolean-attribute
+components-jsx-duplicate-attribute
+components-jsx-dynamic-tag
+components-jsx-fragment-single-child
+components-jsx-nested-components
+components-jsx-undefined-component-fail
+components-jsx-undefined-variable-in-attribute-fail
+crypto-aes-roundtrip
+crypto-bcrypt-verify-ok
+crypto-bcrypt-verify-wrong
+crypto-digest-unknown
+crypto-hmac-sha256-vector
+crypto-hs256-matches-hmac
+crypto-random-bytes-length
+crypto-random-bytes-rejects-zero
+crypto-random-hex-length
+crypto-secure-compare-equal
+crypto-secure-compare-unequal
+crypto-sha256-abc
+crypto-sha3-256-abc
+crypto-sha384-abc
+crypto-sha512-abc
+crypto-uuid-v4-shape
+fs-hello-utf8
+fs-mkdirs-and-dir
+fs-mkdirs-idempotent
+fs-mkdirs-nested
+fs-overwrite
+fs-read-dir-is-dir
+fs-read-dir-is-file
+fs-read-dir-missing
+fs-read-missing
+fs-write-count
+fs-write-empty
+fs-write-missing-parent
+fs-write-then-read
+http-format-content-length
+http-format-custom-header
+http-format-get-line
+http-format-host-header
+http-get-refused
+http-invalid-url
+http-parse-explicit-port
+http-parse-http-port
+http-parse-https-host
+http-parse-https-port
+http-parse-path-query
+http-parse-root-path
+http-parse-scheme
+http-post-refused
+json-parse-array-first
+jwt-accept-audience
+jwt-accept-issuer
+jwt-hs256-jwtio-vector
+jwt-reject-alg-none
+jwt-reject-audience
+jwt-reject-empty
+jwt-reject-expired
+jwt-reject-issuer
+jwt-reject-nbf-future
+jwt-reject-tampered
+jwt-reject-two-parts
+jwt-reject-wrong-key
+jwt-three-parts
+jwt-unsupported-alg-option
+jwt-verify-roundtrip-sub
+tcp-listen-then-close
+tcp-set-deadline-zero
+time-sleep-ms-returns-ms
+time-sleep-ms-returns-zero
+time-sleep-ms-three
