@@ -105,8 +105,6 @@ fn dummy_context(cwd: PathBuf) -> core::Context {
                 mode: ::serve::config::ServeMode::Php,
                 config: ::serve::config::ServeConfig::default(),
             },
-            static_config: ::serve::config::StaticServeConfig::default(),
-            serve_config_path: None,
         });
     context
 }

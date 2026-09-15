@@ -236,12 +236,9 @@ pub fn run_embedded_vfs(args: Vec<String>) -> Result<(), String> {
     let env = core::EnvContext::load();
     let resolved = ::run::handler::resolve_handler_path(&entry_arg)
         .map_err(|err| format!("failed to resolve embedded VFS entry point: {err}"))?;
-    let static_config = ::serve::config::StaticServeConfig::load(&resolved.directory);
     let handler = ::run::handler::HandlerSnapshot {
         input: entry_arg,
         resolved,
-        static_config,
-        serve_config_path: None,
     };
     let mut context = Context::new(cli_args);
     context.env = env;

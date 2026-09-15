@@ -1,5 +1,5 @@
 use engine::config as runtime_config;
-use serve::config::{ServeConfig, ServeMode, StaticServeConfig};
+use serve::config::{ServeConfig, ServeMode};
 use std::path::{Path, PathBuf};
 
 pub fn handler_input_with<Get>(positionals: &[String], env_get: &Get) -> (String, Vec<String>)
@@ -151,8 +151,6 @@ fn detect_mode(path: &Path) -> ServeMode {
 pub struct HandlerSnapshot {
     pub input: String,
     pub resolved: ResolvedHandler,
-    pub static_config: StaticServeConfig,
-    pub serve_config_path: Option<PathBuf>,
 }
 
 impl HandlerSnapshot {
@@ -160,15 +158,8 @@ impl HandlerSnapshot {
         let (input, _) = handler_input_with(positionals, &|key| std::env::var(key).ok());
 
         let resolved = resolve_handler_path(&input)?;
-        let static_config = StaticServeConfig::load(&resolved.directory);
-        let serve_config_path = resolved.directory.join("serve.json");
 
-        Ok(Self {
-            input,
-            resolved,
-            static_config,
-            serve_config_path: serve_config_path.exists().then_some(serve_config_path),
-        })
+        Ok(Self { input, resolved })
     }
 }
 
@@ -253,7 +244,7 @@ mod tests {
         let configured = dir.join("main.phpx");
         fs::write(&explicit, "<?php echo 'simple';").expect("write explicit");
         fs::write(&configured, "<?php echo 'main';").expect("write configured");
-        fs::write(dir.join("serve.json"), r#"{"entry":"main.phpx"}"#).expect("write config");
+        fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.phpx"}}"#).expect("write config");
 
         let resolved = resolve_handler_path(explicit.to_str().expect("path")).expect("resolve");
         let resolved_canon = resolved.path.canonicalize().expect("resolved canonicalize");
@@ -269,7 +260,7 @@ mod tests {
         let app_dir = dir.join("app");
         fs::create_dir_all(&app_dir).expect("mkdir app");
         fs::write(app_dir.join("page.phpx"), "<?php echo 'page';").expect("write page");
-        fs::write(dir.join("serve.json"), r#"{"entry":"main.phpx"}"#).expect("write config");
+        fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.phpx"}}"#).expect("write config");
 
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         let resolved_canon = resolved.path.canonicalize().expect("resolved canonicalize");
@@ -307,23 +298,20 @@ mod tests {
         assert!(matches!(resolved.mode, ServeMode::Js));
     }
 
-    // deka#1021: run::handler::resolve_handler_path must not swallow a
-    // malformed serve.json into a silent default. Before this crate
-    // delegated to engine::config::resolve_handler_path, a bad `mode`
-    // value here resolved to Ok(..) with mode=Static instead of failing;
-    // pin the local resolver specifically, not engine's (which already
-    // hard-failed independently via #1020 and would pass on unmodified
-    // main, proving nothing about this crate's own behavior).
+    // deka#1038: the separate serve.json file is no longer a config
+    // channel. A leftover file (e.g. from before the cutover) must be
+    // ignored entirely -- not parsed, not a source of a hard error --
+    // since run::handler delegates resolution to engine::config, which
+    // only reads deka.json now.
     #[test]
-    fn malformed_legacy_serve_json_is_a_hard_error_not_a_silent_default() {
-        let dir = temp_dir("deka_handler_legacy_serve_json_typo");
+    fn leftover_serve_json_is_ignored_not_read() {
+        let dir = temp_dir("deka_handler_leftover_serve_json");
         fs::write(dir.join("index.html"), "<html></html>").expect("write index");
         fs::write(dir.join("serve.json"), r#"{"mode": "statc"}"#).expect("write config");
 
-        let err = resolve_handler_path(dir.to_str().expect("path"))
-            .expect_err("serve.json with a bad mode must not resolve");
-        assert!(err.contains("invalid serve config"), "{err}");
-        assert!(err.contains("statc"), "{err}");
+        let resolved = resolve_handler_path(dir.to_str().expect("path"))
+            .expect("a leftover serve.json must not be read or fail resolution");
+        assert!(matches!(resolved.mode, ServeMode::Static));
     }
 
     // deka#1021 QA finding: resolving an app-router project through
