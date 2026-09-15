@@ -2,6 +2,7 @@
 
 pub mod config;
 mod fast;
+mod island_markers;
 mod listener;
 pub mod rate_limit;
 #[cfg(feature = "dev-server")]

@@ -47,7 +47,7 @@ function isIslandStartComment(node) {
   return (
     node &&
     node.nodeType === 8 &&
-    String(node.data || "").indexOf("deka-island start:") === 0
+    String(node.data || "").indexOf(DEKA_ISLAND_START_PREFIX) === 0
   );
 }
 
@@ -133,9 +133,9 @@ function skipIslandCommentRange(node) {
   while (cursor) {
     if (cursor.nodeType === 8) {
       var data = String(cursor.data || "");
-      if (data.indexOf("deka-island start:") === 0) {
+      if (data.indexOf(DEKA_ISLAND_START_PREFIX) === 0) {
         depth++;
-      } else if (data.indexOf("deka-island end:") === 0) {
+      } else if (data.indexOf(DEKA_ISLAND_END_PREFIX) === 0) {
         depth--;
         if (!depth) {
           return cursor;
