@@ -26,8 +26,8 @@ const webIdeKitVersion = resolveWebIdeKitVersion();
 const { nativeAvailable, browserAvailable, version, wasmSourceCommit, categories } =
   await loadAndRunAllTests()
 
-function loadExpectedDivergences() {
-  const file = path.join(repoRoot, 'tests', 'dump', 'expected-failures.txt')
+function loadSlugList(fileName) {
+  const file = path.join(repoRoot, 'tests', 'dump', fileName)
   if (!fs.existsSync(file)) return new Set()
   return new Set(
     fs
@@ -38,7 +38,7 @@ function loadExpectedDivergences() {
   )
 }
 
-const expectedDivergences = loadExpectedDivergences()
+const expectedDivergences = loadSlugList('expected-failures.txt')
 const actualDivergences = new Set(
   categories
     .flatMap((category) => category.tests)
@@ -56,6 +56,34 @@ const unexpectedDivergences = [...actualDivergences].filter(
 const staleDivergences = [...expectedDivergences].filter(
   (slug) => !actualDivergences.has(slug),
 )
+
+// The failure ratchet (deka#906 follow-up): a separate axis from the
+// divergence ratchet above. This tracks fixtures that fail outright
+// (overallStatus === 'fail', matching summary.overall.fail below), not
+// disagreements between hosts. A large pre-existing backlog of these exists;
+// see tests/dump/expected-failures-list.txt for what it is and is not.
+const expectedFailures = loadSlugList('expected-failures-list.txt')
+const actualFailures = new Set(
+  categories
+    .flatMap((category) => category.tests)
+    .filter((test) => test.overallStatus === 'fail')
+    .map((test) => test.slug),
+)
+const unexpectedFailures = [...actualFailures].filter((slug) => !expectedFailures.has(slug))
+const staleFailures = [...expectedFailures].filter((slug) => !actualFailures.has(slug))
+
+if (unexpectedFailures.length > 0 || staleFailures.length > 0) {
+  if (unexpectedFailures.length > 0) {
+    console.error('Unlisted fixture failures (new, not in the known-failure baseline):')
+    for (const slug of unexpectedFailures) console.error(`  ${slug}`)
+  }
+  if (staleFailures.length > 0) {
+    console.error(
+      'Listed known failures that now pass (remove them from expected-failures-list.txt):',
+    )
+    for (const slug of staleFailures) console.error(`  ${slug}`)
+  }
+}
 
 // Keep the divergence ratchet separate from the per-host fixture expectation:
 // a known divergence remains a divergent cell in the published result, but it
@@ -139,16 +167,18 @@ console.log(
     `native(match=${summary.native.match} mismatch=${summary.native.mismatch} notRun=${summary.native.notRun})`
 )
 
-// deka#906: the ratchet (checked above) and the raw fail count are
-// independent failure signals -- a clean ratchet does not mean every
-// fixture passed. Both must be able to fail the gate on their own.
+// deka#906: the divergence ratchet and the fixture-failure ratchet are
+// independent failure signals -- a clean divergence ratchet does not mean
+// every fixture passed. All four conditions must be able to fail the gate on
+// their own (see computeGateExitCode).
 process.exitCode = computeGateExitCode({
   unexpectedDivergences: unexpectedDivergences.length,
   staleDivergences: staleDivergences.length,
-  overallFail: summary.overall.fail,
+  unexpectedFailures: unexpectedFailures.length,
+  staleFailures: staleFailures.length,
 })
 if (process.exitCode !== 0) {
-  console.error(`[hats] gate FAILED: exit=${process.exitCode} overall.fail=${summary.overall.fail} unexpectedDivergences=${unexpectedDivergences.length} staleDivergences=${staleDivergences.length}`)
+  console.error(`[hats] gate FAILED: exit=${process.exitCode} overall.fail=${summary.overall.fail} unexpectedDivergences=${unexpectedDivergences.length} staleDivergences=${staleDivergences.length} unexpectedFailures=${unexpectedFailures.length} staleFailures=${staleFailures.length}`)
 }
 
 // Persist results so the static export can read them without re-running the
