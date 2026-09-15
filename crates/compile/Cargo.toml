@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-core = { path = "../core" }
+dcore = { path = "../dcore" }
 compiler = { path = "../compiler" }
 tempfile = "3.23.0"
 stdio = "0.4.0"

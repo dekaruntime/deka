@@ -7,5 +7,5 @@ edition = "2024"
 lsp = []
 
 [dependencies]
-core = { path = "../core" }
+dcore = { path = "../dcore" }
 stdio = "0.4.0"

@@ -1,6 +1,6 @@
 #![allow(clippy::all, dead_code, unused_variables, unused_assignments)]
 
-use core::{Registry, RegistryBuilder};
+use dcore::{Registry, RegistryBuilder};
 #[cfg(target_arch = "wasm32")]
 use serde::{Deserialize, Serialize};
 use wasm_cli as wasm_cmd;
@@ -84,11 +84,11 @@ pub fn build_registry() -> Registry {
 }
 
 /// Per-command flag/param ownership for help rendering. See
-/// [`core::help::build_ownership_index`] for how this avoids the
+/// [`dcore::help::build_ownership_index`] for how this avoids the
 /// first-match-wins bug a name-only lookup against the shared registry
 /// would have (deka#996 review).
-pub fn command_flag_index() -> core::help::OwnershipIndex {
-    core::help::build_ownership_index(&register_fns())
+pub fn command_flag_index() -> dcore::help::OwnershipIndex {
+    dcore::help::build_ownership_index(&register_fns())
 }
 
 pub fn run() {
@@ -119,7 +119,7 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
     let ownership_index = command_flag_index();
     stdio::begin_capture();
 
-    let parsed = core::Args::collect(args, &registry);
+    let parsed = dcore::Args::collect(args, &registry);
     if !parsed.errors.is_empty() {
         let message = cli::format_parse_errors(&ownership_index, &parsed.errors);
         cli::error(Some(message.as_str()));
@@ -158,7 +158,7 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
         }
     }
 
-    let env = core::EnvContext::load();
+    let env = dcore::EnvContext::load();
     let handler = match ::run::handler::HandlerSnapshot::from_positionals(&cmd.positionals) {
         Ok(handler) => handler,
         Err(_) => match ::run::handler::resolve_handler_path(".") {
@@ -174,7 +174,7 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
         },
     };
 
-    let mut context = core::Context::new(cmd.clone());
+    let mut context = dcore::Context::new(cmd.clone());
     context.env = env;
     context.extensions_mut().insert(handler);
 

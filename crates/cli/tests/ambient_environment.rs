@@ -10,7 +10,7 @@
 //! harness output, which carries a wall-clock "finished in" line that made
 //! the raw-stdout comparison flaky (deka#840).
 
-use core::Context;
+use dcore::Context;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -87,8 +87,8 @@ fn cli_config_ignores_contradictory_ambient_environment() {
     assert_eq!(run(&contradictions_a), run(&contradictions_b));
 }
 
-fn dummy_context(cwd: PathBuf) -> core::Context {
-    let mut context = Context::new(core::Args {
+fn dummy_context(cwd: PathBuf) -> dcore::Context {
+    let mut context = Context::new(dcore::Args {
         flags: HashMap::new(),
         params: HashMap::new(),
         commands: vec!["self".to_string(), "monitor".to_string()],

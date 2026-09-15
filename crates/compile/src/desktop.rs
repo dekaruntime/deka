@@ -13,7 +13,7 @@
 
 use crate::binary::BinaryEmbedder;
 use crate::vfs::{DESKTOP_META_PATH, RuntimeMode, VFS};
-use core::Context;
+use dcore::Context;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};

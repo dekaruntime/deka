@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry, SubcommandSpec};
+use dcore::{CommandSpec, Context, FlagSpec, ParamSpec, Registry, SubcommandSpec};
 
 #[path = "assets.rs"]
 mod assets;

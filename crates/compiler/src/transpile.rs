@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, ParamSpec, Registry};
+use dcore::{CommandSpec, Context, ParamSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
     owner: "compiler",
@@ -12,22 +12,22 @@ const COMMAND: CommandSpec = CommandSpec {
 
 pub fn register(registry: &mut Registry) {
     registry.add_command(COMMAND);
-    registry.add_flag(core::FlagSpec {
+    registry.add_flag(dcore::FlagSpec {
         name: "--preserve",
         aliases: &[],
         description: "preserve a directory's module tree (default for directories)",
     });
-    registry.add_flag(core::FlagSpec {
+    registry.add_flag(dcore::FlagSpec {
         name: "--bundle",
         aliases: &[],
         description: "emit one resolved JavaScript module graph",
     });
-    registry.add_flag(core::FlagSpec {
+    registry.add_flag(dcore::FlagSpec {
         name: "--treeshake",
         aliases: &[],
         description: "apply JavaScript optimization to emitted modules",
     });
-    registry.add_flag(core::FlagSpec {
+    registry.add_flag(dcore::FlagSpec {
         name: "--client",
         aliases: &[],
         description: "treat the entry as a client bundle (ui/server is a build failure)",
