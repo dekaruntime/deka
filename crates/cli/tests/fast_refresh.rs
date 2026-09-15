@@ -410,3 +410,109 @@ fn handler_reload_notification_observes_evicted_server_isolates() {
         break;
     }
 }
+
+/// deka#1067: one editor save must run one watch/evict/hmr cycle, not one
+/// per raw filesystem event. Atomic-save editors (and `sed -i`) write a temp
+/// file next to the target and rename it over — on Linux/inotify that alone
+/// delivers `Modify(Data)`, `Access(Close(Write))`, `Modify(Name(From))`,
+/// `Modify(Name(To))` and a synthesized `Modify(Name(Both))`, five raw events
+/// for one logical change. This exercises that exact save shape over the
+/// real `deka dev` process (not an in-process unit call) and asserts exactly
+/// one HMR notification reaches the browser, and exactly one `[hmr] changed`
+/// line — with the `[watch]` bookkeeping lines suppressed by default — reaches
+/// the terminal.
+#[test]
+fn atomic_rename_save_produces_exactly_one_hmr_cycle() {
+    let root = tempfile::Builder::new()
+        .prefix("deka-single-cycle-1067-")
+        .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .unwrap();
+    app_router::init_project(root.path());
+    let layout_path = root.path().join("app/layout.dsx");
+    let port = free_port();
+    let _server = spawn_dev(root.path(), port);
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let url = format!("http://127.0.0.1:{port}/");
+    wait_ok(&client, &url);
+
+    let (mut socket, _) = tungstenite::connect(format!("ws://127.0.0.1:{port}/_deka/hmr")).unwrap();
+    if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_mut() {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+    }
+
+    // Simulate an atomic-save editor: write the new content to a sibling
+    // temp file, then rename it over the real target. `fs::write` alone
+    // (open+write+close on the same path) would not reproduce the bug.
+    let tmp_path = root.path().join("app/.layout.dsx.tmp-1067");
+    fs::write(
+        &tmp_path,
+        "interface LayoutProps {\n  children: ReactNode;\n}\nexport fn Layout(props: LayoutProps) {\n  return <main class=\"edited-1067\">{props.children}</main>\n}\n",
+    )
+    .unwrap();
+    fs::rename(&tmp_path, &layout_path).unwrap();
+
+    // Collect every HMR frame that mentions layout.dsx over a window long
+    // enough to observe a regression (each duplicate cycle would arrive
+    // within milliseconds of the first) but short enough not to wait out a
+    // legitimately quiet socket.
+    let collect_deadline = Instant::now() + Duration::from_secs(3);
+    let mut layout_notifications = Vec::new();
+    while Instant::now() < collect_deadline {
+        match socket.read() {
+            Ok(message) if message.is_text() => {
+                let payload: serde_json::Value =
+                    serde_json::from_str(message.to_text().unwrap()).unwrap();
+                let mentions_layout = payload["paths"].as_array().is_some_and(|paths| {
+                    paths.iter().any(|path| {
+                        path.as_str()
+                            .is_some_and(|path| path.ends_with("/app/layout.dsx"))
+                    })
+                });
+                if mentions_layout {
+                    layout_notifications.push(payload);
+                }
+            }
+            Ok(_) => continue,
+            Err(tungstenite::Error::Io(err))
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(err) => panic!("HMR socket error while collecting notifications: {err}"),
+        }
+    }
+
+    assert_eq!(
+        layout_notifications.len(),
+        1,
+        "one atomic-rename save must produce exactly one HMR notification, got {}: {:?}",
+        layout_notifications.len(),
+        layout_notifications
+    );
+
+    // The terminal-facing side of the same bug: exactly one `[hmr] changed`
+    // line for the save, and the `[watch]` bookkeeping lines suppressed
+    // because `--debug` was not passed (deka#1067 part B).
+    let log = fs::read_to_string(root.path().join(".cache/dev.log")).unwrap_or_default();
+    let hmr_lines: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains("[hmr] changed") && line.contains("layout.dsx"))
+        .collect();
+    assert_eq!(
+        hmr_lines.len(),
+        1,
+        "expected exactly one [hmr] changed line for the save, got: {hmr_lines:?}\nfull log:\n{log}"
+    );
+    assert!(
+        !log.contains("[watch] evicted"),
+        "bookkeeping must stay behind --debug, not print by default:\n{log}"
+    );
+}

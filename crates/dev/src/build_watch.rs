@@ -35,7 +35,12 @@ pub fn set_build_slot_refresh(refresh: BuildSlotRefresh) {
 /// caches that key on the module graph (which does not cover build values);
 /// the caller is expected to evict the engine's shared pool — those
 /// isolates back the `deka:dev/*` value modules.
-pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -> bool {
+pub fn on_watch_event(
+    project_root: &Path,
+    changed: &[String],
+    dev_mode: bool,
+    verbose: bool,
+) -> bool {
     if !dev_mode {
         return false;
     }
@@ -63,13 +68,15 @@ pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -
             }
         },
         Err(_) => {
-            stdio::log(
-                "watch",
-                &format!(
-                    "no build manifest at {}; cannot map the change to build slots",
-                    manifest_path.display()
-                ),
-            );
+            if verbose {
+                stdio::log(
+                    "watch",
+                    &format!(
+                        "no build manifest at {}; cannot map the change to build slots",
+                        manifest_path.display()
+                    ),
+                );
+            }
             None
         }
     };
@@ -94,21 +101,28 @@ pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -
         replan_files: invalidation.source_files.iter().cloned().collect(),
     };
     if invalidation.coarse {
-        stdio::log(
-            "watch",
-            &format!(
-                "coarse build invalidation: rematerializing all build slots ({})",
-                changed.join(", ")
-            ),
-        );
+        if verbose {
+            stdio::log(
+                "watch",
+                &format!(
+                    "coarse build invalidation: rematerializing all build slots ({})",
+                    changed.join(", ")
+                ),
+            );
+        }
     } else if request.slots.is_empty() && request.replan_files.is_empty() {
-        stdio::log(
-            "watch",
-            &format!("no build slots affected by {}", changed.join(", ")),
-        );
+        // Internal bookkeeping (deka#1067): a layout/component edit with no
+        // `build {}` block legitimately touches no slot. Only user-facing
+        // signal here is the `[hmr] changed` line the caller still prints.
+        if verbose {
+            stdio::log(
+                "watch",
+                &format!("no build slots affected by {}", changed.join(", ")),
+            );
+        }
         return false;
     } else {
-        if !request.slots.is_empty() {
+        if !request.slots.is_empty() && verbose {
             stdio::log(
                 "watch",
                 &format!(
@@ -118,7 +132,7 @@ pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -
                 ),
             );
         }
-        if !request.replan_files.is_empty() {
+        if !request.replan_files.is_empty() && verbose {
             stdio::log(
                 "watch",
                 &format!(
@@ -142,10 +156,12 @@ pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -
     });
     match outcome {
         Ok(Ok(())) => {
-            stdio::log(
-                "watch",
-                "rematerialized build slots; re-render on next request",
-            );
+            if verbose {
+                stdio::log(
+                    "watch",
+                    "rematerialized build slots; re-render on next request",
+                );
+            }
             true
         }
         Ok(Err(err)) => {
