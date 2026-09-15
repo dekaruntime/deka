@@ -62,8 +62,9 @@ macro_rules! define_island_markers {
 
         /// JavaScript prelude declaring the marker grammar for the
         /// `hmr_client/` fragments. `router::inject_hmr_client` places this
-        /// ahead of the fragments, so morph.js/patch.js read the exact same
-        /// token values as the Rust scanner.
+        /// ahead of the fragments, so morph.js/patch.js (and the node
+        /// contract harnesses that receive it from the Rust test) read the
+        /// exact same token values as the Rust scanner.
         pub const JS_PRELUDE: &str = concat!(
             "var DEKA_ISLAND_START_PREFIX = \"",
             $tag,
@@ -74,6 +75,18 @@ macro_rules! define_island_markers {
             $tag,
             " ",
             $end,
+            "\";\n",
+            "var DEKA_ISLAND_FIELD_DIRECTIVE = \"",
+            $field_directive,
+            "\";\n",
+            "var DEKA_ISLAND_FIELD_PROPS = \"",
+            $field_props,
+            "\";\n",
+            "var DEKA_ISLAND_FIELD_ID = \"",
+            $field_id,
+            "\";\n",
+            "var DEKA_ISLAND_FIELD_CACHE = \"",
+            $field_cache,
             "\";\n",
         );
     };
@@ -110,5 +123,14 @@ mod tests {
         let end_decl = format!("DEKA_ISLAND_END_PREFIX = \"{} {}\"", TAG, END);
         assert!(JS_PRELUDE.contains(&start_decl));
         assert!(JS_PRELUDE.contains(&end_decl));
+        for field in [
+            ("DIRECTIVE", FIELD_DIRECTIVE),
+            ("PROPS", FIELD_PROPS),
+            ("ID", FIELD_ID),
+            ("CACHE", FIELD_CACHE),
+        ] {
+            let decl = format!("DEKA_ISLAND_FIELD_{} = \"{}\"", field.0, field.1);
+            assert!(JS_PRELUDE.contains(&decl), "prelude lost {decl}");
+        }
     }
 }
