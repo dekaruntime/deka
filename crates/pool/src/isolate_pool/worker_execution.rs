@@ -256,46 +256,9 @@ impl WorkerThread {
                     };
                 }
 
-                // Minimal URL polyfill for parsing URLs
-                if (typeof globalThis.URL === 'undefined') {
-                    globalThis.URL = class URL {
-                        constructor(url) {
-                            this.href = url;
-
-                            // Parse protocol
-                            const protocolMatch = url.match(/^([a-z][a-z0-9+.-]*):\/\//i);
-                            this.protocol = protocolMatch ? protocolMatch[1] + ':' : '';
-
-                            // Remove protocol
-                            let remaining = protocolMatch ? url.slice(protocolMatch[0].length) : url;
-
-                            // Remove hostname/port (everything before first / or ?, or end of string)
-                            const hostMatch = remaining.match(/^([^\/\\?#]*)/);
-                            this.host = hostMatch ? hostMatch[1] : '';
-                            remaining = remaining.slice(this.host.length);
-
-                            // If nothing left after host, pathname is '/'
-                            if (!remaining) {
-                                this.pathname = '/';
-                                this.search = '';
-                                this.hash = '';
-                                return;
-                            }
-
-                            // Extract pathname, search, and hash
-                            const pathMatch = remaining.match(/^([^?#]*)(\\?[^#]*)?(#.*)?$/);
-                            if (pathMatch) {
-                                this.pathname = pathMatch[1] || '/';
-                                this.search = pathMatch[2] || '';
-                                this.hash = pathMatch[3] || '';
-                            } else {
-                                this.pathname = '/';
-                                this.search = '';
-                                this.hash = '';
-                            }
-                        }
-                    };
-                }
+                // Minimal URL polyfill for parsing URLs lives in wintertc.js
+                // (inlined by the WinterTC marker further down); keeping it out
+                // of this file preserves the file-size gate baseline (deka#391).
 
                 // Runtime bridge helpers for PHPX stdlib (JS runtime path)
                 if (typeof globalThis.function_exists !== 'function') {

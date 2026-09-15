@@ -686,3 +686,58 @@ globalThis.app = {
         .and_then(|v| v.as_str());
     assert_eq!(content_type, Some("text/plain"));
 }
+
+/// The native URL polyfill must match WHATWG acceptance/rejection (deka#932):
+/// `new URL("://invalid")` throws `TypeError: Invalid URL`, as do special
+/// schemes with an empty host, while `a://` and `http:///path` stay valid.
+#[tokio::test]
+async fn url_polyfill_rejects_whatwg_invalid_urls() {
+    let pool = test_pool();
+    let code = r#"
+globalThis.app = function() {
+  const mustThrow = ["://invalid", "://", "//x", "http://", "http://?q", "http://#h", "http://ho st/"];
+  const mustParse = ["http:///path", "a://", "a://b", "mailto:user@example.com", "http://example.com/path?x#y"];
+  const out = { threw: {}, parsed: {} };
+  for (const input of mustThrow) {
+    try { new URL(input); out.threw[input] = "no-throw"; }
+    catch (e) { out.threw[input] = e.name + ": " + e.message; }
+  }
+  for (const input of mustParse) {
+    try { const u = new URL(input); out.parsed[input] = u.protocol + " " + u.host; }
+    catch (e) { out.parsed[input] = "threw " + e.name + ": " + e.message; }
+  }
+  return { status: 200, headers: {}, body: JSON.stringify(out) };
+};
+"#;
+    let res = pool
+        .execute(
+            HandlerKey::new("url_polyfill_whatwg"),
+            test_request(code),
+        )
+        .await;
+    let response = res.expect("pool execution should succeed");
+    assert!(response.success, "execution failed: {:?}", response.error);
+    let result = response.result.expect("should have result");
+    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+    for (input, outcome) in parsed["threw"].as_object().expect("threw map") {
+        assert_eq!(
+            outcome.as_str().unwrap(),
+            "TypeError: Invalid URL",
+            "input={input} body={body}"
+        );
+    }
+    assert_eq!(parsed["parsed"]["http:///path"], "http: path", "body={body}");
+    assert_eq!(parsed["parsed"]["a://"], "a: ", "body={body}");
+    assert_eq!(parsed["parsed"]["a://b"], "a: b", "body={body}");
+    assert_eq!(
+        parsed["parsed"]["mailto:user@example.com"],
+        "mailto: ",
+        "body={body}"
+    );
+    assert_eq!(
+        parsed["parsed"]["http://example.com/path?x#y"],
+        "http: example.com",
+        "body={body}"
+    );
+}
