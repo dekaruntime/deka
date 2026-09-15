@@ -6,7 +6,7 @@ use std::{io, net::TcpListener};
 
 use crate::extensions::extensions_for_mode;
 use crate::security::{ResolvedSecurityPolicy, resolve_security_policy_for_serve};
-use core::Context;
+use dcore::Context;
 use deka_host::validation::{format_validation_error, modules::validate_module_resolution};
 use engine::{RuntimeEngine, RuntimeState, config as runtime_config, set_engine};
 use platform::Platform;

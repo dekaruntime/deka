@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, Registry};
+use dcore::{CommandSpec, Context, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
     owner: "dev",

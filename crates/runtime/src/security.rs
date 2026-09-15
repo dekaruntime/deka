@@ -3,7 +3,7 @@ use ::security::security_policy::{
     parse_deka_security_policy, policy_to_json,
 };
 use ::serve::config::ServeMode;
-use core::Context;
+use dcore::Context;
 use deka_modules::modules::MODULES_DIR;
 use std::path::Path;
 

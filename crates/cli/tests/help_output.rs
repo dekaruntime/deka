@@ -253,7 +253,7 @@ fn every_commands_help_shows_only_that_commands_own_flag_descriptions() {
         let Some(owned) = index.flags.get(command.name) else {
             continue;
         };
-        let rendered = core::help::render_command_help(command, Some(owned)).join(
+        let rendered = dcore::help::render_command_help(command, Some(owned)).join(
             "
 ",
         );
@@ -330,7 +330,7 @@ fn ownership_index_matches_independently_replayed_registration() {
     let index = cli::command_flag_index();
 
     for register_fn in cli::register_fns() {
-        let mut scratch = core::Registry::new();
+        let mut scratch = dcore::Registry::new();
         register_fn(&mut scratch);
         if scratch.commands().is_empty() {
             continue;

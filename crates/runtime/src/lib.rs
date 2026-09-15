@@ -1,6 +1,6 @@
 #![allow(clippy::all)]
 
-use core::Context;
+use dcore::Context;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -39,21 +39,21 @@ pub(crate) fn invoke_dev_serve(context: &Context) {
     }
 }
 
-pub fn register(registry: &mut core::Registry) {
+pub fn register(registry: &mut dcore::Registry) {
     register_run(registry);
     register_platform(registry);
     register_serve(registry);
 }
 
-pub fn register_run(registry: &mut core::Registry) {
+pub fn register_run(registry: &mut dcore::Registry) {
     command_run::register(registry);
 }
 
-pub fn register_platform(registry: &mut core::Registry) {
+pub fn register_platform(registry: &mut dcore::Registry) {
     command_platform::register(registry);
 }
 
-pub fn register_serve(registry: &mut core::Registry) {
+pub fn register_serve(registry: &mut dcore::Registry) {
     command_serve::register(registry);
 }
 
@@ -227,13 +227,13 @@ pub fn run_embedded_vfs(args: Vec<String>) -> Result<(), String> {
     positionals.push(entry_arg.clone());
     positionals.extend(args);
 
-    let cli_args = core::Args {
+    let cli_args = dcore::Args {
         flags: std::collections::HashMap::new(),
         params: std::collections::HashMap::new(),
         commands: vec!["run".to_string()],
         positionals,
     };
-    let env = core::EnvContext::load();
+    let env = dcore::EnvContext::load();
     let resolved = ::run::handler::resolve_handler_path(&entry_arg)
         .map_err(|err| format!("failed to resolve embedded VFS entry point: {err}"))?;
     let handler = ::run::handler::HandlerSnapshot {

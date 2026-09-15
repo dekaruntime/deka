@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, ParamSpec, Registry};
+use dcore::{CommandSpec, Context, ParamSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
     owner: "compiler",
@@ -16,12 +16,12 @@ pub fn register(registry: &mut Registry) {
         name: "--lang",
         description: "language to format: ds or js (default: ds)",
     });
-    registry.add_flag(core::FlagSpec {
+    registry.add_flag(dcore::FlagSpec {
         name: "--check",
         aliases: &[],
         description: "exit non-zero if files would change",
     });
-    registry.add_flag(core::FlagSpec {
+    registry.add_flag(dcore::FlagSpec {
         name: "--stdin",
         aliases: &[],
         description: "read source from stdin instead of a file",

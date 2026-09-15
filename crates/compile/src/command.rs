@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, Registry};
+use dcore::{CommandSpec, Context, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
     owner: "compile",
@@ -12,11 +12,11 @@ const COMMAND: CommandSpec = CommandSpec {
 
 pub fn register(registry: &mut Registry) {
     registry.add_command(COMMAND);
-    registry.add_param(core::ParamSpec {
+    registry.add_param(dcore::ParamSpec {
         name: "--outfile",
         description: "compiled executable output path (default: deka-app)",
     });
-    registry.add_flag(core::FlagSpec {
+    registry.add_flag(dcore::FlagSpec {
         name: "--desktop",
         aliases: &[],
         description: "package a web project as a desktop app (React in webview)",

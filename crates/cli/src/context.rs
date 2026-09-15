@@ -1,5 +1,5 @@
 //! Runtime handler state is captured once, before command dispatch.
-use core::{Context, ParseError, Registry};
+use dcore::{Context, ParseError, Registry};
 use run::handler::{HandlerSnapshot, resolve_handler_path};
 
 #[derive(Debug)]
@@ -9,7 +9,7 @@ pub enum ContextError {
 }
 
 pub fn from_env(registry: &Registry) -> Result<Context, ContextError> {
-    let parsed = core::parse_env(registry);
+    let parsed = dcore::parse_env(registry);
     if !parsed.errors.is_empty() {
         return Err(ContextError::Parse(parsed.errors));
     }
@@ -47,7 +47,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn context(command: &str, path: &std::path::Path) -> Context {
-        Context::new(core::Args {
+        Context::new(dcore::Args {
             flags: HashMap::new(),
             params: HashMap::new(),
             commands: vec![command.into()],

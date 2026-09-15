@@ -29,7 +29,7 @@ self-update = ["self_cmd/self-update"]
 [dependencies]
 serve = { path = "../serve" }
 run = { path = "../run" }
-core = { path = "../core" }
+dcore = { path = "../dcore" }
 stdio = "0.4.0"
 wasm_cli = { path = "../wasm_cli" }
 serde = { version = "1.0", features = ["derive"] }

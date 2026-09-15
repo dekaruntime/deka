@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, Registry};
+use dcore::{CommandSpec, Context, Registry};
 use security::security_policy::{
     RuleList, SecurityCliOverrides, merge_policy_with_cli_manifest_net_env,
     parse_deka_security_policy,

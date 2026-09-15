@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, FlagSpec, Registry};
+use dcore::{CommandSpec, Context, FlagSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
     owner: "runtime",

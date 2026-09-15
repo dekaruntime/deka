@@ -2,7 +2,7 @@
 //!
 //! Rendering here is pure text formatting over `Registry` data — no I/O.
 //! `cli::mod` is the only place that prints; keeping the formatting in
-//! `core` keeps `crates/cli/src` inside its composition-only line budget
+//! `dcore` keeps `crates/cli/src` inside its composition-only line budget
 //! (see `scripts/check-cli-surface.sh`).
 //!
 //! Two kinds of content live here:

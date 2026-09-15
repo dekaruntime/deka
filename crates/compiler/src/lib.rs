@@ -7,7 +7,7 @@ mod transpile;
 #[cfg(feature = "lsp")]
 mod lsp;
 
-use core::Registry;
+use dcore::Registry;
 
 pub fn register(registry: &mut Registry) {
     register_check(registry);

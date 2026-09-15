@@ -1,4 +1,4 @@
-use core::{FlagSpec, ParamSpec, ParseError, ParseErrorKind, Registry};
+use dcore::{FlagSpec, ParamSpec, ParseError, ParseErrorKind, Registry};
 use stdio::{ascii, error as stdio_error, raw};
 
 const SUGGESTION_LIMIT: usize = 3;
@@ -167,7 +167,7 @@ pub fn register_global_params(registry: &mut Registry) {
 pub fn help(registry: &Registry) {
     raw(&ascii("deka"));
     raw("");
-    for line in core::help::render_global_help(registry, env!("CARGO_PKG_VERSION")) {
+    for line in dcore::help::render_global_help(registry, env!("CARGO_PKG_VERSION")) {
         raw(&line);
     }
 }
@@ -179,8 +179,8 @@ pub fn help(registry: &Registry) {
 /// registration function (see `crate::command_flag_index`), never by
 /// name-searching the shared registry — two different commands can
 /// register a flag with the same name (deka#996 review).
-pub fn command_help(command: &core::CommandSpec, owned: Option<&core::help::CommandFlags>) {
-    for line in core::help::render_command_help(command, owned) {
+pub fn command_help(command: &dcore::CommandSpec, owned: Option<&dcore::help::CommandFlags>) {
+    for line in dcore::help::render_command_help(command, owned) {
         raw(&line);
     }
 }
@@ -228,7 +228,7 @@ pub fn execute(registry: &Registry) -> i32 {
     }
 
     let ownership_index = crate::command_flag_index();
-    let parsed = core::parse_env(registry);
+    let parsed = dcore::parse_env(registry);
     if !parsed.errors.is_empty() {
         let message = format_parse_errors(&ownership_index, &parsed.errors);
         error(Some(message.as_str()));
@@ -316,7 +316,7 @@ pub fn execute(registry: &Registry) -> i32 {
         if cmd.commands.len() == 1 {
             if !command.subcommands.is_empty() && !cmd.positionals.is_empty() {
                 let sub_name = &cmd.positionals[0];
-                let message = core::help::unknown_subcommand_message(
+                let message = dcore::help::unknown_subcommand_message(
                     registry,
                     &ownership_index,
                     cmd_name,
@@ -332,7 +332,7 @@ pub fn execute(registry: &Registry) -> i32 {
 
         let sub_name = &cmd.commands[1];
         let Some(subcommand) = registry.subcommand_named(command, sub_name) else {
-            let message = core::help::unknown_subcommand_message(
+            let message = dcore::help::unknown_subcommand_message(
                 registry,
                 &ownership_index,
                 cmd_name,
@@ -348,7 +348,7 @@ pub fn execute(registry: &Registry) -> i32 {
     }
 }
 
-pub(crate) fn single_command_wants_help(args: &core::Args) -> bool {
+pub(crate) fn single_command_wants_help(args: &dcore::Args) -> bool {
     if args.commands.len() != 1 {
         return false;
     }
@@ -365,7 +365,7 @@ pub(crate) fn single_command_wants_help(args: &core::Args) -> bool {
 
 /// Render parse-error messages from real CLI parse outcomes.
 pub fn format_parse_errors(
-    ownership_index: &core::help::OwnershipIndex,
+    ownership_index: &dcore::help::OwnershipIndex,
     errors: &[ParseError],
 ) -> String {
     let mut output = String::new();
@@ -376,8 +376,8 @@ pub fn format_parse_errors(
                 if !error.suggestions.is_empty() {
                     output.push_str(". did you mean ");
                     let suggestions =
-                        core::help::expand_suggestions(ownership_index, &error.suggestions);
-                    output.push_str(&core::help::format_suggestions(
+                        dcore::help::expand_suggestions(ownership_index, &error.suggestions);
+                    output.push_str(&dcore::help::format_suggestions(
                         &suggestions,
                         SUGGESTION_LIMIT,
                     ));
