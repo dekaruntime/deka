@@ -1351,6 +1351,10 @@ mod tests {
         reject_source_less_package, reject_vendored_php_modules, run_php_install_in,
         verify_locked_integrity,
     };
+    use crate::install_fixture_registry::{
+        DekaGgFixture, RegistryEnvGuard, fixture_manifest, fixture_registry, pack_fixture_tarball,
+        registry_env_lock,
+    };
     use crate::{lock, payload::InstallPayload};
     use deka_host::integrity::{PackageIntegrity, compute_package_integrity};
     use serde_json::json;
@@ -1706,16 +1710,31 @@ mod tests {
         );
     }
 
-    // The published @deka/string artifact is intentionally source-less now;
-    // its old integration path cannot exercise lock healing after the
-    // source-less package rejection. The pure integrity behavior is covered
-    // by locked_integrity_flags_legacy_empty_module_graph_hash_for_healing.
-    #[ignore = "published fixture is source-less and is rejected before lock verification"]
+    // The published @deka/string artifact is intentionally source-less, so
+    // its live integration path cannot reach lock verification. This runs
+    // the same real install against a fixture registry serving a source-ful
+    // string@0.1.0 instead (deka#933: hermetic, never deka.gg).
     #[test]
     fn locked_install_accepts_legacy_empty_module_graph_hash_without_mutating_lock() {
+        let _lock = registry_env_lock();
+        let fixture = DekaGgFixture::start(BTreeMap::from([(
+            "string".to_string(),
+            (
+                vec!["0.1.0".to_string()],
+                pack_fixture_tarball(&[
+                    ("deka.json", fixture_manifest("@deka/string", "0.1.0")),
+                    (
+                        "index.ds",
+                        "export fn string() string { return \"s\"; }\n".to_string(),
+                    ),
+                ]),
+            ),
+        )]));
+        let _env = RegistryEnvGuard::point_at(fixture.url());
+
         let tmp = tempfile::tempdir().expect("project");
         run_php_install_in(vec!["@deka/string".to_string()], true, false, tmp.path())
-            .expect("bundled deka install");
+            .expect("fixture deka install");
         let lock_path = tmp.path().join("deka.lock");
         assert!(lock_path.is_file());
 
@@ -1937,6 +1956,18 @@ mod tests {
             cli.display()
         );
 
+        // deka#933: the child CLI must resolve @deka/core against a fixture
+        // registry serving a source-less artifact, never the live deka.gg.
+        // The test-only DEKA_PM_REGISTRY_URL / DEKA_PM_STDLIB_CDN injection
+        // points are the only config channel a spawned child has (deka#801).
+        let fixture = DekaGgFixture::start(BTreeMap::from([(
+            "core".to_string(),
+            (
+                vec!["0.1.0".to_string()],
+                pack_fixture_tarball(&[("deka.json", fixture_manifest("@deka/core", "0.1.0"))]),
+            ),
+        )]));
+
         let tmp = tempfile::tempdir().expect("tmp");
         fs::write(
             tmp.path().join("deka.json"),
@@ -1947,13 +1978,28 @@ mod tests {
         let status = std::process::Command::new(&cli)
             .args(["install", "--quiet"])
             .current_dir(tmp.path())
-            .env("LINKHASH_REGISTRY_URL", "http://127.0.0.1:1")
+            .env("DEKA_PM_REGISTRY_URL", fixture.url())
+            .env("DEKA_PM_STDLIB_CDN", fixture.url())
             .status()
             .expect("run real deka install");
         assert!(!status.success(), "source-less package must be rejected");
         assert!(!tmp.path().join(".deka-install-transaction.json").exists());
         assert!(!tmp.path().join(MODULES_DIR).join("@deka/core").exists());
         assert!(!tmp.path().join("deka.lock").exists());
+
+        // The rejection must come from the real child-process install
+        // against the fixture registry, not from a CLI that never resolved
+        // anything (e.g. a dead installer that bails on every @deka package
+        // would still satisfy the assertions above).
+        let requests = fixture.requests();
+        assert!(
+            requests.iter().any(|request| request == "registry core"),
+            "the CLI must fetch registry metadata from the fixture: {requests:?}"
+        );
+        assert!(
+            requests.iter().any(|request| request == "tarball core"),
+            "the CLI must download the release tarball from the fixture: {requests:?}"
+        );
     }
 
     #[test]
@@ -2074,6 +2120,20 @@ mod tests {
 
     #[test]
     fn install_rejects_source_less_registry_package_and_preserves_alias() {
+        let _lock = registry_env_lock();
+        // deka#933: run the real installer against a fixture registry on
+        // 127.0.0.1, never the live deka.gg. The fixture artifact ships a
+        // manifest but no .ds/.dsx sources — exactly the shape the rejection
+        // below asserts on.
+        let fixture = DekaGgFixture::start(BTreeMap::from([(
+            "string".to_string(),
+            (
+                vec!["1.0.0".to_string()],
+                pack_fixture_tarball(&[("deka.json", fixture_manifest("@deka/string", "1.0.0"))]),
+            ),
+        )]));
+        let _env = RegistryEnvGuard::point_at(fixture.url());
+
         let tmp = tempfile::tempdir().expect("project");
         let alias = tmp.path().join(format!("{MODULES_DIR}/string"));
         fs::create_dir_all(&alias).expect("tracked unscoped alias");
@@ -2097,6 +2157,19 @@ mod tests {
         assert_eq!(
             fs::read_to_string(alias.join("index.phpx")).expect("tracked alias survives"),
             "export const compatibility = true;\n"
+        );
+
+        // The rejection must come from the real fetch -> extract -> validate
+        // path against the fixture registry: a dead installer that never
+        // contacted the registry must not satisfy this test.
+        let requests = fixture.requests();
+        assert!(
+            requests.iter().any(|request| request == "registry string"),
+            "install must fetch registry metadata from the fixture: {requests:?}"
+        );
+        assert!(
+            requests.iter().any(|request| request == "tarball string"),
+            "install must download the release tarball from the fixture: {requests:?}"
         );
     }
 
@@ -2163,121 +2236,6 @@ mod tests {
         assert_eq!(lock.packages.len(), 3);
         assert_eq!(lock.packages["@scope/c"].0, "@scope/c@1.4.0");
         shutdown.send(()).expect("shutdown registry");
-    }
-
-    async fn fixture_registry(
-        packages: BTreeMap<String, serde_json::Value>,
-    ) -> (String, tokio::sync::oneshot::Sender<()>) {
-        use axum::{
-            Json, Router,
-            extract::{Path as AxumPath, Query, State},
-            routing::get,
-        };
-        use std::{collections::HashMap, sync::Arc};
-        #[derive(Clone)]
-        struct Fixture(Arc<BTreeMap<String, serde_json::Value>>);
-        async fn versions(
-            AxumPath((_scope, package)): AxumPath<(String, String)>,
-        ) -> Json<serde_json::Value> {
-            let versions = if package == "c" {
-                vec!["1.1.0", "1.3.0", "1.4.0", "2.0.0"]
-            } else {
-                vec!["1.0.0"]
-            };
-            Json(json!({ "versions": versions }))
-        }
-        async fn resolve(
-            AxumPath((scope, package, version)): AxumPath<(String, String, String)>,
-            State(Fixture(packages)): State<Fixture>,
-        ) -> Json<serde_json::Value> {
-            let name = format!("@{scope}/{package}");
-            let dependencies = packages.get(&name).cloned().unwrap_or_else(|| json!({}));
-            let digest = fixture_package_digest(&name, &version, &dependencies);
-            Json(json!({
-                "version": version,
-                "repo": "fixture",
-                "git_ref": "fixture",
-                "digest": format!("sha256:{digest}"),
-            }))
-        }
-        async fn tree(
-            AxumPath((scope, package, _version)): AxumPath<(String, String, String)>,
-            State(Fixture(packages)): State<Fixture>,
-        ) -> Json<serde_json::Value> {
-            let name = format!("@{scope}/{package}");
-            assert!(
-                packages.contains_key(&name),
-                "unknown fixture package {name}"
-            );
-            Json(json!({ "files": [{ "path": "deka.json" }, { "path": "index.phpx" }] }))
-        }
-        async fn blob(
-            AxumPath((scope, package, version)): AxumPath<(String, String, String)>,
-            Query(query): Query<HashMap<String, String>>,
-            State(Fixture(packages)): State<Fixture>,
-        ) -> Json<serde_json::Value> {
-            let name = format!("@{scope}/{package}");
-            let content = if query.get("path").is_some_and(|path| path == "deka.json") {
-                json!({ "name": name, "version": version, "dependencies": packages[&name] })
-                    .to_string()
-            } else {
-                "export const fixture = true;\n".to_string()
-            };
-            Json(json!({ "content": content }))
-        }
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("registry listener");
-        let address = listener.local_addr().expect("registry address");
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let app = Router::new()
-            .route(
-                "/api/scoped-packages/:scope/:package/versions",
-                get(versions),
-            )
-            .route(
-                "/api/scoped-packages/:scope/:package/:version",
-                get(resolve),
-            )
-            .route(
-                "/api/scoped-packages/:scope/:package/:version/tree",
-                get(tree),
-            )
-            .route(
-                "/api/scoped-packages/:scope/:package/:version/blob",
-                get(blob),
-            )
-            .with_state(Fixture(Arc::new(packages)));
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .expect("fixture registry");
-        });
-        (format!("http://{address}"), shutdown_tx)
-    }
-
-    fn fixture_package_digest(
-        name: &str,
-        version: &str,
-        dependencies: &serde_json::Value,
-    ) -> String {
-        let root = tempfile::tempdir().expect("digest fixture tempdir");
-        fs::write(
-            root.path().join("deka.json"),
-            json!({ "name": name, "version": version, "dependencies": dependencies }).to_string(),
-        )
-        .expect("digest fixture manifest");
-        fs::write(
-            root.path().join("index.phpx"),
-            "export const fixture = true;\n",
-        )
-        .expect("digest fixture module");
-        compute_package_integrity(root.path())
-            .expect("digest fixture integrity")
-            .fs_graph
     }
 }
 
