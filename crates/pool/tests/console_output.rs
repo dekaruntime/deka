@@ -1,0 +1,303 @@
+//! `console` global (rfd#44 "Globals" -> the 2026-09-16 `console` addition).
+//!
+//! Pins two things `crates/pool/src/wintertc.js` must keep true:
+//! - the WHATWG stream split (log/info/debug/dir/dirxml/table -> stdout;
+//!   warn/error/trace/assert -> stderr) reaches the process's *real* fd 1/2,
+//!   the same unbuffered path `io`'s `echo` uses (`Deno.core.print` ->
+//!   deno_core's `op_print`, which flushes on every call) — not some
+//!   buffered relay that can drop output on process exit.
+//! - non-string arguments (struct / Option / Result / tuple) print through
+//!   the shared structured-printer (`inspect` in wintertc.js), not
+//!   `String(value)` (`[object Object]`).
+//!
+//! These are inline-handler tests (no dsc): `globalThis.app` is a plain JS
+//! function, and struct/enum shapes are hand-built to match exactly what
+//! dsc emits (structs.mdx's hidden `__deka_struct` tag; build_values.rs's
+//! `{ __enum, __case, name, value|error }` enum shape, which Option/Result
+//! share). `console` is a JS global installed by the pool bootstrap
+//! regardless of dsc, so this does not need the pinned compiler.
+
+use std::io::Read;
+use std::os::unix::io::RawFd;
+use std::sync::{Arc, Mutex, OnceLock};
+
+use pool::{ExecutionMode, ExecutionSecurity, HandlerKey, IsolatePool, PoolConfig, RequestData, RequestParts};
+
+fn console_pool() -> IsolatePool {
+    let config = PoolConfig {
+        num_workers: 1,
+        max_isolates_per_worker: 2,
+        idle_timeout_secs: 30,
+        enable_metrics: false,
+        enable_code_cache: false,
+        request_timeout_ms: 10_000,
+        queue_timeout_ms: 10_000,
+        ..PoolConfig::default()
+    };
+    IsolatePool::new(config, Arc::new(platform_server::extensions_for_php_server))
+}
+
+fn handler_request(handler_code: &str) -> RequestData {
+    RequestData {
+        handler_code: handler_code.to_string(),
+        handler_entry: None,
+        module_root: None,
+        request_value: serde_json::Value::Null,
+        request_parts: Some(RequestParts {
+            url: "http://localhost/".to_string(),
+            method: "GET".to_string(),
+            headers: Vec::new(),
+            body: None,
+        }),
+        mode: ExecutionMode::Request,
+        security: ExecutionSecurity {
+            policy_json: r#"{"security":{"allow":{},"deny":{},"prompt":false}}"#.to_string(),
+            no_prompt: true,
+        },
+    }
+}
+
+/// Every `#[test]` in *this file* runs in one process and shares real fd
+/// 1/2, so redirecting them to a pipe to capture output is process-global
+/// state. Serialize the redirect/run/restore/read-back sequence across this
+/// file's tests with one lock; other test binaries (separate processes)
+/// are unaffected.
+fn stdio_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Redirects `target_fd` (1 or 2) to a pipe for the duration of a scope,
+/// then hands back everything written to it. `Deno.core.print` writes to
+/// the real OS fd (`ops_builtin.rs::op_print` -> `std::io::stdout()`
+/// /`stderr()`), so this has to redirect the fd itself, not a Rust-level
+/// handle.
+struct FdCapture {
+    saved: RawFd,
+    target_fd: RawFd,
+    reader: std::fs::File,
+}
+
+impl FdCapture {
+    fn start(target_fd: RawFd) -> Self {
+        let mut fds = [0i32; 2];
+        let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+        assert_eq!(rc, 0, "pipe() failed: {}", std::io::Error::last_os_error());
+        let (read_fd, write_fd) = (fds[0], fds[1]);
+
+        let saved = unsafe { libc::dup(target_fd) };
+        assert!(saved >= 0, "dup({target_fd}) failed: {}", std::io::Error::last_os_error());
+
+        // dup2 returns the new fd (== target_fd) on success, -1 on error —
+        // not 0.
+        let rc = unsafe { libc::dup2(write_fd, target_fd) };
+        assert_eq!(rc, target_fd, "dup2 failed: {}", std::io::Error::last_os_error());
+        unsafe { libc::close(write_fd) };
+
+        use std::os::unix::io::FromRawFd;
+        let reader = unsafe { std::fs::File::from_raw_fd(read_fd) };
+        FdCapture {
+            saved,
+            target_fd,
+            reader,
+        }
+    }
+
+    /// Restores the original fd (closing the pipe's write end so the
+    /// reader observes EOF) and returns everything captured.
+    fn finish(mut self) -> String {
+        let rc = unsafe { libc::dup2(self.saved, self.target_fd) };
+        assert_eq!(
+            rc,
+            self.target_fd,
+            "dup2 restore failed: {}",
+            std::io::Error::last_os_error()
+        );
+        unsafe { libc::close(self.saved) };
+        let mut buf = Vec::new();
+        self.reader
+            .read_to_end(&mut buf)
+            .expect("read captured output");
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+}
+
+/// Runs `handler_code` with both fd 1 and fd 2 captured, returning
+/// (stdout, stderr). Panics (via `expect`/`assert`) surface as normal test
+/// failures; the pool's own response is asserted by the caller.
+fn run_capturing_stdio(handler_code: &str) -> (String, String, pool::IsolateResponse) {
+    let _guard = stdio_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let out_cap = FdCapture::start(libc::STDOUT_FILENO);
+    let err_cap = FdCapture::start(libc::STDERR_FILENO);
+
+    let pool = console_pool();
+    let response = tokio::runtime::Runtime::new()
+        .expect("tokio runtime")
+        .block_on(pool.execute(HandlerKey::new("console_test"), handler_request(handler_code)))
+        .expect("pool execution");
+
+    let stdout = out_cap.finish();
+    let stderr = err_cap.finish();
+    (stdout, stderr, response)
+}
+
+fn ok_response(response: &pool::IsolateResponse) {
+    assert!(response.success, "execution failed: {:?}", response.error);
+}
+
+#[cfg(unix)]
+#[test]
+fn console_streams_are_separated_and_reach_real_stdio() {
+    let handler = r#"
+globalThis.app = function(req) {
+  console.log("mark-log", 1);
+  console.info("mark-info");
+  console.debug("mark-debug");
+  console.dir("mark-dir");
+  console.dirxml("mark-dirxml");
+  console.warn("mark-warn");
+  console.error("mark-error");
+  console.assert(false, "mark-assert");
+  console.assert(true, "mark-assert-silent");
+  return { status: 200, headers: {}, body: "done" };
+};
+"#;
+    let (stdout, stderr, response) = run_capturing_stdio(handler);
+    ok_response(&response);
+
+    for token in ["mark-log 1", "mark-info", "mark-debug", "mark-dir", "mark-dirxml"] {
+        assert!(stdout.contains(token), "stdout missing {token:?}: {stdout:?}");
+    }
+    for token in ["mark-warn", "mark-error", "Assertion failed: mark-assert"] {
+        assert!(stderr.contains(token), "stderr missing {token:?}: {stderr:?}");
+    }
+    // The condition-true assert call must be silent.
+    assert!(!stderr.contains("mark-assert-silent"), "assert(true, ...) must not print: {stderr:?}");
+
+    // Separation: stdout-only tokens never land on stderr and vice versa.
+    for token in ["mark-log", "mark-info", "mark-debug", "mark-dir", "mark-dirxml"] {
+        assert!(!stderr.contains(token), "{token:?} leaked onto stderr: {stderr:?}");
+    }
+    for token in ["mark-warn", "mark-error"] {
+        assert!(!stdout.contains(token), "{token:?} leaked onto stdout: {stdout:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn console_log_prints_structured_values_not_object_object() {
+    let handler = r#"
+globalThis.app = function(req) {
+  const structProto = Object.create(null);
+  Object.defineProperty(structProto, '__deka_struct', { value: 'Point', enumerable: false });
+  const point = Object.assign(Object.create(structProto), { x: 3, y: 4 });
+
+  console.log(point);
+  console.log(Option.Some(5));
+  console.log(Option.None);
+  console.log(Result.Ok(5));
+  console.log(Result.Err("bad"));
+  console.log([1, "two", true]);
+  console.log({ a: 1, nested: Option.Some("x") });
+  return { status: 200, headers: {}, body: "done" };
+};
+"#;
+    let (stdout, _stderr, response) = run_capturing_stdio(handler);
+    ok_response(&response);
+
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "Point { x: 3, y: 4 }",
+            "Some(5)",
+            "None",
+            "Ok(5)",
+            "Err(\"bad\")",
+            "[ 1, \"two\", true ]",
+            "{ a: 1, nested: Some(\"x\") }",
+        ],
+        "structured console.log output mismatch: {stdout:?}"
+    );
+    assert!(!stdout.contains("[object Object]"), "fell back to String(): {stdout:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn console_group_indents_and_count_time_track_labels() {
+    let handler = r#"
+globalThis.app = function(req) {
+  console.log("outer-1");
+  console.group("G");
+  console.log("inner");
+  console.groupEnd();
+  console.log("outer-2");
+
+  console.count();
+  console.count();
+  console.countReset();
+  console.count();
+
+  console.time("t");
+  console.timeEnd("t");
+  console.timeEnd("missing-timer");
+  return { status: 200, headers: {}, body: "done" };
+};
+"#;
+    let (stdout, stderr, response) = run_capturing_stdio(handler);
+    ok_response(&response);
+
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines[0], "outer-1");
+    assert_eq!(lines[1], "G");
+    assert_eq!(lines[2], "  inner", "group() must indent nested output: {stdout:?}");
+    assert_eq!(lines[3], "outer-2", "groupEnd() must restore indentation: {stdout:?}");
+    assert_eq!(lines[4], "default: 1");
+    assert_eq!(lines[5], "default: 2");
+    assert_eq!(lines[6], "default: 1", "countReset() must zero the label: {stdout:?}");
+    assert!(lines[7].starts_with("t: ") && lines[7].ends_with("ms"), "timeEnd format: {stdout:?}");
+
+    assert!(
+        stderr.contains("Timer 'missing-timer' does not exist"),
+        "timeEnd on an unknown label must warn to stderr: {stderr:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn console_has_exactly_the_whatwg_surface_no_chrome_only_extras() {
+    let handler = r#"
+globalThis.app = function(req) {
+  const whatwg = [
+    "assert", "clear", "count", "countReset", "debug", "dir", "dirxml",
+    "error", "group", "groupCollapsed", "groupEnd", "info", "log", "table",
+    "time", "timeEnd", "timeLog", "trace", "warn",
+  ];
+  const missing = whatwg.filter((m) => typeof console[m] !== "function");
+  // profile/profileEnd/timeStamp/createTask are Chrome DevTools extras, not
+  // WHATWG Console Standard members; deno_core defines no built-in console
+  // at all (only the raw print op), so nothing exposes these unless this
+  // file adds them itself.
+  const chromeOnly = ["profile", "profileEnd", "timeStamp", "createTask"];
+  const present = chromeOnly.filter((m) => m in console);
+  return { status: 200, headers: {}, body: JSON.stringify({ missing, present }) };
+};
+"#;
+    let (_stdout, _stderr, response) = run_capturing_stdio(handler);
+    ok_response(&response);
+    let body = response
+        .result
+        .as_ref()
+        .expect("result")
+        .get("body")
+        .and_then(serde_json::Value::as_str)
+        .expect("body")
+        .to_string();
+    let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
+    assert_eq!(parsed["missing"], serde_json::json!([]), "console is missing WHATWG methods: {body}");
+    assert_eq!(
+        parsed["present"],
+        serde_json::json!([]),
+        "console must not expose Chrome-only, non-WHATWG methods: {body}"
+    );
+}

@@ -1,0 +1,7 @@
+enum Shape {
+  Circle(number),
+  Square(number),
+}
+
+const s = Shape.Circle(5)
+console.log(s)
