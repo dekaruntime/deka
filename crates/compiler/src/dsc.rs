@@ -90,16 +90,33 @@ pub fn dsc_identity() -> Option<String> {
         .map(str::to_string)
 }
 
-/// `dsc check <path>`; failure carries dsc's stderr. When `project_root` is
-/// given, dsc runs from it with `DEKA_MODULE_ROOT` set — the same context
-/// `deka build` compiles project sources in — so project-local and bare
-/// `@deka/*` imports resolve.
+/// Resolve the CLI dsc or exit 1 with the install hint. Checking a whole
+/// project resolves the compiler once up front so a missing dsc is one
+/// tooling error, not one hint per source file.
+pub fn require_cli_dsc() -> PathBuf {
+    match find_cli_dsc() {
+        Ok(Some(bin)) => bin,
+        Ok(None) => {
+            stdio::error("cli", MISSING_DSC);
+            std::process::exit(1);
+        }
+        Err(err) => {
+            stdio::error("cli", &err);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `dsc check <path>` with the already-resolved `dsc` binary; failure
+/// carries dsc's stderr. When `project_root` is given, dsc runs from it with
+/// `DEKA_MODULE_ROOT` set — the same context `deka build` compiles project
+/// sources in — so project-local and bare `@deka/*` imports resolve.
 pub fn check_path(
+    dsc: &std::path::Path,
     path: &std::path::Path,
     project_root: Option<&std::path::Path>,
 ) -> Result<(), String> {
-    let dsc = find_cli_dsc()?.ok_or_else(|| MISSING_DSC.to_string())?;
-    let mut cmd = Command::new(&dsc);
+    let mut cmd = Command::new(dsc);
     if let Some(root) = project_root {
         cmd.current_dir(root).env("DEKA_MODULE_ROOT", root);
     }

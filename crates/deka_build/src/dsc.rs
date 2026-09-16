@@ -40,7 +40,8 @@ pub enum ProjectEmit {
 }
 
 pub fn check_path(path: &Path) -> Result<(), String> {
-    compiler::dsc::check_path(path, None)
+    let dsc = dsc_bin()?;
+    compiler::dsc::check_path(&dsc, path, None)
 }
 
 pub fn transpile_file(path: &Path) -> Result<String, String> {

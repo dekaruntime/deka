@@ -37,15 +37,28 @@ pub fn cmd(context: &Context) {
     crate::dsc::exec_if_present();
 }
 
+/// Flags that turn `deka check` into a single-target check; without a
+/// target they are usage errors. The parser's `--flag=value` form lands the
+/// value in `params` (not `positionals`), which still counts as a target.
+const TARGET_FLAGS: [&str; 2] = ["--as-package", "--single-file"];
+
 /// Bare `deka check` (deka#1100): exec'ing dsc with no argument makes the
 /// inner tool's usage text (`[check] usage: dsc check <file.ds>`) the first
 /// thing a new user sees. Intercept instead: with a project at the cwd,
 /// check every project source tree; without one, answer with deka's own
 /// usage. `deka check <file>` keeps exec'ing dsc unchanged.
 fn check_bare(context: &Context) {
-    if context.args.flags.contains_key("--as-package")
-        || context.args.flags.contains_key("--single-file")
-    {
+    let has_target = TARGET_FLAGS
+        .iter()
+        .any(|flag| context.args.params.contains_key(*flag));
+    let has_flag_without_target = TARGET_FLAGS
+        .iter()
+        .any(|flag| context.args.flags.contains_key(*flag));
+    if has_target {
+        crate::dsc::exec_if_present();
+        return;
+    }
+    if has_flag_without_target {
         stdio::error("check", USAGE);
         std::process::exit(2);
     }
@@ -56,8 +69,10 @@ fn check_bare(context: &Context) {
         std::process::exit(2);
     }
 
+    let dsc = crate::dsc::require_cli_dsc();
+
     let mut failures = 0usize;
-    let mut checked = 0usize;
+    let mut total = 0usize;
     for tree in PROJECT_SOURCE_TREES {
         let sources = match crate::dsc::collect_deka_source_files(&root.join(tree)) {
             Ok(sources) => sources,
@@ -67,18 +82,16 @@ fn check_bare(context: &Context) {
             }
         };
         for path in sources {
+            total += 1;
             let rel = path.strip_prefix(root).unwrap_or(&path);
-            match crate::dsc::check_path(rel, Some(root)) {
-                Ok(()) => checked += 1,
-                Err(diagnostic) => {
-                    failures += 1;
-                    stdio::error("check", &diagnostic);
-                }
+            if let Err(diagnostic) = crate::dsc::check_path(&dsc, rel, Some(root)) {
+                failures += 1;
+                stdio::error("check", &diagnostic);
             }
         }
     }
 
-    if checked == 0 {
+    if total == 0 {
         stdio::error(
             "check",
             "no project sources (.ds/.dsx) found in app/, api/, or src/ — check a file directly: deka check <file.ds>",
@@ -86,7 +99,11 @@ fn check_bare(context: &Context) {
         std::process::exit(1);
     }
     if failures > 0 {
+        stdio::error(
+            "check",
+            &format!("{failures} of {total} project source(s) failed"),
+        );
         std::process::exit(1);
     }
-    stdio::success(&format!("checked {checked} DekaScript source(s)"));
+    stdio::success(&format!("checked {total} DekaScript source(s)"));
 }
