@@ -117,7 +117,13 @@ jobs:
           DEKA_DSC: ${{ github.workspace }}/.ci/dsc
           NO_COLOR: "1"
           FORCE_COLOR: "0"
-        run: cargo test --locked --release -p cli --test compile_executable
+        # Dev profile on purpose: `--release` here forced a complete second build
+        # of the workspace (~1,600 crates) in a profile nothing earlier in the
+        # job had compiled, and on the darwin runners that build missed sccache
+        # every time (11 min arm64 / 23+ min x64 vs 5 min for the whole linux
+        # job). The test copies the `cli` binary and runs the result; the
+        # profile it was built with proves nothing extra.
+        run: cargo test --locked -p cli --test compile_executable
 
   fetch-dsc-wasm:
     name: Fetch published dsc WASM
