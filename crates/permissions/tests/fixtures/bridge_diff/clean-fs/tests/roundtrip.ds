@@ -1,0 +1,17 @@
+import { read_file, read_file_sync, write_file, write_file_sync, read_dir, read_dir_sync, mkdirs, mkdirs_sync } from "../index.ds"
+
+// FS deliberately has no text helpers. This test carries fixture bytes through
+// both surfaces without decoding or manufacturing a payload from a string.
+
+async fn go() {
+  let source = await read_file("tests/hello.txt")
+  let made = await mkdirs("tests/tmp-out")
+  let listed = await read_dir("tests/tmp-out")
+
+  // Real sync counterparts: no await and no async wrapper.
+  let sync_made = mkdirs_sync("tests/tmp-out-sync")
+  let sync_source = read_file_sync("tests/hello.txt")
+  let sync_listed = read_dir_sync("tests/tmp-out-sync")
+}
+
+go()

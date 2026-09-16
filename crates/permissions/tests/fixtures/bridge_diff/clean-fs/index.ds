@@ -1,0 +1,107 @@
+// Host-granted filesystem operations.
+//
+// The package is deliberately thin: the host grant permits these `bridge fs.*`
+// calls, and the host checks phase-aware, target-scoped permissions. There is
+// no package policy or fallback path. File data is always `bytes`; this module
+// never decodes it. Callers that need text must explicitly use @deka/bytes and
+// handle its strict UTF-8 failure value.
+//
+// The async operations yield while the host performs IO. Their `_sync` twins
+// are genuinely blocking host operations for startup and script work; they are
+// not Promises wrapped in a synchronous-looking API.
+//
+// Every export wraps a `bridge fs.*` call and needs an explicit `unsafe<T> {
+// raw }` cast at the source (dsc#223: `Type::Infer` is no longer assignable as
+// a source, and `bridge` calls always type as `Result<Infer, Infer>` — the
+// enclosing fn's return-type annotation alone does not fix this, since the
+// `return` statement itself performs that assignment). The cast is unwrapped
+// through a `match` whose arms preserve the typed value, so the host's
+// materialized FsError reaches callers unchanged. See @deka/tcp and
+// @deka/crypto for the same pattern with a plain string error.
+
+interface DirEntry {
+  name: string
+  is_dir: boolean
+  is_file: boolean
+}
+
+struct FsPermission {
+  capability: string
+  target: string
+}
+
+// Every public operation returns this enum, never a string error. The host
+// materializes these values at the bridge boundary so callers can distinguish
+// denied IO from a missing native filesystem without inspecting messages.
+enum FsError {
+  PermissionDenied(FsPermission),
+  UnsupportedHost,
+  InvalidPayload,
+  Failed(string),
+}
+
+export { FsPermission, FsError }
+
+export async fn read_file(path: string) Promise<Result<bytes, FsError>> {
+  const raw = await bridge fs.read_file(path)
+  return match (unsafe<Result<bytes, FsError>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err(FsError.Failed("read_file: cast failed")),
+  }
+}
+
+export fn read_file_sync(path: string) Result<bytes, FsError> {
+  const raw = bridge fs.read_file_sync(path)
+  return match (unsafe<Result<bytes, FsError>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err(FsError.Failed("read_file_sync: cast failed")),
+  }
+}
+
+export async fn write_file(path: string, data: bytes) Promise<Result<number, FsError>> {
+  const raw = await bridge fs.write_file(path, data)
+  return match (unsafe<Result<number, FsError>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err(FsError.Failed("write_file: cast failed")),
+  }
+}
+
+export fn write_file_sync(path: string, data: bytes) Result<number, FsError> {
+  const raw = bridge fs.write_file_sync(path, data)
+  return match (unsafe<Result<number, FsError>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err(FsError.Failed("write_file_sync: cast failed")),
+  }
+}
+
+export async fn read_dir(path: string) Promise<Result<Array<DirEntry>, FsError>> {
+  const raw = await bridge fs.read_dir(path)
+  return match (unsafe<Result<Array<DirEntry>, FsError>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err(FsError.Failed("read_dir: cast failed")),
+  }
+}
+
+export fn read_dir_sync(path: string) Result<Array<DirEntry>, FsError> {
+  const raw = bridge fs.read_dir_sync(path)
+  return match (unsafe<Result<Array<DirEntry>, FsError>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err(FsError.Failed("read_dir_sync: cast failed")),
+  }
+}
+
+export async fn mkdirs(path: string) Promise<Result<boolean, FsError>> {
+  const raw = await bridge fs.mkdirs(path)
+  return match (unsafe<Result<boolean, FsError>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err(FsError.Failed("mkdirs: cast failed")),
+  }
+}
+
+export fn mkdirs_sync(path: string) Result<boolean, FsError> {
+  const raw = bridge fs.mkdirs_sync(path)
+  return match (unsafe<Result<boolean, FsError>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err(FsError.Failed("mkdirs_sync: cast failed")),
+  }
+}

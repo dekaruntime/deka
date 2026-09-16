@@ -1,0 +1,15 @@
+import { connect } from "../index.ds"
+
+fn go() {
+  const refused = match (connect("127.0.0.1", 1)) {
+    Ok(h) => false,
+    Err(e) => true
+  };
+  if (!refused) {
+    print("fail-refused");
+    return;
+  }
+  print("ok");
+}
+
+go()

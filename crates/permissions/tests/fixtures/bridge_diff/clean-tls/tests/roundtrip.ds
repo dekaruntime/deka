@@ -1,0 +1,15 @@
+import { upgrade } from "../index.ds"
+
+fn go() {
+  const missing = match (upgrade(0, "localhost")) {
+    Ok(h) => false,
+    Err(e) => true
+  };
+  if (!missing) {
+    print("fail-unknown-handle");
+    return;
+  }
+  print("ok");
+}
+
+go()

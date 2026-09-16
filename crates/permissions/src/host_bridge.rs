@@ -29,11 +29,6 @@
 //! deliberately absent — the catalog lists only genuinely host-implemented
 //! actions, zero stubs.
 
-use std::fmt;
-use std::path::Path;
-
-use serde::{Deserialize, Serialize};
-
 // ---- Operation catalog -----------------------------------------------------
 
 /// Wire representation of one bridge argument / result value.
@@ -540,164 +535,80 @@ pub fn js_catalog_json() -> String {
     serde_json::Value::Object(kinds).to_string()
 }
 
-// ---- Host grants -----------------------------------------------------------
-
-/// A grant record: which bridge kinds one locked dependency digest unlocks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HostGrant {
-    pub name: String,
-    pub version: String,
-    /// Lockfile-pinned content digest; the lookup key.
-    pub digest: String,
-    pub kinds: Vec<String>,
-}
-
-/// Grant table deserialized from the project's grant-table JSON (an array of
-/// [`HostGrant`]).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct GrantTable {
-    pub grants: Vec<HostGrant>,
-}
-
-impl GrantTable {
-    /// Parse a grant-table JSON document (array of grants).
-    pub fn from_json(json: &str) -> Result<Self, String> {
-        serde_json::from_str(json).map_err(|error| format!("invalid grant table: {error}"))
-    }
-
-    /// Find the grant for a lockfile-pinned digest.
-    pub fn lookup(&self, digest: &str) -> Option<&HostGrant> {
-        self.grants.iter().find(|grant| grant.digest == digest)
-    }
-}
-
-/// Compile-time grant violation (RFD 27).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GrantError {
-    /// An application package (non-`@deka/*`) declared `host.kinds` in its
-    /// manifest. Only official packages may self-declare kinds; application
-    /// bridge access must come from the project's grant table.
-    AppDeclaresHostKinds { package: String, path: String },
-}
-
-impl fmt::Display for GrantError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            GrantError::AppDeclaresHostKinds { package, path } => write!(
-                formatter,
-                "package '{package}' ({path}) declares host.kinds, but only @deka/* packages may self-declare bridge kinds"
-            ),
+/// Machine-readable dump of the FULL catalog for external tooling
+/// (deka#620: diffing published packages' hand-maintained bridge declarations
+/// against this catalog — see `bridge_diff` and `bridge_decl`). Unlike
+/// [`js_catalog_json`] (the minimal gate payload for the isolate bootstrap),
+/// this includes grant owners, argument names + wire types, and result shapes,
+/// so a declaration diff can be derived from the same source of truth instead
+/// of a hand-copied signature list.
+pub fn catalog_json() -> String {
+    fn wire_json(wire: WireType) -> serde_json::Value {
+        match wire {
+            WireType::Str => serde_json::json!("string"),
+            WireType::Num => serde_json::json!("number"),
+            WireType::Bool => serde_json::json!("boolean"),
+            WireType::Bytes => serde_json::json!("bytes"),
+            WireType::Handle => serde_json::json!("number"),
+            WireType::Json => serde_json::json!("json"),
         }
     }
-}
-
-impl std::error::Error for GrantError {}
-
-/// Official (workspace) packages may self-declare bridge kinds.
-pub fn is_official_package_name(name: &str) -> bool {
-    name.starts_with("@deka/")
-}
-
-/// RFD 27 project-root rule: a project-root manifest that sets `host.kinds`
-/// grants those kinds only when the package is official (`@deka/*` workspace
-/// grant); an application project root declaring kinds is a compile error.
-/// No `host.kinds` → no root grants.
-pub fn resolve_project_root_grants(
-    manifest_name: &str,
-    manifest_path: &Path,
-    host_kinds: Option<&[String]>,
-) -> Result<Vec<String>, GrantError> {
-    let Some(kinds) = host_kinds else {
-        return Ok(Vec::new());
-    };
-    if is_official_package_name(manifest_name) {
-        Ok(kinds.to_vec())
-    } else {
-        Err(GrantError::AppDeclaresHostKinds {
-            package: manifest_name.to_string(),
-            path: manifest_path.display().to_string(),
-        })
-    }
-}
-
-/// RFD 27 dependency rule: a dependency manifest's `host.kinds` is untrusted
-/// and ignored. Grants come only from the grant table via the lockfile-pinned
-/// digest; no pin or no table hit → no grants.
-pub fn resolve_dependency_grants(table: &GrantTable, lock_digest: Option<&str>) -> Vec<String> {
-    let Some(digest) = lock_digest else {
-        return Vec::new();
-    };
-    table
-        .lookup(digest)
-        .map(|grant| grant.kinds.clone())
-        .unwrap_or_default()
-}
-
-/// Union of the kinds granted to a project: the project-root grants (workspace
-/// rule) plus, for each pinned dependency digest, the table lookup result.
-/// Returns the [`GrantError`] unchanged when the project root declared kinds
-/// illegally. The result is deduplicated in first-seen order.
-pub fn granted_kind_names(
-    project_root: &Result<Vec<String>, GrantError>,
-    table: &GrantTable,
-    dependency_digests: &[Option<String>],
-) -> Result<Vec<String>, GrantError> {
-    let mut names: Vec<String> = Vec::new();
-    let mut push = |name: &str| {
-        if !names.iter().any(|existing| existing == name) {
-            names.push(name.to_string());
-        }
-    };
-    for kind in project_root.as_ref().map_err(Clone::clone)? {
-        push(kind);
-    }
-    for digest in dependency_digests {
-        for kind in resolve_dependency_grants(table, digest.as_deref()) {
-            push(&kind);
+    fn shape_json(shape: ResultShape) -> serde_json::Value {
+        match shape {
+            ResultShape::Bytes => serde_json::json!("bytes"),
+            ResultShape::Num => serde_json::json!("number"),
+            ResultShape::Bool => serde_json::json!("boolean"),
+            ResultShape::Unit => serde_json::json!("unit"),
+            ResultShape::Handle => serde_json::json!("number"),
+            ResultShape::Entries => serde_json::json!("entries"),
+            ResultShape::Json => serde_json::json!("json"),
         }
     }
-    Ok(names)
-}
-
-// ---- PermissionDenied ------------------------------------------------------
-
-/// Marker prefixed to the encoded denial so it survives the CoreError /
-/// thrown-message boundary between the Rust op and DekaScript.
-pub const PERMISSION_DENIED_MARKER: &str = "__DEKA_PERMISSION_DENIED__";
-
-/// A bridge call denied by the capability policy. Encoded with
-/// [`PERMISSION_DENIED_MARKER`] + compact JSON on the wire; decoded back on
-/// the JS side into a DS-level `Err` — never a throw.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PermissionDenied {
-    pub capability: String,
-    pub target: String,
-}
-
-impl PermissionDenied {
-    /// Wire encoding: [`PERMISSION_DENIED_MARKER`] + compact JSON
-    /// `{"capability":..,"target":..}`.
-    pub fn encode(&self) -> String {
-        let json = serde_json::to_string(self)
-            .unwrap_or_else(|_| "{\"capability\":\"\",\"target\":\"\"}".to_string());
-        format!("{PERMISSION_DENIED_MARKER}{json}")
+    let mut kinds = serde_json::Map::new();
+    for kind in HOST_CATALOG {
+        let mut actions = serde_json::Map::new();
+        for action in kind.actions {
+            let args: Vec<serde_json::Value> = action
+                .args
+                .iter()
+                .map(|host_arg| {
+                    serde_json::json!({"name": host_arg.name, "wire": wire_json(host_arg.wire)})
+                })
+                .collect();
+            actions.insert(
+                action.name.to_string(),
+                serde_json::json!({
+                    "args": args,
+                    "result": shape_json(action.result),
+                    "async": action.r#async,
+                }),
+            );
+        }
+        kinds.insert(
+            kind.name.to_string(),
+            serde_json::json!({
+                "grant_owner": kind.grant_owner,
+                "actions": actions,
+            }),
+        );
     }
-
-    /// Decode a CoreError/thrown message back into a denial; `None` when the
-    /// message is not a denial (no marker, bad JSON, wrong shape).
-    pub fn decode(message: &str) -> Option<Self> {
-        let json = message.strip_prefix(PERMISSION_DENIED_MARKER)?;
-        serde_json::from_str(json).ok()
-    }
+    serde_json::Value::Object(kinds).to_string()
 }
+
+// Re-exported so existing `permissions::host_bridge::*` grant and denial paths
+// keep working after the grants/PermissionDenied split (deka#391 file-size
+// gate: that file owns the catalog, this one stays under the line limit).
+pub use crate::host_grants::{
+    GrantError, GrantTable, HostGrant, PERMISSION_DENIED_MARKER, PermissionDenied,
+    granted_kind_names, is_official_package_name, resolve_dependency_grants,
+    resolve_project_root_grants,
+};
 
 // ---- Tests -----------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn catalog_is_complete_and_wellformed() {
@@ -843,117 +754,49 @@ mod tests {
     }
 
     #[test]
-    fn grant_table_roundtrips_and_lookups_by_digest() {
-        let json = r#"[
-            {"name":"@deka/fs","version":"1.2.0","digest":"sha256:aaa","kinds":["fs"]},
-            {"name":"@deka/tcp","version":"0.9.1","digest":"sha256:bbb","kinds":["net","tls"]}
-        ]"#;
-        let table = GrantTable::from_json(json).expect("parse");
-        assert_eq!(table.grants.len(), 2);
-        let hit = table.lookup("sha256:bbb").expect("digest hit");
-        assert_eq!(hit.name, "@deka/tcp");
-        assert_eq!(hit.kinds, vec!["net", "tls"]);
-        assert!(table.lookup("sha256:missing").is_none());
-        assert!(GrantTable::from_json("not json").is_err());
-        assert!(GrantTable::from_json("{}").is_err());
-    }
-
-    #[test]
-    fn project_root_grants_follow_rfd27_rules() {
-        let path = PathBuf::from("/proj/deka.json");
-        // Official workspace root may self-declare kinds.
-        let official = resolve_project_root_grants("@deka/fs", &path, Some(&["fs".to_string()]));
-        assert_eq!(official, Ok(vec!["fs".to_string()]));
-        // Official root without kinds grants nothing.
-        assert_eq!(
-            resolve_project_root_grants("@deka/fs", &path, None),
-            Ok(vec![])
-        );
-        // App root declaring kinds is a compile error.
-        let app = resolve_project_root_grants("my-app", &path, Some(&["fs".to_string()]));
-        assert_eq!(
-            app,
-            Err(GrantError::AppDeclaresHostKinds {
-                package: "my-app".to_string(),
-                path: "/proj/deka.json".to_string(),
-            })
-        );
-        // App root without kinds is fine and grants nothing.
-        assert_eq!(
-            resolve_project_root_grants("my-app", &path, None),
-            Ok(vec![])
-        );
-        assert!(is_official_package_name("@deka/crypto"));
-        assert!(!is_official_package_name("my-app"));
-    }
-
-    #[test]
-    fn dependency_grants_come_only_from_the_table() {
-        let table = GrantTable::from_json(
-            r#"[{"name":"@deka/fs","version":"1.0.0","digest":"sha256:aaa","kinds":["fs"]}]"#,
-        )
-        .unwrap();
-        assert_eq!(
-            resolve_dependency_grants(&table, Some("sha256:aaa")),
-            vec!["fs"]
-        );
-        // No lock pin → no grants, even with a populated table.
-        assert!(resolve_dependency_grants(&table, None).is_empty());
-        // Pin with no table hit → no grants.
-        assert!(resolve_dependency_grants(&table, Some("sha256:zzz")).is_empty());
-    }
-
-    #[test]
-    fn granted_kind_names_unions_root_and_dependencies() {
-        let table = GrantTable::from_json(
-            r#"[
-                {"name":"@deka/fs","version":"1.0.0","digest":"sha256:aaa","kinds":["fs"]},
-                {"name":"@deka/tcp","version":"2.0.0","digest":"sha256:bbb","kinds":["net","tls","fs"]}
-            ]"#,
-        )
-        .unwrap();
-        let root = Ok(vec!["crypto".to_string(), "fs".to_string()]);
-        let digests = vec![
-            Some("sha256:aaa".to_string()),
-            None,
-            Some("sha256:bbb".to_string()),
-        ];
-        let names = granted_kind_names(&root, &table, &digests).expect("grants");
-        // Deduped, first-seen order: root kinds then dependency kinds.
-        assert_eq!(names, vec!["crypto", "fs", "net", "tls"]);
-        // Root grant error propagates unchanged.
-        let err = Err(GrantError::AppDeclaresHostKinds {
-            package: "app".to_string(),
-            path: "/p/deka.json".to_string(),
-        });
-        assert_eq!(granted_kind_names(&err, &table, &digests), err);
-    }
-
-    #[test]
-    fn permission_denied_roundtrips_and_rejects_garbage() {
-        let denial = PermissionDenied {
-            capability: "fs.read".to_string(),
-            target: "/etc/passwd".to_string(),
-        };
-        let encoded = denial.encode();
-        assert!(encoded.starts_with(PERMISSION_DENIED_MARKER));
-        assert_eq!(PermissionDenied::decode(&encoded), Some(denial));
-
-        // Non-denial messages decode to None.
-        assert_eq!(PermissionDenied::decode("some other error"), None);
-        assert_eq!(PermissionDenied::decode(""), None);
-        // Truncated payload: marker present but no/invalid JSON.
-        assert_eq!(PermissionDenied::decode(PERMISSION_DENIED_MARKER), None);
-        assert_eq!(
-            PermissionDenied::decode(&format!("{PERMISSION_DENIED_MARKER}{{")),
-            None
-        );
-        assert_eq!(
-            PermissionDenied::decode(&format!("{PERMISSION_DENIED_MARKER}[1,2]")),
-            None
-        );
-        // Marker in the middle of a larger message is not a denial.
-        let wrapped = format!("op failed: {}", encoded);
-        assert_eq!(PermissionDenied::decode(&wrapped), None);
+    fn catalog_json_roundtrips_and_matches_catalog() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&catalog_json()).expect("catalog_json parses");
+        let object = parsed.as_object().expect("top-level object");
+        assert_eq!(object.len(), HOST_CATALOG.len());
+        for kind in HOST_CATALOG {
+            let kind_value = object.get(kind.name).expect("kind present");
+            assert_eq!(
+                kind_value
+                    .get("grant_owner")
+                    .and_then(serde_json::Value::as_str),
+                Some(kind.grant_owner)
+            );
+            let actions = kind_value
+                .get("actions")
+                .and_then(serde_json::Value::as_object)
+                .expect("actions object");
+            assert_eq!(actions.len(), kind.actions.len());
+            for action in kind.actions {
+                let action_value = actions.get(action.name).expect("action present");
+                assert_eq!(
+                    action_value
+                        .get("async")
+                        .and_then(serde_json::Value::as_bool),
+                    Some(action.r#async),
+                    "{}.{} async flag",
+                    kind.name,
+                    action.name
+                );
+                let args = action_value
+                    .get("args")
+                    .and_then(serde_json::Value::as_array)
+                    .expect("args array");
+                assert_eq!(args.len(), action.args.len());
+                for (arg_value, host_arg) in args.iter().zip(action.args.iter()) {
+                    assert_eq!(
+                        arg_value.get("name").and_then(serde_json::Value::as_str),
+                        Some(host_arg.name)
+                    );
+                    assert!(arg_value.get("wire").is_some());
+                }
+                assert!(action_value.get("result").is_some());
+            }
+        }
     }
 }

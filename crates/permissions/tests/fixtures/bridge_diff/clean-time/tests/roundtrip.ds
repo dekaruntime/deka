@@ -1,0 +1,21 @@
+import { now, sleep_ms } from "../index.ds"
+
+summon { total log(message: string) void } from "./log.mjs"
+
+fn go() {
+  const before = now();
+  const slept = match (sleep_ms(1)) {
+    Ok(v) => true,
+    Err(e) => false
+  };
+  const after = now();
+  if (!slept) {
+    panic("fail-sleep");
+  }
+  if (!(before > 0) || !(after >= before)) {
+    panic("fail-now");
+  }
+  log("ok");
+}
+
+go()

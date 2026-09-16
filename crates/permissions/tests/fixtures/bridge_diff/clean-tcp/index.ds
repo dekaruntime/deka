@@ -1,0 +1,65 @@
+// Host-granted TCP. Handles are rids (number). Bind byte results with `let`.
+//
+// Every export wraps a `bridge net.*` call and needs an explicit return type
+// PLUS an `unsafe<T> { raw }` cast at the source (dsc#223: `bridge` calls
+// always type as `Result<Infer, Infer>`, and Infer is no longer assignable
+// as a source into a concrete type — the enclosing fn's return-type
+// annotation alone does not fix this, since the `return` statement itself
+// performs that assignment). See @deka/fs and @deka/crypto for the same
+// pattern.
+
+export fn connect(host: string, port: number) Result<number, string> {
+  const raw = bridge net.connect(host, port)
+  return match (unsafe<Result<number, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("connect: cast failed")
+  }
+}
+
+export fn listen(host: string, port: number) Result<number, string> {
+  const raw = bridge net.listen(host, port)
+  return match (unsafe<Result<number, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("listen: cast failed")
+  }
+}
+
+export fn accept(handle: number) Result<number, string> {
+  const raw = bridge net.accept(handle)
+  return match (unsafe<Result<number, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("accept: cast failed")
+  }
+}
+
+export fn read(handle: number, max_bytes: number = 4096) Result<bytes, string> {
+  const raw = bridge net.read(handle, max_bytes)
+  return match (unsafe<Result<bytes, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("read: cast failed")
+  }
+}
+
+export fn write(handle: number, data: bytes) Result<number, string> {
+  const raw = bridge net.write(handle, data)
+  return match (unsafe<Result<number, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("write: cast failed")
+  }
+}
+
+export fn close(handle: number) Result<boolean, string> {
+  const raw = bridge net.close(handle)
+  return match (unsafe<Result<boolean, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("close: cast failed")
+  }
+}
+
+export fn set_deadline(handle: number, millis: number) Result<boolean, string> {
+  const raw = bridge net.set_deadline(handle, millis)
+  return match (unsafe<Result<boolean, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("set_deadline: cast failed")
+  }
+}
