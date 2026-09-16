@@ -44,6 +44,9 @@ summon-non-function
 summon-opaque-hold
 summon-void-exempt
 
-# deka#932: the native URL polyfill now rejects `new URL("://invalid")` with
-# TypeError, matching Chromium; unsafe-unsafe-url-err agrees on both hosts and
-# is deliberately no longer listed.
+# deka#932: both hosts now reject `new URL("://invalid")` with a TypeError.
+# The behaviour agrees; only the wrapper text differs -- Chromium prefixes
+# "Failed to construct 'URL': Invalid URL", the native polyfill says
+# "Invalid URL". Host/runtime wrapper text, like the block above. Surfaced by
+# the v0.53.5 release dump (run 35058641346), which PR CI's linux dump did not.
+unsafe-unsafe-url-err
