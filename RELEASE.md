@@ -112,4 +112,4 @@ If you want a narrower token, scope it to the buckets above.
 
 - The workflow renames the built binary from `cli` to `deka` when staging artifacts.
 - Each platform build uses its own sccache bucket to avoid cross-platform cache poisoning.
-- We intentionally do not publish to npm or GitHub Packages; R2 is the single source of truth.
+- R2 is the single source of truth. The npm packages (`create-deka-app`, `@dekaruntime/deka*`) are copies of these R2 binaries, published by `dekaruntime/create-deka-app` after each release at the same version number; nothing is compiled there.
