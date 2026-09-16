@@ -355,3 +355,76 @@ globalThis.app = function(req) {
         "console must not expose Chrome-only, non-WHATWG methods: {body}"
     );
 }
+
+/// deka#1116: `cdp_morph_preserves_island_state_and_island_edit_reloads`
+/// (crates/cli/tests/server_fast_refresh.rs) hung on the very first page
+/// load in CI on this branch while every other test in that file, and
+/// every plain HTTP fetch of the same fixture, succeeded. That pointed at
+/// the printer: before this test existed, a throwing getter, a Proxy with
+/// a throwing trap, or a pathologically deep (non-cyclic) value handed to
+/// `console.log` could throw out of the formatter — and depending on where
+/// in the request lifecycle that happens, an uncaught JS exception can
+/// leave a request unresolved rather than cleanly failed. This pins the
+/// fix: the whole request must still complete and return 200, fast,
+/// no matter what `console.log` was asked to print.
+#[cfg(unix)]
+#[test]
+fn console_log_never_throws_or_hangs_on_hostile_values() {
+    let handler = r#"
+globalThis.app = function(req) {
+  const start = Date.now();
+
+  const throwingGetter = {};
+  Object.defineProperty(throwingGetter, 'x', {
+    get() { throw new Error('getter boom'); },
+    enumerable: true,
+  });
+  throwingGetter.y = 1;
+  console.log('getter:', throwingGetter);
+
+  const throwingProxy = new Proxy({}, {
+    ownKeys() { throw new Error('ownKeys boom'); },
+    get() { throw new Error('get boom'); },
+  });
+  console.log('proxy:', throwingProxy);
+
+  // Deep but non-cyclic — `seen` cycle detection alone would not catch
+  // this; only the depth cap does.
+  let deep = { v: 0 };
+  let cur = deep;
+  for (let i = 0; i < 5000; i++) {
+    cur.next = { v: i };
+    cur = cur.next;
+  }
+  console.log('deep:', deep);
+
+  const cyclic = {};
+  cyclic.self = cyclic;
+  console.log('cyclic:', cyclic);
+
+  const badLabelCount = { toString() { throw new Error('label boom'); } };
+  console.count(badLabelCount);
+  console.timeEnd(badLabelCount);
+
+  console.table(throwingProxy);
+
+  const elapsed = Date.now() - start;
+  return { status: 200, headers: {}, body: String(elapsed) };
+};
+"#;
+    let (_stdout, _stderr, response) = run_capturing_stdio(handler);
+    ok_response(&response);
+    let body = response
+        .result
+        .as_ref()
+        .expect("result")
+        .get("body")
+        .and_then(serde_json::Value::as_str)
+        .expect("body")
+        .to_string();
+    let elapsed_ms: u64 = body.parse().expect("elapsed body is a number");
+    assert!(
+        elapsed_ms < 5_000,
+        "hostile console values must not measurably stall the request; took {elapsed_ms}ms"
+    );
+}
