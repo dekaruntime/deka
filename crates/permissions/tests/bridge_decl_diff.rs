@@ -191,8 +191,11 @@ fn dump_catalog_emits_authoritative_json() {
         serde_json::json!("bytes")
     );
     assert_eq!(parsed["net"]["grant_owner"], serde_json::json!("@deka/tcp"));
-    // The #618 lesson, encoded: exactly the four fs actions are async.
-    let async_actions: Vec<String> = parsed
+    // The #618 lesson, encoded: exactly the four fs actions are async. Sort
+    // before comparing — a workspace build unifies serde_json's
+    // preserve_order feature (insertion order), while a -p permissions-only
+    // build sees BTreeMap order, and the set is what matters.
+    let mut async_actions: Vec<String> = parsed
         .as_object()
         .expect("catalog object")
         .iter()
@@ -205,6 +208,7 @@ fn dump_catalog_emits_authoritative_json() {
                 .map(move |(action, _)| format!("{kind}.{action}"))
         })
         .collect();
+    async_actions.sort_unstable();
     assert_eq!(
         async_actions,
         vec![
