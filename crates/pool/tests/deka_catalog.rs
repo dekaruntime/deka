@@ -834,7 +834,9 @@ export fn app(req: string) string {
 }
 "#);
     let source = project.path().join("main.ds");
-    let modules = pool::dsc_compile::compile_graph(project.path(), &source).expect("compile original graph");
+    let modules = pool::dsc_compile::compile_graph(project.path(), &source)
+        .expect("compile original graph")
+        .0;
     let js = pool::dsc_compile::lookup_js(&modules, &source).expect("emitted entry");
     assert!(js.contains("const __dsc_catalog ="), "compiler must bundle catalog helpers");
     write(project.path(), "compiled.js", js);

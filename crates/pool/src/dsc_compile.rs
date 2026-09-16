@@ -20,13 +20,18 @@ use runtime_core::dist::compiler_cache_dir;
 pub fn compile_graph(
     project_root: &Path,
     entry: &Path,
-) -> Result<HashMap<PathBuf, String>, String> {
-    let dsc = compiler::dsc::find_dsc()?.ok_or_else(|| {
-        format!(
-            "{DEKA_VALIDATION_ERROR_MARKER}dsc is required to compile DekaScript in the isolate. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH."
-        )
-    })?;
-    compile_graph_with_dsc(project_root, entry, &dsc)
+) -> Result<(HashMap<PathBuf, String>, PathBuf), String> {
+    let dsc = compiler::dsc::find_dsc()?.ok_or_else(missing_dsc_error)?;
+    let modules = compile_graph_with_dsc(project_root, entry, &dsc)?;
+    // Thread the resolved path back out so callers compiling a single file
+    // don't re-resolve it just to name the binary in failure diagnostics.
+    Ok((modules, dsc))
+}
+
+fn missing_dsc_error() -> String {
+    format!(
+        "{DEKA_VALIDATION_ERROR_MARKER}dsc is required to compile DekaScript in the isolate. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH."
+    )
 }
 
 /// Compile a graph with a compiler selected by the caller. Build owns its
@@ -121,12 +126,7 @@ pub fn lookup_js<'a>(
 /// does not dump them).
 pub fn compile_file(source: &Path) -> Result<String, String> {
     let root = source.parent().unwrap_or(source);
-    let modules = compile_graph(root, source)?;
-    let dsc = compiler::dsc::find_dsc()?.ok_or_else(|| {
-        format!(
-            "{DEKA_VALIDATION_ERROR_MARKER}dsc is required to compile DekaScript in the isolate. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH."
-        )
-    })?;
+    let (modules, dsc) = compile_graph(root, source)?;
     compiled_file(&modules, source, &dsc)
 }
 
@@ -137,16 +137,18 @@ pub fn compile_file_with_dsc(source: &Path, dsc: &Path) -> Result<String, String
     compiled_file(&modules, source, dsc)
 }
 
-fn compiled_file(modules: &HashMap<PathBuf, String>, source: &Path, dsc: &Path) -> Result<String, String> {
-    lookup_js(modules, source)
-        .cloned()
-        .ok_or_else(|| {
-            format!(
-                "{DEKA_VALIDATION_ERROR_MARKER}dsc did not emit {}\n{}",
-                source.display(),
-                compiler::dsc::compiler_identity_line(dsc)
-            )
-        })
+fn compiled_file(
+    modules: &HashMap<PathBuf, String>,
+    source: &Path,
+    dsc: &Path,
+) -> Result<String, String> {
+    lookup_js(modules, source).cloned().ok_or_else(|| {
+        format!(
+            "{DEKA_VALIDATION_ERROR_MARKER}dsc did not emit {}\n{}",
+            source.display(),
+            compiler::dsc::compiler_identity_line(dsc)
+        )
+    })
 }
 
 fn collect_js(
