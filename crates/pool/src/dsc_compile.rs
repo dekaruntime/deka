@@ -75,7 +75,8 @@ pub fn compile_graph_with_dsc(
         // real one. The conformance harness recorded that guess for 317 tests
         // and dropped 388 genuine diagnostics as a result (deka#739). If a
         // diagnosis is ever added back here it must go after dsc's own output,
-        // never in front of it.
+        // never in front of it. The binary-identity trailer below (deka#1101)
+        // follows that rule: same block, after the verbatim detail.
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.trim();
         let detail = if detail.is_empty() {
@@ -83,7 +84,10 @@ pub fn compile_graph_with_dsc(
         } else {
             detail.to_string()
         };
-        return Err(format!("{DEKA_VALIDATION_ERROR_MARKER}{detail}"));
+        return Err(format!(
+            "{DEKA_VALIDATION_ERROR_MARKER}{detail}\n{}",
+            compiler::dsc::compiler_identity_line(dsc)
+        ));
     }
 
     let mut modules = HashMap::new();
@@ -118,23 +122,29 @@ pub fn lookup_js<'a>(
 pub fn compile_file(source: &Path) -> Result<String, String> {
     let root = source.parent().unwrap_or(source);
     let modules = compile_graph(root, source)?;
-    compiled_file(&modules, source)
+    let dsc = compiler::dsc::find_dsc()?.ok_or_else(|| {
+        format!(
+            "{DEKA_VALIDATION_ERROR_MARKER}dsc is required to compile DekaScript in the isolate. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH."
+        )
+    })?;
+    compiled_file(&modules, source, &dsc)
 }
 
 /// Compile one linked-package source with the compiler selected by the caller.
 pub fn compile_file_with_dsc(source: &Path, dsc: &Path) -> Result<String, String> {
     let root = source.parent().unwrap_or(source);
     let modules = compile_graph_with_dsc(root, source, dsc)?;
-    compiled_file(&modules, source)
+    compiled_file(&modules, source, dsc)
 }
 
-fn compiled_file(modules: &HashMap<PathBuf, String>, source: &Path) -> Result<String, String> {
-    lookup_js(&modules, source)
+fn compiled_file(modules: &HashMap<PathBuf, String>, source: &Path, dsc: &Path) -> Result<String, String> {
+    lookup_js(modules, source)
         .cloned()
         .ok_or_else(|| {
             format!(
-                "{DEKA_VALIDATION_ERROR_MARKER}dsc did not emit {}",
-                source.display()
+                "{DEKA_VALIDATION_ERROR_MARKER}dsc did not emit {}\n{}",
+                source.display(),
+                compiler::dsc::compiler_identity_line(dsc)
             )
         })
 }

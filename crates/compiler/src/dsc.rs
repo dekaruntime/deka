@@ -73,7 +73,14 @@ pub fn require_dsc() -> Result<PathBuf, String> {
 /// otherwise. Recorded as compiler provenance in the build manifest.
 pub fn dsc_identity() -> Option<String> {
     let dsc = find_cli_dsc().ok().flatten()?;
-    let output = Command::new(&dsc).arg("--version").output().ok()?;
+    dsc_version_at(&dsc)
+}
+
+/// First-line `--version` output of the dsc binary at `path`, when it
+/// reports one. Probing only happens on failure paths, so the extra exec is
+/// paid exclusively when diagnostics already cost a run.
+pub fn dsc_version_at(path: &std::path::Path) -> Option<String> {
+    let output = Command::new(path).arg("--version").output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -88,6 +95,35 @@ pub fn dsc_identity() -> Option<String> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(str::to_string)
+}
+
+/// One-line identity of the dsc binary at `path` for failure diagnostics
+/// (deka#1101): version when it reports one, always the path.
+pub fn dsc_identity_line(path: &std::path::Path) -> String {
+    match dsc_version_at(path) {
+        Some(version) => format!("dsc {version} at {}", path.display()),
+        None => format!("dsc at {}", path.display()),
+    }
+}
+
+/// One-line identity of the running deka binary for failure diagnostics
+/// (deka#1101): its version and the path it was invoked from.
+pub fn deka_identity_line() -> String {
+    format!(
+        "deka {} at {}",
+        env!("CARGO_PKG_VERSION"),
+        crate::skew::running_binary_path()
+    )
+}
+
+/// Both halves of the producing pair, for appending to a compile or check
+/// failure so the user can see which binaries emitted the diagnostic.
+pub fn compiler_identity_line(dsc: &std::path::Path) -> String {
+    format!(
+        "(diagnostics produced by {}; {})",
+        dsc_identity_line(dsc),
+        deka_identity_line()
+    )
 }
 
 /// Exec dsc with the same argv tail. Does not return on success.
@@ -114,7 +150,23 @@ fn exec_dsc(bin: &std::path::Path) {
         .stderr(Stdio::inherit())
         .status();
     match status {
-        Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+        Ok(status) => {
+            if !status.success() {
+                // deka#1101: name the producing binary pair so a stale
+                // shadowed deka is visible in the failure output, not just
+                // the user's source file. This comes after dsc's own output
+                // (inherited stdio above), never in front of it.
+                stdio::error(
+                    "cli",
+                    &format!(
+                        "dsc exited with {}; {}",
+                        status,
+                        compiler_identity_line(bin)
+                    ),
+                );
+            }
+            std::process::exit(status.code().unwrap_or(1));
+        }
         Err(err) => {
             stdio::error("cli", &format!("failed to exec {}: {err}", bin.display()));
             std::process::exit(1);

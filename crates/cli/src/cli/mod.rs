@@ -326,6 +326,7 @@ pub fn execute(registry: &Registry) -> i32 {
                 error(Some(message.as_str()));
                 return 2;
             }
+            warn_on_command_skew(cmd_name);
             (command.handler)(&context);
             return 0;
         }
@@ -345,6 +346,17 @@ pub fn execute(registry: &Registry) -> i32 {
 
         (subcommand.handler)(&context);
         return 0;
+    }
+}
+
+/// Version-skew nudge for the commands that operate on a project and shell
+/// out to dsc (deka#1101): a stale globally-installed deka shadowing the
+/// project's npm-installed one otherwise fails with a parse error that names
+/// only the user's source file. Warn once, at command start, only when the
+/// cwd tree declares a different `@dekaruntime/deka` version.
+fn warn_on_command_skew(cmd_name: &str) {
+    if matches!(cmd_name, "check" | "dev" | "build" | "serve") {
+        compiler::skew::warn_on_version_skew();
     }
 }
 
