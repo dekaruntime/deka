@@ -86,7 +86,13 @@ fn check_bare(context: &Context) {
             let rel = path.strip_prefix(root).unwrap_or(&path);
             if let Err(diagnostic) = crate::dsc::check_path(&dsc, rel, Some(root)) {
                 failures += 1;
-                stdio::error("check", &diagnostic);
+                // deka#1101: name the producing binary pair after dsc's own
+                // diagnostic so a stale shadowed deka is visible, not just
+                // the user's source file.
+                stdio::error(
+                    "check",
+                    &format!("{diagnostic}\n{}", crate::dsc::compiler_identity_line(&dsc)),
+                );
             }
         }
     }

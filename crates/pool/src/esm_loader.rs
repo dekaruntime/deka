@@ -151,12 +151,11 @@ impl PhpxEsmLoader {
         // them through dsc (dsc only compiles .ds/.dsx).
         let v2_modules = if entry_path.is_file() && !is_javascript_entry(&entry_path) {
             let modules = match dsc.as_deref() {
-                Some(dsc) => crate::dsc_compile::compile_graph_with_dsc(
-                    &project_root,
-                    &entry_path,
-                    dsc,
-                ),
-                None => crate::dsc_compile::compile_graph(&project_root, &entry_path),
+                Some(dsc) => {
+                    crate::dsc_compile::compile_graph_with_dsc(&project_root, &entry_path, dsc)
+                }
+                None => crate::dsc_compile::compile_graph(&project_root, &entry_path)
+                    .map(|(modules, _dsc)| modules),
             }
             .map_err(JsErrorBox::generic)?;
             let imports: Vec<String> = modules

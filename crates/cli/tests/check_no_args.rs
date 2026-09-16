@@ -381,3 +381,43 @@ fn bare_check_when_every_source_fails_reports_the_failures_not_absence() {
         "sources existed and failed; absence must not be reported: {text}"
     );
 }
+
+#[test]
+fn bare_check_failure_names_the_producing_binaries() {
+    // deka#1101: a failing project source must carry the producing dsc and
+    // deka identities, not only the user's source file.
+    let tooling = tempfile::tempdir().expect("tooling dir");
+    let dsc = write_dsc_stub(tooling.path());
+    let project = tempfile::tempdir().expect("project dir");
+    fs::write(project.path().join("deka.json"), "{}\n").expect("write manifest");
+    fs::create_dir_all(project.path().join("app")).expect("create app tree");
+    fs::write(project.path().join("app").join("page.ds"), "BROKEN\n").expect("write broken source");
+
+    let output = run_bare_check(project.path(), &dsc);
+    let text = combined(&output);
+
+    assert!(
+        !output.status.success(),
+        "broken project source must fail the bare check: {text}"
+    );
+    assert!(
+        text.contains("expected identifier, found BROKEN"),
+        "dsc's own diagnostic must be preserved: {text}"
+    );
+    assert!(
+        text.contains("dsc stub 1.0.0"),
+        "expected dsc version: {text}"
+    );
+    assert!(
+        text.contains(dsc.to_str().unwrap()),
+        "expected dsc path: {text}"
+    );
+    assert!(
+        text.contains(&format!("deka {}", env!("CARGO_PKG_VERSION"))),
+        "expected deka version: {text}"
+    );
+    assert!(
+        text.contains(cli_bin()),
+        "expected deka binary path: {text}"
+    );
+}

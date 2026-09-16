@@ -52,11 +52,13 @@ fn run_in(dir: &Path, args: &[&str], dsc: Option<&Path>) -> (i32, String) {
 }
 
 /// Stub `dsc` that records argv and exits 1 so the CLI surfaces the path.
+/// Appends rather than overwrites: failure diagnostics re-probe the stub with
+/// `--version` (deka#1101) between compile attempts.
 fn write_dsc_stub(root: &Path) -> PathBuf {
     let log = root.join("dsc-args.log");
     let stub = root.join("dsc");
     let script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\necho stub-dsc-ran >&2\nexit 1\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\necho stub-dsc-ran >&2\nexit 1\n",
         log.display()
     );
     fs::write(&stub, script).expect("write dsc stub");

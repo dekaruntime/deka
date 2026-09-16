@@ -89,3 +89,55 @@ fn deka_dsc_execs_the_configured_binary() {
         "did not exec stub: {stdout}"
     );
 }
+
+#[test]
+fn failing_check_names_the_producing_binaries() {
+    let temp = tempfile::tempdir().unwrap();
+    // A dsc stand-in that reports a version and fails like a parse error.
+    // deka#1101: the failure output must name the dsc and deka binaries that
+    // produced the diagnostic, not only the user's source file.
+    let stub = temp.path().join("dsc");
+    fs::write(
+        &stub,
+        "#!/bin/sh\n\
+         if [ \"$1\" = \"--version\" ]; then echo 'dsc 0.99.0-test'; exit 0; fi\n\
+         echo '[check] 3:1: bad.ds: expected ``)``, found ``}``' >&2\n\
+         exit 1\n",
+    )
+    .unwrap();
+    let mut perms = fs::metadata(&stub).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&stub, perms).unwrap();
+
+    let bad = temp.path().join("bad.ds");
+    fs::write(&bad, "export fn main() {\n").unwrap();
+
+    let output = Command::new(cli_bin())
+        .args(["check", bad.to_str().unwrap()])
+        .env("DEKA_DSC", &stub)
+        .env_remove("DEKA_NO_DSC")
+        .output()
+        .expect("run deka");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("expected ``)``, found ``}``"),
+        "dsc's own diagnostic must be preserved: {stderr}"
+    );
+    assert!(
+        stderr.contains("dsc 0.99.0-test"),
+        "expected dsc version: {stderr}"
+    );
+    assert!(
+        stderr.contains(stub.to_str().unwrap()),
+        "expected dsc path: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("deka {}", env!("CARGO_PKG_VERSION"))),
+        "expected deka version: {stderr}"
+    );
+    assert!(
+        stderr.contains(cli_bin()),
+        "expected deka binary path: {stderr}"
+    );
+}
