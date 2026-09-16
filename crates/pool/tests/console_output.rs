@@ -16,6 +16,9 @@
 //! `{ __enum, __case, name, value|error }` enum shape, which Option/Result
 //! share). `console` is a JS global installed by the pool bootstrap
 //! regardless of dsc, so this does not need the pinned compiler.
+//!
+//! Capturing real fd 1/2 needs two independent defenses, not one — see
+//! `stdio_lock` and `strip_harness_noise` below for why (deka#1116).
 
 use std::io::Read;
 use std::os::unix::io::RawFd;
@@ -62,9 +65,60 @@ fn handler_request(handler_code: &str) -> RequestData {
 /// state. Serialize the redirect/run/restore/read-back sequence across this
 /// file's tests with one lock; other test binaries (separate processes)
 /// are unaffected.
+///
+/// This alone is *not* enough (deka#1116 CI failure): `cargo test` runs the
+/// other `#[test]` fns in this binary concurrently on their own threads by
+/// default, and CI must keep it that way (no `--test-threads=1`). The lock
+/// only serializes *our* redirect windows against each other — it cannot
+/// stop libtest's own harness, on another thread, from printing that
+/// thread's `test <name> ... ok`/`FAILED` line to the real fd 1 at the
+/// moment our fd 1 happens to be pointed at our pipe. See
+/// `strip_harness_noise` for the other half of the fix.
 fn stdio_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Removes libtest's own progress/result lines from captured output.
+///
+/// `stdio_lock` prevents this file's fd captures from overlapping each
+/// other, but it cannot prevent *libtest's* announcements for whichever
+/// other test happens to finish, on its own thread, while our fd 1/2 is
+/// redirected — those go through ordinary `print!`/`println!` to the same
+/// process-wide fd. That is exactly what broke CI run 35149546804:
+/// `console_log_prints_structured_values_not_object_object`'s captured
+/// stdout got `test console_has_exactly_the_whatwg_surface_no_chrome_only_extras ... ok`
+/// spliced in as its first line, ahead of the real structured-printer
+/// output (which was itself correct). Each libtest write is one line
+/// (`running N tests`, `test <name> ... ok|FAILED|ignored`,
+/// `test result: ...`, and the blank lines around them), and pipe writes
+/// that size don't tear mid-line, so a line-based filter reliably strips
+/// them without touching our own output.
+fn strip_harness_noise(text: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return false;
+            }
+            if trimmed.starts_with("running ") && (trimmed.ends_with(" test") || trimmed.ends_with(" tests"))
+            {
+                return false;
+            }
+            if trimmed.starts_with("test result:") {
+                return false;
+            }
+            if trimmed.starts_with("test ")
+                && (trimmed.ends_with("... ok")
+                    || trimmed.ends_with("... FAILED")
+                    || trimmed.ends_with("... ignored"))
+            {
+                return false;
+            }
+            true
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Redirects `target_fd` (1 or 2) to a pipe for the duration of a scope,
@@ -136,8 +190,8 @@ fn run_capturing_stdio(handler_code: &str) -> (String, String, pool::IsolateResp
         .block_on(pool.execute(HandlerKey::new("console_test"), handler_request(handler_code)))
         .expect("pool execution");
 
-    let stdout = out_cap.finish();
-    let stderr = err_cap.finish();
+    let stdout = strip_harness_noise(&out_cap.finish());
+    let stderr = strip_harness_noise(&err_cap.finish());
     (stdout, stderr, response)
 }
 
