@@ -41,15 +41,7 @@ pub enum ProjectEmit {
 
 pub fn check_path(path: &Path) -> Result<(), String> {
     let dsc = dsc_bin()?;
-    let output = Command::new(&dsc)
-        .arg("check")
-        .arg(path)
-        .output()
-        .map_err(|err| format!("failed to exec {}: {err}", dsc.display()))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    compiler::dsc::check_path(&dsc, path, None)
 }
 
 pub fn transpile_file(path: &Path) -> Result<String, String> {
@@ -155,7 +147,7 @@ pub fn collect_build_plans(
 ) -> Result<Vec<PlannedSource>, String> {
     let mut planned = Vec::new();
     for source_root in source_roots {
-        for source in collect_deka_source_files(source_root)? {
+        for source in compiler::dsc::collect_deka_source_files(source_root)? {
             let plan = build_plan(project_root, &source)?;
             planned.push(PlannedSource {
                 file: source.to_string_lossy().into_owned(),
@@ -341,7 +333,8 @@ fn emit_failure_message(dsc: &Path, combined: &str) -> String {
 /// failure through dsc's per-file check so `deka build` remains actionable.
 fn named_source_failure(project_root: &Path) -> Option<String> {
     for directory in ["app", "api", "src"] {
-        let Ok(paths) = collect_deka_source_files(&project_root.join(directory)) else {
+        let Ok(paths) = compiler::dsc::collect_deka_source_files(&project_root.join(directory))
+        else {
             continue;
         };
         for path in paths {
@@ -358,13 +351,6 @@ fn path_utf8(path: &Path) -> Result<&str, String> {
     path.to_str().ok_or_else(|| "path is not UTF-8".to_string())
 }
 
-fn is_deka_source_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("ds") | Some("dsx")
-    )
-}
-
 /// 1:1 tree emit: `dsc transpile <dir> --out <out>` for `.ds` / `.dsx`, then
 /// copy every other file verbatim. No routing.
 pub fn emit_source_tree(
@@ -375,7 +361,7 @@ pub fn emit_source_tree(
     if !src_dir.is_dir() {
         return Ok(());
     }
-    let sources = collect_deka_source_files(src_dir)?;
+    let sources = compiler::dsc::collect_deka_source_files(src_dir)?;
     if !sources.is_empty() {
         if let Err(err) = transpile_dir(src_dir, dest_dir, Some(project_root)) {
             for path in &sources {
@@ -411,7 +397,7 @@ pub fn copy_non_ds_tree(src: &Path, dst: &Path, skip_existing: bool) -> Result<(
         if file_type.is_dir() {
             copy_non_ds_tree(&src_path, &dst_path, skip_existing)?;
         } else if file_type.is_file() {
-            if is_deka_source_path(&src_path) {
+            if compiler::dsc::is_deka_source_path(&src_path) {
                 continue;
             }
             if skip_existing && dst_path.is_file() {
@@ -432,32 +418,6 @@ pub fn copy_non_ds_tree(src: &Path, dst: &Path, skip_existing: bool) -> Result<(
         }
     }
     Ok(())
-}
-
-fn collect_deka_source_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
-    if !dir.is_dir() {
-        return Ok(files);
-    }
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let entries = fs::read_dir(&current)
-            .map_err(|err| format!("failed to read {}: {}", current.display(), err))?;
-        for entry in entries {
-            let entry = entry.map_err(|err| format!("read_dir entry error: {}", err))?;
-            let path = entry.path();
-            let file_type = entry
-                .file_type()
-                .map_err(|err| format!("file_type error for {}: {}", path.display(), err))?;
-            if file_type.is_dir() {
-                stack.push(path);
-            } else if file_type.is_file() && is_deka_source_path(&path) {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    Ok(files)
 }
 
 fn run_transpile(entry: &Path, cwd: Option<&Path>, prefix: &[&str]) -> Result<String, String> {
