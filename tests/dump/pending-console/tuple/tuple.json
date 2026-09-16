@@ -1,0 +1,5 @@
+{
+  "title": "console.log formats a fixed-size mixed-type array",
+  "stage": "run",
+  "notes": "Printable category: tuple. DekaScript has no dedicated tuple syntax/runtime tag today, so this pins the array formatter on a heterogeneous literal instead."
+}

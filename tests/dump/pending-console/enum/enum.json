@@ -1,0 +1,5 @@
+{
+  "title": "console.log formats a payload enum case as Case(value), no enum-name prefix",
+  "stage": "run",
+  "notes": "Printable category: enum"
+}

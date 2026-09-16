@@ -1,0 +1,5 @@
+{
+  "title": "console.log formats an array as [ item, item ]",
+  "stage": "run",
+  "notes": "Printable category: array"
+}

@@ -35,3 +35,28 @@ The dump/hats harness still talks to dsc's module resolver, which does
 not load these runtime builtins. Do not teach dump a second resolution
 table; JSX dump fixtures that only typeck emitted `@js/react*` imports
 are unchanged.
+
+## `console`
+
+`console` is available from DekaScript as a host global (rfd#44 "Globals",
+`console` addition, 2026-09-16) — no import, and it cannot be bound to a
+variable (`const c = console` is a compile-time error, enforced by dsc).
+It is the full WHATWG Console Standard namespace, 19 methods:
+
+| methods | stream |
+| --- | --- |
+| `log`, `info`, `debug`, `dir`, `dirxml`, `table` | stdout |
+| `warn`, `error`, `trace`, `assert` | stderr (`assert` only when its condition is false) |
+| `count`, `countReset`, `time`, `timeEnd`, `timeLog` | stdout (labelled counters/timers) |
+| `group`, `groupCollapsed`, `groupEnd` | stdout (indentation; `groupCollapsed` behaves as `group` on a non-interactive stream) |
+| `clear` | no-op (no host TTY signal to clear against) |
+
+Every value the runtime can format through its type descriptor —
+primitives, structs, enums, `Option`/`Result`, arrays, tuples, plain
+objects, nested combinations — prints the same way on native (V8 via
+`crates/pool/src/wintertc.js`) and the browser host. `profile`,
+`profileEnd`, `timeStamp` and `createTask` are Chrome DevTools extensions,
+not part of the WHATWG spec, and are not exposed.
+
+`import { echo } from "io"` still works; `console.log` is the
+recommended replacement going forward (`echo` is not being removed yet).

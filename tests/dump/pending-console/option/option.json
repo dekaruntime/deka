@@ -1,0 +1,5 @@
+{
+  "title": "console.log formats Option.Some as Some(value)",
+  "stage": "run",
+  "notes": "Printable category: Option"
+}

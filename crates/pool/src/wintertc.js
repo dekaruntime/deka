@@ -7,23 +7,360 @@
 // hides globalThis.Deno before user code runs, but user-visible logging must
 // continue to work afterwards.
 const __wintertc_print = Deno.core.print.bind(Deno.core);
-globalThis.console = {
-  log: (...args) => {
-    __wintertc_print(args.map(String).join(" ") + "\n", false);
-  },
-  error: (...args) => {
-    __wintertc_print(args.map(String).join(" ") + "\n", true);
-  },
-  warn: (...args) => {
-    __wintertc_print("[WARN] " + args.map(String).join(" ") + "\n", true);
-  },
-  info: (...args) => {
-    __wintertc_print("[INFO] " + args.map(String).join(" ") + "\n", false);
-  },
-  debug: (...args) => {
-    __wintertc_print("[DEBUG] " + args.map(String).join(" ") + "\n", false);
-  },
-};
+
+// `console` (rfd#44, "Globals" — added 2026-09-16 as a cannot-be host global).
+// The full WHATWG Console Standard namespace: log/info/debug/dir/dirxml/table
+// -> stdout; warn/error/trace/assert -> stderr; count/countReset/time/
+// timeEnd/timeLog/group/groupCollapsed/groupEnd/clear have no meaningful
+// stream split (Node treats their informational output as stdout; deka
+// matches). `profile`/`profileEnd`/`timeStamp`/`createTask` are Chrome-only
+// extensions to the WHATWG spec, not part of it, and are simply never
+// defined below — deno_core supplies no built-in `console` (only the raw
+// `Deno.core.print` op used here), so nothing exposes them by accident.
+//
+// `__wintertc_print` -> `Deno.core.print` -> deno_core's `op_print`, which
+// writes straight to the process's real fd 1/2 with an explicit flush per
+// call (ops_builtin.rs). That is the same unbuffered path `io`'s `echo`
+// reaches through `globalThis.__dekaPrint` (worker_execution.rs). Native
+// `deka dev`/`deka run` embed the isolate pool in-process, so a direct fd
+// write is already "the terminal" — there is no separate relay to drop
+// output on exit.
+(() => {
+  // One instance of this state per isolate bootstrap (this whole file runs
+  // once when an isolate is created, not once per request), so group depth
+  // and count/timer labels behave like a persistent console session for the
+  // isolate's lifetime — matching Node/browser semantics, where console
+  // state outlives any single call.
+  let groupDepth = 0;
+  const counts = new Map();
+  const timers = new Map();
+
+  // The structured printer (task: rfd#44 "Printable"). Every non-string
+  // console argument — struct, enum, Option/Result, tuple, array, plain
+  // object, nested combinations — goes through here so native's V8 console
+  // and the browser host format identically. No formatter existed anywhere
+  // in the runtime before this (echo() only ever accepted `string`), so
+  // this is the one implementation both hosts are meant to share; the
+  // browser host (`@dekaruntime/web-ide-kit`, a separate repo) still needs
+  // its own copy ported from this algorithm — see the PR body.
+  // deka#1116: console must never throw and never hang a request. A
+  // host-bridge object with a throwing getter, a revoked/trapping Proxy, or
+  // a pathologically deep (non-cyclic — `seen` only catches true cycles)
+  // structure must degrade to a placeholder string, never propagate an
+  // exception out of a console call or blow the JS call stack. Two guards:
+  // `MAX_INSPECT_DEPTH` bounds recursion (returns "…" past it, well short
+  // of a real RangeError), and every individual field read is its own
+  // try/catch so one bad property does not blank out an otherwise-fine
+  // object; `safeInspect` is the outer backstop for anything that still
+  // escapes (e.g. `Object.keys` itself throwing on an exotic object).
+  const MAX_INSPECT_DEPTH = 24;
+
+  // Reads `container[key]` *and* formats it inside one try/catch. Property
+  // access has to be inside the guard, not just the formatting: `obj[key]`
+  // is evaluated as a normal argument expression, so a throwing getter
+  // fires before a callee's own try/catch ever runs — an earlier version of
+  // this file called `inspect(value[k], ...)` and the getter's throw
+  // escaped past `inspect`'s per-field guard entirely, taking the whole
+  // object down to `safeInspect`'s outer fallback instead of isolating the
+  // one bad field (deka#1116 hardening).
+  function renderField(container, key, seen, depth) {
+    try {
+      const value = container[key];
+      return `${key}: ${inspect(value, seen, depth)}`;
+    } catch (_err) {
+      return `${key}: [threw while formatting]`;
+    }
+  }
+
+  // Guards formatting an already-resolved value (an array element `.map`
+  // already read, an enum payload already unwrapped) — no property access
+  // happens inside this one, so wrapping just the `inspect` call is enough.
+  function guardInspect(value, seen, depth) {
+    try {
+      return inspect(value, seen, depth);
+    } catch (_err) {
+      return "[threw while formatting]";
+    }
+  }
+
+  function inspect(value, seen, depth) {
+    if (value === null) return "null";
+    if (value === undefined) return "undefined";
+    const t = typeof value;
+    if (t === "string") return JSON.stringify(value);
+    if (t === "number" || t === "boolean") return String(value);
+    if (t === "bigint") return String(value) + "n";
+    if (t === "function") {
+      return value.name ? `[Function: ${value.name}]` : "[Function (anonymous)]";
+    }
+    if (value instanceof Uint8Array) {
+      let hex = "";
+      for (let i = 0; i < value.length; i++) {
+        hex += value[i].toString(16).padStart(2, "0");
+      }
+      return `Bytes(${hex})`;
+    }
+    if (t !== "object") return String(value);
+
+    if (seen.has(value)) return "[Circular]";
+    if (depth >= MAX_INSPECT_DEPTH) return "…";
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) return "[]";
+      seen.add(value);
+      const items = value.map((item) => guardInspect(item, seen, depth + 1));
+      seen.delete(value);
+      return `[ ${items.join(", ")} ]`;
+    }
+
+    // Option/Result and every user `enum` share this shape (deka#582,
+    // build_values.rs hydrate): `{ __enum, __case, name, value|error }`,
+    // payload-less cases omit `value`/`error` entirely. Printed as bare
+    // case labels (`Some(1)`, `None`, `Ok(1)`, `Err("e")`, `Red`,
+    // `Circle(5)`) — Rust-`{:?}`-style, no enum-name prefix.
+    if (typeof value.__enum === "string") {
+      const label = value.__case || value.name || value.__enum;
+      const hasPayload = "value" in value || "error" in value;
+      if (!hasPayload) return label;
+      seen.add(value);
+      const payload = "error" in value ? value.error : value.value;
+      const formatted = `${label}(${guardInspect(payload, seen, depth + 1)})`;
+      seen.delete(value);
+      return formatted;
+    }
+
+    // Structs carry a hidden, non-enumerable `__deka_struct` tag holding
+    // the declared name (structs.mdx); own enumerable keys are exactly the
+    // declared fields.
+    if (typeof value.__deka_struct === "string") {
+      seen.add(value);
+      const fields = Object.keys(value).map(
+        (k) => renderField(value, k, seen, depth + 1)
+      );
+      seen.delete(value);
+      return `${value.__deka_struct} ${fields.length ? `{ ${fields.join(", ")} }` : "{}"}`;
+    }
+
+    // Newtypes (build_values.rs hydrate): hidden `__deka_newtype` name tag,
+    // payload under the `deka.nt` well-known symbol.
+    if (typeof value.__deka_newtype === "string") {
+      const payload = value[Symbol.for("deka.nt")];
+      return `${value.__deka_newtype}(${guardInspect(payload, seen, depth + 1)})`;
+    }
+
+    // Plain object (host bridge JSON, raw JS-mode values).
+    seen.add(value);
+    const keys = Object.keys(value);
+    const fields = keys.map((k) => renderField(value, k, seen, depth + 1));
+    seen.delete(value);
+    return fields.length ? `{ ${fields.join(", ")} }` : "{}";
+  }
+
+  // The only entry point the rest of this file calls: never throws, no
+  // matter what `value` is (deka#1116).
+  function safeInspect(value) {
+    try {
+      return inspect(value, new Set(), 0);
+    } catch (_err) {
+      return "[unrepresentable value]";
+    }
+  }
+
+  // Top-level string arguments print raw (no quotes); everything else,
+  // including nested strings, goes through `safeInspect`.
+  function formatArgs(args) {
+    return args
+      .map((a) => (typeof a === "string" ? a : safeInspect(a)))
+      .join(" ");
+  }
+
+  // `String(label)` can itself throw (a `{ toString() { throw ... } }`
+  // label); count/time labels degrade to "default" rather than take the
+  // whole call down with them.
+  function safeLabel(label) {
+    try {
+      return String(label);
+    } catch (_err) {
+      return "default";
+    }
+  }
+
+  // Final backstop (deka#1116): no matter what bug slips past every guard
+  // above, a `console.*` call must never throw into user/handler code —
+  // that turns one bad log line into a failed (or, worse, hung) request.
+  // Swallows the error and best-effort notes it to stderr through the raw
+  // print op directly, bypassing `formatArgs`/`write` so a broken formatter
+  // can't recurse into itself while reporting its own failure.
+  function guarded(fn) {
+    return (...args) => {
+      try {
+        return fn(...args);
+      } catch (err) {
+        try {
+          const message = err && err.message ? err.message : String(err);
+          __wintertc_print(`[console] internal error: ${message}\n`, true);
+        } catch (_ignored) {
+          // Truly nothing left to do; still must not throw.
+        }
+        return undefined;
+      }
+    };
+  }
+
+  function indent(text) {
+    if (groupDepth === 0) return text;
+    const prefix = "  ".repeat(groupDepth);
+    return text
+      .split("\n")
+      .map((line) => prefix + line)
+      .join("\n");
+  }
+
+  function write(text, isErr) {
+    __wintertc_print(indent(text) + "\n", !!isErr);
+  }
+
+  function isPlainRecord(v) {
+    return (
+      v !== null &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof v.__enum !== "string" &&
+      typeof v.__deka_struct !== "string"
+    );
+  }
+
+  // Wrapped end-to-end (deka#1116): `Object.keys`/`Object.hasOwn` on an
+  // exotic object (a throwing Proxy trap) can throw outside `inspectField`'s
+  // per-value guards, so `console.table` gets the same never-throws
+  // guarantee as every other method — falling back to the plain formatter.
+  function table(data) {
+    try {
+      return tableInner(data);
+    } catch (_err) {
+      return safeInspect(data);
+    }
+  }
+
+  function tableInner(data) {
+    let rows;
+    if (Array.isArray(data)) {
+      rows = data.map((v, i) => [String(i), v]);
+    } else if (isPlainRecord(data)) {
+      rows = Object.keys(data).map((k) => [k, data[k]]);
+    } else {
+      return formatArgs([data]);
+    }
+
+    const columns = [];
+    let hasValues = false;
+    for (const [, v] of rows) {
+      if (isPlainRecord(v)) {
+        for (const k of Object.keys(v)) if (!columns.includes(k)) columns.push(k);
+      } else {
+        hasValues = true;
+      }
+    }
+
+    const header = ["(index)", ...columns, ...(hasValues ? ["Values"] : [])];
+    const body = rows.map(([key, v]) => {
+      const record = isPlainRecord(v);
+      const cells = [key];
+      for (const c of columns) {
+        cells.push(record && Object.hasOwn(v, c) ? safeInspect(v[c]) : "");
+      }
+      if (hasValues) cells.push(record ? "" : safeInspect(v));
+      return cells;
+    });
+
+    const widths = header.map((h, i) =>
+      Math.max(h.length, ...body.map((r) => r[i].length))
+    );
+    const rule = `+${widths.map((w) => "-".repeat(w + 2)).join("+")}+`;
+    const renderRow = (cells) =>
+      `| ${cells.map((c, i) => c.padEnd(widths[i])).join(" | ")} |`;
+    return [rule, renderRow(header), rule, ...body.map(renderRow), rule].join("\n");
+  }
+
+  // Every method is wrapped in `guarded` (deka#1116): a console call must
+  // never throw into the caller and never hang a request, regardless of
+  // what value it is asked to print.
+  globalThis.console = {
+    log: guarded((...args) => write(formatArgs(args), false)),
+    info: guarded((...args) => write(formatArgs(args), false)),
+    debug: guarded((...args) => write(formatArgs(args), false)),
+    // Outside a DOM there is no element/XML tree to render; every WinterTC
+    // runtime (Node, Deno, Bun, Workers) falls back to plain `log`-style
+    // formatting for `dir`/`dirxml`.
+    dir: guarded((...args) => write(formatArgs(args), false)),
+    dirxml: guarded((...args) => write(formatArgs(args), false)),
+    warn: guarded((...args) => write(formatArgs(args), true)),
+    error: guarded((...args) => write(formatArgs(args), true)),
+    trace: guarded((...args) => {
+      const stack = (new Error().stack || "").split("\n").slice(1).join("\n");
+      const header = "Trace" + (args.length ? ": " + formatArgs(args) : "");
+      write(stack ? `${header}\n${stack}` : header, true);
+    }),
+    assert: guarded((condition, ...args) => {
+      if (condition) return;
+      const message = args.length
+        ? "Assertion failed: " + formatArgs(args)
+        : "Assertion failed";
+      write(message, true);
+    }),
+    table: guarded((data) => write(table(data), false)),
+    count: guarded((label = "default") => {
+      const key = safeLabel(label);
+      const next = (counts.get(key) || 0) + 1;
+      counts.set(key, next);
+      write(`${key}: ${next}`, false);
+    }),
+    countReset: guarded((label = "default") => {
+      counts.delete(safeLabel(label));
+    }),
+    time: guarded((label = "default") => {
+      timers.set(safeLabel(label), Date.now());
+    }),
+    timeLog: guarded((label = "default", ...args) => {
+      const key = safeLabel(label);
+      const start = timers.get(key);
+      if (start === undefined) {
+        write(`Timer '${key}' does not exist`, true);
+        return;
+      }
+      const suffix = args.length ? " " + formatArgs(args) : "";
+      write(`${key}: ${Date.now() - start}ms${suffix}`, false);
+    }),
+    timeEnd: guarded((label = "default") => {
+      const key = safeLabel(label);
+      const start = timers.get(key);
+      if (start === undefined) {
+        write(`Timer '${key}' does not exist`, true);
+        return;
+      }
+      timers.delete(key);
+      write(`${key}: ${Date.now() - start}ms`, false);
+    }),
+    group: guarded((...args) => {
+      if (args.length) write(formatArgs(args), false);
+      groupDepth++;
+    }),
+    // WHATWG: groupCollapsed is group with a UI hint (start collapsed) that
+    // only means something in a devtools panel; on a terminal it is group.
+    groupCollapsed: guarded((...args) => {
+      if (args.length) write(formatArgs(args), false);
+      groupDepth++;
+    }),
+    groupEnd: guarded(() => {
+      if (groupDepth > 0) groupDepth--;
+    }),
+    // No host op reports whether fd 1/2 is a TTY, so this only implements
+    // the spec's non-TTY case (no-op). Clearing an interactive terminal
+    // would need a new `op_php_is_tty`-shaped host op; deferred until an
+    // interactive `deka dev` console session asks for it.
+    clear: guarded(() => {}),
+  };
+})();
 
 if (!globalThis.TextEncoder) {
   globalThis.TextEncoder = class TextEncoder {

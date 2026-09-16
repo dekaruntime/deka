@@ -176,10 +176,20 @@ struct Cdp {
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
     next_id: u64,
     navigations: u32,
+    /// deka#1116: dev server log, read back into a `navigate()` timeout
+    /// panic so a CI-only hang explains itself instead of just saying
+    /// "page load timed out" again.
+    log_path: PathBuf,
+    /// Browser-side `console.*` calls and uncaught exceptions seen since
+    /// `Runtime.enable`, newest last. `Page.loadEventFired` never fires
+    /// while a blocking (non-module, or import-graph-blocking) script is
+    /// still hung or throwing, so whatever the page's own console said
+    /// right before a navigate timeout is the most direct evidence of why.
+    console_events: Vec<String>,
 }
 
 impl Cdp {
-    fn connect(debug_port: u16) -> Self {
+    fn connect(debug_port: u16, log_path: PathBuf) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(5))
             .no_proxy()
@@ -230,6 +240,8 @@ impl Cdp {
             ws,
             next_id: 1,
             navigations: 0,
+            log_path,
+            console_events: Vec::new(),
         };
         cdp.call("Page.enable", json!({}));
         cdp.call("Runtime.enable", json!({}));
@@ -249,7 +261,8 @@ impl Cdp {
 
     fn on_event(&mut self, text: &str) {
         if let Ok(value) = serde_json::from_str::<Value>(text) {
-            if value.get("method").and_then(|v| v.as_str()) == Some("Page.frameNavigated") {
+            let method = value.get("method").and_then(|v| v.as_str());
+            if method == Some("Page.frameNavigated") {
                 let is_main = value
                     .pointer("/params/frame/parentId")
                     .and_then(|v| v.as_str())
@@ -258,8 +271,63 @@ impl Cdp {
                 if is_main {
                     self.navigations += 1;
                 }
+            } else if method == Some("Runtime.consoleAPICalled") {
+                // deka#1116 diagnostics: the browser's own console, not
+                // native's — real Chrome, unaffected by wintertc.js, but
+                // the most direct evidence of a client-side hang/error if
+                // navigate() times out.
+                let kind = value
+                    .pointer("/params/type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("log");
+                let args = value
+                    .pointer("/params/args")
+                    .and_then(|v| v.as_array())
+                    .map(|args| {
+                        args.iter()
+                            .map(|a| {
+                                a.get("value")
+                                    .map(|v| v.to_string())
+                                    .or_else(|| a.get("description").map(|v| v.to_string()))
+                                    .unwrap_or_else(|| a.to_string())
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default();
+                self.console_events
+                    .push(format!("[browser console.{kind}] {args}"));
+            } else if method == Some("Runtime.exceptionThrown") {
+                let description = value
+                    .pointer("/params/exceptionDetails/exception/description")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        value
+                            .pointer("/params/exceptionDetails/text")
+                            .and_then(|v| v.as_str())
+                    })
+                    .unwrap_or("<no description>");
+                self.console_events
+                    .push(format!("[browser uncaught exception] {description}"));
             }
         }
+    }
+
+    /// Best-effort diagnostic dump for a `navigate()` timeout: the dev
+    /// server's own log plus every browser console/exception event seen
+    /// on this page so far. Never panics itself — a diagnostic that can
+    /// fail to read a file must not replace the real failure.
+    fn diagnostics(&self) -> String {
+        let log = fs::read_to_string(&self.log_path)
+            .unwrap_or_else(|err| format!("<could not read dev.log: {err}>"));
+        let console = if self.console_events.is_empty() {
+            "<none captured>".to_string()
+        } else {
+            self.console_events.join("\n")
+        };
+        format!(
+            "dev.log:\n{log}\n\nbrowser console/exceptions since Runtime.enable:\n{console}"
+        )
     }
 
     fn call(&mut self, method: &str, params: Value) -> Value {
@@ -312,7 +380,7 @@ impl Cdp {
                 Err(_) => std::thread::sleep(Duration::from_millis(20)),
             }
         }
-        panic!("page load timed out");
+        panic!("page load timed out\n\n{}", self.diagnostics());
     }
 
     fn eval(&mut self, expression: &str) -> Value {
@@ -352,7 +420,10 @@ impl Cdp {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        panic!("timed out waiting for {expression} == {expected:?}; last={last}");
+        panic!(
+            "timed out waiting for {expression} == {expected:?}; last={last}\n\n{}",
+            self.diagnostics()
+        );
     }
 }
 
@@ -533,7 +604,7 @@ fn cdp_island_boundary_edit_reloads_instead_of_stale_morph() {
     let debug_port = free_port();
     let chrome_dir = tempfile::tempdir().expect("chrome profile dir");
     let _chrome = spawn_chrome(debug_port, chrome_dir.path());
-    let mut cdp = Cdp::connect(debug_port);
+    let mut cdp = Cdp::connect(debug_port, server.log_path.clone());
     cdp.navigate(&url);
     cdp.wait_eval_eq(
         "document.querySelector('#server-title') && document.querySelector('#server-title').textContent",
@@ -685,7 +756,7 @@ fn cdp_morph_preserves_island_state_and_island_edit_reloads() {
     let debug_port = free_port();
     let chrome_dir = tempfile::tempdir().expect("chrome profile dir");
     let _chrome = spawn_chrome(debug_port, chrome_dir.path());
-    let mut cdp = Cdp::connect(debug_port);
+    let mut cdp = Cdp::connect(debug_port, server.log_path.clone());
     cdp.navigate(&url);
     cdp.wait_eval_eq(
         "document.querySelector('#server-title') && document.querySelector('#server-title').textContent",

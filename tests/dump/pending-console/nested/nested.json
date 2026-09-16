@@ -1,0 +1,5 @@
+{
+  "title": "console.log recurses through Option<Array<struct>>",
+  "stage": "run",
+  "notes": "Printable category: nested (Option wrapping an array of structs)"
+}

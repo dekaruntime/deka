@@ -1,0 +1,2 @@
+const o: Option<number> = Option.Some(7)
+console.log(o)
