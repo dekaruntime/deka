@@ -291,7 +291,14 @@ mod tests {
 
     #[test]
     fn shipped_morph_client_island_signature_contract() {
+        // The harness executes morph.js standalone, so it cannot see the
+        // prelude router.rs injects ahead of the client bundle; supply the
+        // same bytes from the single grammar definition.
         let output = std::process::Command::new("node")
+            .env(
+                "DEKA_ISLAND_MARKERS_JS",
+                crate::island_markers::JS_PRELUDE,
+            )
             .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/morph_client.mjs"))
             .output()
             .expect("run morph client contract");

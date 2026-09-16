@@ -478,6 +478,26 @@ fn looks_like_html(body: &str) -> bool {
     lower.starts_with("<!doctype html") || lower.starts_with("<html")
 }
 
+/// The HMR client module script. Built once (not a `const` concat) because
+/// the island-marker grammar prelude is generated from the tokens in
+/// `crate::island_markers` rather than duplicated as literals here.
+fn hmr_client_script() -> &'static str {
+    static CELL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CELL.get_or_init(|| {
+        let mut script = String::from(r#"<script id="__deka_hmr_client" type="module">"#);
+        script.push_str(crate::island_markers::JS_PRELUDE);
+        script.push_str(include_str!("hmr_client/hydrate.js"));
+        script.push_str(include_str!("hmr_client/helpers.js"));
+        script.push_str(include_str!("hmr_client/morph.js"));
+        script.push_str(include_str!("hmr_client/patch.js"));
+        script.push_str(include_str!("hmr_client/refresh.js"));
+        script.push_str(include_str!("hmr_client/socket.js"));
+        script.push_str("</script>");
+        script
+    })
+    .as_str()
+}
+
 fn inject_hmr_client(html: &str) -> String {
     const MARKER: &str = "__deka_hmr_client";
     if html.contains(MARKER) {
@@ -497,16 +517,7 @@ fn inject_hmr_client(html: &str) -> String {
         include_str!("hmr_client/preamble.js"),
         "</script>"
     );
-    const SCRIPT: &str = concat!(
-        r#"<script id="__deka_hmr_client" type="module">"#,
-        include_str!("hmr_client/hydrate.js"),
-        include_str!("hmr_client/helpers.js"),
-        include_str!("hmr_client/morph.js"),
-        include_str!("hmr_client/patch.js"),
-        include_str!("hmr_client/refresh.js"),
-        include_str!("hmr_client/socket.js"),
-        "</script>"
-    );
+    let SCRIPT: &str = hmr_client_script();
     let with_head = inject_before_tag(html, "</head>", HEAD).unwrap_or_else(|| {
         inject_after_tag(html, "<head>", HEAD).unwrap_or_else(|| {
             let mut out = String::with_capacity(html.len() + HEAD.len());
@@ -607,6 +618,38 @@ mod tests {
         assert!(out.contains("morphChildren"));
         assert!(out.contains("html-update"));
         assert!(out.contains("island-source"));
+    }
+
+    #[test]
+    fn hmr_client_uses_shared_island_marker_grammar() {
+        // The island-marker grammar has one definition site
+        // (crate::island_markers); the injected client must carry it via the
+        // prelude and both marker consumers must read the prelude variables.
+        // If island markers were dropped from the client, or a hand-maintained
+        // literal copy were reintroduced in morph.js/patch.js, this fails.
+        let html = "<html><body><div id=\"app\"></div></body></html>";
+        let out = inject_hmr_client(html);
+        assert!(out.contains(crate::island_markers::JS_PRELUDE));
+        for fragment in ["morphChildren", "patchIslandHtml"] {
+            assert!(
+                out.contains(fragment),
+                "injected client lost {fragment}"
+            );
+        }
+        for prefix in ["DEKA_ISLAND_START_PREFIX", "DEKA_ISLAND_END_PREFIX"] {
+            assert!(
+                out.contains(&format!("indexOf({prefix})")),
+                "client marker consumer must derive from {prefix}"
+            );
+        }
+        assert!(
+            !out.contains("indexOf(\"deka-island start:\")"),
+            "hand-maintained marker literal reintroduced in client"
+        );
+        assert!(
+            !out.contains("indexOf(\"deka-island end:\")"),
+            "hand-maintained marker literal reintroduced in client"
+        );
     }
 
     #[test]

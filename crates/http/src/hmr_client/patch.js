@@ -26,12 +26,12 @@ function patchIslandHtml(islandName, occurrence, html) {
   var occurrenceCount = 0;
   while ((comment = commentWalker.nextNode())) {
     var commentData = String(comment.data || "");
-    if (commentData.indexOf("deka-island start:") !== 0) {
+    if (commentData.indexOf(DEKA_ISLAND_START_PREFIX) !== 0) {
       continue;
     }
     var encodedCommentName = commentData.substring(
-      18,
-      commentData.indexOf(" ", 18)
+      DEKA_ISLAND_START_PREFIX.length,
+      commentData.indexOf(" ", DEKA_ISLAND_START_PREFIX.length)
     );
     if (encodedCommentName !== encodedIslandName) {
       continue;
@@ -53,9 +53,9 @@ function patchIslandHtml(islandName, occurrence, html) {
   while (sibling) {
     if (sibling.nodeType === 8) {
       var siblingData = String(sibling.data || "");
-      if (siblingData.indexOf("deka-island start:") === 0) {
+      if (siblingData.indexOf(DEKA_ISLAND_START_PREFIX) === 0) {
         depth++;
-      } else if (siblingData.indexOf("deka-island end:") === 0) {
+      } else if (siblingData.indexOf(DEKA_ISLAND_END_PREFIX) === 0) {
         depth--;
         if (!depth) {
           endComment = sibling;

@@ -3,13 +3,36 @@
 // morph must full-reload when a server-component edit changes an island's
 // props/directive/set/order, and must keep morphing when only volatile
 // marker cache tokens differ.
+//
+// The island-marker grammar is defined once in crate::island_markers; the
+// Rust contract test ships it here as DEKA_ISLAND_MARKERS_JS (the same
+// JS_PRELUDE bytes inject_hmr_client prepends to the client bundle), and
+// every marker string below derives from those tokens.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+
+const prelude = process.env.DEKA_ISLAND_MARKERS_JS || '';
+if (!prelude) {
+  throw new Error(
+    'DEKA_ISLAND_MARKERS_JS is not set; run via the ' +
+      'shipped_morph_client_island_signature_contract test, which supplies ' +
+      'crate::island_markers::JS_PRELUDE',
+  );
+}
+const tokens = new Function(
+  `${prelude}\nreturn {` +
+    'startPrefix: DEKA_ISLAND_START_PREFIX, ' +
+    'endPrefix: DEKA_ISLAND_END_PREFIX, ' +
+    'directiveField: DEKA_ISLAND_FIELD_DIRECTIVE, ' +
+    'propsField: DEKA_ISLAND_FIELD_PROPS, ' +
+    'idField: DEKA_ISLAND_FIELD_ID, ' +
+    'cacheField: DEKA_ISLAND_FIELD_CACHE};',
+)();
 
 const source = readFileSync(new URL('../src/hmr_client/morph.js', import.meta.url), 'utf8');
 const moduleUrl = code => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}#`;
 const morph = await import(moduleUrl(
-  `${source}\nexport { collectIslandSignatures, islandSignaturesEqual };`,
+  `${prelude}\n${source}\nexport { collectIslandSignatures, islandSignaturesEqual };`,
 ));
 
 // --- minimal fake DOM: only what the signature collector touches -----------
@@ -61,9 +84,9 @@ const counter = (directive, props) =>
   });
 
 const islandRange = (name, directive, props, cache, body) => [
-  comment(`deka-island start:${name} directive:${directive} props:${props}${cache ? ` cache:${cache}` : ''}`),
+  comment(`${tokens.startPrefix}${name} ${tokens.directiveField}${directive} ${tokens.propsField}${props}${cache ? ` ${tokens.cacheField}${cache}` : ''}`),
   body,
-  comment(`deka-island end:${name}`),
+  comment(`${tokens.endPrefix}${name}`),
 ];
 
 const sigs = root => morph.collectIslandSignatures(root);
