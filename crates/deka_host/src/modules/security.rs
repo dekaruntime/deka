@@ -461,7 +461,7 @@ fn is_runtime_safe_env_key(key: &str) -> bool {
     let normalized = key.trim().to_ascii_uppercase();
     matches!(
         normalized.as_str(),
-        "PORT" | "PWD" | "TMPDIR" | "TEMP" | "TMP" | "HOME" | "PATH" | "DEKA_MODULE_ROOT"
+        "PORT" | "PWD" | "TMPDIR" | "TEMP" | "TMP" | "HOME" | "PATH"
     ) || normalized.starts_with("DEKA_")
 }
 

@@ -128,7 +128,6 @@ pub fn build_plan(project_root: &Path, input: &Path) -> Result<BuildPlan, String
     let input = path_utf8(input)?;
     let output = Command::new(&dsc)
         .current_dir(project_root)
-        .env("DEKA_MODULE_ROOT", project_root)
         .args(["plan", input])
         .output()
         .map_err(|err| format!("failed to exec {}: {err}", dsc.display()))?;
@@ -248,16 +247,15 @@ pub fn remove_staged_build_entries(entries: &[StagedBuildEntry]) -> Result<(), S
     Ok(())
 }
 
-/// Prefer tsc-like default emit: `dsc --outdir <outdir>` from the project root
-/// with `DEKA_MODULE_ROOT` set. Falls back narrowly when the installed dsc
-/// does not understand that entrypoint (help / unknown arg), so real compile
-/// errors still fail the build.
+/// Prefer tsc-like default emit: `dsc --outdir <outdir>` from the project root.
+/// Falls back narrowly when the installed dsc does not understand that
+/// entrypoint (help / unknown arg), so real compile errors still fail the
+/// build.
 pub fn emit_project(project_root: &Path, outdir: &Path) -> Result<ProjectEmit, String> {
     let dsc = dsc_bin()?;
     let out_str = path_utf8(outdir)?;
     let output = Command::new(&dsc)
         .current_dir(project_root)
-        .env("DEKA_MODULE_ROOT", project_root)
         .args(["--outdir", out_str])
         .output()
         .map_err(|err| format!("failed to exec {}: {err}", dsc.display()))?;
@@ -298,7 +296,7 @@ pub fn transpile_dir(
     let out_str = path_utf8(out_dir)?;
     let mut cmd = Command::new(&dsc);
     if let Some(root) = project_root {
-        cmd.current_dir(root).env("DEKA_MODULE_ROOT", root);
+        cmd.current_dir(root);
     }
     let output = cmd
         .args(["transpile", input_str, "--out", out_str])
@@ -476,7 +474,7 @@ fn run_transpile(entry: &Path, cwd: Option<&Path>, prefix: &[&str]) -> Result<St
         .ok_or_else(|| "temp path is not UTF-8".to_string())?;
     let mut cmd = Command::new(&dsc);
     if let Some(cwd) = cwd {
-        cmd.current_dir(cwd).env("DEKA_MODULE_ROOT", cwd);
+        cmd.current_dir(cwd);
     }
     let output = cmd
         .args(prefix)
