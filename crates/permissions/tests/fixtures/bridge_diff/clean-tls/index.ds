@@ -1,0 +1,18 @@
+// Host-granted TLS. upgrade consumes a TCP rid and returns a TLS rid.
+// Read/write/close the result with @deka/tcp (same net handle table).
+//
+// dsc#223: `bridge` calls always type as `Result<Infer, Infer>`, and Infer
+// is no longer assignable as a source into a concrete type — a return-type
+// annotation on the enclosing fn alone does not fix this, since the
+// `return` statement itself performs that assignment. The fix is an
+// explicit `unsafe<T> { raw }` cast, unwrapped through `match` (see
+// @deka/fs, @deka/crypto, @deka/tcp for the same pattern). This package is
+// a transitive dependency of @deka/http's TLS upgrade path (https:// URLs).
+
+export fn upgrade(handle: number, server_name: string) Result<number, string> {
+  const raw = bridge tls.upgrade(handle, server_name)
+  return match (unsafe<Result<number, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("upgrade: cast failed")
+  }
+}

@@ -1,0 +1,22 @@
+// Host-granted time. now() is Date.now; only sleep_ms is a host op.
+
+// Date.now is total: expose the timestamp directly instead of hiding errors as zero.
+summon { total now_ms() number } from "./shim.mjs"
+
+export fn now() number {
+  return now_ms()
+}
+
+// dsc#223: `bridge` calls always type as `Result<Infer, Infer>`, and Infer is
+// no longer assignable as a source into a concrete type — a return-type
+// annotation on the enclosing fn alone does not fix this, since the `return`
+// statement itself performs that assignment. The fix is an explicit
+// `unsafe<T> { raw }` cast, unwrapped through `match` (see @deka/fs and
+// @deka/crypto for the same pattern).
+export fn sleep_ms(ms: number) Result<number, string> {
+  const raw = bridge time.sleep_ms(ms)
+  return match (unsafe<Result<number, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("sleep_ms: cast failed")
+  }
+}

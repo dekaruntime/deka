@@ -1,0 +1,21 @@
+import { FsError, FsPermission } from "../index.ds"
+
+// Public error cases are discriminated values, never diagnostic strings.
+fn label(error: FsError) string {
+  return match (error) {
+    PermissionDenied(permission) => permission.capability,
+    UnsupportedHost => "unsupported",
+    InvalidPayload => "invalid-payload",
+    Failed(message) => message,
+  }
+}
+
+const denied = FsError.PermissionDenied(FsPermission { capability: "read", target: "secret.bin" })
+const unsupported = FsError.UnsupportedHost
+const invalid = FsError.InvalidPayload
+const failed = FsError.Failed("io")
+
+label(denied)
+label(unsupported)
+label(invalid)
+label(failed)

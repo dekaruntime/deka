@@ -540,6 +540,66 @@ pub fn js_catalog_json() -> String {
     serde_json::Value::Object(kinds).to_string()
 }
 
+/// Machine-readable dump of the FULL catalog for external tooling
+/// (deka#620: diffing published packages' hand-maintained bridge declarations
+/// against this catalog — see `bridge_diff` and `bridge_decl`). Unlike
+/// [`js_catalog_json`] (the minimal gate payload for the isolate bootstrap),
+/// this includes grant owners, argument names + wire types, and result shapes,
+/// so a declaration diff can be derived from the same source of truth instead
+/// of a hand-copied signature list.
+pub fn catalog_json() -> String {
+    fn wire_json(wire: WireType) -> serde_json::Value {
+        match wire {
+            WireType::Str => serde_json::json!("string"),
+            WireType::Num => serde_json::json!("number"),
+            WireType::Bool => serde_json::json!("boolean"),
+            WireType::Bytes => serde_json::json!("bytes"),
+            WireType::Handle => serde_json::json!("number"),
+            WireType::Json => serde_json::json!("json"),
+        }
+    }
+    fn shape_json(shape: ResultShape) -> serde_json::Value {
+        match shape {
+            ResultShape::Bytes => serde_json::json!("bytes"),
+            ResultShape::Num => serde_json::json!("number"),
+            ResultShape::Bool => serde_json::json!("boolean"),
+            ResultShape::Unit => serde_json::json!("unit"),
+            ResultShape::Handle => serde_json::json!("number"),
+            ResultShape::Entries => serde_json::json!("entries"),
+            ResultShape::Json => serde_json::json!("json"),
+        }
+    }
+    let mut kinds = serde_json::Map::new();
+    for kind in HOST_CATALOG {
+        let mut actions = serde_json::Map::new();
+        for action in kind.actions {
+            let args: Vec<serde_json::Value> = action
+                .args
+                .iter()
+                .map(|host_arg| {
+                    serde_json::json!({"name": host_arg.name, "wire": wire_json(host_arg.wire)})
+                })
+                .collect();
+            actions.insert(
+                action.name.to_string(),
+                serde_json::json!({
+                    "args": args,
+                    "result": shape_json(action.result),
+                    "async": action.r#async,
+                }),
+            );
+        }
+        kinds.insert(
+            kind.name.to_string(),
+            serde_json::json!({
+                "grant_owner": kind.grant_owner,
+                "actions": actions,
+            }),
+        );
+    }
+    serde_json::Value::Object(kinds).to_string()
+}
+
 // ---- Host grants -----------------------------------------------------------
 
 /// A grant record: which bridge kinds one locked dependency digest unlocks.
@@ -838,6 +898,53 @@ mod tests {
                     kind.name,
                     action.name
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn catalog_json_roundtrips_and_matches_catalog() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&catalog_json()).expect("catalog_json parses");
+        let object = parsed.as_object().expect("top-level object");
+        assert_eq!(object.len(), HOST_CATALOG.len());
+        for kind in HOST_CATALOG {
+            let kind_value = object.get(kind.name).expect("kind present");
+            assert_eq!(
+                kind_value
+                    .get("grant_owner")
+                    .and_then(serde_json::Value::as_str),
+                Some(kind.grant_owner)
+            );
+            let actions = kind_value
+                .get("actions")
+                .and_then(serde_json::Value::as_object)
+                .expect("actions object");
+            assert_eq!(actions.len(), kind.actions.len());
+            for action in kind.actions {
+                let action_value = actions.get(action.name).expect("action present");
+                assert_eq!(
+                    action_value
+                        .get("async")
+                        .and_then(serde_json::Value::as_bool),
+                    Some(action.r#async),
+                    "{}.{} async flag",
+                    kind.name,
+                    action.name
+                );
+                let args = action_value
+                    .get("args")
+                    .and_then(serde_json::Value::as_array)
+                    .expect("args array");
+                assert_eq!(args.len(), action.args.len());
+                for (arg_value, host_arg) in args.iter().zip(action.args.iter()) {
+                    assert_eq!(
+                        arg_value.get("name").and_then(serde_json::Value::as_str),
+                        Some(host_arg.name)
+                    );
+                    assert!(arg_value.get("wire").is_some());
+                }
+                assert!(action_value.get("result").is_some());
             }
         }
     }
