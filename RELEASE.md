@@ -28,29 +28,73 @@ It does not commit or tag. Open a PR with the bump, merge it, then tag from `mai
 
 ## Triggering a release
 
-Confirm the tree carries the version, then push an annotated tag matching `v*`:
+See [rfd#68](https://github.com/dekaruntime/rfd/issues/68). Every build is a
+**canary**; a **stable** release only ever republishes an already-built
+canary's bytes. There is no more "push a `vX.Y.Z` tag by hand" step —
+`.github/workflows/release.yml` now fails fast on a plain `vX.Y.Z` ref with
+an error pointing here.
 
-```sh
-git checkout main
-git pull origin main
-scripts/runtime-version.sh          # must print the version you are about to tag
-git tag -a "v$(scripts/runtime-version.sh)" -m "deka v$(scripts/runtime-version.sh)"
-git push origin "v$(scripts/runtime-version.sh)"
-```
+1. Merge your bump PR (see Bumping, above) to `main`. Nothing else to do:
+   `.github/workflows/tag-canary.yml` tags the merge commit
+   `vX.Y.Z-canary-<7-hex-sha>` and starts `.github/workflows/release.yml` for
+   that tag.
+2. Watch the canary build:
+   ```sh
+   gh run list --repo dekaruntime/deka --workflow=release.yml
+   gh run watch <RUN_ID> --repo dekaruntime/deka --exit-status
+   ```
+   `release.yml` builds the three CLI binaries + browser WASM, smoke-tests
+   the *built* binaries (no compilation, ~30s), publishes them to R2 under
+   the canary's own path plus `canary.json` / `deka-wasm`'s `canary/*`
+   pointers, and dispatches `create-deka-app` (npm `canary` dist-tag) and
+   `testsuite-site`. It never touches `latest.json` / `latest/*`.
+   Afterwards, a conformance dump runs against the built artifacts and
+   writes `validation.json` — this does not block the canary publish, but it
+   is what `promote.yml` checks before promoting.
+3. Test the canary (it is a real, installable build). Iterate by merging
+   fixes to `main`; each merge yields a new canary of the same base version
+   automatically.
+4. Promote: **Actions → Promote → Run workflow**, with the canary tag as
+   input (e.g. `v0.59.0-canary-d5661ed`).
 
-The release workflow aborts if the tag and `[workspace.package]` disagree, so a tag on an unbumped tree no longer publishes a lying binary.
+### Promotion, step by step
 
-The `.github/workflows/release.yml` workflow will:
+`.github/workflows/promote.yml` enforces these gates, in order, all
+fail-closed with a clear `::error::`:
+
+1. The input matches `vX.Y.Z-canary-<7-hex-sha>`, that tag exists, and no
+   `vX.Y.Z` tag exists yet.
+2. `<canary-version>/release.json` exists on `releases.deka.gg` and its
+   `commit` equals the canary tag's commit.
+3. `<canary-version>/validation.json` exists, names the same commit, and its
+   `gate` is `"green"` — a green result from a different canary of the same
+   version cannot be reused.
+4. The canary's `dsc_version` has no prerelease suffix (a stable deka cannot
+   pin a canary dsc).
+
+If every gate passes: `promote.yml` copies the canary's bytes to the stable
+path in both R2 buckets (no rebuild — same bytes, only the manifest's
+`version`/`tag`/`channel`/`promoted_from` change), writes `latest.json` and
+the WASM `latest/*` pointers, creates and pushes the `vX.Y.Z` tag at the
+canary's own commit, and notifies all five downstreams (website, npm
+`latest`, testsuite-site, draftwriter, headless).
+
+The old workflow (build the three CLI binaries, browser WASM, checksum,
+`manifest.json`/`release.json`, upload) still happens — just once per
+version line, inside the canary's `release.yml` run, not on every promotion:
 
 1. Build the `deka` CLI binary in release mode for:
    - `linux-x64`
    - `darwin-x64`
    - `darwin-arm64`
 2. Build the browser compiler WASM artifacts (`deka_compiler.wasm`, `deka_diagnostics.wasm`).
-3. Compute SHA-256 checksums and write `manifest.json`.
-4. Upload CLI binaries and WASM to the `deka-releases` bucket under `v<VERSION>/`.
-5. Copy the manifest to `deka-releases/latest.json` so `deka.gg` can point users at the current release.
-6. Also copy the WASM files to the `deka-wasm` bucket under `v<VERSION>/` and to `deka-wasm/latest/`, giving the website a stable URL for the pinned browser compiler artifact.
+3. Compute SHA-256 checksums and write `release.json`.
+4. Upload CLI binaries and WASM to the `deka-releases` bucket under
+   `<VERSION>/` (no `v` prefix — the R2 releases bucket never had one) and to
+   the `deka-wasm` bucket under `v<VERSION>/` (the wasm bucket keeps its
+   existing `v` prefix).
+5. Publish `canary.json` / `canary/*` (canary) — `promote.yml` is the only
+   thing that later writes `latest.json` / `latest/*` (stable).
 
 ## Required GitHub secrets
 
@@ -84,14 +128,22 @@ If you want a narrower token, scope it to the buckets above.
 
 ## Manifest format
 
-`latest.json` (and `v<VERSION>/manifest.json`) has this shape:
+`latest.json` / `canary.json` (and `<VERSION>/release.json`, the file this
+repo calls its manifest — there is no separately-named `manifest.json`) has
+this shape. rfd#68 added `channel`, `base_version`, `dsc_version`,
+`corpus_sha` and `promoted_from`; every other key is unchanged:
 
 ```json
 {
-  "version": "0.9.0",
-  "tag": "v0.9.0",
+  "version": "0.59.0-canary-d5661ed",
+  "tag": "v0.59.0-canary-d5661ed",
   "commit": "<full-sha>",
   "published_at": "2026-08-16T...Z",
+  "channel": "canary",
+  "base_version": "0.59.0",
+  "dsc_version": "0.53.5",
+  "corpus_sha": "59e9c9ea6ea5c10779116ac30bef0c482fc94c98cc8d8ddb295ad2805500d30a",
+  "promoted_from": null,
   "binaries": {
     "linux-x64": { "name": "deka-linux-x64", "sha256": "..." },
     "darwin-x64": { "name": "deka-darwin-x64", "sha256": "..." },
@@ -106,7 +158,36 @@ If you want a narrower token, scope it to the buckets above.
 }
 ```
 
-`deka.gg` can read this manifest to render download links or to pin the browser compiler artifact used by the tour.
+A promoted (`stable`) manifest is the identical document with `version` /
+`tag` rewritten to the plain `vX.Y.Z`, `channel: "stable"`, and
+`promoted_from` set to the canary tag it came from — `commit`, `dsc_version`,
+`corpus_sha` and every checksum are untouched, because it is the same build.
+
+`promote.yml` also reads (never writes, except its own success) a sibling
+`validation.json` per canary version, written by `release.yml`'s
+`dump-conformance` job:
+
+```json
+{
+  "tag": "v0.59.0-canary-d5661ed",
+  "commit": "<full-sha>",
+  "base_version": "0.59.0",
+  "dsc_version": "0.53.5",
+  "corpus_sha": "...",
+  "gate": "green",
+  "summary": {
+    "fail": 0,
+    "unexpectedDivergences": 0,
+    "staleDivergences": 0,
+    "unexpectedFailures": 0,
+    "staleFailures": 0
+  },
+  "run_url": "https://github.com/dekaruntime/deka/actions/runs/...",
+  "written_at": "2026-08-16T...Z"
+}
+```
+
+`deka.gg` can read the release manifest to render download links or to pin the browser compiler artifact used by the tour.
 
 ## Notes
 

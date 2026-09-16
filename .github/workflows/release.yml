@@ -1,14 +1,22 @@
 # SCCACHE IS REQUIRED FOR ALL RUST COMPILATION.
 # EVERY CARGO BUILD/TEST/CHECK MUST RUN WITH RUSTC_WRAPPER=sccache. NO EXCEPTIONS.
-
+#
+# rfd#68: this workflow builds and publishes CANARIES ONLY. It never builds a
+# plain vX.Y.Z tag and it never moves `latest.json` / `latest/`. A canary
+# becomes stable only via promote.yml (Actions -> Promote -> Run workflow),
+# which copies these same bytes to the stable path — there is no second
+# build.
 name: Release
 
 on:
+  # Normally started by tag-canary.yml's `gh workflow run release.yml --ref
+  # <canary-tag>` after it pushes the tag (that push itself does not trigger
+  # this workflow -- GITHUB_TOKEN pushes don't fire `on: push`). Also usable
+  # by hand at an existing canary tag.
+  workflow_dispatch:
   push:
-    branches-ignore:
-      - '**'
     tags:
-      - 'v*'
+      - 'v*-canary-*'
 
 permissions:
   contents: read
@@ -18,36 +26,18 @@ env:
   R2_BUCKET_WASM: "deka-wasm"
 
 jobs:
-  test:
-    name: Test (${{ matrix.platform }})
-    environment: release
-    strategy:
-      fail-fast: true
-      matrix:
-        platform: [linux-x64, darwin-x64, darwin-arm64]
-        include:
-          - platform: linux-x64
-            runner: ubuntu-latest
-            sccache_bucket: deka-sccache-linux-x64
-          - platform: darwin-x64
-            runner: macos-15-intel
-            sccache_bucket: deka-sccache-darwin-x64
-          - platform: darwin-arm64
-            runner: macos-14
-            sccache_bucket: deka-sccache-darwin-arm64
-    runs-on: ${{ matrix.runner }}
-    env:
-      CARGO_INCREMENTAL: 0
-      # Every cargo step in this job goes through sccache. Set here, not per step,
-      # so a new step cannot silently build cold (the smoke test did, deka#1081).
-      RUSTC_WRAPPER: sccache
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      SCCACHE_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-      SCCACHE_REGION: auto
-      SCCACHE_BUCKET: ${{ matrix.sccache_bucket }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  # Every other job reads TAG/BASE_VERSION/SHA7/COMMIT from here instead of
+  # re-deriving them, and nothing else runs until this ref is proven to be a
+  # real, matching canary.
+  resolve:
+    name: Resolve canary tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      base_version: ${{ steps.resolve.outputs.base_version }}
+      sha7: ${{ steps.resolve.outputs.sha7 }}
+      commit: ${{ steps.resolve.outputs.commit }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -55,79 +45,47 @@ jobs:
       - name: Where am I
         uses: ./.github/actions/where-am-i
 
-      - name: Tag matches workspace version
+      - name: Resolve and validate the canary tag
+        id: resolve
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::${TAG} looks like a stable tag. This workflow only builds canaries (vX.Y.Z-canary-<sha>) -- stable tags are created by promote.yml, which republishes an already-built canary instead of compiling a new one."
+            exit 1
+          fi
+
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-canary-([0-9a-f]{7})$ ]]; then
+            echo "::error::'${TAG}' is not a canary tag. Expected vX.Y.Z-canary-<7-hex-sha>, e.g. v0.59.0-canary-d5661ed."
+            exit 1
+          fi
+          BASE_VERSION="${BASH_REMATCH[1]}"
+          SHA7="${BASH_REMATCH[2]}"
+
           TREE_VERSION="$(scripts/runtime-version.sh)"
-          if [ "$TREE_VERSION" != "$TAG_VERSION" ]; then
-            echo "::error::git tag ${GITHUB_REF_NAME} does not match workspace version ${TREE_VERSION}."
-            echo "Bump with scripts/bump-version.sh and merge that PR before tagging."
-            echo "This is how v0.26.1 shipped a 0.26.0 binary and v0.28.0 shipped 0.27.0."
+          if [[ "$TREE_VERSION" != "$BASE_VERSION" ]]; then
+            echo "::error::canary tag ${TAG} names base version ${BASE_VERSION}, but the tagged tree is ${TREE_VERSION}."
+            echo "Bump with scripts/bump-version.sh and merge that PR before the next canary."
             exit 1
           fi
 
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.96.0
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Verify sccache can reach R2
-        run: |
-          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
-          sccache --show-stats
-          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run utility-css checks
-        run: |
-          cd assets/utility-css
-          bun build.ts
-          if [ -n "$(git status --porcelain bundle.js)" ]; then
-            echo "::error::assets/utility-css/bundle.js is out of date."
+          COMMIT="$(git rev-parse HEAD)"
+          ACTUAL_SHA7="$(git rev-parse --short=7 HEAD)"
+          if [[ "$ACTUAL_SHA7" != "$SHA7" ]]; then
+            echo "::error::canary tag ${TAG} names commit ${SHA7}, but this ref resolves to ${ACTUAL_SHA7} (${COMMIT})."
             exit 1
           fi
-          bun test.ts
 
-      - name: Build tested crates
-        run: cargo build -p deka_http -p pool -p engine
-
-      - name: Run Rust tests
-        run: |
-          cargo test -p deka_http
-          cargo test -p pool
-          cargo test -p engine
-
-      # This integration test also runs in the normal PR workspace suite.
-      # The release matrix proves native execution on each supported host.
-      - name: Install dsc for executable smoke test
-        run: scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc"
-
-      - name: Smoke test host-target executable compilation
-        env:
-          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
-          NO_COLOR: "1"
-          FORCE_COLOR: "0"
-        # Dev profile on purpose: `--release` here forced a complete second build
-        # of the workspace (~1,600 crates) in a profile nothing earlier in the
-        # job had compiled, and on the darwin runners that build missed sccache
-        # every time (11 min arm64 / 23+ min x64 vs 5 min for the whole linux
-        # job). The test copies the `cli` binary and runs the result; the
-        # profile it was built with proves nothing extra.
-        run: cargo test --locked -p cli --test compile_executable
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "base_version=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha7=${SHA7}" >> "$GITHUB_OUTPUT"
+          echo "commit=${COMMIT}" >> "$GITHUB_OUTPUT"
 
   fetch-dsc-wasm:
     name: Fetch published dsc WASM
-    needs: [test]
+    needs: [resolve]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -151,7 +109,7 @@ jobs:
 
   build-cli-linux-x64:
     name: Build CLI (linux-x64)
-    needs: [test]
+    needs: [resolve]
     runs-on: ubuntu-latest
     environment: release
     env:
@@ -204,7 +162,7 @@ jobs:
 
   build-cli-darwin-x64:
     name: Build CLI (darwin-x64)
-    needs: [test]
+    needs: [resolve]
     runs-on: macos-15-intel
     environment: release
     env:
@@ -257,7 +215,7 @@ jobs:
 
   build-cli-darwin-arm64:
     name: Build CLI (darwin-arm64)
-    needs: [test]
+    needs: [resolve]
     runs-on: macos-14
     environment: release
     env:
@@ -308,10 +266,118 @@ jobs:
           path: dist/deka-darwin-arm64
           retention-days: 1
 
+  # rfd#68: replaces the old `test` job's in-tree `cargo test -p cli --test
+  # compile_executable`. PR CI on the merge commit is now the unit-test gate
+  # (ci.yml already runs this same test on ubuntu and macos-14); this job
+  # proves the *shipped binary* on each host, with zero compilation -- ~30s
+  # per platform instead of a from-scratch `cargo build`/`cargo test` matrix.
+  smoke:
+    name: Smoke test compiled executable (${{ matrix.platform }})
+    needs: [resolve, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64]
+    strategy:
+      fail-fast: true
+      matrix:
+        platform: [linux-x64, darwin-x64, darwin-arm64]
+        include:
+          - platform: linux-x64
+            runner: ubuntu-latest
+          - platform: darwin-x64
+            runner: macos-15-intel
+          - platform: darwin-arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Where am I
+        uses: ./.github/actions/where-am-i
+
+      - name: Download built CLI
+        uses: actions/download-artifact@v7
+        with:
+          name: deka-cli-${{ matrix.platform }}
+          path: artifacts
+
+      - name: Install pinned dsc
+        run: scripts/ci-install-dsc.sh "${{ runner.temp }}/dsc-pinned"
+
+      # Mirrors crates/cli/tests/compile_executable.rs exactly, but against
+      # the built artifact and with no cargo/compilation involved: a real
+      # source tree (with the checked-in @deka/io 0.1.1 fixture + its
+      # deka.lock), a private copy of dsc that gets deleted with the source
+      # dir, a codesign check on macOS, and a from-empty-environment run of
+      # the compiled binary asserting exact stdout.
+      - name: Smoke test compiled executable
+        run: |
+          set -euo pipefail
+          CLI="$(pwd)/artifacts/deka-${{ matrix.platform }}"
+          chmod +x "$CLI"
+
+          SOURCE="$(mktemp -d "${{ runner.temp }}/smoke-src.XXXXXX")"
+          DEST="$(mktemp -d "${{ runner.temp }}/smoke-dst.XXXXXX")"
+          ELSEWHERE="$(mktemp -d "${{ runner.temp }}/smoke-run.XXXXXX")"
+
+          mkdir -p "$SOURCE/ds_modules/@deka/io"
+          cp crates/cli/tests/fixtures/package-cache/cache-entry/ds_modules/@deka/io/index.ds \
+            "$SOURCE/ds_modules/@deka/io/index.ds"
+          cp crates/cli/tests/fixtures/package-cache/cache-entry/ds_modules/@deka/io/deka.json \
+            "$SOURCE/ds_modules/@deka/io/deka.json"
+          cp crates/cli/tests/fixtures/package-cache/cache-entry/deka.lock \
+            "$SOURCE/deka.lock"
+          printf '{"dependencies":{"@deka/io":"0.1.1"}}' > "$SOURCE/deka.json"
+          printf 'import { echo } from "io"\necho("hello from compiled Deka");\n' > "$SOURCE/hello.ds"
+
+          # A private copy, exactly like the in-tree test: the compiler must
+          # not be needed after this directory (and this copy) are gone.
+          cp "${{ runner.temp }}/dsc-pinned" "$SOURCE/dsc"
+          chmod +x "$SOURCE/dsc"
+
+          EXECUTABLE="$DEST/hello"
+          (cd "$SOURCE" && DEKA_DSC="$SOURCE/dsc" "$CLI" compile hello.ds --outfile "$EXECUTABLE")
+
+          rm -rf "$SOURCE"
+
+          if [ "${{ matrix.platform }}" != "linux-x64" ]; then
+            codesign --verify --strict "$EXECUTABLE"
+          fi
+
+          set +e
+          OUTPUT="$(cd "$ELSEWHERE" && env -i \
+            PATH="$ELSEWHERE" \
+            HOME="$ELSEWHERE" \
+            DEKA_DSC="$ELSEWHERE/missing-dsc" \
+            DEKA_NO_DSC=1 \
+            "$EXECUTABLE")"
+          STATUS=$?
+          set -e
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::compiled executable exited $STATUS (expected 0)"
+            exit 1
+          fi
+          if [ "$OUTPUT" != "hello from compiled Deka" ]; then
+            echo "::error::unexpected stdout: $(printf '%s' "$OUTPUT" | head -c 500)"
+            exit 1
+          fi
+          echo "smoke test passed on ${{ matrix.platform }}"
+
+  # rfd#68: runs against the built artifacts, same as before -- but AFTER
+  # `publish` and blocking nothing. Its own conclusion still turns red on a
+  # red gate (so it stays visible in the run), but publishing this canary
+  # never waits on it, and neither does anything else: only promote.yml reads
+  # its result (validation.json), and only a human promoting this canary is
+  # affected by a red gate.
   dump-conformance:
     name: Dump Hats + pack conformance
-    needs: [fetch-dsc-wasm, build-cli-darwin-arm64]
+    needs: [resolve, publish]
     runs-on: macos-14
+    environment: release
+    env:
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -340,14 +406,19 @@ jobs:
       - name: Install dump deps and Chromium
         working-directory: tests/dump
         # --frozen-lockfile: deka#1006. Without it, an unreadable lockfile is
-        # a warning bun recovers from by re-resolving over the network —
+        # a warning bun recovers from by re-resolving over the network --
         # nondeterministic and exactly how the v0.53.1 dump job died further
         # downstream instead of failing fast and clearly on this step.
         run: |
           bun install --frozen-lockfile
           bunx playwright install chromium
 
+      # Not gated with `set -e`: this job must still write and upload
+      # validation.json (gate: "red") when the dump fails its own ratchets,
+      # so that promote.yml has a real answer instead of a missing file. The
+      # job's own conclusion is still made red at the bottom of this step.
       - name: Dump native + browser
+        id: dump
         env:
           DEKA_DSC: ${{ github.workspace }}/.ci/dsc
           DEKA_NATIVE: ${{ github.workspace }}/artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
@@ -355,14 +426,18 @@ jobs:
         run: |
           scripts/ci-install-dsc.sh "$DEKA_DSC"
           chmod +x "$DEKA_NATIVE"
-          bun tests/dump/scripts/dump-results.mjs
+          set +e
+          bun tests/dump/scripts/dump-results.mjs > "${{ runner.temp }}/dump.log" 2>&1
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          set -e
+          cat "${{ runner.temp }}/dump.log"
 
       - name: Fetch pinned tour
         env:
           DEKA_NATIVE: ${{ github.workspace }}/artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
         run: |
           # deka#845 replaced scripts/ci-fetch-tour.sh with the shipped CLI.
-          # pack-conformance.sh reads ./tour/tests/tour — leave the checkout
+          # pack-conformance.sh reads ./tour/tests/tour -- leave the checkout
           # exactly where self fetch puts it.
           chmod +x "$DEKA_NATIVE"
           "$DEKA_NATIVE" self fetch tour
@@ -372,16 +447,111 @@ jobs:
           chmod +x scripts/pack-conformance.sh
           scripts/pack-conformance.sh
 
-      - name: Upload conformance pack
+      - name: Upload conformance pack (workflow artifact)
         uses: actions/upload-artifact@v7
         with:
           name: deka-conformance
           path: dist/conformance
           retention-days: 1
 
+      - name: Install AWS CLI
+        run: command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
+
+      - name: Publish conformance pack to R2
+        run: |
+          TAG="${{ needs.resolve.outputs.tag }}"
+          aws s3 sync dist/conformance/ "s3://${R2_BUCKET_WASM}/${TAG}/conformance/" --endpoint-url="${R2_ENDPOINT}"
+
+      # Parses the same summary line the gate itself prints
+      # (tests/dump/scripts/dump-results.mjs): on a red gate it prints
+      # `[hats] gate FAILED: exit=N overall.fail=A unexpectedDivergences=B
+      # staleDivergences=C unexpectedFailures=D staleFailures=E`; on green
+      # that line is absent (nothing to ratchet) and the always-printed
+      # `[hats] summary total=... overall(pass=... fail=...)` line supplies
+      # the pass/fail counts with the four ratchet counters implicitly 0.
+      - name: Write validation.json
+        id: gate
+        run: |
+          LOG="${{ runner.temp }}/dump.log"
+          TAG="${{ needs.resolve.outputs.tag }}"
+          VERSION="${{ needs.resolve.outputs.version }}"
+          COMMIT="${{ needs.resolve.outputs.commit }}"
+          BASE_VERSION="${{ needs.resolve.outputs.base_version }}"
+          DSC_VERSION="$(tr -d '[:space:]' < scripts/dsc-version)"
+          CORPUS_SHA="$(sed -n '2p' scripts/testsuite-corpus-version | tr -d '[:space:]')"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          WRITTEN_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          if grep -q '^\[hats\] gate FAILED:' "$LOG"; then
+            GATE="red"
+            LINE="$(grep '^\[hats\] gate FAILED:' "$LOG" | tail -1)"
+            FAIL="$(echo "$LINE" | grep -oE 'overall\.fail=[0-9]+' | head -1 | cut -d= -f2)"
+            UNEXPECTED_DIV="$(echo "$LINE" | grep -oE 'unexpectedDivergences=[0-9]+' | head -1 | cut -d= -f2)"
+            STALE_DIV="$(echo "$LINE" | grep -oE 'staleDivergences=[0-9]+' | head -1 | cut -d= -f2)"
+            UNEXPECTED_FAIL="$(echo "$LINE" | grep -oE 'unexpectedFailures=[0-9]+' | head -1 | cut -d= -f2)"
+            STALE_FAIL="$(echo "$LINE" | grep -oE 'staleFailures=[0-9]+' | head -1 | cut -d= -f2)"
+          else
+            GATE="green"
+            LINE="$(grep '^\[hats\] summary ' "$LOG" | tail -1)"
+            FAIL="$(echo "$LINE" | grep -oE 'fail=[0-9]+' | head -1 | cut -d= -f2)"
+            UNEXPECTED_DIV=0
+            STALE_DIV=0
+            UNEXPECTED_FAIL=0
+            STALE_FAIL=0
+          fi
+
+          jq -n \
+            --arg tag "$TAG" \
+            --arg commit "$COMMIT" \
+            --arg base_version "$BASE_VERSION" \
+            --arg dsc_version "$DSC_VERSION" \
+            --arg corpus_sha "$CORPUS_SHA" \
+            --arg gate "$GATE" \
+            --argjson fail "${FAIL:-0}" \
+            --argjson unexpected_divergences "${UNEXPECTED_DIV:-0}" \
+            --argjson stale_divergences "${STALE_DIV:-0}" \
+            --argjson unexpected_failures "${UNEXPECTED_FAIL:-0}" \
+            --argjson stale_failures "${STALE_FAIL:-0}" \
+            --arg run_url "$RUN_URL" \
+            --arg written_at "$WRITTEN_AT" \
+            '{
+              tag: $tag,
+              commit: $commit,
+              base_version: $base_version,
+              dsc_version: $dsc_version,
+              corpus_sha: $corpus_sha,
+              gate: $gate,
+              summary: {
+                fail: $fail,
+                unexpectedDivergences: $unexpected_divergences,
+                staleDivergences: $stale_divergences,
+                unexpectedFailures: $unexpected_failures,
+                staleFailures: $stale_failures
+              },
+              run_url: $run_url,
+              written_at: $written_at
+            }' > validation.json
+
+          cat validation.json
+          # deka-releases has no "v" prefix on its versioned dirs (today's
+          # releases.deka.gg/<version>/, no leading v) -- VERSION here, not
+          # TAG. deka-wasm keeps its existing "v"-prefixed convention, which
+          # is why the conformance upload above used TAG.
+          aws s3 cp validation.json "s3://${R2_BUCKET_RELEASES}/${VERSION}/validation.json" --endpoint-url="${R2_ENDPOINT}"
+          echo "gate=${GATE}" >> "$GITHUB_OUTPUT"
+
+      # validation.json is uploaded regardless of outcome (the step above);
+      # this is the only place the job's own conclusion is decided, so a red
+      # gate is visible on the run without having blocked publish above.
+      - name: Fail this job's conclusion on a red gate
+        if: ${{ steps.gate.outputs.gate == 'red' }}
+        run: |
+          echo "::error::conformance gate is red for ${{ needs.resolve.outputs.tag }}; validation.json was still published, but this canary cannot be promoted until a green canary follows it."
+          exit 1
+
   publish:
     name: Publish to R2
-    needs: [fetch-dsc-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, dump-conformance]
+    needs: [resolve, fetch-dsc-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, smoke]
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -411,44 +581,39 @@ jobs:
       - name: Prepare release layout
         id: prepare
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          TAG="${GITHUB_REF_NAME}"
-          COMMIT="${GITHUB_SHA}"
+          TAG="${{ needs.resolve.outputs.tag }}"
+          VERSION="${{ needs.resolve.outputs.version }}"
+          BASE_VERSION="${{ needs.resolve.outputs.base_version }}"
+          COMMIT="${{ needs.resolve.outputs.commit }}"
           PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          TREE_VERSION="$(scripts/runtime-version.sh)"
-          if [ "$TREE_VERSION" != "$VERSION" ]; then
-            echo "::error::git tag ${TAG} does not match workspace version ${TREE_VERSION}."
-            exit 1
-          fi
+          DSC_VERSION="$(tr -d '[:space:]' < scripts/dsc-version)"
+          CORPUS_SHA="$(sed -n '2p' scripts/testsuite-corpus-version | tr -d '[:space:]')"
 
-          mkdir -p "release/${VERSION}" release/wasm-latest
+          mkdir -p "release/${TAG}"
 
           # CLI binaries
           for platform in linux-x64 darwin-x64 darwin-arm64; do
             src="artifacts/deka-cli-${platform}/deka-${platform}"
-            dst="release/${VERSION}/deka-${platform}"
+            dst="release/${TAG}/deka-${platform}"
             cp "${src}" "${dst}"
           done
 
           # WASM artifacts
-          cp artifacts/deka-wasm/deka_compiler.wasm "release/${VERSION}/"
-          cp artifacts/deka-wasm/deka_diagnostics.wasm "release/${VERSION}/"
-
-          mkdir -p "release/${VERSION}/conformance"
-          cp -R artifacts/deka-conformance/. "release/${VERSION}/conformance/"
+          cp artifacts/deka-wasm/deka_compiler.wasm "release/${TAG}/"
+          cp artifacts/deka-wasm/deka_diagnostics.wasm "release/${TAG}/"
 
           # Compute sha256s and sizes
           sha256() { sha256sum "$1" | awk '{print $1}'; }
 
-          COMPILER_SHA256="$(sha256 "release/${VERSION}/deka_compiler.wasm")"
-          COMPILER_SIZE="$(stat -c%s "release/${VERSION}/deka_compiler.wasm")"
-          DIAGNOSTICS_SHA256="$(sha256 "release/${VERSION}/deka_diagnostics.wasm")"
-          DIAGNOSTICS_SIZE="$(stat -c%s "release/${VERSION}/deka_diagnostics.wasm")"
+          COMPILER_SHA256="$(sha256 "release/${TAG}/deka_compiler.wasm")"
+          COMPILER_SIZE="$(stat -c%s "release/${TAG}/deka_compiler.wasm")"
+          DIAGNOSTICS_SHA256="$(sha256 "release/${TAG}/deka_diagnostics.wasm")"
+          DIAGNOSTICS_SIZE="$(stat -c%s "release/${TAG}/deka_diagnostics.wasm")"
           CARGO_LOCK_SHA256="$(sha256sum Cargo.lock | awk '{print $1}')"
 
-          LINUX_X64_SHA256="$(sha256 "release/${VERSION}/deka-linux-x64")"
-          DARWIN_X64_SHA256="$(sha256 "release/${VERSION}/deka-darwin-x64")"
-          DARWIN_ARM64_SHA256="$(sha256 "release/${VERSION}/deka-darwin-arm64")"
+          LINUX_X64_SHA256="$(sha256 "release/${TAG}/deka-linux-x64")"
+          DARWIN_X64_SHA256="$(sha256 "release/${TAG}/deka-darwin-x64")"
+          DARWIN_ARM64_SHA256="$(sha256 "release/${TAG}/deka-darwin-arm64")"
 
           # Website-compatible compiler manifest
           jq -n \
@@ -475,7 +640,7 @@ jobs:
                 sha256: $sha256,
                 bytes: $bytes
               }
-            }' > "release/${VERSION}/deka-compiler-artifact.json"
+            }' > "release/${TAG}/deka-compiler-artifact.json"
 
           # Website-compatible diagnostics manifest
           jq -n \
@@ -500,7 +665,7 @@ jobs:
                 sha256: $sha256,
                 bytes: $bytes
               }
-            }' > "release/${VERSION}/deka-diagnostics-artifact.json"
+            }' > "release/${TAG}/deka-diagnostics-artifact.json"
 
           # WASM metadata sidecars consumed by the website sync job
           jq -n \
@@ -520,7 +685,7 @@ jobs:
               target: $target,
               cargo_lock_sha256: $cargo_lock,
               compiler: { name: $name, version: $version, abi_version: $abi_version }
-            }' > "release/${VERSION}/deka_compiler.wasm.metadata.json"
+            }' > "release/${TAG}/deka_compiler.wasm.metadata.json"
 
           jq -n \
             --arg artifact "deka_diagnostics.wasm" \
@@ -538,9 +703,12 @@ jobs:
               target: $target,
               cargo_lock_sha256: $cargo_lock,
               adapter: { name: $name, abi_version: $abi_version }
-            }' > "release/${VERSION}/deka_diagnostics.wasm.metadata.json"
+            }' > "release/${TAG}/deka_diagnostics.wasm.metadata.json"
 
-          # Release manifest consumed by the website sync job
+          # Release manifest consumed by the website sync job and by
+          # promote.yml's gates. rfd#68 additions: channel, base_version,
+          # dsc_version, corpus_sha, promoted_from (always null here --
+          # only promote.yml's rewrite of this same file sets it).
           jq -n \
             --arg version "${VERSION}" \
             --arg tag "${TAG}" \
@@ -551,11 +719,20 @@ jobs:
             --arg darwin_arm64_sha "${DARWIN_ARM64_SHA256}" \
             --arg compiler_sha "${COMPILER_SHA256}" \
             --arg diagnostics_sha "${DIAGNOSTICS_SHA256}" \
+            --arg channel "canary" \
+            --arg base_version "${BASE_VERSION}" \
+            --arg dsc_version "${DSC_VERSION}" \
+            --arg corpus_sha "${CORPUS_SHA}" \
             '{
               version: $version,
               tag: $tag,
               commit: $commit,
               published_at: $published_at,
+              channel: $channel,
+              base_version: $base_version,
+              dsc_version: $dsc_version,
+              corpus_sha: $corpus_sha,
+              promoted_from: null,
               binaries: {
                 "linux-x64": { name: "deka-linux-x64", sha256: $linux_x64_sha },
                 "darwin-x64": { name: "deka-darwin-x64", sha256: $darwin_x64_sha },
@@ -567,14 +744,18 @@ jobs:
                 diagnostics: "deka_diagnostics.wasm",
                 diagnostics_sha256: $diagnostics_sha
               }
-            }' > "release/${VERSION}/release.json"
+            }' > "release/${TAG}/release.json"
 
+          cp "release/${TAG}/release.json" "release/${TAG}/canary.json"
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "compiler_sha256=${COMPILER_SHA256}" >> "$GITHUB_OUTPUT"
           echo "diagnostics_sha256=${DIAGNOSTICS_SHA256}" >> "$GITHUB_OUTPUT"
 
       - name: Upload versioned release to R2
         run: |
+          TAG="${{ steps.prepare.outputs.tag }}"
           VERSION="${{ steps.prepare.outputs.version }}"
           # R2 rate-limits high-concurrency PutObject bursts (the ~1000-file
           # conformance tree tripped ServiceUnavailable twice on v0.48.1).
@@ -582,208 +763,84 @@ jobs:
           aws configure set default.s3.max_concurrent_requests 4
           aws configure set default.retry_mode adaptive
           aws configure set default.max_attempts 10
-          aws s3 sync "release/${VERSION}/" "s3://${R2_BUCKET_RELEASES}/${VERSION}/" --endpoint-url="${R2_ENDPOINT}"
+          # deka-releases has no "v" prefix on its versioned dirs (today:
+          # releases.deka.gg/0.53.4/, not /v0.53.4/) -- VERSION here, not TAG.
+          aws s3 sync "release/${TAG}/" "s3://${R2_BUCKET_RELEASES}/${VERSION}/" --endpoint-url="${R2_ENDPOINT}" --exclude "canary.json"
 
       - name: Upload versioned WASM to R2
         run: |
-          VERSION="${{ steps.prepare.outputs.version }}"
-          aws s3 sync "release/${VERSION}/" "s3://${R2_BUCKET_WASM}/v${VERSION}/" --endpoint-url="${R2_ENDPOINT}"
+          TAG="${{ steps.prepare.outputs.tag }}"
+          aws s3 sync "release/${TAG}/" "s3://${R2_BUCKET_WASM}/${TAG}/" --endpoint-url="${R2_ENDPOINT}" --exclude "canary.json"
 
-      - name: Promote latest release manifest
+      # rfd#68: canary.json / canary/* instead of latest.json / latest/* --
+      # `latest` is stable-only and is never touched by this workflow.
+      - name: Publish canary release pointer
         run: |
-          VERSION="${{ steps.prepare.outputs.version }}"
-          aws s3 cp "release/${VERSION}/release.json" "s3://${R2_BUCKET_RELEASES}/latest.json" --endpoint-url="${R2_ENDPOINT}"
+          TAG="${{ steps.prepare.outputs.tag }}"
+          aws s3 cp "release/${TAG}/canary.json" "s3://${R2_BUCKET_RELEASES}/canary.json" --endpoint-url="${R2_ENDPOINT}"
 
-      - name: Promote latest WASM artifacts
+      - name: Publish canary WASM pointers
         run: |
-          VERSION="${{ steps.prepare.outputs.version }}"
-          aws s3 cp "release/${VERSION}/deka-compiler-artifact.json" "s3://${R2_BUCKET_WASM}/latest/deka-compiler-artifact.json" --endpoint-url="${R2_ENDPOINT}"
-          aws s3 cp "release/${VERSION}/deka-diagnostics-artifact.json" "s3://${R2_BUCKET_WASM}/latest/deka-diagnostics-artifact.json" --endpoint-url="${R2_ENDPOINT}"
-          aws s3 cp "release/${VERSION}/deka_compiler.wasm" "s3://${R2_BUCKET_WASM}/latest/deka_compiler.wasm" --endpoint-url="${R2_ENDPOINT}"
-          aws s3 cp "release/${VERSION}/deka_diagnostics.wasm" "s3://${R2_BUCKET_WASM}/latest/deka_diagnostics.wasm" --endpoint-url="${R2_ENDPOINT}"
-          aws s3 sync "release/${VERSION}/conformance/" "s3://${R2_BUCKET_WASM}/latest/conformance/" --endpoint-url="${R2_ENDPOINT}"
+          TAG="${{ steps.prepare.outputs.tag }}"
+          aws s3 cp "release/${TAG}/deka-compiler-artifact.json" "s3://${R2_BUCKET_WASM}/canary/deka-compiler-artifact.json" --endpoint-url="${R2_ENDPOINT}"
+          aws s3 cp "release/${TAG}/deka-diagnostics-artifact.json" "s3://${R2_BUCKET_WASM}/canary/deka-diagnostics-artifact.json" --endpoint-url="${R2_ENDPOINT}"
+          aws s3 cp "release/${TAG}/deka_compiler.wasm" "s3://${R2_BUCKET_WASM}/canary/deka_compiler.wasm" --endpoint-url="${R2_ENDPOINT}"
+          aws s3 cp "release/${TAG}/deka_diagnostics.wasm" "s3://${R2_BUCKET_WASM}/canary/deka_diagnostics.wasm" --endpoint-url="${R2_ENDPOINT}"
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ steps.prepare.outputs.version }}"
+          TAG="${{ steps.prepare.outputs.tag }}"
           TMPDIR="$(mktemp -d)"
           curl -fsSL -o "${TMPDIR}/gh.tar.gz" "https://github.com/cli/cli/releases/download/v2.98.0/gh_2.98.0_linux_amd64.tar.gz"
           tar -xzf "${TMPDIR}/gh.tar.gz" -C "${TMPDIR}"
           GH_BIN="${TMPDIR}/gh_2.98.0_linux_amd64/bin/gh"
 
-          # The release may already exist if the workflow is retried or if a
-          # draft release was created ahead of the tag push. Make this step
-          # idempotent so downstream triggers still run.
-          # The conformance pack is a directory, and a release asset must be a
-          # file -- uploading the glob failed with "is a directory" once the
-          # pack moved into the release tree. Tar it, then upload files only.
-          if [ -d "release/${VERSION}/conformance" ]; then
-            tar -czf "release/${VERSION}/conformance.tar.gz" \
-              -C "release/${VERSION}" conformance
-            rm -rf "release/${VERSION}/conformance"
-          fi
-
+          # The release may already exist if the workflow is retried. Make
+          # this step idempotent so downstream triggers still run.
           ASSETS=()
-          for f in release/${VERSION}/*; do
+          for f in "release/${TAG}"/*; do
             [ -f "$f" ] && ASSETS+=("$f")
           done
 
-          if "$GH_BIN" release view "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release ${GITHUB_REF_NAME} already exists. Uploading/overwriting assets."
-            "$GH_BIN" release upload "${GITHUB_REF_NAME}" "${ASSETS[@]}" \
+          if "$GH_BIN" release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists. Uploading/overwriting assets."
+            "$GH_BIN" release upload "${TAG}" "${ASSETS[@]}" \
               --repo "${{ github.repository }}" --clobber
           else
-            "$GH_BIN" release create "${GITHUB_REF_NAME}" \
+            "$GH_BIN" release create "${TAG}" \
               --repo "${{ github.repository }}" \
-              --title "deka ${VERSION}" \
-              --notes "deka ${VERSION} release binaries and WASM artifacts." \
+              --title "deka canary ${TAG}" \
+              --notes "deka canary build. Not yet promoted -- see rfd#68." \
+              --prerelease \
               "${ASSETS[@]}"
           fi
 
       - name: Summary
         run: |
-          echo "Published deka ${{ github.ref_name }}"
-          echo "  release manifest: https://releases.deka.gg/latest.json"
-          echo "  compiler manifest: https://wasm.deka.gg/latest/deka-compiler-artifact.json"
-          echo "  diagnostics manifest: https://wasm.deka.gg/latest/deka-diagnostics-artifact.json"
-          echo "  conformance pack: https://wasm.deka.gg/v${{ steps.prepare.outputs.version }}/conformance/manifest.json"
-          echo "  downstream deploys triggered: website sync, testsuite deploy"
+          TAG="${{ steps.prepare.outputs.tag }}"
+          VERSION="${{ steps.prepare.outputs.version }}"
+          echo "Published deka canary ${TAG}"
+          echo "  release manifest: https://releases.deka.gg/${VERSION}/release.json"
+          echo "  canary pointer: https://releases.deka.gg/canary.json"
+          echo "  compiler manifest: https://wasm.deka.gg/canary/deka-compiler-artifact.json"
+          echo "  diagnostics manifest: https://wasm.deka.gg/canary/deka-diagnostics-artifact.json"
+          echo "  conformance pack (after dump-conformance): https://wasm.deka.gg/${TAG}/conformance/manifest.json"
+          echo "  downstream notified: create-deka-app (npm canary tag), testsuite-site"
+          echo "  to promote: gh workflow run promote.yml -f canary=${TAG}"
 
-  # Downstream consumers are notified from a SEPARATE JOB that needs `publish`,
-  # not from steps inside it.
-  #
-  # A step guarded by if: success() is only as good as its position: anything
-  # added after it has already had the triggers fire. As a job with
-  # needs: [publish], the whole release must be green before anything
-  # downstream hears about it -- and a draft blog post is not something to
-  # generate for a release that did not finish.
+  # Downstream consumers are notified from a SEPARATE JOB that needs
+  # `publish`, not from steps inside it -- a canary's downstream footprint is
+  # deliberately narrow (npm canary dist-tag + testsuite-site only; website,
+  # headless and draftwriter are stable-only, see promote.yml).
   notify:
     name: Notify downstream
-    needs: [publish]
-    runs-on: ubuntu-latest
-    steps:
-      # The testsuite-site step reads scripts/testsuite-corpus-version from
-      # the workspace -- without a checkout the job fails on a missing file
-      # (first hit: v0.50.0).
-      - uses: actions/checkout@v4
-
-      - name: Resolve version
-        id: v
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Trigger website compiler sync
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.DISPATCH_WEBSITE_SYNC_TOKEN }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "DISPATCH_WEBSITE_SYNC_TOKEN not set; skipping cross-repo sync trigger."
-            echo "The website's hourly sync fallback will pick up this release."
-            exit 0
-          fi
-          curl -sSL --fail-with-body -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/dekaruntime/website/actions/workflows/sync-deka-compiler.yml/dispatches \
-            -d '{"ref":"main"}'
-
-      - name: Trigger npm package publish
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.CASCADE_DISPATCH_TOKEN }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::CASCADE_DISPATCH_TOKEN is not visible to this repo (org secret → Repository access). The npm publish for this release was NOT triggered; create-deka-app's hourly schedule will publish it within the hour, but fix the secret."
-            exit 1
-          fi
-          TAG="${GITHUB_REF_NAME}"
-          curl -sSL --fail-with-body -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/dekaruntime/create-deka-app/dispatches \
-            -d "{\"event_type\":\"deka-released\",\"client_payload\":{\"tag\":\"$TAG\"}}"
-
-      - name: Trigger testsuite-site deploy
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.CASCADE_DISPATCH_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::CASCADE_DISPATCH_TOKEN is required to dispatch the testsuite-site deploy."
-            echo "Add dekaruntime/deka to the org secret's repository access list before retrying this release."
-            exit 1
-          fi
-          corpus_ref="$(sed -n '1p' scripts/testsuite-corpus-version)"
-          corpus_sha="$(curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/dekaruntime/testsuite/commits/${corpus_ref}" \
-            | jq -r '.sha')"
-          if ! [[ "$corpus_sha" =~ ^[a-f0-9]{40}$ ]]; then
-            echo "::error::Could not resolve testsuite corpus pin ${corpus_ref} to a commit SHA."
-            exit 1
-          fi
-          curl -sSL --fail-with-body -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/dekaruntime/testsuite-site/dispatches \
-            -d "{\"event_type\":\"corpus-updated\",\"client_payload\":{\"corpus_sha\":\"${corpus_sha}\"}}"
-
-      # The release-note pipeline. draftwriter listens for `runtime-published`
-      # and opens a post PR on the website. Nothing fired this event, so the
-      # workflow had run 3 times ever -- all by hand -- and 0.35, 0.36, 0.37
-      # and 0.38 were never written at all.
-      #
-      # Minor and major only. Patch releases do not get their own post; their
-      # content belongs in the minor's.
-      - name: Trigger release-note draft
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.CASCADE_DISPATCH_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          patch="${TAG##*.}"
-          if [ "$patch" != "0" ]; then
-            echo "$TAG is a patch release; release notes are written per minor."
-            exit 0
-          fi
-          if [ -z "$GH_TOKEN" ]; then
-            echo "CASCADE_DISPATCH_TOKEN not set; skipping release-note trigger."
-            echo "Run draftwriter's draft.yml manually with tag=$TAG."
-            exit 0
-          fi
-          curl -sSL --fail-with-body -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/dekaruntime/draftwriter/dispatches \
-            -d "{\"event_type\":\"runtime-published\",\"client_payload\":{\"tag\":\"$TAG\"}}"
-
-      # headless bundles the compiler wasm so release-note code samples can be
-      # validated against the compiler for the version being announced. It also
-      # polls releases.deka.gg hourly, so this is a latency optimisation rather
-      # than a correctness requirement -- and the poll additionally covers the
-      # case where a wasm upload finishes after this job does.
-      - name: Trigger headless compiler sync
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.CASCADE_DISPATCH_TOKEN }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "CASCADE_DISPATCH_TOKEN not set; skipping cross-repo headless sync trigger."
-            echo "The headless hourly sync fallback will pick up this release."
-            exit 0
-          fi
-          curl -sSL --fail-with-body -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/dekaruntime/headless/actions/workflows/sync-wasm.yml/dispatches \
-            -d '{"ref":"main"}'
+    needs: [resolve, publish]
+    uses: ./.github/workflows/notify-downstream.yml
+    with:
+      tag: ${{ needs.resolve.outputs.tag }}
+      channel: canary
+      create_deka_app: true
+      testsuite_site: true
+    secrets: inherit

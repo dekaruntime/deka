@@ -5,16 +5,28 @@ artifacts land, and how downstream sites pick them up automatically.
 
 ## Overview
 
-A release is driven entirely by GitHub Actions. Pushing an annotated tag matching
-`v*` to `dekaruntime/deka` triggers `.github/workflows/release.yml`, which:
+See [rfd#68](https://github.com/dekaruntime/rfd/issues/68) for the full design.
+Every build is a **canary**; a **stable** release is a canary that a human
+promotes, republishing the exact same bytes under the plain version. There is
+exactly one compilation per version line.
 
-1. Runs the Rust test suite on linux-x64, darwin-x64, and darwin-arm64.
-2. Builds the browser compiler + diagnostics WASM artifacts.
-3. Builds native CLI binaries for linux-x64, darwin-x64, and darwin-arm64.
-4. Publishes versioned artifacts to Cloudflare R2.
-5. Promotes the `latest` pointers on R2.
-6. Dispatches downstream workflows so the tour and conformance sites rebuild.
-7. Dispatches the npm publish (see npm packages below).
+- **canary** (`vX.Y.Z-canary-<sha>`): every merge to `main` gets one,
+  automatically. `.github/workflows/tag-canary.yml` tags the merge commit and
+  starts `.github/workflows/release.yml`, which builds the three CLI
+  binaries + WASM, smoke-tests the built binary on each host, publishes to
+  R2 under that canary's own path plus `canary.json` / `deka-wasm`'s
+  `canary/*` pointers, and dispatches the conformance dump (which records a
+  result for the promote gate — it does not block the canary publish).
+- **stable** (`vX.Y.Z`): created only by a human running
+  **Actions → Promote → Run workflow** with the canary tag to promote.
+  `.github/workflows/promote.yml` verifies the canary shipped, was validated
+  green, and pins a stable dsc, then copies its bytes to the stable path,
+  writes `latest.json` / `deka-wasm`'s `latest/*`, tags `vX.Y.Z` at the
+  canary's commit, and notifies every downstream.
+
+The old flow — a human pushing a `vX.Y.Z` tag straight into a full build —
+no longer exists. `release.yml` builds canaries only; a plain `vX.Y.Z` ref
+fails it fast with an error pointing at `promote.yml`.
 
 All jobs run on self-hosted runners and use a shared sccache backend on R2.
 
@@ -24,20 +36,49 @@ All jobs run on self-hosted runners and use a shared sccache backend on R2.
    ```bash
    ./scripts/bump-version.sh patch    # or minor, or an explicit X.Y.Z
    ```
-2. Open a PR with the bump, merge it to `main`.
-3. Create and push an annotated tag from `main`:
-   ```bash
-   git checkout main
-   git pull origin main
-   scripts/runtime-version.sh          # must match the version you are tagging
-   git tag -a "v$(scripts/runtime-version.sh)" -m "deka v$(scripts/runtime-version.sh)"
-   git push origin "v$(scripts/runtime-version.sh)"
-   ```
-4. Watch the run:
+2. Open a PR with the bump, merge it to `main`. **That's it** — merging is
+   the only manual step to get a canary. `tag-canary.yml` tags the merge
+   commit `vX.Y.Z-canary-<sha>` and starts `release.yml` for you.
+3. Watch the canary build:
    ```bash
    gh run list --repo dekaruntime/deka --workflow=release.yml
    gh run watch <RUN_ID> --repo dekaruntime/deka --exit-status
    ```
+4. Test the canary. It's a full, installable build at its own version —
+   nothing about it is "unfinished". Its conformance dump runs after
+   publish and writes a `validation.json` gate result that `promote.yml`
+   reads; it does not need to be green for you to try the build.
+5. Iterate if needed: a fix is another PR to `main`, which yields another
+   canary of the same base version (`vX.Y.Z-canary-<new-sha>`) automatically.
+   Only bump the version again for the *next* release line.
+6. Promote when satisfied: **Actions → Promote → Run workflow**, enter the
+   canary tag (e.g. `v0.59.0-canary-d5661ed`). See
+   [Promotion, step by step](#promotion-step-by-step) below for exactly what
+   this checks.
+
+### Promotion, step by step
+
+`promote.yml` enforces these gates, in order, all fail-closed:
+
+1. **The input is a real, unpromoted canary.** It matches
+   `vX.Y.Z-canary-<7-hex-sha>`, that tag exists in the repo, and no `vX.Y.Z`
+   tag exists yet.
+2. **The canary shipped.** `<canary>/release.json` exists on
+   `releases.deka.gg` and its `commit` matches the canary tag's commit.
+3. **Integration is green for this exact commit.** `<canary>/validation.json`
+   exists, names the same commit, and its `gate` is `"green"`. A green
+   result from a different (even newer) canary of the same version cannot be
+   reused — the human pressing the button is what turns "tested" into
+   "shipped", and it has to be *this* canary.
+4. **Stable pins stable.** The canary's `dsc_version` must have no
+   prerelease suffix (a stable deka cannot pin a canary dsc).
+
+If every gate passes, `promote.yml` copies the canary's bytes to the stable
+path in both R2 buckets (no rebuild), rewrites the manifest
+(`version`/`tag`/`channel`/`promoted_from`, everything else — checksums,
+commit, `dsc_version`, `corpus_sha` — unchanged), writes `latest.json` and
+the WASM `latest/*` pointers, creates and pushes the `vX.Y.Z` tag at the
+canary's commit, and notifies all five downstreams.
 
 ## Release artifacts
 
@@ -45,22 +86,39 @@ After a successful run the following are available on R2:
 
 | Artifact | URL pattern | Consumers |
 |---|---|---|
-| Release manifest | `https://releases.deka.gg/latest.json` | CLI installers, testsuite native isolate runs |
-| Versioned release | `https://releases.deka.gg/<VERSION>/...` | Native CLI binaries, WASM files |
-| Compiler manifest | `https://wasm.deka.gg/latest/deka-compiler-artifact.json` | Website, testsuite |
+| Stable release manifest | `https://releases.deka.gg/latest.json` | CLI installers, testsuite native isolate runs |
+| Canary release manifest | `https://releases.deka.gg/canary.json` | Opt-in canary consumers (`install.sh --canary`) |
+| Versioned release (stable) | `https://releases.deka.gg/<VERSION>/...` | Native CLI binaries, WASM files |
+| Versioned release (canary) | `https://releases.deka.gg/<VERSION>-canary-<sha>/...` | Native CLI binaries, WASM files, plus `validation.json` (the promote gate result) |
+| Stable compiler manifest | `https://wasm.deka.gg/latest/deka-compiler-artifact.json` | Website, testsuite |
+| Canary compiler manifest | `https://wasm.deka.gg/canary/deka-compiler-artifact.json` | Opt-in canary consumers |
 | Diagnostics manifest | `https://wasm.deka.gg/latest/deka-diagnostics-artifact.json` | Website, testsuite |
 | Compiler WASM | `https://wasm.deka.gg/latest/deka_compiler.wasm` | Website tour, testsuite |
 | Diagnostics WASM | `https://wasm.deka.gg/latest/deka_diagnostics.wasm` | Website tour |
 
-The `latest/*` paths are updated atomically at the end of the `publish` job.
+`latest.json` / `deka-wasm`'s `latest/*` move only in `promote.yml`, at the
+end of a successful promotion. `canary.json` / `deka-wasm`'s `canary/*` move
+at the end of every canary's `publish` job in `release.yml`, and are never
+touched by promotion. Note the two R2 buckets disagree on whether a version
+segment carries a `v` prefix: `deka-releases` paths have none (`/0.53.4/`,
+`/0.59.0-canary-d5661ed/`); `deka-wasm` paths keep the `v` it always had
+(`/v0.53.4/`, `/v0.59.0-canary-d5661ed/`).
 
 ## Downstream deployments
 
-The release workflow does not deploy anything directly. Its `notify` job
-(`needs: [publish]`, so nothing fires until the whole release is green) sends
-five dispatches to other repositories. Each is independent — a failure in one
-does not undo the release, but (see below) it can skip the ones that come
-after it in the same job.
+Neither `release.yml` nor `promote.yml` deploys anything directly — each ends
+in a `notify` job (`needs: [publish]` / `needs: [promote]`, so nothing fires
+until the run is green) that calls the shared
+`.github/workflows/notify-downstream.yml` reusable workflow. The two channels
+notify a different subset:
+
+- **canary** (`release.yml`): `create-deka-app` (npm, `--tag canary`) and
+  `testsuite-site` only. Website tour, headless and draftwriter are
+  stable-only — a canary never touches them.
+- **stable** (`promote.yml`): all five downstreams below.
+
+Each dispatch is independent — a failure in one does not undo the release,
+but (see below) it can skip the ones that come after it in the same job.
 
 ```mermaid
 flowchart LR
@@ -68,33 +126,39 @@ flowchart LR
     dscRel --> dscR2[("R2: dsc-wasm.deka.gg<br/>dsc.wasm, CLIs, release.json")]
     dscRel -->|CASCADE_DISPATCH_TOKEN<br/>dsc-released| npmDsc[npm: dsc packages]
 
-    dekaTag[deka: v* tag] --> dekaRel[deka release.yml]
+    dekaMerge[deka: PR merges to main] --> dekaTagCanary[tag-canary.yml]
+    dekaTagCanary -->|"vX.Y.Z-canary-sha tag<br/>+ workflow_dispatch"| dekaRel[deka release.yml<br/>canary build]
     dekaRel -->|fetch-dsc-wasm job<br/>pins scripts/dsc-version| dscR2
-    dekaRel --> dekaR2[("R2: releases.deka.gg<br/>wasm.deka.gg")]
+    dekaRel --> dekaR2canary[("R2: canary.json, canary/*<br/>+ validation.json (gate)")]
+    dekaHuman[human: Actions -> Promote] --> dekaPromote[deka promote.yml]
+    dekaR2canary -.->|gates a-d| dekaPromote
+    dekaPromote --> dekaR2[("R2: releases.deka.gg<br/>wasm.deka.gg (latest)")]
 
-    dekaRel -->|DISPATCH_WEBSITE_SYNC_TOKEN| webSync[website: sync-deka-compiler.yml]
+    dekaPromote -->|DISPATCH_WEBSITE_SYNC_TOKEN<br/>stable only| webSync[website: sync-deka-compiler.yml]
     dscR2 -->|hourly cron, latest, no pin| webSync
     webSync --> webDeploy[website: deploy.yml] --> tour[deka.gg tour]
 
-    dekaRel -->|CASCADE_DISPATCH_TOKEN<br/>corpus-updated| tsSite[testsuite-site: deploy.yml]
+    dekaRel -->|CASCADE_DISPATCH_TOKEN<br/>corpus-updated, canary| tsSite[testsuite-site: deploy.yml]
+    dekaPromote -->|CASCADE_DISPATCH_TOKEN<br/>corpus-updated, stable| tsSite
     tsSite --> tsLive[testsuite.deka.gg]
 
-    dekaRel -->|CASCADE_DISPATCH_TOKEN<br/>workflow_dispatch| headlessSync[headless: sync-wasm.yml]
+    dekaPromote -->|CASCADE_DISPATCH_TOKEN<br/>workflow_dispatch, stable only| headlessSync[headless: sync-wasm.yml]
     headlessSync --> headlessNpm[npm: headless package] --> aiWorker[AI worker deploy]
 
-    dekaRel -->|CASCADE_DISPATCH_TOKEN<br/>runtime-published, minor/major only| draft[draftwriter: draft.yml]
+    dekaPromote -->|CASCADE_DISPATCH_TOKEN<br/>runtime-published, stable only, minor/major| draft[draftwriter: draft.yml]
     draft --> blogPr[Draft PR on website]
 
-    dekaRel -->|CASCADE_DISPATCH_TOKEN<br/>deka-released| cda[create-deka-app: publish-runtime.yml]
+    dekaRel -->|CASCADE_DISPATCH_TOKEN<br/>deka-released, channel=canary| cda[create-deka-app: publish-runtime.yml]
+    dekaPromote -->|CASCADE_DISPATCH_TOKEN<br/>deka-released, channel=stable| cda
     npmDsc -.->|deka pins an already-published dsc version| cda
     cda --> npmDeka[npm: deka + create-deka-app]
 ```
 
 ### Website (`dekaruntime/website`) — the tour
 
-Triggered by:
+Stable-only: a canary never dispatches this (rfd#68). Triggered by:
 - `workflow_dispatch` on `.github/workflows/sync-deka-compiler.yml`, sent by
-  `notify` using `DISPATCH_WEBSITE_SYNC_TOKEN`.
+  `promote.yml`'s `notify` job using `DISPATCH_WEBSITE_SYNC_TOKEN`.
 - Independently, an hourly cron (`17 * * * *`) inside that same workflow.
 
 What it does: `scripts/sync-deka-wasm-from-r2.ts` fetches
@@ -120,7 +184,9 @@ dispatch step logs and exits 0; the hourly cron is the safety net.
 
 ### Test suite (`dekaruntime/testsuite-site`)
 
-Triggered by: `repository_dispatch` (`corpus-updated`) sent by `notify` using
+Fires on both channels: `release.yml`'s `notify` job dispatches this for
+every canary, and `promote.yml`'s `notify` job dispatches it again on
+promotion. Triggered by: `repository_dispatch` (`corpus-updated`) sent using
 `CASCADE_DISPATCH_TOKEN`, with `client_payload.corpus_sha` — the commit in
 `dekaruntime/testsuite` that `scripts/testsuite-corpus-version` currently
 pins. (This is `dekaruntime/testsuite-site`, not `dekaruntime/testsuite`:
@@ -166,8 +232,9 @@ polling, so nothing is lost, just delayed.
 
 ### Headless (`dekaruntime/headless`)
 
-Triggered by: `workflow_dispatch` on `.github/workflows/sync-wasm.yml`, sent
-by `notify` using `CASCADE_DISPATCH_TOKEN` — note this calls the
+Stable-only (rfd#68). Triggered by: `workflow_dispatch` on
+`.github/workflows/sync-wasm.yml`, sent by `promote.yml`'s `notify` job using
+`CASCADE_DISPATCH_TOKEN` — note this calls the
 `actions/workflows/.../dispatches` endpoint with just `ref: main`, not the
 `repository_dispatch` (`runtime-released`) that workflow's own header comment
 describes; that trigger currently has no sender. Falls back to headless's own
@@ -185,9 +252,10 @@ Silent on a missing token: the dispatch step in `notify` exits 0 if
 
 ### Release notes (`dekaruntime/draftwriter`)
 
-Triggered by: `repository_dispatch` (`runtime-published`) sent by `notify`
-using `CASCADE_DISPATCH_TOKEN`, minor/major releases only — a patch tag exits
-the step immediately, since release notes are written per minor.
+Stable-only (rfd#68). Triggered by: `repository_dispatch` (`runtime-published`)
+sent by `promote.yml`'s `notify` job using `CASCADE_DISPATCH_TOKEN`,
+minor/major releases only — a patch tag exits the step immediately, since
+release notes are written per minor.
 
 What it does: calls `https://draftwriter.deka.gg/draft` (its own
 `DRAFT_TOKEN`, not `CASCADE_DISPATCH_TOKEN`) to generate a draft, then opens a
@@ -199,9 +267,12 @@ dropped dispatch means someone has to notice and run it by hand.
 
 ### npm packages
 
-See [npm packages (downstream)](#npm-packages-downstream) below — that
-dispatch (`deka-released` to `create-deka-app`) is also sent from this same
-`notify` job.
+Fires on both channels. See
+[npm packages (downstream)](#npm-packages-downstream) below — that dispatch
+(`deka-released` to `create-deka-app`) is sent by `release.yml`'s `notify` job
+for every canary (`client_payload.channel: "canary"`, published under the npm
+`canary` dist-tag) and again by `promote.yml`'s `notify` job on promotion
+(`channel: "stable"`, npm `latest`).
 
 ## npm packages (downstream)
 
@@ -209,10 +280,13 @@ The runtime is also published to npm, but not by this repo. All npm delivery
 lives in one public repo, `dekaruntime/create-deka-app`, with a single
 workflow: `.github/workflows/publish-runtime.yml`. That repo never compiles
 anything and never commits versions or binaries — the workflow downloads the
-release binaries from `releases.deka.gg/<VERSION>/` and `latest.json`,
-verifies every sha256 against the release manifest, stamps the version into
-`package.json` files in the working tree only, and publishes via npm trusted
-publishing (OIDC, no stored token).
+release binaries from `releases.deka.gg/<VERSION>/` (or, for a canary,
+`releases.deka.gg/<VERSION>-canary-<sha>/`) and the matching `latest.json` /
+`canary.json`, verifies every sha256 against the release manifest, stamps the
+version into `package.json` files in the working tree only, and publishes via
+npm trusted publishing (OIDC, no stored token). A canary version publishes
+under the `canary` dist-tag (npm requires an explicit tag for any prerelease
+version); a stable version publishes to `latest`.
 
 ### Packages
 
@@ -239,11 +313,12 @@ installs.
 
 ### Trigger
 
-1. The "Trigger npm package publish" step of `release.yml`'s `notify` job
-   sends a `repository_dispatch` (`deka-released`) to
-   `dekaruntime/create-deka-app` using the org secret
-   `CASCADE_DISPATCH_TOKEN`. `dekaruntime/deka` is in that secret's
-   Repository access list.
+1. The "Trigger create-deka-app publish" step of the shared `notify` job
+   (called from both `release.yml`, per canary, and `promote.yml`, per
+   promotion) sends a `repository_dispatch` (`deka-released`,
+   `client_payload: {tag, channel}`) to `dekaruntime/create-deka-app` using
+   the org secret `CASCADE_DISPATCH_TOKEN`. `dekaruntime/deka` is in that
+   secret's Repository access list.
 2. Fallback: `create-deka-app` runs `publish-runtime.yml` hourly
    (`17 * * * *`); it publishes whatever the release hosts have that npm
    doesn't, for both the deka and dsc families (dsc first), and is a no-op
@@ -259,8 +334,11 @@ Every package in a run is pre-flighted (stamped version, no placeholder pins,
 packages → launcher → `create-deka-app`, each read back from the registry, so
 users never see a half release. A run that dies partway is completed by the
 next trigger — publishing an already-published version is treated as done.
-Publishes go straight to `latest`; the OIDC credential cannot run
-`npm dist-tag`.
+A stable publish goes straight to the `latest` dist-tag; a canary publish
+(a prerelease version) requires `--tag canary` at publish time, which is a
+separate cross-repo change in `create-deka-app` tracked alongside rfd#68
+(see "Needs Sami" in the rfd#68 PR if that work has not landed yet). Either
+way the OIDC credential cannot run `npm dist-tag` after the fact.
 
 ### Verification
 
@@ -282,10 +360,16 @@ Secrets live in `dekaruntime/deka` unless noted otherwise.
 
 | Secret | Used by | Required permissions |
 |---|---|---|
-| `R2_ACCESS_KEY_ID` | `release.yml` | Read/write on the R2 buckets below |
-| `R2_SECRET_ACCESS_KEY` | `release.yml` | Read/write on the R2 buckets below |
-| `DISPATCH_WEBSITE_SYNC_TOKEN` | `release.yml` (`notify` job) | `actions:write` on `dekaruntime/website`, to dispatch `sync-deka-compiler.yml` |
-| `CASCADE_DISPATCH_TOKEN` | `release.yml` (`notify` job) | Org secret; `dekaruntime/deka` must be in its Repository access list. Dispatches the npm publish (`create-deka-app`), the testsuite-site deploy, the headless sync, and the release-note draft (`draftwriter`) |
+| `R2_ACCESS_KEY_ID` | `release.yml`, `promote.yml` | Read/write on the R2 buckets below |
+| `R2_SECRET_ACCESS_KEY` | `release.yml`, `promote.yml` | Read/write on the R2 buckets below |
+| `DISPATCH_WEBSITE_SYNC_TOKEN` | `promote.yml` (`notify` job) | `actions:write` on `dekaruntime/website`, to dispatch `sync-deka-compiler.yml` |
+| `CASCADE_DISPATCH_TOKEN` | `release.yml` and `promote.yml` (`notify` job in both) | Org secret; `dekaruntime/deka` must be in its Repository access list. Dispatches the npm publish (`create-deka-app`) and the testsuite-site deploy from both channels; the headless sync and the release-note draft (`draftwriter`) from `promote.yml` only |
+
+`tag-canary.yml` uses only the built-in `GITHUB_TOKEN` (to push the canary
+tag and to `gh workflow run release.yml`) — no new secret. `promote.yml`
+also uses only `GITHUB_TOKEN` to push the stable tag, plus the R2 and
+`CASCADE_DISPATCH_TOKEN`/`DISPATCH_WEBSITE_SYNC_TOKEN` secrets above, all of
+which already exist in this repo.
 
 `CASCADE_DISPATCH_TOKEN` is an organization secret shared with `dekaruntime/dsc`
 and the other repos in this cascade; it is not set per-repo. Missing it
