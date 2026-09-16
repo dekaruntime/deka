@@ -66,7 +66,7 @@ deploy run	run a pipeline from a linkhash.yaml file in a gild VM
 [project]
 init		initialize a new app project
 build		build a DekaScript file into a JavaScript module
-check		validate a DekaScript source file (execs dsc)
+check		validate a DekaScript file or the whole project (execs dsc)
 fmt		format DekaScript source or emitted JavaScript (execs dsc)
 compile		compile to single-file executable
 transpile		emit JavaScript from a .ds file or directory (execs dsc)
