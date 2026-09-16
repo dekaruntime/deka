@@ -143,7 +143,6 @@ fn compile_with_dsc(source: &Path, out_dir: &Path) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("loose source has no parent: {}", source.display()))?;
     let output = Command::new(&dsc)
         .current_dir(source_parent)
-        .env("DEKA_MODULE_ROOT", source_parent)
         .args([
             "transpile",
             "--self-contained",

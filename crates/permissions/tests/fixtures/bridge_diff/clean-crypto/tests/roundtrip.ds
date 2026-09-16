@@ -1,0 +1,132 @@
+import { from_string, from_array, to_hex, len } from "@deka/bytes"
+import { random_bytes, digest, secure_compare, sha256, hs256, aes_256_gcm_encrypt, aes_256_gcm_decrypt, bcrypt_verify, uuid_v4, random_hex } from "../index.ds"
+
+summon { total log(message: string) void } from "./log.mjs"
+
+fn go() {
+  let abc = from_string("abc");
+  const sha = match (sha256(abc)) {
+    Ok(v) => to_hex(v),
+    Err(e) => "fail-sha"
+  };
+  if (sha != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
+    panic("fail-sha256");
+  }
+
+  let key = from_string("key");
+  let msg = from_string("The quick brown fox jumps over the lazy dog");
+  const mac = match (hs256(key, msg)) {
+    Ok(v) => to_hex(v),
+    Err(e) => "fail-hmac"
+  };
+  if (mac != "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8") {
+    panic("fail-hmac");
+  }
+
+  const eq: boolean = match (secure_compare(key, from_string("key"))) {
+    Ok(v) => v,
+    Err(e) => false
+  };
+  const ne: boolean = match (secure_compare(key, from_string("kez"))) {
+    Ok(v) => v,
+    Err(e) => true
+  };
+  if (!eq || ne) {
+    panic("fail-compare");
+  }
+
+  const unknown: boolean = match (digest("md5", abc)) {
+    Ok(v) => false,
+    Err(e) => true
+  };
+  if (!unknown) {
+    panic("fail-unknown-digest");
+  }
+
+  let secret = match (random_bytes(32)) {
+    Ok(v) => v,
+    Err(e) => from_string("")
+  };
+  let nonce = match (random_bytes(12)) {
+    Ok(v) => v,
+    Err(e) => from_string("")
+  };
+  let pt = from_string("hello aead");
+  let aad = from_array([]);
+  const round = match (aes_256_gcm_encrypt(secret, nonce, pt, aad)) {
+    Err(e) => "fail-encrypt",
+    Ok(ct) => match (aes_256_gcm_decrypt(secret, nonce, ct, aad)) {
+      Err(e) => "fail-decrypt",
+      Ok(out) => to_hex(out)
+    }
+  };
+  if (round != to_hex(pt)) {
+    panic("fail-aes");
+  }
+
+  const bcrypt_ok: boolean = match (bcrypt_verify("password", "$2y$04$6ck.DhBYy8ZL.sAFGrLZtuLI1F5cSwaM5XHJRxoZFRMx1n8ZpYtJa")) {
+    Ok(v) => v,
+    Err(e) => false
+  };
+  const bcrypt_bad: boolean = match (bcrypt_verify("wrong", "$2y$04$6ck.DhBYy8ZL.sAFGrLZtuLI1F5cSwaM5XHJRxoZFRMx1n8ZpYtJa")) {
+    Ok(v) => v,
+    Err(e) => true
+  };
+  if (!bcrypt_ok || bcrypt_bad) {
+    panic("fail-bcrypt");
+  }
+
+  const id: string = match (uuid_v4()) {
+    Ok(v) => v,
+    Err(e) => ""
+  };
+  let id_shape = id.length == 36
+  for (let i = 0; i < id.length; i += 1) {
+    const c = id.slice(i, i + 1)
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      id_shape = id_shape && c == "-"
+    } else {
+      id_shape = id_shape && ((c >= "0" && c <= "9") || (c >= "a" && c <= "f"))
+    }
+  }
+  const variant = id.slice(19, 20)
+  id_shape = id_shape && id.slice(14, 15) == "4" && (variant == "8" || variant == "9" || variant == "a" || variant == "b")
+  if (!id_shape) {
+    panic("fail-uuid");
+  }
+
+  const hex: string = match (random_hex(8)) {
+    Ok(v) => v,
+    Err(e) => ""
+  };
+  if (hex.length != 16) {
+    panic("fail-random-hex");
+  }
+
+  const zero_rejected: boolean = match (random_hex(0)) {
+    Ok(v) => false,
+    Err(e) => true
+  }
+  if (!zero_rejected) {
+    panic("fail-random-hex-zero")
+  }
+  const rejected: boolean = match (random_hex(-1)) {
+    Ok(v) => false,
+    Err(e) => true
+  }
+  if (!rejected) {
+    panic("fail-random-hex-error")
+  }
+
+  const n = match (random_bytes(16)) {
+    Ok(v) => len(v),
+    Err(e) => 0
+  };
+  if (n != 16) {
+    panic("fail-random-len");
+  }
+
+  log("ok");
+}
+
+go()

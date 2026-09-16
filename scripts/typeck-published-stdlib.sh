@@ -2,6 +2,12 @@
 # Typecheck each published @deka/* tarball against this checkout's CLI.
 # Catches stdlib that compiled on an old compiler and broke on current main
 # (dekaruntime/deka#405).
+#
+# With BRIDGE_DIFF set (path to the bridge_diff binary built from this
+# checkout), also diffs each package's declared `bridge kind.action(...)`
+# signatures against the authoritative host bridge catalog compiled into the
+# binary — sync/async status, argument shapes, return shapes — so catalog
+# drift fails here instead of at a consumer's call site (deka#620).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -98,6 +104,29 @@ for name in "${PACKAGES[@]}"; do
     continue
   fi
   echo "ok $name (via $symbol)"
+
+  # Diff the package's hand-maintained `bridge kind.action(...)` declarations
+  # against the authoritative host bridge catalog compiled into bridge_diff
+  # (deka#620). Import-only typecheck above cannot catch a declaration that
+  # drifts from the catalog — dsc types every action as sync
+  # Result<infer, infer> — so a sync/async or shape mismatch ships silently
+  # and only breaks at a consumer's call site (the @deka/fs
+  # deka#420 -> deka#584 -> deka#618 history). The package was installed by
+  # `deka add` above; diff its installed tree.
+  if [[ -n "${BRIDGE_DIFF:-}" ]]; then
+    if [[ ! -x "$BRIDGE_DIFF" ]]; then
+      echo "FAIL $name: BRIDGE_DIFF is not executable: $BRIDGE_DIFF"
+      failed=1
+      continue
+    fi
+    if ! diff_out="$("$BRIDGE_DIFF" "$(dirname "$pkg_index")" 2>&1)"; then
+      echo "FAIL $name: bridge declarations drifted from the host catalog"
+      echo "$diff_out"
+      failed=1
+      continue
+    fi
+    echo "$diff_out"
+  fi
 done
 
 if [[ "$failed" -ne 0 ]]; then

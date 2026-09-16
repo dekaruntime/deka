@@ -114,7 +114,6 @@ fn compile_ds(ctx: &RefreshContext, abs: &Path) -> Result<String, String> {
     }
     let output = Command::new(dsc)
         .current_dir(&ctx.project_root)
-        .env("DEKA_MODULE_ROOT", &ctx.project_root)
         .args(&args)
         .output()
         .map_err(|err| format!("failed to exec {}: {err}", dsc.display()))?;

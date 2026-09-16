@@ -87,17 +87,10 @@ crypto-sha384-abc
 crypto-sha512-abc
 crypto-uuid-v4-shape
 fs-hello-utf8
-fs-mkdirs-and-dir
-fs-mkdirs-idempotent
 fs-mkdirs-nested
 fs-overwrite
-fs-read-dir-is-dir
-fs-read-dir-is-file
-fs-read-dir-missing
-fs-read-missing
 fs-write-count
 fs-write-empty
-fs-write-missing-parent
 fs-write-then-read
 http-format-content-length
 http-format-custom-header

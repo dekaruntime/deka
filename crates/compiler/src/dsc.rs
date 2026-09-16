@@ -126,6 +126,82 @@ pub fn compiler_identity_line(dsc: &std::path::Path) -> String {
     )
 }
 
+/// Resolve the CLI dsc or exit 1 with the install hint. Checking a whole
+/// project resolves the compiler once up front so a missing dsc is one
+/// tooling error, not one hint per source file.
+pub fn require_cli_dsc() -> PathBuf {
+    match find_cli_dsc() {
+        Ok(Some(bin)) => bin,
+        Ok(None) => {
+            stdio::error("cli", MISSING_DSC);
+            std::process::exit(1);
+        }
+        Err(err) => {
+            stdio::error("cli", &err);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `dsc check <path>` with the already-resolved `dsc` binary; failure
+/// carries dsc's stderr. When `project_root` is given, dsc runs from it with
+/// `DEKA_MODULE_ROOT` set — the same context `deka build` compiles project
+/// sources in — so project-local and bare `@deka/*` imports resolve.
+pub fn check_path(
+    dsc: &std::path::Path,
+    path: &std::path::Path,
+    project_root: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let mut cmd = Command::new(dsc);
+    if let Some(root) = project_root {
+        cmd.current_dir(root).env("DEKA_MODULE_ROOT", root);
+    }
+    let output = cmd
+        .arg("check")
+        .arg(path)
+        .output()
+        .map_err(|err| format!("failed to exec {}: {err}", dsc.display()))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+}
+
+pub fn is_deka_source_path(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ds") | Some("dsx")
+    )
+}
+
+/// Sorted enumeration of every `.ds`/`.dsx` file under `dir`. Shared by
+/// `deka check`'s project pass and `deka build`'s plan/emit walks.
+pub fn collect_deka_source_files(dir: &std::path::Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    if !dir.is_dir() {
+        return Ok(files);
+    }
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let entries = std::fs::read_dir(&current)
+            .map_err(|err| format!("failed to read {}: {err}", current.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("read_dir entry error: {err}"))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|err| format!("file_type error for {}: {err}", path.display()))?;
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() && is_deka_source_path(&path) {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 /// Exec dsc with the same argv tail. Does not return on success.
 pub fn exec_if_present() {
     match find_cli_dsc() {

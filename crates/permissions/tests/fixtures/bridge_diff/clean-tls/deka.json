@@ -1,0 +1,8 @@
+{
+  "name": "@deka/tls",
+  "version": "0.2.1",
+  "main": "index.ds",
+  "host": {
+    "kinds": ["tls"]
+  }
+}

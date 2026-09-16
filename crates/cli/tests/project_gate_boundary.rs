@@ -66,11 +66,16 @@ fn lock_installed_module(project: &Path) {
 }
 
 fn run_entry(project: &Path) -> (bool, String) {
-    let output = Command::new(cli_bin())
-        .args(["run", "main.ds"])
-        .current_dir(project)
-        .output()
-        .expect("run through the CLI");
+    run_entry_with_env(project, &[])
+}
+
+fn run_entry_with_env(project: &Path, envs: &[(&str, &str)]) -> (bool, String) {
+    let mut command = Command::new(cli_bin());
+    command.args(["run", "main.ds"]).current_dir(project);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let output = command.output().expect("run through the CLI");
     (
         output.status.success(),
         format!(
@@ -195,5 +200,66 @@ fn runtime_rejects_a_project_with_no_lockfile() {
     assert!(
         !success && combined.contains("deka.lock"),
         "a project without a lockfile must be rejected: {combined}"
+    );
+}
+
+// deka#229: `DEKA_MODULE_ROOT` used to short-circuit the pool ESM loader's
+// copy of the project gate — its mere presence returned Ok, skipping the
+// lockfile requirement, integrity verification, and every module-presence
+// check. The gate is a shared explicit-parameter API now and reads no process
+// environment: offering a fully valid project through the env var must not
+// rescue an integrity-tampered one. (The layout is deliberately one that dsc
+// itself accepts — declared, locked, installed — so only the gate can reject
+// it; a missing-lockfile layout would also be caught by the transpile
+// wrapper's own lockfile requirement and prove nothing about the gate.)
+#[test]
+fn env_module_root_cannot_bypass_the_project_gate() {
+    let project = project_with_installed_module(
+        "{\"name\":\"gate\",\"dependencies\":{\"@deka/io\":\"*\"}}\n",
+    );
+    lock_installed_module(project.path());
+    fs::write(
+        project
+            .path()
+            .join("ds_modules")
+            .join("@deka")
+            .join("io")
+            .join("index.ds"),
+        "export fn echo(value: string) string {\n    return \"tampered\"\n}\n",
+    )
+    .expect("tamper package");
+
+    // Everything the old bypass would have pointed at: a complete project
+    // with manifest, lockfile, and a locked, installed module.
+    let offered = project_with_installed_module(
+        "{\"name\":\"offered\",\"dependencies\":{\"@deka/io\":\"*\"}}\n",
+    );
+    lock_installed_module(offered.path());
+    let offered_root = offered.path().to_string_lossy().into_owned();
+
+    let (success, combined) =
+        run_entry_with_env(project.path(), &[("DEKA_MODULE_ROOT", &offered_root)]);
+    let lower = combined.to_ascii_lowercase();
+    assert!(
+        !success
+            && (lower.contains("integrity mismatch") || lower.contains("does not match deka.lock")),
+        "a valid DEKA_MODULE_ROOT must not waive fsGraph integrity: {combined}"
+    );
+}
+
+// The flip side of the same pin: a garbage module root must not change the
+// outcome for a valid project either. Resolution is a function of the
+// project on disk, never of the ambient environment.
+#[test]
+fn declared_project_runs_with_garbage_module_root_env() {
+    let project = project_with_installed_module(
+        "{\"name\":\"gate\",\"dependencies\":{\"@deka/io\":\"*\"}}\n",
+    );
+    lock_installed_module(project.path());
+    let (success, combined) =
+        run_entry_with_env(project.path(), &[("DEKA_MODULE_ROOT", "/not/a/project")]);
+    assert!(
+        success,
+        "declared and locked dependency must execute with a garbage DEKA_MODULE_ROOT: {combined}"
     );
 }

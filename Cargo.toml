@@ -36,7 +36,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.53.4"
+version = "0.53.7"
 
 [workspace.dependencies]
 # V8 Runtime (Deno Core)

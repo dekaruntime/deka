@@ -60,7 +60,6 @@ pub fn compile_graph_with_dsc(
 
     let output = Command::new(dsc)
         .current_dir(compile_root)
-        .env("DEKA_MODULE_ROOT", compile_root)
         .args([
             "transpile",
             "--self-contained",

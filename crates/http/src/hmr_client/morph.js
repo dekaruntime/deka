@@ -47,7 +47,7 @@ function isIslandStartComment(node) {
   return (
     node &&
     node.nodeType === 8 &&
-    String(node.data || "").indexOf("deka-island start:") === 0
+    String(node.data || "").indexOf(DEKA_ISLAND_START_PREFIX) === 0
   );
 }
 
@@ -136,9 +136,9 @@ function skipIslandCommentRange(node) {
   while (cursor) {
     if (cursor.nodeType === 8) {
       var data = String(cursor.data || "");
-      if (data.indexOf("deka-island start:") === 0) {
+      if (data.indexOf(DEKA_ISLAND_START_PREFIX) === 0) {
         depth++;
-      } else if (data.indexOf("deka-island end:") === 0) {
+      } else if (data.indexOf(DEKA_ISLAND_END_PREFIX) === 0) {
         depth--;
         if (!depth) {
           return cursor;
@@ -151,14 +151,15 @@ function skipIslandCommentRange(node) {
 }
 
 // Stable identity of an island start marker, ignoring volatile fields.
-// Grammar: "deka-island start:<b64 name> directive:<b64> [props:<b64>]
-// [id:<b64>] [cache:<b64>] ..." — cache tokens may change per render and
-// must not read as an island change, so they stay out of the signature.
+// The marker grammar is defined once in crate::island_markers (the
+// DEKA_ISLAND_* tokens injected ahead of this fragment); cache tokens may
+// change per render and must not read as an island change, so they stay out
+// of the signature.
 function islandMarkerSignature(data) {
   return String(data || "")
     .split(" ")
     .filter(function (field) {
-      return field.indexOf("cache:") !== 0;
+      return field.indexOf(DEKA_ISLAND_FIELD_CACHE) !== 0;
     })
     .join(" ");
 }

@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::island_markers;
     use crate::websocket::build_patch_from_snapshot;
     use serde_json::Value;
 
@@ -80,15 +81,30 @@ mod tests {
 
     // Builds an island exactly the way the paused ui/server runtime emits
     // it: comment markers carrying the b64-encoded component name, directive,
-    // and props around the server-rendered body.
+    // and props around the server-rendered body. The marker bytes come from
+    // `crate::island_markers` (the single grammar definition) so fixtures and
+    // consumers cannot drift apart.
+    fn end_marker(name: &str) -> String {
+        format!(
+            "{}{} {}{}-->",
+            island_markers::COMMENT_OPEN,
+            island_markers::TAG,
+            island_markers::END,
+            b64(name)
+        )
+    }
+
     fn island(name: &str, directive: &str, props: &str, body: &str) -> String {
         format!(
-            "<!--deka-island start:{} directive:{} props:{}-->{}<!--deka-island end:{}-->",
-            b64(name),
-            b64(directive),
-            b64(props),
-            body,
-            b64(name)
+            "{start}{name} {directive_key}{directive} {props_key}{props}-->{body}{end}",
+            start = island_markers::START_NEEDLE,
+            name = b64(name),
+            directive_key = island_markers::FIELD_DIRECTIVE,
+            directive = b64(directive),
+            props_key = island_markers::FIELD_PROPS,
+            props = b64(props),
+            body = body,
+            end = end_marker(name)
         )
     }
 
@@ -221,22 +237,34 @@ mod tests {
         // wrapDeferred (server.js:433) emits markers with id/enc/cache fields
         // and no props; those must be located too.
         let path = "/__hmr_test_island_defer_shape";
+        let defer_body_a = "<span data-deka-defer=\"D:1\"><span data-deka-id=\"test:_/i0/i0\" slot=\"fallback\">.</span></span>";
         let marker_a = format!(
-            "<!--deka-island start:{} directive:{} id:{} cache:{}--><span data-deka-defer=\"D:1\"><span data-deka-id=\"test:_/i0/i0\" slot=\"fallback\">.</span></span><!--deka-island end:{}-->",
-            b64("Badge"),
-            b64("defer"),
-            b64("D:1"),
-            b64("60s"),
-            b64("Badge")
+            "{start}{name} {directive}{directive_val} {id}{id_val} {cache}{cache_val}-->{body}{end}",
+            start = island_markers::START_NEEDLE,
+            name = b64("Badge"),
+            directive = island_markers::FIELD_DIRECTIVE,
+            directive_val = b64("defer"),
+            id = island_markers::FIELD_ID,
+            id_val = b64("D:1"),
+            cache = island_markers::FIELD_CACHE,
+            cache_val = b64("60s"),
+            body = defer_body_a,
+            end = end_marker("Badge")
         );
         let _ = build_patch_from_snapshot(path, &["main.phpx".to_string()], "#app", &marker_a);
+        let defer_body_b = "<span data-deka-defer=\"D:1\"><span data-deka-id=\"test:_/i0/i1\" slot=\"fallback\">!</span></span>";
         let marker_b = format!(
-            "<!--deka-island start:{} directive:{} id:{} cache:{}--><span data-deka-defer=\"D:1\"><span data-deka-id=\"test:_/i0/i1\" slot=\"fallback\">!</span></span><!--deka-island end:{}-->",
-            b64("Badge"),
-            b64("defer"),
-            b64("D:1"),
-            b64("60s"),
-            b64("Badge")
+            "{start}{name} {directive}{directive_val} {id}{id_val} {cache}{cache_val}-->{body}{end}",
+            start = island_markers::START_NEEDLE,
+            name = b64("Badge"),
+            directive = island_markers::FIELD_DIRECTIVE,
+            directive_val = b64("defer"),
+            id = island_markers::FIELD_ID,
+            id_val = b64("D:1"),
+            cache = island_markers::FIELD_CACHE,
+            cache_val = b64("60s"),
+            body = defer_body_b,
+            end = end_marker("Badge")
         );
         let payload =
             build_patch_from_snapshot(path, &["main.phpx".to_string()], "#app", &marker_b);
@@ -246,7 +274,7 @@ mod tests {
         assert_eq!(json["ops"][0]["occurrence"], 1);
         assert_eq!(
             json["ops"][0]["html"],
-            "<span data-deka-defer=\"D:1\"><span data-deka-id=\"test:_/i0/i1\" slot=\"fallback\">!</span></span>"
+            defer_body_b
         );
     }
 
@@ -288,8 +316,8 @@ mod tests {
     // parses.
     fn resolve_island_body(html: &str, name: &str, occurrence: usize) -> Option<String> {
         let name_b64 = b64(name);
-        let start_needle = "<!--deka-island start:";
-        let marker_needle = "<!--deka-island ";
+        let start_needle = island_markers::START_NEEDLE;
+        let marker_needle = island_markers::ANY_NEEDLE;
         let mut seen = 0usize;
         let mut offset = 0usize;
         while let Some(pos) = html[offset..].find(start_needle) {
@@ -305,9 +333,9 @@ mod tests {
                     while let Some(rel) = html[cursor..].find(marker_needle) {
                         let marker_abs = cursor + rel;
                         let after = marker_abs + marker_needle.len();
-                        if html[after..].starts_with("start:") {
+                        if html[after..].starts_with(island_markers::START) {
                             depth += 1;
-                        } else if html[after..].starts_with("end:") {
+                        } else if html[after..].starts_with(island_markers::END) {
                             depth = depth.saturating_sub(1);
                             if depth == 0 {
                                 return Some(html[body_start..marker_abs].to_string());
@@ -417,8 +445,16 @@ mod tests {
         let _ = build_patch_from_snapshot(path, &["main.phpx".to_string()], "#app", &first);
         // No end marker: the island cannot be bounded, so no island op may be
         // emitted for it.
-        let second = "<!--deka-island start:V2lkZ2V0 directive:bG9hZA== props:e30=--><div data-deka-id=\"n2\">B</div><p>tail</p>";
-        let payload = build_patch_from_snapshot(path, &["main.phpx".to_string()], "#app", second);
+        let second = format!(
+            "{start}{name} {directive}{directive_val} {props}{props_val}--><div data-deka-id=\"n2\">B</div><p>tail</p>",
+            start = island_markers::START_NEEDLE,
+            name = b64("Widget"),
+            directive = island_markers::FIELD_DIRECTIVE,
+            directive_val = b64("load"),
+            props = island_markers::FIELD_PROPS,
+            props_val = b64("{}")
+        );
+        let payload = build_patch_from_snapshot(path, &["main.phpx".to_string()], "#app", &second);
         let json = parse(&payload);
         assert_eq!(json["ops"].as_array().map(|v| v.len()), Some(1));
         assert_eq!(json["ops"][0]["selector"], "#app");

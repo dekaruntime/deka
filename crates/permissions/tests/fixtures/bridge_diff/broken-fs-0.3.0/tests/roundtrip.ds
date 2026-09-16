@@ -1,0 +1,83 @@
+import { read_file, write_file, read_dir, mkdirs } from "../index.ds"
+
+// No package imports: `fs` is a leaf and its test should not need one. The
+// previous version called `print`, which does not exist in v2.
+fn say(line: string) {
+  let printed = unsafe { console.log(line) };
+  match (printed) {
+    Ok(v) => v,
+    Err(e) => e
+  };
+}
+
+// The ops are synchronous, so the whole test is too. The previous version was
+// `async fn go()` awaiting each call, which is the form that does not
+// typecheck (deka#420).
+
+fn utf8(value: string) bytes {
+  let encoded = unsafe { new TextEncoder().encode(value) };
+  return match (encoded) {
+    Ok(buf) => buf,
+    Err(err) => utf8("")
+  };
+}
+
+fn from_utf8(value: bytes) string {
+  let decoded = unsafe { new TextDecoder("utf-8", { fatal: false }).decode(value) };
+  return match (decoded) {
+    Ok(text) => text,
+    Err(err) => ""
+  };
+}
+
+fn go() {
+  let hello = match (read_file("tests/hello.txt")) {
+    Ok(buf) => from_utf8(buf),
+    Err(e) => "fail-read"
+  };
+  if (hello != "hello fs\n") {
+    say("fail-read");
+    say(hello);
+    return;
+  }
+
+  match (mkdirs("tests/tmp-out")) {
+    Ok(v) => v,
+    Err(e) => false
+  };
+
+  // A file that does not exist yet must be creatable under a write grant.
+  // It was not, until deka#434 -- `canonicalize` fails on a missing path and
+  // the fallback compared the raw string against a resolved rule.
+  let wrote = match (write_file("tests/tmp-out/a.txt", utf8("hi"))) {
+    Ok(n) => n,
+    Err(e) => 0
+  };
+
+  let round = match (read_file("tests/tmp-out/a.txt")) {
+    Ok(buf) => from_utf8(buf),
+    Err(e) => "fail-round"
+  };
+
+  let names = match (read_dir("tests/tmp-out")) {
+    Ok(entries) => match (unsafe { entries.map((e) => e.name).join(",") }) {
+      Ok(v) => v,
+      Err(e) => "fail-dir"
+    },
+    Err(e) => "fail-dir"
+  };
+
+  let has = match (unsafe { String(names).indexOf("a.txt") >= 0 }) {
+    Ok(v) => v,
+    Err(e) => false
+  };
+
+  if (wrote > 0 && round == "hi" && has) {
+    say("ok");
+  } else {
+    say(round);
+    say(names);
+  }
+}
+
+go()

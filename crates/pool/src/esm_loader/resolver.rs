@@ -154,9 +154,10 @@ pub(crate) fn resolve_phpx_module_spec(
         }
     }
 
-    // DEKA_MODULE_ROOT fallback (#220): if the tenant's ds_modules/ doesn't
-    // contain the spec, try the runtime stdlib root. This lets stdlib-only
-    // tenants (e.g. id.tana.gg) deploy without vendoring stdlib.
+    // External module-root fallback (#220): when the tenant's ds_modules/
+    // doesn't contain the spec, try the runtime stdlib root passed in as the
+    // explicit `module_root` parameter. This lets stdlib-only tenants (e.g.
+    // id.tana.gg) deploy without vendoring stdlib.
     if let Some(root) = module_root {
         for alias in aliases.iter() {
             let base = if alias.starts_with("@user/") {

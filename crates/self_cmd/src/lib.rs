@@ -1,5 +1,6 @@
 use deka_cli_core::{CommandSpec, Context, ParamSpec, Registry, SubcommandSpec};
 
+mod doctor;
 mod fetch;
 #[cfg(feature = "self-update")]
 pub mod monitor;
@@ -8,6 +9,13 @@ mod targets;
 mod test;
 #[cfg(feature = "self-update")]
 pub mod update;
+
+const DOCTOR: SubcommandSpec = SubcommandSpec {
+    name: "doctor",
+    summary: "diagnose install problems (shadowed binaries, version skew, mismatched dsc)",
+    aliases: &[],
+    handler: doctor::cmd,
+};
 
 const FETCH: SubcommandSpec = SubcommandSpec {
     name: "fetch",
@@ -46,9 +54,9 @@ const UPDATE: SubcommandSpec = SubcommandSpec {
 };
 
 #[cfg(feature = "self-update")]
-const SUBCOMMANDS: &[SubcommandSpec] = &[FETCH, MONITOR, TEST, UPDATE];
+const SUBCOMMANDS: &[SubcommandSpec] = &[DOCTOR, FETCH, MONITOR, TEST, UPDATE];
 #[cfg(not(feature = "self-update"))]
-const SUBCOMMANDS: &[SubcommandSpec] = &[FETCH, TEST];
+const SUBCOMMANDS: &[SubcommandSpec] = &[DOCTOR, FETCH, TEST];
 
 const COMMAND: CommandSpec = CommandSpec {
     owner: "self",

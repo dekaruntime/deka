@@ -1,0 +1,127 @@
+// Host-granted crypto. Bind byte results with `let`, not `const`:
+// Deka freezes const values, and JS cannot freeze typed arrays.
+//
+// Every export that wraps a `bridge crypto.*` call is given an explicit
+// return type (dsc#223: `Type::Infer` is no longer assignable as a source,
+// and `bridge` calls always type as `Result<Infer, Infer>` — the checker
+// cannot see through the FFI boundary). An explicit return-type annotation
+// on the enclosing function is NOT enough on its own: the `return` statement
+// still tries to assign the bridge's `Result<Infer, Infer>` into the
+// declared concrete `Result<T, string>`, which is exactly the
+// Infer-into-concrete assignment dsc#223 rejects. The fix is an explicit
+// `unsafe<Result<T, string>> { raw }` cast at the source, unwrapped through
+// a `match` (the cast itself returns `Result<Result<T, string>, JsError>`).
+// See @deka/fs for the same pattern with a richer error enum.
+
+import { slice, to_hex } from "@deka/bytes"
+
+export fn random_bytes(len: number) Result<bytes, string> {
+  const raw = bridge crypto.random_bytes(len)
+  return match (unsafe<Result<bytes, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("random_bytes: cast failed")
+  }
+}
+
+export fn digest(algorithm: string, data: bytes) Result<bytes, string> {
+  const raw = bridge crypto.digest(algorithm, data)
+  return match (unsafe<Result<bytes, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("digest: cast failed")
+  }
+}
+
+export fn hmac(algorithm: string, key: bytes, data: bytes) Result<bytes, string> {
+  const raw = bridge crypto.hmac(algorithm, key, data)
+  return match (unsafe<Result<bytes, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("hmac: cast failed")
+  }
+}
+
+export fn secure_compare(a: bytes, b: bytes) Result<boolean, string> {
+  const raw = bridge crypto.secure_compare(a, b)
+  return match (unsafe<Result<boolean, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("secure_compare: cast failed")
+  }
+}
+
+export fn aes_256_gcm_encrypt(key: bytes, nonce: bytes, plaintext: bytes, aad: bytes) Result<bytes, string> {
+  const raw = bridge crypto.aes_256_gcm_encrypt(key, nonce, plaintext, aad)
+  return match (unsafe<Result<bytes, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("aes_256_gcm_encrypt: cast failed")
+  }
+}
+
+export fn aes_256_gcm_decrypt(key: bytes, nonce: bytes, ciphertext: bytes, aad: bytes) Result<bytes, string> {
+  const raw = bridge crypto.aes_256_gcm_decrypt(key, nonce, ciphertext, aad)
+  return match (unsafe<Result<bytes, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("aes_256_gcm_decrypt: cast failed")
+  }
+}
+
+export fn bcrypt_verify(password: string, hash: string) Result<boolean, string> {
+  const raw = bridge crypto.bcrypt_verify(password, hash)
+  return match (unsafe<Result<boolean, string>> { raw }) {
+    Ok(v) => v,
+    Err(e) => Err("bcrypt_verify: cast failed")
+  }
+}
+
+export fn sha256(data: bytes) Result<bytes, string> {
+  return digest("sha256", data)
+}
+
+export fn sha384(data: bytes) Result<bytes, string> {
+  return digest("sha384", data)
+}
+
+export fn sha512(data: bytes) Result<bytes, string> {
+  return digest("sha512", data)
+}
+
+export fn sha3_256(data: bytes) Result<bytes, string> {
+  return digest("sha3-256", data)
+}
+
+export fn blake3(data: bytes) Result<bytes, string> {
+  return digest("blake3", data)
+}
+
+export fn hs256(key: bytes, data: bytes) Result<bytes, string> {
+  return hmac("sha256", key, data)
+}
+
+export fn hs384(key: bytes, data: bytes) Result<bytes, string> {
+  return hmac("sha384", key, data)
+}
+
+export fn hs512(key: bytes, data: bytes) Result<bytes, string> {
+  return hmac("sha512", key, data)
+}
+
+export fn random_hex(len: number) Result<string, string> {
+  return match (random_bytes(len)) {
+    Err(e) => Err(e),
+    Ok(buf) => Ok(to_hex(buf))
+  }
+}
+
+export fn uuid_v4() Result<string, string> {
+  return match (random_bytes(16)) {
+    Err(e) => Err(e),
+    Ok(raw) => Ok(format_uuid_v4(raw))
+  }
+}
+
+fn format_uuid_v4(raw: bytes) string {
+  let b = slice(raw, 0)
+  // Preserve the random low bits and set the RFC 4122 version/variant bits.
+  b[6] = (b[6] % 16) + 64
+  b[8] = (b[8] % 64) + 128
+  const hex = to_hex(b)
+  return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20, 32)
+}

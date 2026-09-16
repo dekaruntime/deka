@@ -10,6 +10,8 @@ use tokio::sync::mpsc;
 
 use engine::{RuntimeState, execute_request_parts};
 use pool::RequestData;
+
+use crate::island_markers;
 static NEXT_WS_ID: AtomicU64 = AtomicU64::new(1);
 struct WsEntry {
     sender: mpsc::UnboundedSender<Message>,
@@ -497,21 +499,17 @@ fn collect_deka_nodes(container_html: &str) -> HashMap<String, String> {
 }
 
 fn collect_islands(container_html: &str) -> HashMap<String, String> {
-    // Islands ship as HTML comment markers. The grammar is defined once in
-    // the paused ui runtime's island-marker module (producer and consumer
-    // both derive from it); this scanner only matches the literal
-    // `deka-island start:` / `deka-island end:` prefixes, so keep
-    // ISLAND_MARKER_TAG stable there:
-    //   <!--deka-island start:<b64 name> directive:<b64> [props:<b64>] [id:<b64>] ...-->
-    //   ...island body...
-    //   <!--deka-island end:<b64 name>-->
-    // The island's stable identity is the decoded component name from the start
-    // marker; the body is the markup between the start and end markers.
+    // Islands ship as HTML comment markers. The marker grammar (including the
+    // `cache:` field emitted for deferred islands) is defined once in
+    // `crate::island_markers`; this scanner only matches its start/any
+    // needles. The island's stable identity is the decoded component name
+    // from the start marker; the body is the markup between the start and
+    // end markers.
     let mut out = HashMap::new();
     let mut counts: HashMap<String, usize> = HashMap::new();
     let mut offset = 0usize;
-    let start_needle = "<!--deka-island start:";
-    let marker_needle = "<!--deka-island ";
+    let start_needle = island_markers::START_NEEDLE;
+    let marker_needle = island_markers::ANY_NEEDLE;
     while let Some(pos) = container_html[offset..].find(start_needle) {
         let abs = offset + pos;
         let header_start = abs + start_needle.len();
@@ -538,9 +536,9 @@ fn collect_islands(container_html: &str) -> HashMap<String, String> {
         while let Some(rel) = container_html[cursor..].find(marker_needle) {
             let marker_abs = cursor + rel;
             let after = marker_abs + marker_needle.len();
-            if container_html[after..].starts_with("start:") {
+            if container_html[after..].starts_with(island_markers::START) {
                 depth += 1;
-            } else if container_html[after..].starts_with("end:") {
+            } else if container_html[after..].starts_with(island_markers::END) {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
                     body_end = Some(marker_abs);

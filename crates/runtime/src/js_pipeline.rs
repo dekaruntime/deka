@@ -48,7 +48,6 @@ fn build_deka_handler_bundle_in_project(
         .ok_or_else(|| "bundle temp path is not UTF-8".to_string())?;
     let output = Command::new(&dsc)
         .current_dir(&project_root)
-        .env("DEKA_MODULE_ROOT", &project_root)
         .args([
             "transpile",
             entry,
@@ -124,11 +123,6 @@ mod tests {
     };
     use deka_host::integrity::compute_package_integrity;
     use std::path::Path;
-    use std::sync::Mutex;
-
-    // DEKA_MODULE_ROOT is process-global. Keep tests that replace it isolated
-    // from each other while preserving the runtime's concurrent bundle tests.
-    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn write_locked_package(root: &Path, name: &str, package_path: &str) {
         let integrity = compute_package_integrity(&root.join(MODULES_DIR).join(package_path))
@@ -261,9 +255,6 @@ mod tests {
     #[test]
     #[ignore = "fixture ds_modules/@tana/store/index.ds uses pre-v2 syntax; revisit during stdlib fixture cleanup (see dekaruntime/deka#330)"]
     fn bundle_uses_tenant_lock_when_platform_lock_is_empty() {
-        let _env_lock = TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tmp = tempfile::tempdir().expect("tmp");
         let platform_root = tmp.path();
         let tenant_root = platform_root.join("default");
@@ -306,6 +297,59 @@ mod tests {
         // process-global module root.
         let bundle = build_deka_handler_bundle(handler.to_str().expect("utf-8 handler"));
         assert!(bundle.is_ok(), "tenant bundle failed: {bundle:?}");
+    }
+
+    // deka#229: `DEKA_MODULE_ROOT` used to be a whole-gate bypass — the pool
+    // ESM loader returned Ok the moment the env var was present, skipping the
+    // lockfile requirement and every module check. The gate takes the module
+    // root as an explicit parameter and reads no process environment. The env
+    // var is set in a spawned child so it cannot leak into other tests in
+    // this binary.
+    #[test]
+    fn env_module_root_does_not_bypass_gate() {
+        let test_bin = std::env::current_exe().expect("current test binary");
+        let output = std::process::Command::new(&test_bin)
+            .args([
+                "--exact",
+                "js_pipeline::tests::env_module_root_does_not_bypass_gate_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("DEKA_MODULE_ROOT", "/not/a/project")
+            .output()
+            .expect("run isolated child test");
+        assert!(
+            output.status.success(),
+            "child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn env_module_root_does_not_bypass_gate_child() {
+        // Declared and installed, but no deka.lock: exactly the layout the
+        // env-var bypass used to admit.
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(
+            tmp.path().join("deka.json"),
+            r#"{"name":"tenant","dependencies":{"@deka/crypto":"*"}}"#,
+        )
+        .expect("manifest");
+        let module_dir = tmp.path().join(MODULES_DIR).join("@deka").join("crypto");
+        std::fs::create_dir_all(&module_dir).expect("module dir");
+        std::fs::write(
+            module_dir.join("index.ds"),
+            "export fn random_hex() string { return 'abc' }\n",
+        )
+        .expect("module");
+
+        let err = ensure_project_layout(tmp.path(), Some(tmp.path()), &["@deka/crypto".to_string()])
+            .expect_err("missing lockfile must be rejected even with DEKA_MODULE_ROOT set");
+        assert!(
+            err.contains("deka.lock"),
+            "expected lockfile rejection, got: {err}"
+        );
     }
 
     #[test]

@@ -1,0 +1,10 @@
+{
+  "name": "@deka/fs",
+  "version": "0.4.1",
+  "main": "index.ds",
+  "host": {
+    "kinds": [
+      "fs"
+    ]
+  }
+}

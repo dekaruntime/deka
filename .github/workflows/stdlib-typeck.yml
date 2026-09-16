@@ -13,6 +13,7 @@ on:
     branches: [main]
     paths:
       - "crates/cli/**"
+      - "crates/permissions/**"
       - "scripts/typeck-published-stdlib.sh"
       - ".github/workflows/stdlib-typeck.yml"
 
@@ -88,12 +89,20 @@ jobs:
       - name: Build CLI
         run: cargo build --release -p cli
 
+      # deka#620: the declaration diff below links the authoritative bridge
+      # catalog (crates/permissions), so it must be built from this checkout
+      # too. Runs under sccache via the Configure sccache step above, which
+      # fails the job when sccache is missing — no cold builds.
+      - name: Build bridge declaration diff tool
+        run: cargo build --release -p permissions --bin bridge_diff
+
       - name: Install published dsc
         run: scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc"
 
       - name: Typecheck published packages
         env:
           DEKA_DSC: ${{ github.workspace }}/.ci/dsc
+          BRIDGE_DIFF: ${{ github.workspace }}/target/release/bridge_diff
         run: |
           chmod +x scripts/typeck-published-stdlib.sh
           CLI="${{ github.workspace }}/target/release/cli" scripts/typeck-published-stdlib.sh

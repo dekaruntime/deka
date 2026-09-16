@@ -113,7 +113,13 @@ if ! semver_gt "$NEW" "$CURRENT"; then
   exit 1
 fi
 
-LATEST_TAG="$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n1 || true)"
+# rfd#68: canary tags (v0.59.0-canary-d5661ed) live in this same v[0-9]*
+# namespace and sort ahead of the stable tag they were built from -- picking
+# the overall top tag here would find a canary, fail its strict-semver check,
+# and skip the "must clear latest" guard entirely instead of checking the
+# actual latest stable tag underneath it. Filter to stable tags (no
+# `-canary-`) before taking the top of the sort.
+LATEST_TAG="$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -v -- '-canary-' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
 if [[ -n "$LATEST_TAG" ]]; then
   LATEST_VER="${LATEST_TAG#v}"
   if [[ "$LATEST_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && ! semver_gt "$NEW" "$LATEST_VER"; then
