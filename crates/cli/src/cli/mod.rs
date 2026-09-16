@@ -354,6 +354,12 @@ pub fn execute(registry: &Registry) -> i32 {
 /// project's npm-installed one otherwise fails with a parse error that names
 /// only the user's source file. Warn once, at command start, only when the
 /// cwd tree declares a different `@dekaruntime/deka` version.
+///
+/// Invariant: this hook sits in the single-command dispatch branch, so it
+/// only fires for commands registered with `subcommands: &[]` — today
+/// check/dev/build/serve all are. If any of them ever grows a subcommand,
+/// the hook must move ahead of the branch split or that command's skew
+/// warning silently stops firing (deka#1101 review).
 fn warn_on_command_skew(cmd_name: &str) {
     if matches!(cmd_name, "check" | "dev" | "build" | "serve") {
         compiler::skew::warn_on_version_skew();

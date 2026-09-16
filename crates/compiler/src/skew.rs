@@ -13,18 +13,52 @@ use std::path::Path;
 /// npm package directory that carries the project-local deka version.
 const PACKAGE_JSON: &str = "node_modules/@dekaruntime/deka/package.json";
 
-/// Declared `version` of the nearest `node_modules/@dekaruntime/deka` at or
-/// above `start`, walking parent directories the way Node resolution does.
+/// Project marker that anchors the walk: installs above it belong to a
+/// different tree and must not attribute their version to this project.
+const PROJECT_MANIFEST: &str = "deka.json";
+
+/// Declared `version` of the nearest in-project
+/// `node_modules/@dekaruntime/deka`, searching from `start` up to (and
+/// including) the project root.
+///
+/// The walk is anchored to the nearest ancestor containing `deka.json`:
+///
+/// - create-deka-app projects always have `deka.json` at their root, and the
+///   install that matters sits at or below it.
+/// - Monorepos with a hoisted root install keep `deka.json` at the workspace
+///   root, where the hoisted install lives; nearest-first ordering then
+///   matches Node resolution. A monorepo that keeps `deka.json` only in a
+///   sub-package while hoisting `node_modules` above it is the accepted
+///   tradeoff — that layout does not see the warning.
+/// - A stray ancestor install (e.g. `~/node_modules/@dekaruntime/deka` left
+///   over from a one-off `npm install` in `$HOME`) is above the project root
+///   and can no longer make "this project expects deka X" fire for every run
+///   under that tree.
+///
+/// When no `deka.json` ancestor exists there is no project to attribute a
+/// version to; only a package.json directly in `start` (the cwd) counts — an
+/// upward install without a project anchor is exactly the stray-`$HOME` case.
 pub fn project_deka_version(start: &Path) -> Option<String> {
-    for dir in start.ancestors() {
-        let manifest = dir.join(PACKAGE_JSON);
-        if let Ok(text) = fs::read_to_string(&manifest) {
-            if let Some(version) = package_version(&text) {
-                return Some(version);
-            }
+    let boundary = start
+        .ancestors()
+        .find(|dir| dir.join(PROJECT_MANIFEST).is_file())
+        .unwrap_or(start);
+    let mut dir = start;
+    loop {
+        if let Some(version) = deka_version_in(dir) {
+            return Some(version);
         }
+        if dir == boundary {
+            return None;
+        }
+        dir = dir.parent()?;
     }
-    None
+}
+
+fn deka_version_in(dir: &Path) -> Option<String> {
+    let manifest = dir.join(PACKAGE_JSON);
+    let text = fs::read_to_string(manifest).ok()?;
+    package_version(&text)
 }
 
 /// Extract the `"version"` field from package.json text without a JSON
@@ -127,11 +161,70 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("skew-walk-{}", std::process::id()));
         let nested = temp.join("app/src/pages");
         std::fs::create_dir_all(&nested).unwrap();
+        // deka.json at the workspace root: the hoisted install there is
+        // in-project and must be found from any nested directory.
+        std::fs::write(temp.join("deka.json"), "{}\n").unwrap();
         write_package(&temp, "0.53.4");
-        assert_eq!(
-            project_deka_version(&nested).as_deref(),
-            Some("0.53.4")
-        );
+        assert_eq!(project_deka_version(&nested).as_deref(), Some("0.53.4"));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn install_at_project_root_next_to_deka_json_counts() {
+        let temp = std::env::temp_dir().join(format!("skew-root-{}", std::process::id()));
+        std::fs::create_dir_all(&temp).unwrap();
+        std::fs::write(temp.join("deka.json"), "{}\n").unwrap();
+        write_package(&temp, "0.53.4");
+        assert_eq!(project_deka_version(&temp).as_deref(), Some("0.53.4"));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn stray_ancestor_install_above_project_root_does_not_warn() {
+        // ~/node_modules/@dekaruntime/deka left over from a one-off install:
+        // it is above the project root (deka.json) and must not attribute its
+        // version to a project living below it.
+        let temp = std::env::temp_dir().join(format!("skew-stray-{}", std::process::id()));
+        let project = temp.join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        write_package(&temp, "99.0.0");
+        std::fs::write(project.join("deka.json"), "{}\n").unwrap();
+        assert_eq!(project_deka_version(&project), None);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn cwd_level_install_without_project_still_counts() {
+        // No deka.json anywhere: only the cwd-level install describes what
+        // the user is operating on.
+        let temp = std::env::temp_dir().join(format!("skew-cwd-{}", std::process::id()));
+        std::fs::create_dir_all(&temp).unwrap();
+        write_package(&temp, "0.53.4");
+        assert_eq!(project_deka_version(&temp).as_deref(), Some("0.53.4"));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn ancestor_install_without_project_does_not_warn() {
+        // No deka.json anywhere and the install is only above the cwd: the
+        // stray-$HOME case must stay silent.
+        let temp = std::env::temp_dir().join(format!("skew-nopj-{}", std::process::id()));
+        let nested = temp.join("work");
+        std::fs::create_dir_all(&nested).unwrap();
+        write_package(&temp, "99.0.0");
+        // Unreachable when an ancestor outside the fixture carries a
+        // deka.json (e.g. tests run with TMPDIR inside this repo): the
+        // fixture then genuinely sits inside a deka project, and naming the
+        // in-boundary install is correct behavior, not a stray-$HOME case.
+        if nested
+            .ancestors()
+            .skip(1)
+            .any(|dir| dir.join("deka.json").is_file())
+        {
+            let _ = std::fs::remove_dir_all(&temp);
+            return;
+        }
+        assert_eq!(project_deka_version(&nested), None);
         let _ = std::fs::remove_dir_all(&temp);
     }
 
