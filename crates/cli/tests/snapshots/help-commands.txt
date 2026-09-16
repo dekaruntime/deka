@@ -38,6 +38,7 @@ wasm stubs	generate wasm .d.ds stubs
 
 [internal]
 self		internal deka maintenance commands
+self doctor	diagnose install problems (shadowed binaries, version skew, mismatched dsc)
 self fetch	fetch a pinned content checkout (testsuite, tour)
 self test	run internal deka compatibility and content tests
 
