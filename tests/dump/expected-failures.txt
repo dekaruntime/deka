@@ -47,8 +47,3 @@ summon-void-exempt
 # deka#932: the native URL polyfill now rejects `new URL("://invalid")` with
 # TypeError, matching Chromium; unsafe-unsafe-url-err agrees on both hosts and
 # is deliberately no longer listed.
-
-# deka#931: native @deka/crypto install fails in the dump env (artifact repaired
-# + republished 2026-09-12; row persists — possibly CDN-cached old tarball or
-# env-specific install path). Remove when #931 closes.
-error-globals-crypto-random-uuid

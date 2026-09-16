@@ -105,7 +105,7 @@ type HarnessRun = {
 
 // Vendored stdlib shims served to the browser harness. Keep in sync with the
 // real packages; io's echo is the console.log shim by design.
-const MODULE_SHIMS: Record<string, string> = {
+export const MODULE_SHIMS: Record<string, string> = {
   // Closed compiler module (dsc#142): the compiler normally lowers
   // `import { PI } from "math"` to a local binding, but serve the module too
   // so any emitted JS that keeps the specifier resolves like io/time/crypto.
@@ -125,8 +125,13 @@ const MODULE_SHIMS: Record<string, string> = {
     '  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");\n' +
     '  return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20);\n' +
     '}\n' +
+    // The compiler lowers Result to the `{ ok, value }` / `{ ok, error }`
+    // shape (see the compiled stdlib-stubs/crypto.ds), and emitted match arms
+    // test `.ok === true/false`. The old `{ __case }` envelope no longer
+    // matches any arm, so `match (uuid_v4())` fell through to undefined
+    // (deka#931).
     'export function uuid_v4() {\n' +
-    '  return { __case: "Ok", value: uuid_v4_value() }\n' +
+    '  return { ok: true, value: uuid_v4_value() }\n' +
     '}\n',
 }
 
