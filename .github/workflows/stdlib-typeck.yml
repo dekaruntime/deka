@@ -15,6 +15,8 @@ on:
       - "crates/cli/**"
       - "crates/permissions/**"
       - "scripts/typeck-published-stdlib.sh"
+      - "scripts/typeck-ratchet.sh"
+      - "tests/typeck-ratchet.sh"
       - ".github/workflows/stdlib-typeck.yml"
 
 permissions:
