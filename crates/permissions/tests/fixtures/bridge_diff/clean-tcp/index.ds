@@ -48,17 +48,17 @@ export fn write(handle: number, data: bytes) Result<number, string> {
   }
 }
 
-export fn close(handle: number) Result<boolean, string> {
+export fn close(handle: number) Result<void, string> {
   const raw = bridge net.close(handle)
-  return match (unsafe<Result<boolean, string>> { raw }) {
+  return match (unsafe<Result<void, string>> { raw }) {
     Ok(v) => v,
     Err(e) => Err("close: cast failed")
   }
 }
 
-export fn set_deadline(handle: number, millis: number) Result<boolean, string> {
+export fn set_deadline(handle: number, millis: number) Result<void, string> {
   const raw = bridge net.set_deadline(handle, millis)
-  return match (unsafe<Result<boolean, string>> { raw }) {
+  return match (unsafe<Result<void, string>> { raw }) {
     Ok(v) => v,
     Err(e) => Err("set_deadline: cast failed")
   }
