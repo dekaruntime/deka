@@ -1,5 +1,0 @@
-import { posts as allPosts } from "./posts.generated.ds"
-
-export fn postCount() number {
-  return allPosts.length
-}

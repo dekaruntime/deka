@@ -1,5 +1,0 @@
-node_modules/
-.next/
-.bench-static/
-*.tsbuildinfo
-next-env.d.ts

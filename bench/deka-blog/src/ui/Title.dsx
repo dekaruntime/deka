@@ -1,3 +1,0 @@
-export fn Title(text: string) ReactNode {
-  return <title>{text}</title>
-}

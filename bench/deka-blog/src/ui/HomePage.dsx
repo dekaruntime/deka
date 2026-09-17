@@ -1,5 +1,0 @@
-import { PostList } from "./PostList.dsx"
-
-export fn HomePage() ReactNode {
-  return <PostList page={1} />
-}

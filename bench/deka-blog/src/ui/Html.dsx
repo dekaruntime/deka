@@ -1,8 +1,0 @@
-interface HtmlProps {
-  html: string
-}
-
-export fn Html(props: HtmlProps) ReactNode {
-  const raw = { __html: props.html }
-  return <div class="prose" dangerouslySetInnerHTML={raw}></div>
-}
