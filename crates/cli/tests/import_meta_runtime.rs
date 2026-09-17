@@ -3,26 +3,25 @@
 //! `dirname` / `filename` name the original source file — never a compiled
 //! or staged copy.
 //!
-//! This needs a `dsc` that actually parses `import.meta` (dsc#282), which is
-//! not what ships until deka pins a dsc that includes it. Point
-//! `IMPORT_META_TEST_DSC` at such a `dsc` binary to run this for real (the
-//! dsc built alongside this PR, `dsc/.target/debug/dsc` or a release build);
-//! without it the test skips instead of failing CI (dsc#282 is not pinned
-//! yet, so a plain checkout has no such `dsc`).
+//! This needs a real `dsc` that parses `import.meta` (dsc#282, pinned in
+//! `scripts/dsc-version` as of deka#1149). It is resolved exactly the way
+//! every other real-dsc CLI integration test in this file's directory
+//! resolves one (`dekascript_run.rs` et al.): the spawned `cli` process
+//! inherits `DEKA_DSC` from this test process's own environment — set by CI
+//! (`ci.yml` installs the pinned dsc to `.ci/dsc` and exports `DEKA_DSC` for
+//! the `cargo test` step) or, locally, by whatever the developer has on
+//! `DEKA_DSC`/`PATH` (`compiler::dsc::find_cli_dsc`'s own resolution order).
+//! No test-only env var, and no early return: without a resolvable dsc,
+//! `deka run` fails with `[cli] dsc is required for check, fmt, transpile,
+//! and lsp. …`, which surfaces as an ordinary, clearly-labeled test failure
+//! below — never a silent pass.
 
-use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
-}
-
-/// The dsc built for dsc#282, or `None` to skip (see module docs).
-fn real_dsc() -> Option<PathBuf> {
-    let path = PathBuf::from(env::var_os("IMPORT_META_TEST_DSC")?);
-    if path.is_file() { Some(path) } else { None }
 }
 
 struct Env {
@@ -36,20 +35,19 @@ impl Env {
         }
     }
 
-    fn command(&self, dir: &Path, dsc: &Path) -> Command {
+    fn command(&self, dir: &Path) -> Command {
         let mut command = Command::new(cli_bin());
         command
             .current_dir(dir)
             .env("HOME", self.home.path())
-            .env_remove("XDG_CACHE_HOME")
-            .env("DEKA_DSC", dsc);
+            .env_remove("XDG_CACHE_HOME");
         command
     }
 }
 
-fn run(env: &Env, dir: &Path, dsc: &Path, args: &[&str]) -> (bool, String) {
+fn run(env: &Env, dir: &Path, args: &[&str]) -> (bool, String) {
     let output = env
-        .command(dir, dsc)
+        .command(dir)
         .args(args)
         .output()
         .expect("run deka");
@@ -162,10 +160,6 @@ export const helperMain = import.meta.main
 /// not exercised end-to-end here.
 #[test]
 fn loose_run_reports_original_source_not_the_cache_copy() {
-    let Some(dsc) = real_dsc() else {
-        eprintln!("skipping: set IMPORT_META_TEST_DSC to a dsc built with dsc#282");
-        return;
-    };
     let env = Env::new();
     let dir = tempfile::tempdir().expect("loose dir");
     let entry = dir.path().join("main.ds");
@@ -174,7 +168,7 @@ fn loose_run_reports_original_source_not_the_cache_copy() {
     // to resolve against.
     fs::write(dir.path().join("helper.ds"), "export const x = 1\n").expect("write helper");
 
-    let (ok, output) = run(&env, dir.path(), &dsc, &["run", "main.ds"]);
+    let (ok, output) = run(&env, dir.path(), &["run", "main.ds"]);
     assert!(ok, "deka run failed:\n{output}");
 
     let original_dir = dir
@@ -214,10 +208,6 @@ fn loose_run_reports_original_source_not_the_cache_copy() {
 /// (deka#1139 item 1, "and a project file").
 #[test]
 fn project_run_reports_its_source_path() {
-    let Some(dsc) = real_dsc() else {
-        eprintln!("skipping: set IMPORT_META_TEST_DSC to a dsc built with dsc#282");
-        return;
-    };
     let env = Env::new();
     let dir = tempfile::tempdir().expect("project dir");
     fs::write(dir.path().join("deka.json"), "{}\n").expect("write deka.json");
@@ -230,7 +220,7 @@ fn project_run_reports_its_source_path() {
     fs::write(&entry, PROJECT_ENTRY_SOURCE).expect("write entry");
     fs::write(dir.path().join("helper.ds"), HELPER_SOURCE).expect("write helper");
 
-    let (ok, output) = run(&env, dir.path(), &dsc, &["run", "main.ds"]);
+    let (ok, output) = run(&env, dir.path(), &["run", "main.ds"]);
     assert!(ok, "deka run failed:\n{output}");
 
     let project_dir = dir
