@@ -40,9 +40,9 @@ version = "0.53.7"
 
 [workspace.dependencies]
 # V8 Runtime (Deno Core)
-deno_core = "0.410.0"
-deno_napi = "0.188.0"
-deno_permissions = "0.116.0"
+deno_core = "0.412.0"
+deno_napi = "0.190.0"
+deno_permissions = "0.118.0"
 deno_error = "0.7.1"
 
 # Async Runtime

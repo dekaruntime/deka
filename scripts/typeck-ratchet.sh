@@ -13,9 +13,6 @@
 # dekaruntime/dsc#272 (typed bridge calls), because that dsc will typecheck the
 # listed package@version without any per-call ceremony.
 EXPECTED_FAILURES=(
-  "auth@0.4.1" # typed bridge calls (dsc#272)
-  "http@0.4.1" # typed bridge calls (dsc#272)
-  "jwt@0.4.1"  # typed bridge calls (dsc#272)
 )
 
 typeck_ratchet_reason() {

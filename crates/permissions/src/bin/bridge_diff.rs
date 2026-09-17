@@ -19,7 +19,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use permissions::bridge_decl::{BridgeDiagnostic, check_package};
-use permissions::host_bridge::{catalog_json, host_decl};
+use permissions::host_bridge::catalog_json;
+use permissions::host_decl::host_decl;
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
