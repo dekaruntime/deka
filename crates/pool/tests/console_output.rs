@@ -276,6 +276,70 @@ globalThis.app = function(req) {
     assert!(!stdout.contains("[object Object]"), "fell back to String(): {stdout:?}");
 }
 
+/// rfd#44 "Formatting erased values" (decided with Sami 2026-09-16).
+///
+/// dsc's *actual* compiled-code shapes (deka_emit prelude.rs, dsc#269
+/// console-global-69), not the pool's own `Option`/`Result` globalThis
+/// constructors (`crates/pool/src/prelude.rs`, still the older
+/// `{ __enum, __case, ... }` envelope used by host-bridge conversions and
+/// exercised by `console_log_prints_structured_values_not_object_object`
+/// above): `Option.Some(v)` compiles to the bare value `v`, `Option.None`
+/// compiles to `undefined`, `Result.Ok(v)` to the plain object
+/// `{ ok: true, value: v }`, and `Result.Err(e)` to `{ ok: false, error: e }`.
+/// This test builds those exact runtime shapes by hand (mirroring how the
+/// struct test above hand-builds the `__deka_struct` shape) so it pins the
+/// printer against what dsc really emits, not against the pool's own
+/// differently-shaped test convenience globals.
+#[cfg(unix)]
+#[test]
+fn console_log_formats_erased_option_and_result_per_rfd44() {
+    let handler = r#"
+globalThis.app = function(req) {
+  const structProto = Object.create(null);
+  Object.defineProperty(structProto, '__deka_struct', { value: 'User', enumerable: false });
+  const user = Object.assign(Object.create(structProto), {
+    name: "sami",
+    nickname: undefined, // Option.None, erased
+    age: 40,             // Option.Some(40), erased
+  });
+
+  console.log(undefined);                 // Option.None
+  console.log(7);                         // Option.Some(7), erased to the bare value
+  console.log({ ok: true, value: 1 });    // Result.Ok(1)
+  console.log({ ok: false, error: "boom" }); // Result.Err("boom")
+  console.log(user);
+  console.log([1, undefined, 3]);         // None nested in an array
+  console.log([{ ok: true, value: 2 }, { ok: false, error: "x" }]);
+
+  // Not a Result: extra key, or `ok` not strictly boolean-true/false. Must
+  // fall through to plain-object formatting, never be duck-typed.
+  console.log({ ok: true, value: 1, extra: 2 });
+  console.log({ ok: "yes", value: 1 });
+
+  return { status: 200, headers: {}, body: "done" };
+};
+"#;
+    let (stdout, _stderr, response) = run_capturing_stdio(handler);
+    ok_response(&response);
+
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "None",
+            "7",
+            "Ok(1)",
+            "Err(\"boom\")",
+            "User { name: \"sami\", nickname: None, age: 40 }",
+            "[ 1, None, 3 ]",
+            "[ Ok(2), Err(\"x\") ]",
+            "{ ok: true, value: 1, extra: 2 }",
+            "{ ok: \"yes\", value: 1 }",
+        ],
+        "rfd#44 erased-value formatting mismatch: {stdout:?}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn console_group_indents_and_count_time_track_labels() {
