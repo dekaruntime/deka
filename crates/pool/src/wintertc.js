@@ -83,9 +83,32 @@ const __wintertc_print = Deno.core.print.bind(Deno.core);
     }
   }
 
+  // Result recognition (rfd#44 "Formatting erased values", 2026-09-16).
+  // `Result.Ok`/`Result.Err` compile to the plain object shapes
+  // `{ ok: true, value }` / `{ ok: false, error }` (deka_emit's
+  // RESULT_OK/RESULT_ERR prelude constants) -- unlike a user `enum`, there is
+  // no `__enum` tag to dispatch on. Recognized only by the exact own
+  // enumerable key set (`{ok, value}` with `ok === true`, or `{ok, error}`
+  // with `ok === false`), never by duck-typing an isolated `ok` field, so an
+  // unrelated plain object that merely happens to have an `ok` property is
+  // never misprinted as a Result.
+  function resultCaseLabel(value) {
+    const keys = Object.keys(value);
+    if (keys.length !== 2 || !keys.includes("ok")) return null;
+    if (value.ok === true && keys.includes("value")) return "Ok";
+    if (value.ok === false && keys.includes("error")) return "Err";
+    return null;
+  }
+
   function inspect(value, seen, depth) {
     if (value === null) return "null";
-    if (value === undefined) return "undefined";
+    // Option is fully erased at runtime (rfd#62): `Some(v)` compiles to the
+    // bare value `v`, `None` compiles to `undefined`. Since no other
+    // DekaScript value is ever `undefined` (rfd#62's unoccupied-undefined
+    // invariant), printing it as `None` is sound at top level and wherever
+    // it recurs -- array elements, tuple slots, struct fields (rfd#44
+    // "Formatting erased values").
+    if (value === undefined) return "None";
     const t = typeof value;
     if (t === "string") return JSON.stringify(value);
     if (t === "number" || t === "boolean") return String(value);
@@ -113,8 +136,18 @@ const __wintertc_print = Deno.core.print.bind(Deno.core);
       return `[ ${items.join(", ")} ]`;
     }
 
-    // Option/Result and every user `enum` share this shape (deka#582,
-    // build_values.rs hydrate): `{ __enum, __case, name, value|error }`,
+    const resultLabel = resultCaseLabel(value);
+    if (resultLabel !== null) {
+      seen.add(value);
+      const payload = resultLabel === "Ok" ? value.value : value.error;
+      const formatted = `${resultLabel}(${guardInspect(payload, seen, depth + 1)})`;
+      seen.delete(value);
+      return formatted;
+    }
+
+    // Every user `enum` (and any Result value that still carries the
+    // __enum-tagged envelope from other compiled paths, deka#582,
+    // build_values.rs hydrate) shares this shape: `{ __enum, __case, name, value|error }`,
     // payload-less cases omit `value`/`error` entirely. Printed as bare
     // case labels (`Some(1)`, `None`, `Ok(1)`, `Err("e")`, `Red`,
     // `Circle(5)`) — Rust-`{:?}`-style, no enum-name prefix.
