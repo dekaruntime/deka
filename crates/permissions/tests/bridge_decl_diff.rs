@@ -231,7 +231,7 @@ fn dump_catalog_emits_authoritative_json() {
 }
 
 /// --dump-host-decl emits the exact declaration file that the release job
-/// publishes, byte-for-byte with `permissions::host_bridge::host_decl()`.
+/// publishes, byte-for-byte with `permissions::host_decl::host_decl()`.
 #[test]
 fn dump_host_decl_emits_authoritative_declaration_file() {
     let output = bridge_diff()
@@ -242,7 +242,7 @@ fn dump_host_decl_emits_authoritative_declaration_file() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(
         stdout,
-        permissions::host_bridge::host_decl(),
+        permissions::host_decl::host_decl(),
         "--dump-host-decl output must match host_decl() exactly"
     );
     assert!(

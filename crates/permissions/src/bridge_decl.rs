@@ -34,7 +34,8 @@
 
 mod parse;
 
-use crate::host_bridge::{HOST_CATALOG, HostAction, find_action, result_shape_to_ds, wire_type_to_ds};
+use crate::host_bridge::{HOST_CATALOG, HostAction, find_action};
+use crate::host_decl::{result_shape_to_ds, wire_type_to_ds};
 use parse::{Declaration, Type, parse_declarations, tokenize};
 
 /// One mismatch between a declared bridge signature and the catalog.
