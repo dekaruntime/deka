@@ -93,6 +93,28 @@ jobs:
       - name: Run typecheck ratchet tests
         run: tests/typeck-ratchet.sh
 
+  lockstep-check:
+    # deka#1154, dekaruntime/rfd#68's 2026-09-17 amendment to rfd#59: deka,
+    # dsc, testsuite and tour share ONE version. This enforces it: deka's own
+    # crate version is the source of truth, and scripts/dsc-version /
+    # scripts/testsuite-corpus-version must each carry it, or the immediately
+    # previous released version while a bump is mid-flight. Fast, no Rust
+    # build — bash only. fetch-depth 0 pulls the tag history the "previous
+    # version" computation needs.
+    name: Lockstep pin check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Run lockstep hermetic tests
+        run: tests/lockstep-check.sh
+
+      - name: Verify lockstep pins
+        run: scripts/lockstep-verify.sh
+
   utility-css:
     name: Utility CSS generator
     needs: [changes]
