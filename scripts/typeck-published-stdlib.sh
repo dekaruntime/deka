@@ -11,6 +11,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/typeck-ratchet.sh"
+
 CLI="${CLI:-$ROOT/target/release/cli}"
 if [[ ! -x "$CLI" ]]; then
   CLI="$ROOT/target/debug/cli"
@@ -26,8 +28,8 @@ PACKAGES=(
   auth bytes cookies crypto fs http io json jwt tcp time tls
 )
 
-failed=0
 workdir="$(mktemp -d)"
+results_file="$workdir/results.tsv"
 trap 'rm -rf "$workdir"' EXIT
 
 for name in "${PACKAGES[@]}"; do
@@ -43,7 +45,7 @@ for name in "${PACKAGES[@]}"; do
   printf '%s\n' '{"lockfileVersion":1,"packages":{}}' >"$proj/deka.lock"
   if ! (cd "$proj" && DEKA_SECURITY_NO_PROMPT=1 "$CLI" add "$name" --yes --no-prompt); then
     echo "FAIL $name: deka add"
-    failed=1
+    printf '%s\t%s\t%s\n' "$name" "" "fail" >> "$results_file"
     continue
   fi
   # `deka check` is a SINGLE-FILE typecheck: it does not resolve imports, so
@@ -69,8 +71,18 @@ for name in "${PACKAGES[@]}"; do
   done
   if [[ -z "$pkg_index" ]]; then
     echo "FAIL $name: no index.ds after install"
-    failed=1
+    printf '%s\t%s\t%s\n' "$name" "" "fail" >> "$results_file"
     continue
+  fi
+
+  # Resolve the installed version so the ratchet can key on exact name@version.
+  resolved_version=""
+  if [[ -f "$proj/deka.lock" ]]; then
+    resolved_version="$(jq -r --arg key "@deka/$name" '.packages[$key][0] // empty' "$proj/deka.lock" 2>/dev/null)"
+    resolved_version="${resolved_version##*@}"
+  fi
+  if [[ -z "$resolved_version" && -n "${meta:-}" ]]; then
+    resolved_version="$(jq -r '.versions[-1] // empty' <<<"$meta" 2>/dev/null)"
   fi
 
   # Import one real export so the package enters the graph. A bare named
@@ -100,7 +112,7 @@ for name in "${PACKAGES[@]}"; do
   if grep -qE '^[0-9]+:[0-9]+:.*(ds_modules|php_modules)/' <<<"$out"; then
     echo "FAIL $name: does not typecheck on this compiler"
     grep -vE '^\[security\]' <<<"$out" | head -5
-    failed=1
+    printf '%s\t%s\t%s\n' "$name" "$resolved_version" "fail" >> "$results_file"
     continue
   fi
   echo "ok $name (via $symbol)"
@@ -116,21 +128,21 @@ for name in "${PACKAGES[@]}"; do
   if [[ -n "${BRIDGE_DIFF:-}" ]]; then
     if [[ ! -x "$BRIDGE_DIFF" ]]; then
       echo "FAIL $name: BRIDGE_DIFF is not executable: $BRIDGE_DIFF"
-      failed=1
+      printf '%s\t%s\t%s\n' "$name" "$resolved_version" "fail" >> "$results_file"
       continue
     fi
     if ! diff_out="$("$BRIDGE_DIFF" "$(dirname "$pkg_index")" 2>&1)"; then
       echo "FAIL $name: bridge declarations drifted from the host catalog"
       echo "$diff_out"
-      failed=1
+      printf '%s\t%s\t%s\n' "$name" "$resolved_version" "fail" >> "$results_file"
       continue
     fi
     echo "$diff_out"
   fi
+
+  printf '%s\t%s\t%s\n' "$name" "$resolved_version" "ok" >> "$results_file"
 done
 
-if [[ "$failed" -ne 0 ]]; then
-  echo "published stdlib typeck failed" >&2
+if ! typeck_ratchet_evaluate "$results_file"; then
   exit 1
 fi
-echo "all published stdlib packages typeck"
