@@ -83,6 +83,13 @@ fn prepare_run_context(context: &Context) -> Result<PreparedRun, String> {
     if deka_cache::is_loose_source_file(&resolved.path) {
         let materialized = deka_cache::materialize_loose(&resolved.path)
             .map_err(|err| format!("failed to materialize {} into the user cache: {err}", resolved.path.display()))?;
+        // So the module loader can map the cache artifact it executes back
+        // to the real source file for `import.meta.url`/`dirname`/
+        // `filename` (rfd#12 amendment, deka#1139) — never the cache copy.
+        pool::install_source_override_hint(pool::SourceOverrideHint {
+            compiled_root: materialized.compiled_root.clone(),
+            original_root: materialized.original_root.clone(),
+        });
         let mut prepared = deka_cache::rewrite_context_for_artifact(
             context,
             &materialized.artifact,

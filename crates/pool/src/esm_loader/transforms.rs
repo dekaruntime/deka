@@ -80,6 +80,20 @@ pub(crate) fn prepend_host_bindings(code: ModuleSourceCode, kinds: &[String]) ->
     }
 }
 
+/// Prepend the `import.meta` override preamble (rfd#12 amendment,
+/// deka#1139) computed by [`super::PhpxEsmLoader::import_meta_prelude`].
+pub(crate) fn prepend_import_meta(code: ModuleSourceCode, prelude: &str) -> ModuleSourceCode {
+    match code {
+        ModuleSourceCode::String(source) => {
+            let mut text = String::with_capacity(prelude.len() + source.len());
+            text.push_str(prelude);
+            text.push_str(&source);
+            ModuleSourceCode::String(text.into())
+        }
+        other => other,
+    }
+}
+
 pub(crate) fn append_entry_footer(code: ModuleSourceCode) -> ModuleSourceCode {
     const FOOTER: &str = "\nif (typeof globalThis.app === \"undefined\" && typeof app !== \"undefined\") {\n\
   const __candidate = app;\n\
