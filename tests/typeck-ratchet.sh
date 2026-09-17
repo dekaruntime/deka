@@ -6,6 +6,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/typeck-ratchet.sh"
 
+# The tests exercise the decision function with their own fixture list, so
+# they stay valid whatever the live expected-failure list contains.
+EXPECTED_FAILURES=("auth@0.4.1" "http@0.4.1" "jwt@0.4.1")
+
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
