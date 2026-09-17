@@ -29,6 +29,8 @@
 //! deliberately absent — the catalog lists only genuinely host-implemented
 //! actions, zero stubs.
 
+use std::fmt::Write;
+
 // ---- Operation catalog -----------------------------------------------------
 
 /// Wire representation of one bridge argument / result value.
@@ -595,6 +597,80 @@ pub fn catalog_json() -> String {
     serde_json::Value::Object(kinds).to_string()
 }
 
+// ---- Declaration-file generation (rfd#27 2026-09-16 amendment) -------------
+
+/// Wire type → DekaScript surface type. This is the single mapping shared by
+/// the generated `deka-host.d.ds` and the bridge-declaration checker
+/// (`bridge_decl`, deka#620 / deka#1098); keep it in one place so the catalog
+/// and the checked declarations can never drift apart.
+pub fn wire_type_to_ds(wire: WireType) -> &'static str {
+    match wire {
+        WireType::Str => "string",
+        WireType::Num => "number",
+        WireType::Bool => "boolean",
+        WireType::Bytes => "bytes",
+        // Handles are opaque u64 resource ids on the DS surface.
+        WireType::Handle => "number",
+        // Free-form JSON values are `JsValue` in declaration-space.
+        WireType::Json => "JsValue",
+    }
+}
+
+/// Result shape → DekaScript `Result<Ok, string>` Ok type. Host errors are
+/// always `string` in the declaration file; stdlib packages wrap them.
+pub fn result_shape_to_ds(shape: ResultShape) -> &'static str {
+    match shape {
+        ResultShape::Bytes => "bytes",
+        ResultShape::Num => "number",
+        ResultShape::Bool => "boolean",
+        // Unit host results have no value on the DS side.
+        ResultShape::Unit => "void",
+        ResultShape::Handle => "number",
+        // Directory listings are arrays of entry names.
+        ResultShape::Entries => "Array<string>",
+        ResultShape::Json => "JsValue",
+    }
+}
+
+/// Render `deka-host.d.ds` from [`HOST_CATALOG`]. The output is deterministic
+/// and byte-stable so it can be golden-file tested and published verbatim.
+pub fn host_decl() -> String {
+    let mut output = String::new();
+    writeln!(
+        output,
+        "// deka-host.d.ds — generated from the deka host catalog. Do not edit."
+    )
+    .unwrap();
+    output.push('\n');
+
+    for (kind_index, kind) in HOST_CATALOG.iter().enumerate() {
+        if kind_index > 0 {
+            output.push('\n');
+        }
+        writeln!(output, "bridge {} {{", kind.name).unwrap();
+        for action in kind.actions {
+            let args: Vec<String> = action
+                .args
+                .iter()
+                .map(|host_arg| {
+                    format!("{}: {}", host_arg.name, wire_type_to_ds(host_arg.wire))
+                })
+                .collect();
+            let async_keyword = if action.r#async { "async " } else { "" };
+            let ok_type = result_shape_to_ds(action.result);
+            writeln!(
+                output,
+                "  {async_keyword}fn {}({}) Result<{ok_type}, string>",
+                action.name,
+                args.join(", "),
+            )
+            .unwrap();
+        }
+        writeln!(output, "}}").unwrap();
+    }
+    output
+}
+
 // Re-exported so existing `permissions::host_bridge::*` grant and denial paths
 // keep working after the grants/PermissionDenied split (deka#391 file-size
 // gate: that file owns the catalog, this one stays under the line limit).
@@ -798,5 +874,99 @@ mod tests {
                 assert!(action_value.get("result").is_some());
             }
         }
+    }
+
+    #[test]
+    fn host_decl_contains_every_catalog_action() {
+        let decl = host_decl();
+        assert!(decl.starts_with("// deka-host.d.ds"));
+
+        // Collect every action we expect, keyed for diagnostics.
+        let mut expected: std::collections::HashMap<String, (&'static HostAction, &'static str)> =
+            std::collections::HashMap::new();
+        for kind in HOST_CATALOG {
+            for action in kind.actions {
+                expected.insert(
+                    format!("{}.{}", kind.name, action.name),
+                    (action, kind.name),
+                );
+            }
+        }
+
+        // Parse the declaration file naïvely: every non-comment, non-blank line
+        // inside a `bridge <kind> { ... }` block must match an action.
+        let mut current_kind = "";
+        for raw_line in decl.lines() {
+            let line = raw_line.trim();
+            if line.is_empty() || line.starts_with("//") {
+                continue;
+            }
+            if line.starts_with("bridge ") && line.ends_with("{") {
+                current_kind = line
+                    .strip_prefix("bridge ")
+                    .and_then(|s| s.strip_suffix(" {"))
+                    .expect("bridge block header");
+                continue;
+            }
+            if line == "}" {
+                current_kind = "";
+                continue;
+            }
+
+            // "async fn name(args) Result<Ok, string>"
+            let line = line
+                .strip_prefix("async ")
+                .unwrap_or(line)
+                .strip_prefix("fn ")
+                .expect("action line starts with fn");
+            let (name_rest, ok_type) = line
+                .rsplit_once(") Result<")
+                .expect("action line has Result<...> return");
+            let (name, args_part) = name_rest.split_once('(').expect("action line has args");
+            let name = name.trim();
+            let key = format!("{}.{}", current_kind, name);
+            let (action, _kind) = expected
+                .remove(&key)
+                .unwrap_or_else(|| panic!("unexpected action in declaration file: {key}"));
+            assert_eq!(
+                action.r#async,
+                raw_line.trim().starts_with("async "),
+                "{key} async flag mismatch"
+            );
+            assert_eq!(
+                ok_type.strip_suffix(", string>").expect("error type is string"),
+                result_shape_to_ds(action.result),
+                "{key} return type mismatch"
+            );
+            let expected_args: Vec<String> = action
+                .args
+                .iter()
+                .map(|host_arg| {
+                    format!("{}: {}", host_arg.name, wire_type_to_ds(host_arg.wire))
+                })
+                .collect();
+            assert_eq!(
+                args_part,
+                expected_args.join(", "),
+                "{key} argument list mismatch"
+            );
+        }
+
+        assert!(
+            expected.is_empty(),
+            "catalog actions missing from declaration file: {:?}",
+            expected.keys()
+        );
+    }
+
+    #[test]
+    fn host_decl_matches_golden_file() {
+        let golden = include_str!("../tests/fixtures/deka-host.d.ds");
+        assert_eq!(
+            host_decl(),
+            golden,
+            "host_decl() output differs from golden file; run bridge_diff --dump-host-decl > \
+             crates/permissions/tests/fixtures/deka-host.d.ds after a deliberate change"
+        );
     }
 }

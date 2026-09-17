@@ -147,6 +147,26 @@ jobs:
           RUSTC_WRAPPER: sccache
         run: cargo build --release -p cli
 
+      # rfd#27 2026-09-16 amendment: deka-host.d.ds is generated from the same
+      # compiled catalog the runtime executes, then published beside the binaries.
+      - name: Build bridge_diff
+        env:
+          RUSTC_WRAPPER: sccache
+        run: cargo build --release -p permissions --bin bridge_diff
+
+      - name: Generate host declaration file
+        run: |
+          mkdir -p dist
+          ./target/release/bridge_diff --dump-host-decl > dist/deka-host.d.ds
+          [ -s dist/deka-host.d.ds ] || { echo "::error::deka-host.d.ds is empty"; exit 1; }
+
+      - name: Upload host declaration artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: deka-host-decl
+          path: dist/deka-host.d.ds
+          retention-days: 1
+
       - name: Prepare binary
         run: |
           mkdir -p dist
@@ -602,6 +622,9 @@ jobs:
           cp artifacts/deka-wasm/deka_compiler.wasm "release/${TAG}/"
           cp artifacts/deka-wasm/deka_diagnostics.wasm "release/${TAG}/"
 
+          # Host declaration file (rfd#27 2026-09-16 amendment)
+          cp artifacts/deka-host-decl/deka-host.d.ds "release/${TAG}/"
+
           # Compute sha256s and sizes
           sha256() { sha256sum "$1" | awk '{print $1}'; }
 
@@ -609,6 +632,7 @@ jobs:
           COMPILER_SIZE="$(stat -c%s "release/${TAG}/deka_compiler.wasm")"
           DIAGNOSTICS_SHA256="$(sha256 "release/${TAG}/deka_diagnostics.wasm")"
           DIAGNOSTICS_SIZE="$(stat -c%s "release/${TAG}/deka_diagnostics.wasm")"
+          HOST_DECL_SHA256="$(sha256 "release/${TAG}/deka-host.d.ds")"
           CARGO_LOCK_SHA256="$(sha256sum Cargo.lock | awk '{print $1}')"
 
           LINUX_X64_SHA256="$(sha256 "release/${TAG}/deka-linux-x64")"
@@ -719,6 +743,7 @@ jobs:
             --arg darwin_arm64_sha "${DARWIN_ARM64_SHA256}" \
             --arg compiler_sha "${COMPILER_SHA256}" \
             --arg diagnostics_sha "${DIAGNOSTICS_SHA256}" \
+            --arg host_decl_sha "${HOST_DECL_SHA256}" \
             --arg channel "canary" \
             --arg base_version "${BASE_VERSION}" \
             --arg dsc_version "${DSC_VERSION}" \
@@ -743,6 +768,10 @@ jobs:
                 compiler_sha256: $compiler_sha,
                 diagnostics: "deka_diagnostics.wasm",
                 diagnostics_sha256: $diagnostics_sha
+              },
+              host_decl: {
+                file: "deka-host.d.ds",
+                sha256: $host_decl_sha
               }
             }' > "release/${TAG}/release.json"
 
@@ -752,6 +781,7 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "compiler_sha256=${COMPILER_SHA256}" >> "$GITHUB_OUTPUT"
           echo "diagnostics_sha256=${DIAGNOSTICS_SHA256}" >> "$GITHUB_OUTPUT"
+          echo "host_decl_sha256=${HOST_DECL_SHA256}" >> "$GITHUB_OUTPUT"
 
       - name: Upload versioned release to R2
         run: |
@@ -770,7 +800,8 @@ jobs:
       - name: Upload versioned WASM to R2
         run: |
           TAG="${{ steps.prepare.outputs.tag }}"
-          aws s3 sync "release/${TAG}/" "s3://${R2_BUCKET_WASM}/${TAG}/" --endpoint-url="${R2_ENDPOINT}" --exclude "canary.json"
+          # The declaration file lives in the releases bucket only.
+          aws s3 sync "release/${TAG}/" "s3://${R2_BUCKET_WASM}/${TAG}/" --endpoint-url="${R2_ENDPOINT}" --exclude "canary.json" --exclude "deka-host.d.ds"
 
       # rfd#68: canary.json / canary/* instead of latest.json / latest/* --
       # `latest` is stable-only and is never touched by this workflow.

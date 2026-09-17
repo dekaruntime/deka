@@ -42,7 +42,7 @@ enum FsError {
 
 export { FsPermission, FsError }
 
-export async fn read_file(path: string) Promise<Result<bytes, FsError>> {
+export async fn read_file(path: string) Result<bytes, FsError> {
   const raw = await bridge fs.read_file(path)
   return match (unsafe<Result<bytes, FsError>> { raw }) {
     Ok(v) => v,
@@ -58,7 +58,7 @@ export fn read_file_sync(path: string) Result<bytes, FsError> {
   }
 }
 
-export async fn write_file(path: string, data: bytes) Promise<Result<number, FsError>> {
+export async fn write_file(path: string, data: bytes) Result<number, FsError> {
   const raw = await bridge fs.write_file(path, data)
   return match (unsafe<Result<number, FsError>> { raw }) {
     Ok(v) => v,
@@ -74,33 +74,33 @@ export fn write_file_sync(path: string, data: bytes) Result<number, FsError> {
   }
 }
 
-export async fn read_dir(path: string) Promise<Result<Array<DirEntry>, FsError>> {
+export async fn read_dir(path: string) Result<Array<string>, FsError> {
   const raw = await bridge fs.read_dir(path)
-  return match (unsafe<Result<Array<DirEntry>, FsError>> { raw }) {
+  return match (unsafe<Result<Array<string>, FsError>> { raw }) {
     Ok(v) => v,
     Err(e) => Err(FsError.Failed("read_dir: cast failed")),
   }
 }
 
-export fn read_dir_sync(path: string) Result<Array<DirEntry>, FsError> {
+export fn read_dir_sync(path: string) Result<Array<string>, FsError> {
   const raw = bridge fs.read_dir_sync(path)
-  return match (unsafe<Result<Array<DirEntry>, FsError>> { raw }) {
+  return match (unsafe<Result<Array<string>, FsError>> { raw }) {
     Ok(v) => v,
     Err(e) => Err(FsError.Failed("read_dir_sync: cast failed")),
   }
 }
 
-export async fn mkdirs(path: string) Promise<Result<boolean, FsError>> {
+export async fn mkdirs(path: string) Result<void, FsError> {
   const raw = await bridge fs.mkdirs(path)
-  return match (unsafe<Result<boolean, FsError>> { raw }) {
+  return match (unsafe<Result<void, FsError>> { raw }) {
     Ok(v) => v,
     Err(e) => Err(FsError.Failed("mkdirs: cast failed")),
   }
 }
 
-export fn mkdirs_sync(path: string) Result<boolean, FsError> {
+export fn mkdirs_sync(path: string) Result<void, FsError> {
   const raw = bridge fs.mkdirs_sync(path)
-  return match (unsafe<Result<boolean, FsError>> { raw }) {
+  return match (unsafe<Result<void, FsError>> { raw }) {
     Ok(v) => v,
     Err(e) => Err(FsError.Failed("mkdirs_sync: cast failed")),
   }

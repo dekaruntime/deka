@@ -22,17 +22,15 @@
 //! - unknown kinds/actions (a call the catalog does not list is a hard
 //!   failure, not a silently-typed `Result<infer, infer>`).
 //!
-//! Wire/result → DS type mapping is grounded in the published packages that
-//! are known-clean from the deka#618 audit (@deka/crypto 0.3.1, @deka/time
-//! 0.2.1, @deka/tcp 0.2.0, @deka/tls 0.2.0, @deka/fs 0.4.x): handles are
-//! rids typed `number`, unit results are typed `boolean`, and directory
-//! listings are `Array<SomeEntry>` with a package-defined element type.
-//! `WireType::Json` / `ResultShape::Json` have no published consumer yet, so
-//! their value types are opaque: arity is still checked.
+//! Wire/result → DS type mapping is the same single function used to generate
+//! `deka-host.d.ds` (rfd#27 2026-09-16 amendment): `Handle` → `number`,
+//! `Entries` → `Array<string>`, `Unit` → `void`, `Json` → `JsValue`, and host
+//! errors are `string`. The `bridge_decl` checker and the declaration file
+//! therefore cannot drift apart.
 
 mod parse;
 
-use crate::host_bridge::{HOST_CATALOG, HostAction, ResultShape, WireType, find_action};
+use crate::host_bridge::{HOST_CATALOG, HostAction, find_action, result_shape_to_ds, wire_type_to_ds};
 use parse::{Declaration, Type, parse_declarations, tokenize};
 
 /// One mismatch between a declared bridge signature and the catalog.
@@ -189,17 +187,12 @@ fn check_declarations(
     let catalog_signature = render_catalog_signature(&declaration.kind, catalog_action);
     let declared_signature = render_declared_signature(declaration);
 
-    // Sync/async: the fn marker, the Promise return shape, and `await` on the
-    // call must ALL agree with the catalog flag (dsc 0.8.1 contract).
+    // Sync/async: the export's `async` marker and the `await` on the call must
+    // agree with the catalog flag. The declaration file types an async action
+    // as `async fn ... Result<T, string>`; the `Promise<...>` wrapper is a
+    // call-site detail, not part of the exported signature.
     let return_type = declaration.return_type.as_ref();
-    let promise_inner = return_type.and_then(|ty| {
-        if ty.name == "Promise" && ty.args.len() == 1 {
-            Some(&ty.args[0])
-        } else {
-            None
-        }
-    });
-    let result_parts = promise_inner.or(return_type).and_then(|ty| {
+    let result_parts = return_type.and_then(|ty| {
         if ty.name == "Result" && ty.args.len() == 2 {
             Some((&ty.args[0], &ty.args[1]))
         } else {
@@ -214,15 +207,6 @@ fn check_declarations(
                 "export is not `async` but the catalog action is async"
             } else {
                 "export is `async` but the catalog action is sync"
-            },
-        ),
-        (
-            promise_inner.is_some(),
-            catalog_action.r#async,
-            if catalog_action.r#async {
-                "return type is not `Promise<...>` but the catalog action is async"
-            } else {
-                "return type is `Promise<...>` but the catalog action is sync"
             },
         ),
         (
@@ -274,9 +258,7 @@ fn check_declarations(
         for (host_arg, (param_name, param_type)) in
             catalog_action.args.iter().zip(declaration.params.iter())
         {
-            let Some(expected) = wire_type_name(host_arg.wire) else {
-                continue; // Json wire: opaque until a package declares one.
-            };
+            let expected = wire_type_to_ds(host_arg.wire);
             if param_type.render() != expected {
                 push(
                     check,
@@ -299,46 +281,28 @@ fn check_declarations(
     // Return shape: the declared Ok type must match the catalog result shape.
     // The error type is package-chosen (string, FsError, ...) and unconstrained.
     match result_parts {
-        Some((ok_type, _err_type)) => match result_shape_type(catalog_action.result) {
-            ReturnExpectation::Exact(expected) => {
-                if ok_type.render() != expected {
-                    push(
-                        check,
-                        format!(
-                            "return shape mismatch: catalog result is `{}` but the \
-                                 declaration returns Ok type `{}`; catalog: `{}`; declared: `{}`",
-                            expected,
-                            ok_type.render(),
-                            catalog_signature,
-                            declared_signature
-                        ),
-                    );
-                }
+        Some((ok_type, _err_type)) => {
+            let expected = result_shape_to_ds(catalog_action.result);
+            if ok_type.render() != expected {
+                push(
+                    check,
+                    format!(
+                        "return shape mismatch: catalog result is `{}` but the \
+                             declaration returns Ok type `{}`; catalog: `{}`; declared: `{}`",
+                        expected,
+                        ok_type.render(),
+                        catalog_signature,
+                        declared_signature
+                    ),
+                );
             }
-            ReturnExpectation::Array => {
-                if ok_type.name != "Array" || ok_type.args.len() != 1 {
-                    push(
-                        check,
-                        format!(
-                            "return shape mismatch: catalog result is a directory listing \
-                                 (`Array<SomeEntry>`) but the declaration returns Ok type `{}`; \
-                                 catalog: `{}`; declared: `{}`",
-                            ok_type.render(),
-                            catalog_signature,
-                            declared_signature
-                        ),
-                    );
-                }
-            }
-            ReturnExpectation::Opaque => {}
-        },
+        }
         None => {
             if async_problems.is_empty() {
                 push(
                     check,
                     format!(
-                        "return type is not `Result<T, E>` (or `Promise<Result<T, E>>` for async \
-                         actions); catalog: `{}`; declared: `{}`",
+                        "return type is not `Result<T, E>`; catalog: `{}`; declared: `{}`",
                         catalog_signature, declared_signature
                     ),
                 );
@@ -347,57 +311,21 @@ fn check_declarations(
     }
 }
 
-enum ReturnExpectation {
-    Exact(&'static str),
-    Array,
-    Opaque,
-}
-
-fn result_shape_type(shape: ResultShape) -> ReturnExpectation {
-    match shape {
-        ResultShape::Bytes => ReturnExpectation::Exact("bytes"),
-        ResultShape::Num => ReturnExpectation::Exact("number"),
-        ResultShape::Bool => ReturnExpectation::Exact("boolean"),
-        // Unit results are surfaced as boolean success flags on the DS side
-        // (mkdirs, close, set_deadline — see published @deka/fs and @deka/tcp).
-        ResultShape::Unit => ReturnExpectation::Exact("boolean"),
-        // Handles are rids typed `number` (@deka/tcp, @deka/tls).
-        ResultShape::Handle => ReturnExpectation::Exact("number"),
-        ResultShape::Entries => ReturnExpectation::Array,
-        // Json results have no published consumer yet; the Ok type is opaque.
-        ResultShape::Json => ReturnExpectation::Opaque,
-    }
-}
-
-fn wire_type_name(wire: WireType) -> Option<&'static str> {
-    match wire {
-        WireType::Str => Some("string"),
-        WireType::Num => Some("number"),
-        WireType::Bool => Some("boolean"),
-        WireType::Bytes => Some("bytes"),
-        WireType::Handle => Some("number"),
-        // Json args have no published consumer yet; the type is opaque.
-        WireType::Json => None,
-    }
-}
-
 /// Render a catalog entry as a DS-like signature for diagnostics, e.g.
-/// `async fn fs.read_file(path: string) -> Result<bytes>` (`boolean` covers
-/// unit results, `Array<Entry>` covers directory listings).
+/// `async fn fs.read_file(path: string) -> Result<bytes>`.
 fn render_catalog_signature(kind: &str, action: &HostAction) -> String {
     let args: Vec<String> = action
         .args
         .iter()
         .map(|host_arg| {
-            let wire = wire_type_name(host_arg.wire).unwrap_or("json");
-            format!("{}: {}", host_arg.name, wire)
+            format!(
+                "{}: {}",
+                host_arg.name,
+                wire_type_to_ds(host_arg.wire)
+            )
         })
         .collect();
-    let result = match result_shape_type(action.result) {
-        ReturnExpectation::Exact(name) => format!("Result<{name}>"),
-        ReturnExpectation::Array => "Result<Array<Entry>>".to_string(),
-        ReturnExpectation::Opaque => "Result<Json>".to_string(),
-    };
+    let result = format!("Result<{}>", result_shape_to_ds(action.result));
     format!(
         "{}fn {}.{}({}) -> {result}",
         if action.r#async { "async " } else { "" },
@@ -408,7 +336,7 @@ fn render_catalog_signature(kind: &str, action: &HostAction) -> String {
 }
 
 /// Render the declared signature for diagnostics, e.g.
-/// `async fn read_file(path: string) -> Promise<Result<bytes, FsError>>`.
+/// `async fn read_file(path: string) -> Result<bytes, FsError>`.
 fn render_declared_signature(declaration: &Declaration) -> String {
     let args: Vec<String> = declaration
         .params
@@ -470,7 +398,7 @@ mod tests {
     #[test]
     fn clean_async_declaration_passes() {
         let check = check(
-            "export async fn read_file(path: string) Promise<Result<bytes, FsError>> {\n\
+            "export async fn read_file(path: string) Result<bytes, FsError> {\n\
             \x20 const raw = await bridge fs.read_file(path)\n\
             \x20 return match (unsafe<Result<bytes, FsError>> { raw }) {\n\
             \x20   Ok(v) => v,\n\
@@ -512,7 +440,7 @@ mod tests {
     #[test]
     fn async_declaration_for_sync_action_fails_too() {
         let check = check(
-            "export async fn random_bytes(len: number) Promise<Result<bytes, string>> {\n\
+            "export async fn random_bytes(len: number) Result<bytes, string> {\n\
             \x20 const raw = await bridge crypto.random_bytes(len)\n\
             \x20 return match (unsafe<Result<bytes, string>> { raw }) { Ok(v) => v, Err(e) => Err(\"x\") }\n\
             }\n",
@@ -524,7 +452,7 @@ mod tests {
     #[test]
     fn missing_await_on_async_action_fails() {
         let check = check(
-            "export async fn read_file(path: string) Promise<Result<bytes, string>> {\n\
+            "export async fn read_file(path: string) Result<bytes, string> {\n\
             \x20 const raw = bridge fs.read_file(path)\n\
             \x20 return match (unsafe<Result<bytes, string>> { raw }) { Ok(v) => v, Err(e) => Err(\"x\") }\n\
             }\n",
@@ -593,12 +521,12 @@ mod tests {
     }
 
     #[test]
-    fn unit_result_maps_to_boolean() {
-        // Catalog says Unit for mkdirs; published packages declare boolean.
+    fn unit_result_maps_to_void() {
+        // Catalog says Unit for mkdirs; the declaration file types it as void.
         let check = check(
-            "export async fn mkdirs(path: string) Promise<Result<boolean, string>> {\n\
+            "export async fn mkdirs(path: string) Result<void, string> {\n\
             \x20 const raw = await bridge fs.mkdirs(path)\n\
-            \x20 return match (unsafe<Result<boolean, string>> { raw }) { Ok(v) => v, Err(e) => Err(\"x\") }\n\
+            \x20 return match (unsafe<Result<void, string>> { raw }) { Ok(v) => v, Err(e) => Err(\"x\") }\n\
             }\n",
         );
         assert!(check.is_clean(), "diagnostics: {:?}", messages(&check));
@@ -616,12 +544,11 @@ mod tests {
     }
 
     #[test]
-    fn entries_result_accepts_any_array_element() {
+    fn entries_result_maps_to_array_string() {
         let check = check(
-            "interface DirEntry {\n  name: string\n  is_dir: boolean\n}\n\
-            export async fn read_dir(path: string) Promise<Result<Array<DirEntry>, string>> {\n\
+            "export async fn read_dir(path: string) Result<Array<string>, string> {\n\
             \x20 const raw = await bridge fs.read_dir(path)\n\
-            \x20 return match (unsafe<Result<Array<DirEntry>, string>> { raw }) { Ok(v) => v, Err(e) => Err(\"x\") }\n\
+            \x20 return match (unsafe<Result<Array<string>, string>> { raw }) { Ok(v) => v, Err(e) => Err(\"x\") }\n\
             }\n",
         );
         assert!(check.is_clean(), "diagnostics: {:?}", messages(&check));

@@ -104,7 +104,15 @@ fn published_clean_packages_pass() {
 #[test]
 fn fs_0_3_0_async_drift_fails_with_named_diagnostics() {
     let check = check_fixture("broken-fs-0.3.0");
-    assert_eq!(check.diagnostics.len(), 4, "the four #618 exports");
+    // The four async exports must each produce at least a sync/async
+    // mismatch. The historical fixture also declares `boolean`/`Array<DirEntry>`
+    // for unit/entries results, so the total diagnostic count may be >4
+    // after the rfd#27 amendment's stricter shape mapping.
+    assert!(
+        check.diagnostics.len() >= 4,
+        "expected at least one diagnostic per #618 export, got {:?}",
+        check.diagnostics
+    );
     assert_eq!(check.declarations, 4);
     for (export, action) in [
         ("read_file", "read_file"),
@@ -112,19 +120,21 @@ fn fs_0_3_0_async_drift_fails_with_named_diagnostics() {
         ("read_dir", "read_dir"),
         ("mkdirs", "mkdirs"),
     ] {
-        let diagnostic = check
+        let matching: Vec<_> = check
             .diagnostics
             .iter()
-            .find(|diagnostic| diagnostic.export == export)
-            .unwrap_or_else(|| panic!("no diagnostic for export {export}"));
+            .filter(|diagnostic| diagnostic.export == export)
+            .collect();
+        assert!(!matching.is_empty(), "no diagnostic for export {export}");
+        assert!(
+            matching.iter().any(|d| d.message.contains("sync/async mismatch")),
+            "{export}: no sync/async mismatch diagnostic; got {:?}",
+            matching
+        );
+        let diagnostic = matching[0];
         assert_eq!(diagnostic.package, "@deka/fs");
         assert_eq!(diagnostic.kind, "fs");
         assert_eq!(diagnostic.action, action);
-        assert!(
-            diagnostic.message.contains("sync/async mismatch"),
-            "{export}: message: {}",
-            diagnostic.message
-        );
         // Both signatures are named.
         assert!(
             diagnostic.message.contains("async fn fs."),
@@ -217,5 +227,30 @@ fn dump_catalog_emits_authoritative_json() {
             "fs.read_file".to_string(),
             "fs.write_file".to_string(),
         ]
+    );
+}
+
+/// --dump-host-decl emits the exact declaration file that the release job
+/// publishes, byte-for-byte with `permissions::host_bridge::host_decl()`.
+#[test]
+fn dump_host_decl_emits_authoritative_declaration_file() {
+    let output = bridge_diff()
+        .arg("--dump-host-decl")
+        .output()
+        .expect("run bridge_diff --dump-host-decl");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout,
+        permissions::host_bridge::host_decl(),
+        "--dump-host-decl output must match host_decl() exactly"
+    );
+    assert!(
+        stdout.contains("bridge crypto {"),
+        "declaration file contains bridge blocks"
+    );
+    assert!(
+        stdout.contains("async fn read_file(path: string) Result<bytes, string>"),
+        "declaration file contains async fs.read_file"
     );
 }

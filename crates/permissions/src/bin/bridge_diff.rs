@@ -2,7 +2,7 @@
 //! declarations against the authoritative host bridge catalog (deka#620).
 //!
 //! Usage:
-//!   bridge_diff [--dump-catalog] <package-dir>...
+//!   bridge_diff [--dump-catalog | --dump-host-decl] <package-dir>...
 //!
 //! Each package dir is an installed package tree (e.g. `ds_modules/@deka/fs`);
 //! every `.ds` file under it is scanned for `bridge kind.action(...)` calls
@@ -12,23 +12,27 @@
 //!
 //! `--dump-catalog` prints the full catalog as JSON (grant owners, argument
 //! wire types, result shapes, async flags) for logs and debugging.
+//! `--dump-host-decl` prints `deka-host.d.ds`, the declaration file published
+//! with every release (rfd#27 2026-09-16 amendment).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use permissions::bridge_decl::{BridgeDiagnostic, check_package};
-use permissions::host_bridge::catalog_json;
+use permissions::host_bridge::{catalog_json, host_decl};
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let mut dump_catalog = false;
+    let mut dump_host_decl = false;
     let mut dirs: Vec<PathBuf> = Vec::new();
     for arg in args.by_ref() {
         match arg.as_str() {
             "--dump-catalog" => dump_catalog = true,
+            "--dump-host-decl" => dump_host_decl = true,
             "--help" | "-h" => {
                 eprintln!(
-                    "usage: bridge_diff [--dump-catalog] <package-dir>...\n\
+                    "usage: bridge_diff [--dump-catalog | --dump-host-decl] <package-dir>...\n\
                      \x20Diffs each package's `bridge kind.action(...)` declarations against \
                      the authoritative host bridge catalog (deka#620)."
                 );
@@ -40,8 +44,11 @@ fn main() -> ExitCode {
     if dump_catalog {
         println!("{}", catalog_json());
     }
+    if dump_host_decl {
+        print!("{}", host_decl());
+    }
     if dirs.is_empty() {
-        if dump_catalog {
+        if dump_catalog || dump_host_decl {
             return ExitCode::SUCCESS;
         }
         eprintln!("error: no package dirs given (see --help)");
