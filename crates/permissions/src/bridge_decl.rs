@@ -23,10 +23,14 @@
 //!   failure, not a silently-typed `Result<infer, infer>`).
 //!
 //! Wire/result → DS type mapping is the same single function used to generate
-//! `deka-host.d.ds` (rfd#27 2026-09-16 amendment): `Handle` → `number`,
-//! `Entries` → `Array<string>`, `Unit` → `void`, `Json` → `JsValue`, and host
-//! errors are `string`. The `bridge_decl` checker and the declaration file
-//! therefore cannot drift apart.
+//! `deka-host.d.ds` (rfd#27 2026-09-16 amendment, corrected after the first
+//! generated file disagreed with the published `@deka/fs` and `@deka/tcp`):
+//! `Handle` → `number`, `Entries` → `Array<DirEntry>` (the runtime returns
+//! host-built entry objects, never bare name strings), `Unit` → `boolean`
+//! (the bridge envelope carries a literal `true`), `Json` → `JsValue`. Host
+//! errors are per kind: `fs` carries `FsError`, every other kind `string`.
+//! The `bridge_decl` checker and the declaration file therefore cannot drift
+//! apart.
 
 mod parse;
 
@@ -188,11 +192,23 @@ fn check_declarations(
     let declared_signature = render_declared_signature(declaration);
 
     // Sync/async: the export's `async` marker and the `await` on the call must
-    // agree with the catalog flag. The declaration file types an async action
-    // as `async fn ... Result<T, string>`; the `Promise<...>` wrapper is a
-    // call-site detail, not part of the exported signature.
+    // agree with the catalog flag. The generated declaration file types an
+    // async action as bare `async fn ... Result<T, E>`, but a real `async fn`
+    // export needs a concrete declared return type and so may spell it out
+    // explicitly as `Promise<Result<T, E>>` (deka#1145: the published
+    // `@deka/fs` 0.4.1 does exactly this). Unwrap one layer of `Promise<...>`
+    // before matching `Result<...>` so both spellings are recognized; the
+    // `Promise<...>` wrapper is a call-site detail either way, not a distinct
+    // signature shape.
     let return_type = declaration.return_type.as_ref();
-    let result_parts = return_type.and_then(|ty| {
+    let unwrapped_return_type = return_type.map(|ty| {
+        if ty.name == "Promise" && ty.args.len() == 1 {
+            &ty.args[0]
+        } else {
+            ty
+        }
+    });
+    let result_parts = unwrapped_return_type.and_then(|ty| {
         if ty.name == "Result" && ty.args.len() == 2 {
             Some((&ty.args[0], &ty.args[1]))
         } else {
@@ -521,15 +537,35 @@ mod tests {
     }
 
     #[test]
-    fn unit_result_maps_to_void() {
-        // Catalog says Unit for mkdirs; the declaration file types it as void.
+    fn unit_result_maps_to_boolean() {
+        // Catalog says Unit for mkdirs; the bridge envelope's `finish` sets
+        // `data = true` for a unit result (worker_execution.rs), never JS
+        // `undefined`, so the declaration types it as `boolean`, not `void`.
+        let check = check(
+            "export async fn mkdirs(path: string) Result<boolean, string> {\n\
+            \x20 const raw = await bridge fs.mkdirs(path)\n\
+            \x20 return match (unsafe<Result<boolean, string>> { raw }) { Ok(v) => v, Err(e) => Err(\"x\") }\n\
+            }\n",
+        );
+        assert!(check.is_clean(), "diagnostics: {:?}", messages(&check));
+    }
+
+    #[test]
+    fn void_result_for_unit_action_fails() {
+        // The old (wrong) mapping: reverting result_shape_to_ds's Unit arm to
+        // `void` must make this fail again (deka#1145).
         let check = check(
             "export async fn mkdirs(path: string) Result<void, string> {\n\
             \x20 const raw = await bridge fs.mkdirs(path)\n\
             \x20 return match (unsafe<Result<void, string>> { raw }) { Ok(v) => v, Err(e) => Err(\"x\") }\n\
             }\n",
         );
-        assert!(check.is_clean(), "diagnostics: {:?}", messages(&check));
+        assert_eq!(check.diagnostics.len(), 1);
+        assert!(
+            check.diagnostics[0].message.contains("return shape mismatch"),
+            "message: {}",
+            check.diagnostics[0].message
+        );
     }
 
     #[test]
@@ -544,14 +580,55 @@ mod tests {
     }
 
     #[test]
-    fn entries_result_maps_to_array_string() {
+    fn entries_result_maps_to_array_dir_entry() {
+        // Catalog says Entries for read_dir; the runtime returns an array of
+        // host-built DirEntry objects (PhpDirEntry), never bare name strings.
+        let check = check(
+            "export async fn read_dir(path: string) Result<Array<DirEntry>, string> {\n\
+            \x20 const raw = await bridge fs.read_dir(path)\n\
+            \x20 return match (unsafe<Result<Array<DirEntry>, string>> { raw }) { Ok(v) => v, Err(e) => Err(\"x\") }\n\
+            }\n",
+        );
+        assert!(check.is_clean(), "diagnostics: {:?}", messages(&check));
+    }
+
+    #[test]
+    fn array_string_for_entries_action_fails() {
+        // The old (wrong) mapping: reverting result_shape_to_ds's Entries arm
+        // to `Array<string>` must make this fail again (deka#1145).
         let check = check(
             "export async fn read_dir(path: string) Result<Array<string>, string> {\n\
             \x20 const raw = await bridge fs.read_dir(path)\n\
             \x20 return match (unsafe<Result<Array<string>, string>> { raw }) { Ok(v) => v, Err(e) => Err(\"x\") }\n\
             }\n",
         );
+        assert_eq!(check.diagnostics.len(), 1);
+        assert!(
+            check.diagnostics[0].message.contains("return shape mismatch"),
+            "message: {}",
+            check.diagnostics[0].message
+        );
+    }
+
+    #[test]
+    fn async_export_with_explicit_promise_wrapper_passes_the_1145_case() {
+        // The real @deka/fs 0.4.1 shape (deka#1145): an `async fn` export
+        // spells its return type out explicitly as `Promise<Result<T, E>>`
+        // (a real async fn needs a concrete declared return type). Before the
+        // fix, the checker only recognized the bare `Result<T, E>` shape and
+        // misreported this as "return type is not Result<T, E>" even though
+        // the sync/async status and Ok type both matched the catalog.
+        let check = check(
+            "export async fn read_file(path: string) Promise<Result<bytes, FsError>> {\n\
+            \x20 const raw = await bridge fs.read_file(path)\n\
+            \x20 return match (unsafe<Result<bytes, FsError>> { raw }) {\n\
+            \x20   Ok(v) => v,\n\
+            \x20   Err(e) => Err(FsError.Failed(\"cast failed\")),\n\
+            \x20 }\n\
+            }\n",
+        );
         assert!(check.is_clean(), "diagnostics: {:?}", messages(&check));
+        assert_eq!(check.declarations, 1);
     }
 
     #[test]

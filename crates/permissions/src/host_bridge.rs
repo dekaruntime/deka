@@ -67,8 +67,12 @@ pub enum ResultShape {
     Bool,
     Unit,
     Handle,
-    /// Directory listing (array of entry names).
+    /// Directory listing: an array of host-built `DirEntry` objects.
     Entries,
+    /// Database query result set: an array of arbitrary row objects — not a
+    /// `DirEntry` (deka#1145: `Entries` is fs-specific; conflating the two
+    /// made `db.query`'s declared type as wrong as fs's was before this fix).
+    Rows,
     Json,
 }
 
@@ -421,7 +425,7 @@ const DB_ACTIONS: &[HostAction] = &[
             arg("sql", WireType::Str),
             arg("params", WireType::Json),
         ],
-        result: ResultShape::Entries,
+        result: ResultShape::Rows,
         r#async: false,
         capability: Some("db"),
         hosts: Hosts::NativeOnly,
@@ -563,6 +567,7 @@ pub fn catalog_json() -> String {
             ResultShape::Unit => serde_json::json!("unit"),
             ResultShape::Handle => serde_json::json!("number"),
             ResultShape::Entries => serde_json::json!("entries"),
+            ResultShape::Rows => serde_json::json!("rows"),
             ResultShape::Json => serde_json::json!("json"),
         }
     }
@@ -616,24 +621,50 @@ pub fn wire_type_to_ds(wire: WireType) -> &'static str {
     }
 }
 
-/// Result shape → DekaScript `Result<Ok, string>` Ok type. Host errors are
-/// always `string` in the declaration file; stdlib packages wrap them.
+/// Result shape → DekaScript `Result<Ok, _>` Ok type. This describes what the
+/// runtime actually returns (corrected 2026-09-16, rfd#27 amendment, after
+/// the first generated file disagreed with the published `@deka/fs` and
+/// `@deka/tcp`): the bridge envelope's `finish` (worker_execution.rs) sets
+/// `data = true` for a unit result, never `undefined`, and `data = entries`
+/// — an array of host-built `PhpDirEntry` objects, never bare name strings —
+/// for a directory listing.
 pub fn result_shape_to_ds(shape: ResultShape) -> &'static str {
     match shape {
         ResultShape::Bytes => "bytes",
         ResultShape::Num => "number",
         ResultShape::Bool => "boolean",
-        // Unit host results have no value on the DS side.
-        ResultShape::Unit => "void",
+        // Unit host results resolve to the envelope's literal `true`.
+        ResultShape::Unit => "boolean",
         ResultShape::Handle => "number",
-        // Directory listings are arrays of entry names.
-        ResultShape::Entries => "Array<string>",
+        // Directory listings are arrays of host-built DirEntry objects.
+        ResultShape::Entries => "Array<DirEntry>",
+        // Database rows are arbitrary JSON objects, not DirEntry — distinct
+        // from Entries (deka#1145).
+        ResultShape::Rows => "Array<JsValue>",
         ResultShape::Json => "JsValue",
+    }
+}
+
+/// Result error type for a bridge kind's declaration-file signatures.
+/// Host errors are per kind (rfd#27 amendment): `fs` materializes a typed
+/// `FsError` enum at the bridge boundary (`__dekaFsError` in
+/// worker_execution.rs); every other kind's envelope carries the raw message
+/// as `string`.
+pub fn error_type_for_kind(kind_name: &str) -> &'static str {
+    match kind_name {
+        "fs" => "FsError",
+        _ => "string",
     }
 }
 
 /// Render `deka-host.d.ds` from [`HOST_CATALOG`]. The output is deterministic
 /// and byte-stable so it can be golden-file tested and published verbatim.
+///
+/// Ahead of the `bridge` blocks, the file declares the host-produced data
+/// types referenced from them — `DirEntry`, `FsPermission`, `FsError` — shaped
+/// exactly as the runtime builds them (`PhpDirEntry` in
+/// `deka_host::modules::fs`; `__dekaFsError` in worker_execution.rs), because
+/// the host is what builds them, not any one package.
 pub fn host_decl() -> String {
     let mut output = String::new();
     writeln!(
@@ -643,11 +674,30 @@ pub fn host_decl() -> String {
     .unwrap();
     output.push('\n');
 
-    for (kind_index, kind) in HOST_CATALOG.iter().enumerate() {
-        if kind_index > 0 {
-            output.push('\n');
-        }
+    writeln!(output, "interface DirEntry {{").unwrap();
+    writeln!(output, "  name: string").unwrap();
+    writeln!(output, "  is_dir: boolean").unwrap();
+    writeln!(output, "  is_file: boolean").unwrap();
+    writeln!(output, "}}").unwrap();
+    output.push('\n');
+
+    writeln!(output, "struct FsPermission {{").unwrap();
+    writeln!(output, "  capability: string").unwrap();
+    writeln!(output, "  target: string").unwrap();
+    writeln!(output, "}}").unwrap();
+    output.push('\n');
+
+    writeln!(output, "enum FsError {{").unwrap();
+    writeln!(output, "  PermissionDenied(FsPermission),").unwrap();
+    writeln!(output, "  UnsupportedHost,").unwrap();
+    writeln!(output, "  InvalidPayload,").unwrap();
+    writeln!(output, "  Failed(string),").unwrap();
+    writeln!(output, "}}").unwrap();
+    output.push('\n');
+
+    for kind in HOST_CATALOG.iter() {
         writeln!(output, "bridge {} {{", kind.name).unwrap();
+        let error_type = error_type_for_kind(kind.name);
         for action in kind.actions {
             let args: Vec<String> = action
                 .args
@@ -660,13 +710,19 @@ pub fn host_decl() -> String {
             let ok_type = result_shape_to_ds(action.result);
             writeln!(
                 output,
-                "  {async_keyword}fn {}({}) Result<{ok_type}, string>",
+                "  {async_keyword}fn {}({}) Result<{ok_type}, {error_type}>",
                 action.name,
                 args.join(", "),
             )
             .unwrap();
         }
         writeln!(output, "}}").unwrap();
+        output.push('\n');
+    }
+    // Drop the trailing blank line after the last block so the file ends
+    // with a single newline, matching the header's own formatting.
+    if output.ends_with("}\n\n") {
+        output.pop();
     }
     output
 }
@@ -894,11 +950,24 @@ mod tests {
         }
 
         // Parse the declaration file naïvely: every non-comment, non-blank line
-        // inside a `bridge <kind> { ... }` block must match an action.
+        // inside a `bridge <kind> { ... }` block must match an action. Ahead
+        // of the bridge blocks, the file declares host data types (DirEntry,
+        // FsPermission, FsError) in `interface`/`struct`/`enum` blocks; skip
+        // those wholesale by brace depth rather than trying to parse them as
+        // actions.
         let mut current_kind = "";
+        let mut skip_depth = 0u32;
         for raw_line in decl.lines() {
             let line = raw_line.trim();
             if line.is_empty() || line.starts_with("//") {
+                continue;
+            }
+            if skip_depth > 0 {
+                if line.ends_with('{') {
+                    skip_depth += 1;
+                } else if line == "}" {
+                    skip_depth -= 1;
+                }
                 continue;
             }
             if line.starts_with("bridge ") && line.ends_with("{") {
@@ -912,8 +981,16 @@ mod tests {
                 current_kind = "";
                 continue;
             }
+            if current_kind.is_empty() {
+                // A non-bridge declaration (interface/struct/enum) the `fs`
+                // block depends on, not an action line.
+                if line.ends_with('{') {
+                    skip_depth = 1;
+                }
+                continue;
+            }
 
-            // "async fn name(args) Result<Ok, string>"
+            // "async fn name(args) Result<Ok, ErrorType>"
             let line = line
                 .strip_prefix("async ")
                 .unwrap_or(line)
@@ -925,7 +1002,7 @@ mod tests {
             let (name, args_part) = name_rest.split_once('(').expect("action line has args");
             let name = name.trim();
             let key = format!("{}.{}", current_kind, name);
-            let (action, _kind) = expected
+            let (action, kind_name) = expected
                 .remove(&key)
                 .unwrap_or_else(|| panic!("unexpected action in declaration file: {key}"));
             assert_eq!(
@@ -933,8 +1010,13 @@ mod tests {
                 raw_line.trim().starts_with("async "),
                 "{key} async flag mismatch"
             );
+            let error_type = error_type_for_kind(kind_name);
+            let expected_suffix = format!(", {error_type}>");
+            let ok_type = ok_type.strip_suffix(expected_suffix.as_str()).unwrap_or_else(|| {
+                panic!("{key}: expected error type `{error_type}`, return was `{ok_type}>`")
+            });
             assert_eq!(
-                ok_type.strip_suffix(", string>").expect("error type is string"),
+                ok_type,
                 result_shape_to_ds(action.result),
                 "{key} return type mismatch"
             );

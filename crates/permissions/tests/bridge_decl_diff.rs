@@ -250,7 +250,7 @@ fn dump_host_decl_emits_authoritative_declaration_file() {
         "declaration file contains bridge blocks"
     );
     assert!(
-        stdout.contains("async fn read_file(path: string) Result<bytes, string>"),
+        stdout.contains("async fn read_file(path: string) Result<bytes, FsError>"),
         "declaration file contains async fs.read_file"
     );
 }
