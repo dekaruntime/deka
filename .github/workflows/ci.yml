@@ -81,6 +81,15 @@ jobs:
           echo "bun_lockfile=$bun_lockfile" >> "$GITHUB_OUTPUT"
           echo "utility_css=$utility_css" >> "$GITHUB_OUTPUT"
 
+  typeck-ratchet:
+    name: Typecheck ratchet tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Run typecheck ratchet tests
+        run: tests/typeck-ratchet.sh
+
   utility-css:
     name: Utility CSS generator
     needs: [changes]
