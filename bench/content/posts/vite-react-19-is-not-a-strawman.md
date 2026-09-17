@@ -12,7 +12,7 @@ React 19.1.1 is the version vendored for `deka dev` Fast Refresh. The Vite app p
   "dependencies": {
     "react": "19.1.1",
     "react-dom": "19.1.1",
-    "react-router-dom": "7.6.2"
+    "react-router-dom": "7.18.4"
   }
 }
 ```

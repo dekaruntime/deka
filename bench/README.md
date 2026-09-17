@@ -27,7 +27,7 @@ Output: the full markdown table on stdout, `last-results.json` (ignored), and co
 
 - `content/posts/*.md`: the same 28 posts, shared syntax highlighting in `lib/ingest.mjs` / `lib/markdown.mjs`, shared SVG images. Ingest is untimed.
 - `deka-blog`: existing Deka app-router blog, Theme + Newsletter compiled from DSX and hydrated with `client:load`. A **release-mode main-build CLI**, not released deka 0.52.0; dsc **0.52.2**. The CLI's verbose git SHA and SHA-256 are recorded. Never substitute the older released CLI that lacks islands hydration.
-- `vite-blog`: existing idiomatic React **19.1.1**, Vite **6.3.5**, React Router **7.6.2**, with `React.lazy` route splitting. Existing npm pins unchanged.
+- `vite-blog`: existing idiomatic React **19.1.1**, Vite **6.4.3**, React Router **7.18.4**, with `React.lazy` route splitting. Existing npm pins unchanged.
 - `next-blog`: Next.js **16.3.5**, React / React DOM **19.3.0**, exact pins and committed npm lockfile. These were npm's current stable releases when this lane was implemented. Next App Router can use its bundled React implementation internally; the installed package pins do not override that. Default Turbopack production build and development server; no compiler, minification, type-checking, or prefetch shortcuts.
 
 This PR's Deka CLI includes the fixes needed to run the real app-router update
