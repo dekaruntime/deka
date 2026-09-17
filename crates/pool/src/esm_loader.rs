@@ -37,11 +37,14 @@ use permissions::host_bridge::{self, GrantTable};
 
 mod grants;
 mod graph_hash;
+mod import_meta;
+pub mod import_meta_ops;
 mod policy;
 mod resolver;
 mod transforms;
 
 pub use graph_hash::hash_module_graph;
+pub use import_meta::{SourceOverrideHint, install_source_override_hint};
 pub use policy::ensure_project_layout;
 pub use resolver::{entry_wrapper_path, entry_wrapper_path_with, is_javascript_entry, resolve_project_root};
 pub use transforms::entry_wrapper_source;
@@ -51,7 +54,7 @@ use grants::{
     read_project_grant_table,
 };
 use resolver::{parse_module_imports, resolve_phpx_module_spec};
-use transforms::{append_entry_footer, prepend_host_bindings};
+use transforms::{append_entry_footer, prepend_host_bindings, prepend_import_meta};
 
 #[derive(Clone)]
 pub struct PhpxEsmLoader {
@@ -84,6 +87,7 @@ pub struct PhpxEsmLoader {
     /// compiler input, no extension guessing, no package/cache fallback, and
     /// no path outside this root (deka#743/#763).
     artifact_server_root: Option<PathBuf>,
+    source_override: Option<import_meta::SourceOverride>, // see `import_meta::SourceOverrideHint`
 }
 
 impl PhpxEsmLoader {
@@ -171,6 +175,8 @@ impl PhpxEsmLoader {
             None
         };
 
+        let source_override = import_meta::resolve_source_override();
+
         let loader = Self {
             project_root,
             module_root,
@@ -185,6 +191,7 @@ impl PhpxEsmLoader {
             lock_digests,
             package_kinds: Rc::new(RefCell::new(HashMap::new())),
             artifact_server_root,
+            source_override,
         };
 
         // Static pre-check: any compiled module that references `__deka_host(`
@@ -531,8 +538,8 @@ impl PhpxEsmLoader {
                     path.display()
                 )));
             }
-            let mut code = self.load_js_source(&path)?;
-            code = prepend_host_bindings(code, &self.kinds_for_path(&path));
+            let code = self.load_js_source(&path)?;
+            let mut code = prepend_host_bindings(prepend_import_meta(code, &self.import_meta_prelude(specifier, &path)), &self.kinds_for_path(&path));
             if specifier == &self.entry_specifier {
                 code = append_entry_footer(code);
             }
@@ -570,11 +577,11 @@ impl PhpxEsmLoader {
             raw_path
         };
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-        let mut code = match ext {
+        let code = match ext {
             "ds" | "dsx" => self.load_ds_source(&path)?,
             _ => self.load_js_source(&path)?,
         };
-        code = prepend_host_bindings(code, &self.kinds_for_path(&path));
+        let mut code = prepend_host_bindings(prepend_import_meta(code, &self.import_meta_prelude(specifier, &path)), &self.kinds_for_path(&path));
         if specifier == &self.entry_specifier {
             code = append_entry_footer(code);
         }

@@ -913,10 +913,21 @@ impl WorkerThread {
                     // Deno.core.ops table is deliberately NOT exposed here — user
                     // code must go through `host` (catalog + grant gated) or
                     // `bridge` (PHPX compatibility).
+                    // `import.meta.resolve()` (rfd#12 amendment, deka#1139)
+                    // needs the same lockfile-first resolver `import`
+                    // statements use, which lives in Rust
+                    // (`PhpxEsmLoader::resolve_path`). Captured here, on the
+                    // same frozen gateway object as the RFD 27 bridge, for
+                    // the same reason: the raw `Deno.core.ops` table is
+                    // never exposed to module code directly.
+                    const __opsForImportMeta = (Deno && Deno.core && Deno.core.ops) ? Deno.core.ops : {};
                     globalThis[Symbol.for('deka.host.internal')] = Object.freeze({
                         host: __deka_host,
                         bridge: __bridge,
                         toResult: __deka_to_result,
+                        resolveImportMeta: typeof __opsForImportMeta.op_deka_import_meta_resolve === 'function'
+                            ? __opsForImportMeta.op_deka_import_meta_resolve
+                            : undefined,
                     });
                     /*__DEKA_WINTERTC__*/
                     try {

@@ -47,8 +47,19 @@ const MAX_BYTES: u64 = 256 * 1024 * 1024;
 
 /// A loose DekaScript source compiled into the user cache. `artifact` is the
 /// executed subject: the compiled JS the runtime runs, never the source.
+///
+/// `compiled_root` and `original_root` let the module loader map any file
+/// under the cache entry's output tree back to the real source file it was
+/// compiled from (rfd#12 amendment, deka#1139): `dsc transpile` preserves
+/// relative directory structure between the two, so
+/// `original_root.join(path.strip_prefix(compiled_root))` (extension swapped
+/// back to `.ds`/`.dsx`) recovers it for `import.meta.url`/`dirname`/
+/// `filename` — including for a sibling module the entry imports, not just
+/// the entry itself.
 pub struct MaterializedLoose {
     pub artifact: PathBuf,
+    pub compiled_root: PathBuf,
+    pub original_root: PathBuf,
 }
 
 /// Entry metadata, recorded beside the compiled artifact.
@@ -232,9 +243,20 @@ fn materialize_with(
     let key = content_key(&content);
     let loose_root = cache_root.join(LOOSE_DIR);
     let entry_dir = loose_root.join(&key);
+    let original_root = source
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let original_root = original_root
+        .canonicalize()
+        .unwrap_or(original_root);
 
     if let Some(artifact) = valid_entry(&entry_dir, compiler)? {
-        return Ok(MaterializedLoose { artifact });
+        return Ok(MaterializedLoose {
+            artifact,
+            compiled_root: entry_dir.join(OUT_DIR),
+            original_root,
+        });
     }
 
     let staging = loose_root.join(format!(".staging-{}-{}", std::process::id(), key));
@@ -292,6 +314,8 @@ fn materialize_with(
     prune_loose(&loose_root, MAX_ENTRIES, MAX_BYTES)?;
     Ok(MaterializedLoose {
         artifact: entry_dir.join(relative),
+        compiled_root: entry_dir.join(OUT_DIR),
+        original_root,
     })
 }
 

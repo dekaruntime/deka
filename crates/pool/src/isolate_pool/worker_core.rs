@@ -746,7 +746,8 @@ impl WorkerThread {
         handler_entry: Option<&str>,
         module_root: Option<&str>,
     ) -> Result<WarmIsolate, String> {
-        let extensions = (self.extensions_provider)();
+        let mut extensions = (self.extensions_provider)();
+        extensions.push(crate::esm_loader::import_meta_ops::init());
         let isolate_id = format!("isolate_{}", nanoid!(10, &ID_ALPHABET));
 
         let op_metrics = if self.introspect_profiling.load(Ordering::Relaxed) {
@@ -754,7 +755,7 @@ impl WorkerThread {
         } else {
             None
         };
-        let (module_loader, entry_specifier) = if let Some(entry) = handler_entry {
+        let (module_loader, entry_specifier, import_meta_loader) = if let Some(entry) = handler_entry {
             let entry_path = Path::new(entry).to_path_buf();
             let project_root = match module_root {
                 Some(root) => Path::new(root).to_path_buf(),
@@ -780,10 +781,11 @@ impl WorkerThread {
                 self.config.dev_mode,
             )
                 .map_err(|err| err.to_string())?;
+            let import_meta_loader = loader.clone();
             let loader: Rc<dyn deno_core::ModuleLoader> = Rc::new(loader);
-            (Some(loader), Some(wrapper_specifier))
+            (Some(loader), Some(wrapper_specifier), Some(import_meta_loader))
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         let runtime = JsRuntime::new(RuntimeOptions {
@@ -794,6 +796,13 @@ impl WorkerThread {
             module_loader,
             ..Default::default()
         });
+        // `import.meta.resolve()` (rfd#12 amendment, deka#1139) is a thin op
+        // over this isolate's own loader (`import_meta_ops.rs`); it needs the
+        // loader reachable from `OpState`, which the module-loader trait
+        // object (just installed above) does not expose.
+        if let Some(import_meta_loader) = import_meta_loader {
+            runtime.op_state().borrow_mut().put(import_meta_loader);
+        }
 
         Ok(WarmIsolate {
             isolate_id,
