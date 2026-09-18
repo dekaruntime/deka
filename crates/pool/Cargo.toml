@@ -42,4 +42,4 @@ tempfile = "3"
 platform_server = { path = "../platform_server" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-mach2 = "0.6.0"
+mach2 = "0.7.0"
