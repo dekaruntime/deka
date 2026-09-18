@@ -38,7 +38,7 @@ bytes = "1"
 chrono = { version = "0.4", features = ["clock"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-prost = "0.13"
+prost = "0.14"
 sha2 = "0.10"
 postgres = { version = "0.19", features = ["with-chrono-0_4"], optional = true }
 mysql = { version = "28", optional = true }
