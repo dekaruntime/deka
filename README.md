@@ -8,6 +8,7 @@ It compiles to JavaScript and runs both natively and in the browser via WASM.
 - **Homepage:** https://deka.gg
 - **Language tour:** https://deka.gg/tour
 - **Documentation:** https://deka.gg/docs
+- **CodeQuality Explorer:** https://explorer.deka.gg
 - **Test suite:** https://testsuite.deka.gg
 - **Releases:** https://github.com/dekaruntime/deka/releases
 
