@@ -7,13 +7,23 @@ publish = false
 
 [features]
 default = []
+runtime = ["dep:deno_core", "dep:pool", "dep:platform_server", "dep:security", "dep:permissions", "dep:tokio", "dep:serde"]
 gpu = ["deka_native_ui/gpu"]
 runtime-shaders = ["gpu", "deka_native_ui/runtime-shaders"]
 
 [dependencies]
 deka_native_ui = { path = "../deka_native_ui", features = ["program"] }
-deka_native_ir = { git = "https://github.com/dekaruntime/dsc", rev = "f3524ef87ab312d2fa7195d42d6ec14cdc0f1384", features = ["program"] }
+deka_native_ir = { git = "https://github.com/dekaruntime/dsc", rev = "15b8ae547da6174616186f14a8facb9edd9b90b5", features = ["program"] }
 serde_json = "1.0"
 
+deno_core = { workspace = true, optional = true }
+pool = { path = "../pool", optional = true }
+platform_server = { path = "../platform_server", optional = true }
+security = { path = "../security", optional = true }
+permissions = { path = "../permissions", optional = true }
+tokio = { workspace = true, features = ["rt", "time"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+
 [dev-dependencies]
-deka_native_compile = { git = "https://github.com/dekaruntime/dsc", rev = "f3524ef87ab312d2fa7195d42d6ec14cdc0f1384" }
+tempfile = "3"
+deka_native_compile = { git = "https://github.com/dekaruntime/dsc", rev = "15b8ae547da6174616186f14a8facb9edd9b90b5" }

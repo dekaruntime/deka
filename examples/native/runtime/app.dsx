@@ -1,0 +1,13 @@
+import { Counter } from "./counter.dsx";
+
+export fn App() ReactNode {
+    const [visible, setVisible] = useState(true);
+    return (<div className="w-96 p-4 gap-4 bg-[#F3EFE3] text-[#1A1611]">
+        <div className="flex-row gap-3">
+            <Counter />
+            <Counter />
+        </div>
+        <button className="w-48 h-12 p-2" onClick={fn() { setVisible(!visible); }}>Toggle third counter</button>
+        {visible ? <Counter /> : <span />}
+    </div>);
+}

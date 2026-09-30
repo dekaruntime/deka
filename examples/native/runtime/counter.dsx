@@ -1,0 +1,7 @@
+export fn Counter() ReactNode {
+    const [count, setCount] = useState(0);
+    const background = count == 0 ? "bg-[#0C8B43]" : "bg-[#663399]";
+    return (<button className={"w-24 h-16 p-2 rounded-lg text-[#ffffff] " + background} onClick={fn() { setCount(count + 1); }}>
+        Count: {string(count)}
+    </button>);
+}

@@ -2319,7 +2319,15 @@ dependencies = [
  "deka_native_compile",
  "deka_native_ir",
  "deka_native_ui",
+ "deno_core",
+ "permissions",
+ "platform_server",
+ "pool",
+ "security",
+ "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -2468,7 +2476,7 @@ dependencies = [
 [[package]]
 name = "deka_native_compile"
 version = "0.53.7"
-source = "git+https://github.com/dekaruntime/dsc?rev=f3524ef87ab312d2fa7195d42d6ec14cdc0f1384#f3524ef87ab312d2fa7195d42d6ec14cdc0f1384"
+source = "git+https://github.com/dekaruntime/dsc?rev=15b8ae547da6174616186f14a8facb9edd9b90b5#15b8ae547da6174616186f14a8facb9edd9b90b5"
 dependencies = [
  "bumpalo",
  "deka_native_ir",
@@ -2479,7 +2487,7 @@ dependencies = [
 [[package]]
 name = "deka_native_ir"
 version = "0.53.7"
-source = "git+https://github.com/dekaruntime/dsc?rev=f3524ef87ab312d2fa7195d42d6ec14cdc0f1384#f3524ef87ab312d2fa7195d42d6ec14cdc0f1384"
+source = "git+https://github.com/dekaruntime/dsc?rev=15b8ae547da6174616186f14a8facb9edd9b90b5#15b8ae547da6174616186f14a8facb9edd9b90b5"
 dependencies = [
  "serde",
 ]
@@ -2509,7 +2517,7 @@ dependencies = [
 [[package]]
 name = "deka_syntax"
 version = "0.53.7"
-source = "git+https://github.com/dekaruntime/dsc?rev=f3524ef87ab312d2fa7195d42d6ec14cdc0f1384#f3524ef87ab312d2fa7195d42d6ec14cdc0f1384"
+source = "git+https://github.com/dekaruntime/dsc?rev=15b8ae547da6174616186f14a8facb9edd9b90b5#15b8ae547da6174616186f14a8facb9edd9b90b5"
 dependencies = [
  "bumpalo",
  "serde",

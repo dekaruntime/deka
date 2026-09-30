@@ -1,4 +1,5 @@
-//! Development interpreter. This crate is never linked into generated applications.
+//! Experimental native hosts: restricted development IR and persistent Deka runtime.
+//! This crate is never linked into the restricted IR generator's applications.
 use deka_native_ir::{Node, Program};
 use deka_native_ui::program::{ProgramApp, validate};
 use deka_native_ui::{Application, Reload};
@@ -116,3 +117,6 @@ impl Drop for DevApp {
         self.stop.store(true, Ordering::Relaxed);
     }
 }
+
+#[cfg(feature = "runtime")]
+pub mod runtime;

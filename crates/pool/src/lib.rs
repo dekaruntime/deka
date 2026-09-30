@@ -15,3 +15,5 @@ pub use esm_loader::*;
 pub use isolate_pool::*;
 pub use secrets_cache::*;
 pub use validation::*;
+
+pub mod bootstrap;

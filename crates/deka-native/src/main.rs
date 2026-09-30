@@ -9,11 +9,48 @@ fn main() -> ExitCode {
         }
     }
 }
+#[cfg(feature = "runtime")]
+fn runtime(args: &[String]) -> Result<(), String> {
+    if !(args.len() == 8 || (args.len() == 10 && args[8] == "--exercise"))
+        || args[2] != "--project"
+        || args[4] != "--compiler"
+        || args[6] != "--component"
+    {
+        return Err("usage: deka-native runtime <source.dsx> --project <root> --compiler <dsc> --component <export> [--exercise <clicks>]".into());
+    }
+    let session = deka_native::runtime::Session::open(
+        Path::new(&args[3]),
+        Path::new(&args[1]),
+        Path::new(&args[5]),
+        &args[7],
+    )?;
+    let app = deka_native::runtime::RuntimeApp::new(session);
+    if args.len() == 10 {
+        let clicks = args[9]
+            .parse()
+            .map_err(|_| "--exercise requires a nonnegative click count")?;
+        println!("{}", deka_native_ui::exercise(app, clicks));
+        return Ok(());
+    }
+    #[cfg(feature = "gpu")]
+    deka_native_ui::run(app);
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = app;
+        return Err("native runtime window requires the gpu feature".into());
+    }
+    #[cfg(feature = "gpu")]
+    Ok(())
+}
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    #[cfg(feature = "runtime")]
+    if args.first().is_some_and(|arg| arg == "runtime") {
+        return runtime(&args);
+    }
     if args.as_slice() == ["--help"] || args.as_slice() == ["-h"] {
         println!(
-            "deka-native dev <source.dsx> --compiler <dsc-native> [--exercise <clicks>]\ndeka-native build <source.dsx> --compiler <dsc-native> --out <fresh-directory> [--runtime-shaders]"
+            "deka-native runtime <source.dsx> --project <root> --compiler <dsc> --component <export> [--exercise <clicks>] (requires runtime + gpu features)\ndeka-native dev <source.dsx> --compiler <dsc-native> [--exercise <clicks>]\ndeka-native build <source.dsx> --compiler <dsc-native> --out <fresh-directory> [--runtime-shaders]"
         );
         return Ok(());
     }
