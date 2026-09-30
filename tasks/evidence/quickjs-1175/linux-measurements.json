@@ -1,0 +1,143 @@
+{
+  "utc": "2026-09-30T05:36:48.749648+00:00",
+  "host": "PRETTY_NAME=\"Ubuntu 26.04.1 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"26.04\"\nVERSION=\"26.04.1 LTS (Resolute Raccoon)\"\nVERSION_CODENAME=resolute\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=resolute\nLOGO=ubuntu-logo\n",
+  "kernel": "7.0.0-27-generic",
+  "machine": "x86_64",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "git_head": "85b57ab541c333ea6085a2e7c7b6ba804df7950b",
+  "measurement_script_sha256": "b5a75c2ecc068fe75e03e183a60f83f1abc372dce3e85b0f471a4019fb44b751",
+  "display": "Xvfb 1024x768x24; Mesa lavapipe software Vulkan",
+  "driver_icd": {
+    "ICD": {
+      "api_version": "1.4.335",
+      "library_path": "libvulkan_lvp.so"
+    },
+    "file_format_version": "1.0.1"
+  },
+  "idle_seconds": 5,
+  "variants": {
+    "rust": {
+      "bytes": 18729584,
+      "gzip_bytes": 7208037,
+      "sha256": "9fa332a4298d511110fc7dbd76e37fd62f7aeb1dc9daed82a677a8581096e54d",
+      "exercise": "Deka native backend comparison Count: 3",
+      "samples": [
+        {
+          "pid": 1484389,
+          "rss_kib": 58524,
+          "pss_kib": 45764,
+          "uss_kib": 34916,
+          "swap_kib": 0,
+          "executable_mapping_size_kib": 18304,
+          "executable_mapping_rss_kib": 6052
+        },
+        {
+          "pid": 1484839,
+          "rss_kib": 58444,
+          "pss_kib": 45716,
+          "uss_kib": 34832,
+          "swap_kib": 0,
+          "executable_mapping_size_kib": 18304,
+          "executable_mapping_rss_kib": 6052
+        },
+        {
+          "pid": 1485006,
+          "rss_kib": 58736,
+          "pss_kib": 46031,
+          "uss_kib": 35156,
+          "swap_kib": 0,
+          "executable_mapping_size_kib": 18304,
+          "executable_mapping_rss_kib": 6056
+        }
+      ],
+      "median_rss_kib": 58524,
+      "median_pss_kib": 45764,
+      "median_uss_kib": 34916,
+      "median_swap_kib": 0,
+      "median_executable_mapping_size_kib": 18304,
+      "median_executable_mapping_rss_kib": 6052
+    },
+    "v8": {
+      "bytes": 68388144,
+      "gzip_bytes": 24974426,
+      "sha256": "c779a9ad99a06a92d994a4a5d90147a3e5e9b46d26bb258a8b22bebee6a4b3e7",
+      "exercise": "Deka native backend comparison Count: 3",
+      "samples": [
+        {
+          "pid": 1484481,
+          "rss_kib": 71904,
+          "pss_kib": 59212,
+          "uss_kib": 48352,
+          "swap_kib": 0,
+          "executable_mapping_size_kib": 66792,
+          "executable_mapping_rss_kib": 15556
+        },
+        {
+          "pid": 1484673,
+          "rss_kib": 71824,
+          "pss_kib": 59015,
+          "uss_kib": 48136,
+          "swap_kib": 0,
+          "executable_mapping_size_kib": 66792,
+          "executable_mapping_rss_kib": 15556
+        },
+        {
+          "pid": 1485091,
+          "rss_kib": 71680,
+          "pss_kib": 58904,
+          "uss_kib": 48080,
+          "swap_kib": 0,
+          "executable_mapping_size_kib": 66792,
+          "executable_mapping_rss_kib": 15552
+        }
+      ],
+      "median_rss_kib": 71824,
+      "median_pss_kib": 59015,
+      "median_uss_kib": 48136,
+      "median_swap_kib": 0,
+      "median_executable_mapping_size_kib": 66792,
+      "median_executable_mapping_rss_kib": 15556
+    },
+    "quickjs": {
+      "bytes": 20020976,
+      "gzip_bytes": 7816528,
+      "sha256": "94b5e413d80105f0fe322f18cb28a3adb7f7f19f03e242bec80d5c151d2a0b32",
+      "exercise": "Deka native backend comparison Count: 3",
+      "samples": [
+        {
+          "pid": 1484567,
+          "rss_kib": 59208,
+          "pss_kib": 46462,
+          "uss_kib": 35580,
+          "swap_kib": 0,
+          "executable_mapping_size_kib": 19564,
+          "executable_mapping_rss_kib": 6552
+        },
+        {
+          "pid": 1484750,
+          "rss_kib": 59196,
+          "pss_kib": 46470,
+          "uss_kib": 35588,
+          "swap_kib": 0,
+          "executable_mapping_size_kib": 19564,
+          "executable_mapping_rss_kib": 6556
+        },
+        {
+          "pid": 1484915,
+          "rss_kib": 58960,
+          "pss_kib": 46227,
+          "uss_kib": 35352,
+          "swap_kib": 0,
+          "executable_mapping_size_kib": 19564,
+          "executable_mapping_rss_kib": 6564
+        }
+      ],
+      "median_rss_kib": 59196,
+      "median_pss_kib": 46462,
+      "median_uss_kib": 35580,
+      "median_swap_kib": 0,
+      "median_executable_mapping_size_kib": 19564,
+      "median_executable_mapping_rss_kib": 6556
+    }
+  }
+}
