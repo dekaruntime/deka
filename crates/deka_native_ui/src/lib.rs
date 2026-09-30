@@ -85,3 +85,6 @@ fn collect_text(node: &Node, output: &mut String) {
 #[cfg(feature = "program")]
 pub mod program;
 pub mod scene;
+
+/// Isolated portfolio-world proof of concept.
+pub mod world;
