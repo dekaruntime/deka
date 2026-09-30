@@ -86,6 +86,17 @@ impl NativePreview {
         }
         serde_json::to_string(&self.scene).expect("finite scene")
     }
+    /// Diagnostic counters for the compiled native tree, independent of browser paint frames.
+    pub fn binding_stats(&self) -> String {
+        serde_json::to_string(
+            &self
+                .host
+                .as_ref()
+                .map(|h| h.app.binding_stats())
+                .unwrap_or_default(),
+        )
+        .expect("binding diagnostics")
+    }
     pub fn pointer(&mut self, x: f32, y: f32) -> bool {
         if let Some(target) = self.scene.hit(x, y) {
             self.focus = Some(target.id.clone());
@@ -250,5 +261,41 @@ impl PortfolioWorld {
     }
     pub fn audio_samples(id: u8) -> Vec<f32> {
         deka_native_ui::world::audio::samples(id)
+    }
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+    #[test]
+    fn actual_source_updates_a_single_retained_binding_and_survives_edits() {
+        let source = include_str!("../../../examples/native/bindings.dsx");
+        let mut a = NativePreview::new();
+        let mut b = NativePreview::new();
+        a.compile(source, false).unwrap();
+        b.compile(source, false).unwrap();
+        a.frame(560., 400., 1.);
+        b.frame(560., 400., 1.);
+        let before = a.host.as_ref().unwrap().app.binding_stats();
+        let target = a.scene.targets[0].rect;
+        assert!(a.pointer(target.x + 2., target.y + 2.));
+        a.frame(560., 400., 1.);
+        let after = a.host.as_ref().unwrap().app.binding_stats();
+        assert_eq!(after.tree_builds, 1);
+        assert_eq!(after.nodes_created, before.nodes_created);
+        assert_eq!(after.binding_evaluations, before.binding_evaluations + 1);
+        assert_eq!(after.changed_nodes.len(), 1);
+        assert_eq!(a.host.as_ref().unwrap().state, vec![1., 10.]);
+        assert_eq!(b.host.as_ref().unwrap().state, vec![0., 10.]);
+        a.compile(&source.replace("count += 1", "count += 2"), false)
+            .unwrap();
+        a.frame(560., 400., 1.);
+        a.pointer(target.x + 2., target.y + 2.);
+        assert_eq!(a.host.as_ref().unwrap().state, vec![3., 10.]);
+        assert!(a.compile("export fn Counter() { !!!", false).is_err());
+        assert_eq!(a.host.as_ref().unwrap().state, vec![3., 10.]);
+        a.compile(source, true).unwrap();
+        a.frame(560., 400., 1.);
+        assert_eq!(a.host.as_ref().unwrap().state, vec![0., 10.]);
     }
 }

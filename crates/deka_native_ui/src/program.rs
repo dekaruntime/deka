@@ -4,11 +4,29 @@ use deka_native_ir::{Condition, FORMAT_VERSION, Node, Number, Program, Template,
 
 pub struct ProgramApp {
     program: Program,
+    retained: std::cell::RefCell<Option<bindings::Retained>>,
 }
 impl ProgramApp {
     pub fn new(program: Program) -> Result<Self, String> {
         validate(&program)?;
-        Ok(Self { program })
+        Ok(Self {
+            program,
+            retained: Default::default(),
+        })
+    }
+    fn sync(&self, state: &[f64]) {
+        let mut cache = self.retained.borrow_mut();
+        match cache.as_mut() {
+            Some(tree) => tree.update(&self.program, state),
+            None => *cache = Some(bindings::Retained::new(&self.program, state)),
+        }
+    }
+    pub fn binding_stats(&self) -> BindingStats {
+        self.retained
+            .borrow()
+            .as_ref()
+            .map(|t| t.stats.clone())
+            .unwrap_or_default()
     }
     pub fn replace(&mut self, program: Program) -> Result<Reload, String> {
         validate(&program)?;
@@ -20,6 +38,7 @@ impl ProgramApp {
                 .map(|s| &s.name)
                 .eq(program.states.iter().map(|s| &s.name));
         self.program = program;
+        *self.retained.borrow_mut() = None;
         Ok(if compatible {
             Reload::Preserve
         } else {
@@ -32,11 +51,18 @@ impl Application for ProgramApp {
         self.program.states.iter().map(|s| s.initial).collect()
     }
     fn render(&self, state: &[f64]) -> Node {
-        render(&self.program.root, state)
+        self.sync(state);
+        self.retained
+            .borrow()
+            .as_ref()
+            .expect("initialized tree")
+            .root
+            .clone()
     }
     fn event(&self, handler: usize, state: &mut [f64]) {
         if let Some(update) = self.program.handlers.get(handler) {
             state[update.state] = number(&update.value, state);
+            self.sync(state);
         }
     }
 }
@@ -124,3 +150,9 @@ pub fn validate(program: &Program) -> Result<(), String> {
     }
     Ok(())
 }
+
+mod bindings;
+pub use bindings::BindingStats;
+
+#[cfg(test)]
+mod tests;
