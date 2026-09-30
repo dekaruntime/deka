@@ -50,3 +50,12 @@ jobs:
             echo "VM-only feature set unexpectedly links a V8 dependency"
             exit 1
           fi
+      - name: Package and exercise relocated native application
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/experiments/deka-vm/target
+        run: |
+          cargo fmt --manifest-path experiments/deka-vm/packaging/Cargo.toml --check
+          cargo clippy --locked --manifest-path experiments/deka-vm/packaging/Cargo.toml --workspace --all-targets --all-features -- -D warnings
+          cargo build --locked --release --manifest-path experiments/deka-vm/Cargo.toml --no-default-features --features gpu --bin dvm-ui
+          cargo build --locked --release --manifest-path experiments/deka-vm/packaging/Cargo.toml
+          python3 experiments/deka-vm/packaging/test_bundle.py experiments/deka-vm/target/release/dvm-package experiments/deka-vm/target/release/dvm-ui experiments/deka-vm/examples/packaged-counter/deka.json experiments/deka-vm/target/package-tests

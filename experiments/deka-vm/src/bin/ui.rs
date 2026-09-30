@@ -6,16 +6,26 @@ fn main() {
     }
 }
 fn run() -> Result<()> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    let path = args
-        .first()
-        .ok_or("usage: dvm-ui counter.dsx|counter.dvm.json [--exercise N | --snapshot N]")?;
+    let mut args: Vec<_> = std::env::args().skip(1).collect();
+    // Finder supplies no source path. Resolve the payload from this executable's
+    // bundle, never the working directory or the developer's source checkout.
+    if args.first().is_none_or(|arg| arg.starts_with("--")) {
+        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        let directory = executable.parent().ok_or("executable has no directory")?;
+        #[cfg(target_os = "macos")]
+        let payload = directory.join("../Resources/app.dvm.json");
+        #[cfg(not(target_os = "macos"))]
+        let payload = directory.join("app.dvm.json");
+        args.insert(0, payload.to_string_lossy().into_owned());
+    }
     if args.len() != 1
         && !(args.len() == 3 && matches!(args[1].as_str(), "--exercise" | "--snapshot"))
     {
         return Err("unexpected arguments".into());
     }
-    let source = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let path = &args[0];
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read application payload {path}: {e}"))?;
     let program = if path.ends_with(".dsx") {
         #[cfg(feature = "compiler")]
         {

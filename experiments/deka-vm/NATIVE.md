@@ -67,3 +67,6 @@ parity. The embedded-DSC VM build is measured separately from the precompiled on
 
 See [the native measurements](measurements/NATIVE.md) for executable sizes,
 visible-window memory samples, caveats and exact build commands.
+
+For a double-clickable application configured through `deka.json`, see the
+[Tauri packaging demo](packaging/README.md).
