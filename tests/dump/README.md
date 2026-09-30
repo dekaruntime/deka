@@ -1,28 +1,15 @@
-# Conformance dump
+# Historical browser harness
 
-Produces the dual-host Hats dump (`hats-results.json`) for
-https://testsuite.deka.gg. Native isolate + Chromium Worker. The language
-gate is `./run.sh` (tour + snippets + ADHOC). This dump is what the website
-fills in (#292 step 2), including the **ADHOC** category.
+The aggregate Hats/conformance dump and external corpus release pipeline are
+retired. The old collector remains here for historical reference; it is not run
+by CI or release publication and is not the current testing contract.
 
-```sh
-cargo build --release -p cli
-CARGO_INCREMENTAL=0 cargo build --release \
-  --target wasm32-unknown-unknown -p deka_compiler_wasm --no-default-features
+The `scripts/*-e2e.mjs` browser regressions for legacy HMR/Fast Refresh remain in
+use until the JavaScript backend is retired. Install their locked dependencies
+with `bun install --frozen-lockfile` here. Current native-runtime validation is
+documented in the repository's `TESTING.md`.
 
-cd tests/dump
-bun install
-bunx playwright install chromium
-
-DEKA_NATIVE=../../target/release/cli \
-DEKA_WASM=../../target/wasm32-unknown-unknown/release/deka_compiler_wasm.wasm \
-  bun scripts/dump-results.mjs
-```
-
-Writes `dist/conformance/hats-results.json`. `scripts/pack-conformance.sh`
-bundles that with the pinned tour checkout (`./tour`, from
-`deka self fetch tour`) and the pinned testsuite corpus (`./testsuite`) for
-R2.
+## Historical collector notes
 
 Corpus `.code` sidecars follow dsc's Hats runner: a file whose trimmed body is
 a decimal integer is a process exit code, not formatted source (deka#929).

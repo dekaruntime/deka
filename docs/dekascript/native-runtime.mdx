@@ -1,0 +1,19 @@
+# Native runtime preview
+
+Deka's native runtime compiles DekaScript to VM bytecode and renders a node tree
+through its Rust layout, text and animation implementation. The compiler,
+intermediate UI model, renderer and VM live together in Deka's repository.
+
+This path does not require a JavaScript engine or WebView. Host operations expose
+Rust capabilities to source code; the renderer handles layout and drawing. The
+supported language and host surface is still a preview, not a claim of full
+compatibility with the older JavaScript backend.
+
+The runtime is tested with source compilation, execution and UI-event tests in
+its owning crates, plus a relocated packaged-app test. The retired external
+conformance corpus is no longer a release dependency.
+
+Application testing remains a first-class feature: `deka test` runs DekaScript
+tests for your application. Its current CLI implementation still uses the older
+runtime while the VM integration is being completed. For npm installations use
+`npx deka test` or your project's test script.

@@ -382,196 +382,15 @@ jobs:
           fi
           echo "smoke test passed on ${{ matrix.platform }}"
 
-  # rfd#68: runs against the built artifacts, same as before -- but AFTER
-  # `publish` and blocking nothing. Its own conclusion still turns red on a
-  # red gate (so it stays visible in the run), but publishing this canary
-  # never waits on it, and neither does anything else: only promote.yml reads
-  # its result (validation.json), and only a human promoting this canary is
-  # affected by a red gate.
-  dump-conformance:
-    name: Dump Hats + pack conformance
-    needs: [resolve, publish]
-    runs-on: macos-14
-    environment: release
-    env:
-      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: auto
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Where am I
-        uses: ./.github/actions/where-am-i
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-
-      - name: Download WASM + darwin-arm64 CLI
-        uses: actions/download-artifact@v7
-        with:
-          path: artifacts
-          pattern: deka-*
-
-      # RFD 59 (deka#836): the dump and the conformance pack read the pinned
-      # content checkouts; the shipped CLI fetches them (this job previously
-      # relied on the old .cache defaults without fetching anything).
-      - name: Fetch pinned content (self fetch)
-        run: |
-          chmod +x artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
-          ./artifacts/deka-cli-darwin-arm64/deka-darwin-arm64 self fetch testsuite
-          ./artifacts/deka-cli-darwin-arm64/deka-darwin-arm64 self fetch tour
-
-      - name: Install dump deps and Chromium
-        working-directory: tests/dump
-        # --frozen-lockfile: deka#1006. Without it, an unreadable lockfile is
-        # a warning bun recovers from by re-resolving over the network --
-        # nondeterministic and exactly how the v0.53.1 dump job died further
-        # downstream instead of failing fast and clearly on this step.
-        run: |
-          bun install --frozen-lockfile
-          bunx playwright install chromium
-
-      # Not gated with `set -e`: this job must still write and upload
-      # validation.json (gate: "red") when the dump fails its own ratchets,
-      # so that promote.yml has a real answer instead of a missing file. The
-      # job's own conclusion is still made red at the bottom of this step.
-      - name: Dump native + browser
-        id: dump
-        env:
-          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
-          DEKA_NATIVE: ${{ github.workspace }}/artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
-          DEKA_WASM: ${{ github.workspace }}/artifacts/deka-wasm/deka_compiler.wasm
-        run: |
-          scripts/ci-install-dsc.sh "$DEKA_DSC"
-          chmod +x "$DEKA_NATIVE"
-          set +e
-          bun tests/dump/scripts/dump-results.mjs > "${{ runner.temp }}/dump.log" 2>&1
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-          set -e
-          cat "${{ runner.temp }}/dump.log"
-
-      - name: Fetch pinned tour
-        env:
-          DEKA_NATIVE: ${{ github.workspace }}/artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
-        run: |
-          # deka#845 replaced scripts/ci-fetch-tour.sh with the shipped CLI.
-          # pack-conformance.sh reads ./tour/tests/tour -- leave the checkout
-          # exactly where self fetch puts it.
-          chmod +x "$DEKA_NATIVE"
-          "$DEKA_NATIVE" self fetch tour
-
-      - name: Pack conformance tree + dump
-        run: |
-          chmod +x scripts/pack-conformance.sh
-          scripts/pack-conformance.sh
-
-      - name: Upload conformance pack (workflow artifact)
-        uses: actions/upload-artifact@v7
-        with:
-          name: deka-conformance
-          path: dist/conformance
-          retention-days: 1
-
-      - name: Install AWS CLI
-        run: command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-
-      - name: Publish conformance pack to R2
-        run: |
-          TAG="${{ needs.resolve.outputs.tag }}"
-          aws s3 sync dist/conformance/ "s3://${R2_BUCKET_WASM}/${TAG}/conformance/" --endpoint-url="${R2_ENDPOINT}"
-
-      # Parses the same summary line the gate itself prints
-      # (tests/dump/scripts/dump-results.mjs): on a red gate it prints
-      # `[hats] gate FAILED: exit=N overall.fail=A unexpectedDivergences=B
-      # staleDivergences=C unexpectedFailures=D staleFailures=E`; on green
-      # that line is absent (nothing to ratchet) and the always-printed
-      # `[hats] summary total=... overall(pass=... fail=...)` line supplies
-      # the pass/fail counts with the four ratchet counters implicitly 0.
-      - name: Write validation.json
-        id: gate
-        run: |
-          LOG="${{ runner.temp }}/dump.log"
-          TAG="${{ needs.resolve.outputs.tag }}"
-          VERSION="${{ needs.resolve.outputs.version }}"
-          COMMIT="${{ needs.resolve.outputs.commit }}"
-          BASE_VERSION="${{ needs.resolve.outputs.base_version }}"
-          DSC_VERSION="$(tr -d '[:space:]' < scripts/dsc-version)"
-          CORPUS_SHA="$(sed -n '2p' scripts/testsuite-corpus-version | tr -d '[:space:]')"
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          WRITTEN_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-          if grep -q '^\[hats\] gate FAILED:' "$LOG"; then
-            GATE="red"
-            LINE="$(grep '^\[hats\] gate FAILED:' "$LOG" | tail -1)"
-            FAIL="$(echo "$LINE" | grep -oE 'overall\.fail=[0-9]+' | head -1 | cut -d= -f2)"
-            UNEXPECTED_DIV="$(echo "$LINE" | grep -oE 'unexpectedDivergences=[0-9]+' | head -1 | cut -d= -f2)"
-            STALE_DIV="$(echo "$LINE" | grep -oE 'staleDivergences=[0-9]+' | head -1 | cut -d= -f2)"
-            UNEXPECTED_FAIL="$(echo "$LINE" | grep -oE 'unexpectedFailures=[0-9]+' | head -1 | cut -d= -f2)"
-            STALE_FAIL="$(echo "$LINE" | grep -oE 'staleFailures=[0-9]+' | head -1 | cut -d= -f2)"
-          else
-            GATE="green"
-            LINE="$(grep '^\[hats\] summary ' "$LOG" | tail -1)"
-            FAIL="$(echo "$LINE" | grep -oE 'fail=[0-9]+' | head -1 | cut -d= -f2)"
-            UNEXPECTED_DIV=0
-            STALE_DIV=0
-            UNEXPECTED_FAIL=0
-            STALE_FAIL=0
-          fi
-
-          jq -n \
-            --arg tag "$TAG" \
-            --arg commit "$COMMIT" \
-            --arg base_version "$BASE_VERSION" \
-            --arg dsc_version "$DSC_VERSION" \
-            --arg corpus_sha "$CORPUS_SHA" \
-            --arg gate "$GATE" \
-            --argjson fail "${FAIL:-0}" \
-            --argjson unexpected_divergences "${UNEXPECTED_DIV:-0}" \
-            --argjson stale_divergences "${STALE_DIV:-0}" \
-            --argjson unexpected_failures "${UNEXPECTED_FAIL:-0}" \
-            --argjson stale_failures "${STALE_FAIL:-0}" \
-            --arg run_url "$RUN_URL" \
-            --arg written_at "$WRITTEN_AT" \
-            '{
-              tag: $tag,
-              commit: $commit,
-              base_version: $base_version,
-              dsc_version: $dsc_version,
-              corpus_sha: $corpus_sha,
-              gate: $gate,
-              summary: {
-                fail: $fail,
-                unexpectedDivergences: $unexpected_divergences,
-                staleDivergences: $stale_divergences,
-                unexpectedFailures: $unexpected_failures,
-                staleFailures: $stale_failures
-              },
-              run_url: $run_url,
-              written_at: $written_at
-            }' > validation.json
-
-          cat validation.json
-          # deka-releases has no "v" prefix on its versioned dirs (today's
-          # releases.deka.gg/<version>/, no leading v) -- VERSION here, not
-          # TAG. deka-wasm keeps its existing "v"-prefixed convention, which
-          # is why the conformance upload above used TAG.
-          aws s3 cp validation.json "s3://${R2_BUCKET_RELEASES}/${VERSION}/validation.json" --endpoint-url="${R2_ENDPOINT}"
-          echo "gate=${GATE}" >> "$GITHUB_OUTPUT"
-
-      # validation.json is uploaded regardless of outcome (the step above);
-      # this is the only place the job's own conclusion is decided, so a red
-      # gate is visible on the run without having blocked publish above.
-      - name: Fail this job's conclusion on a red gate
-        if: ${{ steps.gate.outputs.gate == 'red' }}
-        run: |
-          echo "::error::conformance gate is red for ${{ needs.resolve.outputs.tag }}; validation.json was still published, but this canary cannot be promoted until a green canary follows it."
-          exit 1
+  # Local runtime tests replace the retired external corpus release gate.
+  runtime-validation:
+    name: Validate native runtime
+    needs: resolve
+    uses: ./.github/workflows/vm-experiment.yml
 
   publish:
     name: Publish to R2
-    needs: [resolve, fetch-dsc-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, smoke]
+    needs: [resolve, fetch-dsc-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, smoke, runtime-validation]
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -607,7 +426,6 @@ jobs:
           COMMIT="${{ needs.resolve.outputs.commit }}"
           PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           DSC_VERSION="$(tr -d '[:space:]' < scripts/dsc-version)"
-          CORPUS_SHA="$(sed -n '2p' scripts/testsuite-corpus-version | tr -d '[:space:]')"
 
           mkdir -p "release/${TAG}"
 
@@ -731,7 +549,7 @@ jobs:
 
           # Release manifest consumed by the website sync job and by
           # promote.yml's gates. rfd#68 additions: channel, base_version,
-          # dsc_version, corpus_sha, promoted_from (always null here --
+          # dsc_version, promoted_from (always null here --
           # only promote.yml's rewrite of this same file sets it).
           jq -n \
             --arg version "${VERSION}" \
@@ -747,7 +565,6 @@ jobs:
             --arg channel "canary" \
             --arg base_version "${BASE_VERSION}" \
             --arg dsc_version "${DSC_VERSION}" \
-            --arg corpus_sha "${CORPUS_SHA}" \
             '{
               version: $version,
               tag: $tag,
@@ -756,7 +573,6 @@ jobs:
               channel: $channel,
               base_version: $base_version,
               dsc_version: $dsc_version,
-              corpus_sha: $corpus_sha,
               promoted_from: null,
               binaries: {
                 "linux-x64": { name: "deka-linux-x64", sha256: $linux_x64_sha },
@@ -857,13 +673,21 @@ jobs:
           echo "  canary pointer: https://releases.deka.gg/canary.json"
           echo "  compiler manifest: https://wasm.deka.gg/canary/deka-compiler-artifact.json"
           echo "  diagnostics manifest: https://wasm.deka.gg/canary/deka-diagnostics-artifact.json"
-          echo "  conformance pack (after dump-conformance): https://wasm.deka.gg/${TAG}/conformance/manifest.json"
-          echo "  downstream notified: create-deka-app (npm canary tag), testsuite-site"
+          echo "  downstream notified: create-deka-app (npm canary tag)"
           echo "  to promote: gh workflow run promote.yml -f canary=${TAG}"
+
+      - name: Publish runtime validation evidence
+        run: |
+          jq -n \
+            --arg commit "${{ needs.resolve.outputs.commit }}" \
+            --arg tag "${{ needs.resolve.outputs.tag }}" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{schema: 1, kind: "native-runtime", commit: $commit, tag: $tag, gate: "green", checks: ["frontend-vm-renderer", "packaged-native-app"], run_url: $run_url}' > validation.json
+          aws s3 cp validation.json "s3://${R2_BUCKET_RELEASES}/${{ needs.resolve.outputs.version }}/validation.json" --endpoint-url="${R2_ENDPOINT}"
 
   # Downstream consumers are notified from a SEPARATE JOB that needs
   # `publish`, not from steps inside it -- a canary's downstream footprint is
-  # deliberately narrow (npm canary dist-tag + testsuite-site only; website,
+  # deliberately narrow (npm canary dist-tag only; website,
   # headless and draftwriter are stable-only, see promote.yml).
   notify:
     name: Notify downstream
@@ -873,5 +697,4 @@ jobs:
       tag: ${{ needs.resolve.outputs.tag }}
       channel: canary
       create_deka_app: true
-      testsuite_site: true
     secrets: inherit

@@ -93,28 +93,6 @@ jobs:
       - name: Run typecheck ratchet tests
         run: tests/typeck-ratchet.sh
 
-  lockstep-check:
-    # deka#1154, dekaruntime/rfd#68's 2026-09-17 amendment to rfd#59: deka,
-    # dsc, testsuite and tour share ONE version. This enforces it: deka's own
-    # crate version is the source of truth, and scripts/dsc-version /
-    # scripts/testsuite-corpus-version must each carry it, or the immediately
-    # previous released version while a bump is mid-flight. Fast, no Rust
-    # build — bash only. fetch-depth 0 pulls the tag history the "previous
-    # version" computation needs.
-    name: Lockstep pin check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Run lockstep hermetic tests
-        run: tests/lockstep-check.sh
-
-      - name: Verify lockstep pins
-        run: scripts/lockstep-verify.sh
-
   utility-css:
     name: Utility CSS generator
     needs: [changes]
@@ -309,13 +287,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Forbid vendored testsuite corpus
-        run: |
-          if find tests -type d -name testsuite -print -quit | grep -q .; then
-            echo "::error::testsuite corpus must not be vendored; it is owned by dekaruntime/testsuite. Use 'deka self fetch testsuite'"
-            exit 1
-          fi
-
       - name: Forbid vendored tour
         run: |
           if find tests -type d -name tour -print -quit | grep -q .; then
@@ -438,11 +409,9 @@ jobs:
           cargo build --release -p cli
 
       # RFD 59 (deka#836): the shipped CLI fetches the pinned content
-      # checkouts. This replaces scripts/ci-fetch-testsuite-corpus.sh and
-      # scripts/ci-fetch-tour.sh, and is the zero-environment-variable path.
+      # tour checkout without a toolchain environment override.
       - name: Fetch pinned content (self fetch)
         run: |
-          ./target/release/cli self fetch testsuite
           ./target/release/cli self fetch tour
 
       # rfd#38: language compile is dsc. Fetch the published CLI + browser
@@ -489,11 +458,8 @@ jobs:
           test -f "$tmp/ok.js"
           rm -rf "$tmp"
 
-      - name: Run tour + public conformance suite (native)
-        env:
-          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
-          DEKA_WASM: ${{ github.workspace }}/.ci/wasm/deka_compiler.wasm
-        run: ./run.sh --skip-build --locked
+      - name: Test native frontend, VM and renderer
+        run: ./run.sh
 
       - name: Install dump harness deps + Chromium
         working-directory: tests/dump
@@ -503,15 +469,6 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bunx playwright install chromium
-
-      # The full dump only runs on release; without this smoke, harness
-      # breakage (bad shim paths, import-transform regressions) ships red.
-      - name: Dump harness smoke (browser + native)
-        env:
-          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
-          DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
-          DEKA_WASM: ${{ github.workspace }}/.ci/wasm/deka_compiler.wasm
-        run: bun tests/dump/scripts/smoke.mjs
 
       # A fresh HTTP request can observe an edit even when the injected HMR
       # client fails to parse. Keep a real browser page loaded and require the

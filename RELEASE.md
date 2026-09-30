@@ -1,5 +1,6 @@
 # Deka runtime/cli releases
 
+
 Releases are fully automated through GitHub Actions and published to Cloudflare R2.
 
 ## Versioning policy
@@ -46,11 +47,10 @@ an error pointing here.
    `release.yml` builds the three CLI binaries + browser WASM, smoke-tests
    the *built* binaries (no compilation, ~30s), publishes them to R2 under
    the canary's own path plus `canary.json` / `deka-wasm`'s `canary/*`
-   pointers, and dispatches `create-deka-app` (npm `canary` dist-tag) and
-   `testsuite-site`. It never touches `latest.json` / `latest/*`.
-   Afterwards, a conformance dump runs against the built artifacts and
-   writes `validation.json` — this does not block the canary publish, but it
-   is what `promote.yml` checks before promoting.
+   pointers, and dispatches `create-deka-app` (npm `canary` dist-tag).
+   Native frontend/VM/renderer tests and relocated-app packaging must pass before
+   publication. The publish job writes `validation.json` for that source commit;
+   `promote.yml` checks it before promotion. No external corpus is fetched.
 3. Test the canary (it is a real, installable build). Iterate by merging
    fixes to `main`; each merge yields a new canary of the same base version
    automatically.
@@ -76,8 +76,8 @@ If every gate passes: `promote.yml` copies the canary's bytes to the stable
 path in both R2 buckets (no rebuild — same bytes, only the manifest's
 `version`/`tag`/`channel`/`promoted_from` change), writes `latest.json` and
 the WASM `latest/*` pointers, creates and pushes the `vX.Y.Z` tag at the
-canary's own commit, and notifies all five downstreams (website, npm
-`latest`, testsuite-site, draftwriter, headless).
+canary's own commit, and notifies the remaining downstreams (website, npm
+`latest`, draftwriter, headless).
 
 The old workflow (build the three CLI binaries, browser WASM, checksum,
 `manifest.json`/`release.json`, upload) still happens — just once per
@@ -131,7 +131,7 @@ If you want a narrower token, scope it to the buckets above.
 `latest.json` / `canary.json` (and `<VERSION>/release.json`, the file this
 repo calls its manifest — there is no separately-named `manifest.json`) has
 this shape. rfd#68 added `channel`, `base_version`, `dsc_version`,
-`corpus_sha` and `promoted_from`; every other key is unchanged:
+and `promoted_from`; every other key is unchanged:
 
 ```json
 {
@@ -142,7 +142,6 @@ this shape. rfd#68 added `channel`, `base_version`, `dsc_version`,
   "channel": "canary",
   "base_version": "0.59.0",
   "dsc_version": "0.53.5",
-  "corpus_sha": "59e9c9ea6ea5c10779116ac30bef0c482fc94c98cc8d8ddb295ad2805500d30a",
   "promoted_from": null,
   "binaries": {
     "linux-x64": { "name": "deka-linux-x64", "sha256": "..." },
@@ -161,31 +160,26 @@ this shape. rfd#68 added `channel`, `base_version`, `dsc_version`,
 A promoted (`stable`) manifest is the identical document with `version` /
 `tag` rewritten to the plain `vX.Y.Z`, `channel: "stable"`, and
 `promoted_from` set to the canary tag it came from — `commit`, `dsc_version`,
-`corpus_sha` and every checksum are untouched, because it is the same build.
+and every checksum are untouched, because it is the same build.
 
-`promote.yml` also reads (never writes, except its own success) a sibling
-`validation.json` per canary version, written by `release.yml`'s
-`dump-conformance` job:
+`promote.yml` also reads a sibling `validation.json` per canary version, written
+by the publish job only after the native-runtime workflow and binary smoke checks
+succeed. Missing or failed checks block publication of this evidence.
 
 ```json
 {
-  "tag": "v0.59.0-canary-d5661ed",
+  "schema": 1,
+  "kind": "native-runtime",
+  "tag": "v0.60.0-canary-abcdef0",
   "commit": "<full-sha>",
-  "base_version": "0.59.0",
-  "dsc_version": "0.53.5",
-  "corpus_sha": "...",
   "gate": "green",
-  "summary": {
-    "fail": 0,
-    "unexpectedDivergences": 0,
-    "staleDivergences": 0,
-    "unexpectedFailures": 0,
-    "staleFailures": 0
-  },
-  "run_url": "https://github.com/dekaruntime/deka/actions/runs/...",
-  "written_at": "2026-08-16T...Z"
+  "checks": ["frontend-vm-renderer", "packaged-native-app"],
+  "run_url": "https://github.com/dekaruntime/deka/actions/runs/..."
 }
 ```
+
+The legacy CLI's DSC dependency remains during consolidation. See
+[VERSIONING.md](VERSIONING.md) for the migration boundary.
 
 `deka.gg` can read the release manifest to render download links or to pin the browser compiler artifact used by the tour.
 

@@ -19,7 +19,7 @@ const DOCTOR: SubcommandSpec = SubcommandSpec {
 
 const FETCH: SubcommandSpec = SubcommandSpec {
     name: "fetch",
-    summary: "fetch a pinned content checkout (testsuite, tour)",
+    summary: "fetch a pinned content checkout (tour)",
     aliases: &[],
     handler: fetch::cmd,
 };
@@ -92,7 +92,7 @@ pub fn register(registry: &mut Registry) {
         },
         ParamSpec {
             name: "--jobs",
-            description: "self test: parallel native runs for the testsuite gate",
+            description: "self test: parallel native runs for tour lessons",
         },
     ] {
         registry.add_param(param);

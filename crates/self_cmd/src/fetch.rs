@@ -22,11 +22,9 @@ pub fn cmd(context: &Context) {
     // usage_error mirrors `self test` (deka#1010): a missing or unknown
     // target name is a bad argument (exit 2); a failure inside `fetch`
     // (network, checksum, extraction) only surfaces once we try (exit 1).
-    let (result, usage_error) = match context.args.positionals.get(0).map(|s| s.as_str()) {
+    let (result, usage_error) = match context.args.positionals.first().map(|s| s.as_str()) {
         Some(name) => match targets::by_name(name) {
-            Some(target) if name == target.name => (fetch(target, &context.env.cwd), false),
-            // The `suite` alias is accepted by `self test`, not `self fetch`.
-            Some(_) => (Err(format!("unknown fetch target '{}'", name)), true),
+            Some(target) => (fetch(target, &context.env.cwd), false),
             None => (Err(format!("unknown fetch target '{}'", name)), true),
         },
         None => (

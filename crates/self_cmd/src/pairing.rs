@@ -1,7 +1,6 @@
 //! Binary pairing for `deka self test` (deka#836).
 //!
-//! The content runners (dekaruntime/testsuite `corpus/run.mjs`,
-//! dekaruntime/tour `tests/tour/run.mjs) locate the toolchain the same way
+//! The legacy tour runner (`tests/tour/run.mjs`) locates the toolchain the same way
 //! they do inside their own repos: an executable at
 //! `<checkout>/target/release/cli`, optionally beside a `dsc`. `self test`
 //! materializes that layout from the running CLI (or the `--deka`/`--dsc`
@@ -10,7 +9,7 @@
 //!
 //! Two pairing shapes, one per runner contract:
 //!
-//! - The corpus runner execs only `cli run`, and `deka run` finds dsc via
+//! - A content runner can exec only `cli run`, and `deka run` finds dsc via
 //!   [`compiler::dsc::find_dsc`] — the `dsc` file beside the executable
 //!   it is running. A `dsc` symlink is enough.
 //! - The tour runner execs the `dsc` file *directly* (it prefers it over

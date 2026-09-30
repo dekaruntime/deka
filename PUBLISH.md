@@ -1,5 +1,6 @@
 # Publishing the Deka runtime
 
+
 This document describes how a new runtime release is produced, where the
 artifacts land, and how downstream sites pick them up automatically.
 
@@ -15,8 +16,8 @@ exactly one compilation per version line.
   starts `.github/workflows/release.yml`, which builds the three CLI
   binaries + WASM, smoke-tests the built binary on each host, publishes to
   R2 under that canary's own path plus `canary.json` / `deka-wasm`'s
-  `canary/*` pointers, and dispatches the conformance dump (which records a
-  result for the promote gate — it does not block the canary publish).
+  `canary/*` pointers. Native runtime tests and relocated-app packaging gate
+  publication; the publish job records their success in `validation.json`.
 - **stable** (`vX.Y.Z`): created only by a human running
   **Actions → Promote → Run workflow** with the canary tag to promote.
   `.github/workflows/promote.yml` verifies the canary shipped, was validated
@@ -28,11 +29,12 @@ The old flow — a human pushing a `vX.Y.Z` tag straight into a full build —
 no longer exists. `release.yml` builds canaries only; a plain `vX.Y.Z` ref
 fails it fast with an error pointing at `promote.yml`.
 
-All jobs run on self-hosted runners and use a shared sccache backend on R2.
+Rust compilation uses sccache. Native validation runs on GitHub-hosted Linux
+and macOS workers; legacy release jobs retain their existing runner setup.
 
 ## Cutting a release
 
-1. Bump the lockstep version and refresh `Cargo.lock`:
+1. Bump the workspace version and refresh `Cargo.lock`:
    ```bash
    ./scripts/bump-version.sh patch    # or minor, or an explicit X.Y.Z
    ```
@@ -45,9 +47,8 @@ All jobs run on self-hosted runners and use a shared sccache backend on R2.
    gh run watch <RUN_ID> --repo dekaruntime/deka --exit-status
    ```
 4. Test the canary. It's a full, installable build at its own version —
-   nothing about it is "unfinished". Its conformance dump runs after
-   publish and writes a `validation.json` gate result that `promote.yml`
-   reads; it does not need to be green for you to try the build.
+   publication includes a `validation.json` gate result from successful runtime
+   validation for the same commit, which `promote.yml` verifies.
 5. Iterate if needed: a fix is another PR to `main`, which yields another
    canary of the same base version (`vX.Y.Z-canary-<new-sha>`) automatically.
    Only bump the version again for the *next* release line.
@@ -76,7 +77,7 @@ All jobs run on self-hosted runners and use a shared sccache backend on R2.
 If every gate passes, `promote.yml` copies the canary's bytes to the stable
 path in both R2 buckets (no rebuild), rewrites the manifest
 (`version`/`tag`/`channel`/`promoted_from`, everything else — checksums,
-commit, `dsc_version`, `corpus_sha` — unchanged), writes `latest.json` and
+commit and `dsc_version` unchanged), writes `latest.json` and
 the WASM `latest/*` pointers, creates and pushes the `vX.Y.Z` tag at the
 canary's commit, and notifies all five downstreams.
 
@@ -86,14 +87,14 @@ After a successful run the following are available on R2:
 
 | Artifact | URL pattern | Consumers |
 |---|---|---|
-| Stable release manifest | `https://releases.deka.gg/latest.json` | CLI installers, testsuite native isolate runs |
+| Stable release manifest | `https://releases.deka.gg/latest.json` | CLI installers |
 | Canary release manifest | `https://releases.deka.gg/canary.json` | Opt-in canary consumers (`install.sh --canary`) |
 | Versioned release (stable) | `https://releases.deka.gg/<VERSION>/...` | Native CLI binaries, WASM files |
 | Versioned release (canary) | `https://releases.deka.gg/<VERSION>-canary-<sha>/...` | Native CLI binaries, WASM files, plus `validation.json` (the promote gate result) |
-| Stable compiler manifest | `https://wasm.deka.gg/latest/deka-compiler-artifact.json` | Website, testsuite |
+| Stable compiler manifest | `https://wasm.deka.gg/latest/deka-compiler-artifact.json` | Website |
 | Canary compiler manifest | `https://wasm.deka.gg/canary/deka-compiler-artifact.json` | Opt-in canary consumers |
-| Diagnostics manifest | `https://wasm.deka.gg/latest/deka-diagnostics-artifact.json` | Website, testsuite |
-| Compiler WASM | `https://wasm.deka.gg/latest/deka_compiler.wasm` | Website tour, testsuite |
+| Diagnostics manifest | `https://wasm.deka.gg/latest/deka-diagnostics-artifact.json` | Website |
+| Compiler WASM | `https://wasm.deka.gg/latest/deka_compiler.wasm` | Website tour |
 | Diagnostics WASM | `https://wasm.deka.gg/latest/deka_diagnostics.wasm` | Website tour |
 
 `latest.json` / `deka-wasm`'s `latest/*` move only in `promote.yml`, at the
@@ -112,10 +113,9 @@ until the run is green) that calls the shared
 `.github/workflows/notify-downstream.yml` reusable workflow. The two channels
 notify a different subset:
 
-- **canary** (`release.yml`): `create-deka-app` (npm, `--tag canary`) and
-  `testsuite-site` only. Website tour, headless and draftwriter are
+- **canary** (`release.yml`): `create-deka-app` (npm, `--tag canary`) only. Website tour, headless and draftwriter are
   stable-only — a canary never touches them.
-- **stable** (`promote.yml`): all five downstreams below.
+- **stable** (`promote.yml`): website, npm, draftwriter and headless.
 
 Each dispatch is independent — a failure in one does not undo the release,
 but (see below) it can skip the ones that come after it in the same job.
@@ -138,9 +138,6 @@ flowchart LR
     dscR2 -->|hourly cron, latest, no pin| webSync
     webSync --> webDeploy[website: deploy.yml] --> tour[deka.gg tour]
 
-    dekaRel -->|CASCADE_DISPATCH_TOKEN<br/>corpus-updated, canary| tsSite[testsuite-site: deploy.yml]
-    dekaPromote -->|CASCADE_DISPATCH_TOKEN<br/>corpus-updated, stable| tsSite
-    tsSite --> tsLive[testsuite.deka.gg]
 
     dekaPromote -->|CASCADE_DISPATCH_TOKEN<br/>workflow_dispatch, stable only| headlessSync[headless: sync-wasm.yml]
     headlessSync --> headlessNpm[npm: headless package] --> aiWorker[AI worker deploy]
@@ -174,61 +171,13 @@ of this doc: **a dsc release updates the tour on its own**, via that hourly
 cron, whether or not deka ever releases. A deka release's dispatch just makes
 the sync happen sooner. deka's own `fetch-dsc-wasm` job — which downloads the
 same dsc wasm at the version pinned in `scripts/dsc-version` and republishes
-it to `wasm.deka.gg` for the testsuite/CLI-facing manifest — is a **separate
+it to `wasm.deka.gg` for the legacy CLI-facing manifest — is a **separate
 path that does not feed the tour**. The tour can therefore briefly be ahead of
 what `wasm.deka.gg` (and deka's own pin) report, if dsc ships a version deka
 has not picked up yet.
 
 Silent on a missing token: if `DISPATCH_WEBSITE_SYNC_TOKEN` is unset, the
 dispatch step logs and exits 0; the hourly cron is the safety net.
-
-### Test suite (`dekaruntime/testsuite-site`)
-
-Fires on both channels: `release.yml`'s `notify` job dispatches this for
-every canary, and `promote.yml`'s `notify` job dispatches it again on
-promotion. Triggered by: `repository_dispatch` (`corpus-updated`) sent using
-`CASCADE_DISPATCH_TOKEN`, with `client_payload.corpus_sha` — the commit in
-`dekaruntime/testsuite` that `scripts/testsuite-corpus-version` currently
-pins. (This is `dekaruntime/testsuite-site`, not `dekaruntime/testsuite`:
-`testsuite` is where the corpus/fixtures live, `testsuite-site` is what
-deploys `testsuite.deka.gg`. An earlier version of this doc pointed the
-manual fallback at `dekaruntime/testsuite`; that repo's own workflow is not
-what this pipeline dispatches.)
-
-Workflow: `.github/workflows/deploy.yml`
-
-What it does:
-- On the dispatch, fetches the corpus at the dispatched commit
-  (`bun run fetch:corpus -- --ref <sha>`), ingests it, and runs every public
-  fixture on **two Deka hosts**: the native isolate (`deka run`) and a
-  Chromium Worker (WASM compile + tour sandbox). Node is not an execution
-  host. See [RFD 26](https://github.com/dekaruntime/rfd/issues/26).
-- Builds a static Next.js export and deploys it to Cloudflare Workers via
-  Wrangler (`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`, both required or
-  the deploy step fails loudly).
-
-The published site (`testsuite.deka.gg`) is a diagnostic grid. Pink cells are
-host disagreement. Dump/CI exit 0 means the dump ran; it does not mean every
-cell is green.
-
-To dump an unreleased runtime against itself:
-
-```bash
-DEKA_NATIVE=./target/release/cli \
-DEKA_WASM=./target/wasm32-unknown-unknown/release/deka_compiler_wasm.wasm \
-  bun scripts/dump-results.mjs
-```
-
-(from a `dekaruntime/testsuite-site` checkout — `dump-results.mjs` lives
-there, not in `dekaruntime/testsuite`)
-
-Loud on a missing token: unlike every other dispatch in `notify`, this step
-has no fallback branch — a missing or under-scoped `CASCADE_DISPATCH_TOKEN`
-makes it print `::error::` and `exit 1`, failing the `notify` job. Because the
-job's later steps are each gated on `if: success()`, **a failed testsuite-site
-dispatch also skips the release-note draft and headless dispatches below it
-in that same run** — both of those still catch up on their own hourly
-polling, so nothing is lost, just delayed.
 
 ### Headless (`dekaruntime/headless`)
 
@@ -363,7 +312,7 @@ Secrets live in `dekaruntime/deka` unless noted otherwise.
 | `R2_ACCESS_KEY_ID` | `release.yml`, `promote.yml` | Read/write on the R2 buckets below |
 | `R2_SECRET_ACCESS_KEY` | `release.yml`, `promote.yml` | Read/write on the R2 buckets below |
 | `DISPATCH_WEBSITE_SYNC_TOKEN` | `promote.yml` (`notify` job) | `actions:write` on `dekaruntime/website`, to dispatch `sync-deka-compiler.yml` |
-| `CASCADE_DISPATCH_TOKEN` | `release.yml` and `promote.yml` (`notify` job in both) | Org secret; `dekaruntime/deka` must be in its Repository access list. Dispatches the npm publish (`create-deka-app`) and the testsuite-site deploy from both channels; the headless sync and the release-note draft (`draftwriter`) from `promote.yml` only |
+| `CASCADE_DISPATCH_TOKEN` | `release.yml` and `promote.yml` (`notify` job in both) | Org secret; `dekaruntime/deka` must be in its Repository access list. Dispatches the npm publish (`create-deka-app`) from both channels; the headless sync and the release-note draft (`draftwriter`) from `promote.yml` only |
 
 `tag-canary.yml` uses only the built-in `GITHUB_TOKEN` (to push the canary
 tag and to `gh workflow run release.yml`) — no new secret. `promote.yml`
@@ -374,11 +323,10 @@ which already exist in this repo.
 `CASCADE_DISPATCH_TOKEN` is an organization secret shared with `dekaruntime/dsc`
 and the other repos in this cascade; it is not set per-repo. Missing it
 degrades most of `notify`'s steps to their own hourly-polling fallback,
-except the testsuite-site dispatch, which fails the job outright (see
-Downstream deployments above).
+except the npm dispatch, which fails the job outright.
 
 Downstream repos also need their own `CLOUDFLARE_API_TOKEN` /
-`CLOUDFLARE_ACCOUNT_ID` (website, testsuite-site) and `DRAFT_TOKEN`
+`CLOUDFLARE_ACCOUNT_ID` (website) and `DRAFT_TOKEN`
 (draftwriter), but those are unrelated to the runtime release and live in
 those repos.
 
@@ -390,8 +338,6 @@ If a downstream dispatch ever fails, things can be re-triggered manually:
 # Website tour
 gh workflow run sync-deka-compiler.yml --repo dekaruntime/website --ref main
 
-# Test suite (testsuite-site, not testsuite)
-gh workflow run "Deploy deka test suite" --repo dekaruntime/testsuite-site --ref main
 
 # Headless (pins to the latest deka release unless -f version=X.Y.Z is given)
 gh workflow run sync-wasm.yml --repo dekaruntime/headless --ref main
@@ -429,13 +375,6 @@ The R2 manifests should match the tag you just pushed immediately; the tour
 and npm views should match within minutes to an hour, depending on whether
 the dispatch fired or a repo fell back to its own polling.
 
-Testsuite-site has no version endpoint to curl — confirm it rebuilt from the
-dispatched corpus commit instead:
-
-```bash
-gh run list --repo dekaruntime/testsuite-site --workflow="Deploy deka test suite" --limit 3
-```
-
 To see whether the dispatches actually fired, rather than assuming from a
 downstream symptom, read the `notify` job's own log:
 
@@ -455,14 +394,13 @@ org secret, so a 403 usually means `dekaruntime/deka` was dropped from (or
 never added to) its Repository access list, not that the token itself is
 wrong. Re-scope/re-add it with `actions:write` on `dekaruntime/website`, and
 repository access to `dekaruntime/create-deka-app`,
-`dekaruntime/testsuite-site`, `dekaruntime/headless`, and
+`dekaruntime/headless`, and
 `dekaruntime/draftwriter`.
 
 ### npm did not update after a release
 
 1. Read the `notify` job log (see Verification) for the "Trigger npm package
-   publish" step — did it run, or was it skipped because the testsuite-site
-   dispatch step before it failed (see the next entry)?
+   publish" step — did it run and return success?
 2. Check `gh run list -R dekaruntime/create-deka-app --workflow publish-runtime.yml`
    for a run against the released tag.
 3. If neither ran, `create-deka-app`'s hourly fallback (`17 * * * *`) picks up
@@ -472,13 +410,9 @@ repository access to `dekaruntime/create-deka-app`,
 
 ### One downstream dispatch failing can skip the ones after it
 
-The `notify` job's dispatch steps run in a fixed order (website, npm,
-testsuite-site, release-note draft, headless), and each is gated by
-`if: success()`. The testsuite-site step is the only one that fails hard
-(`exit 1`) on a missing/under-scoped token, and doing so skips the
-release-note draft and headless steps for that run — both still catch up via
-their own hourly polling, but do not assume a missing tour/npm update and a
-missing testsuite-site update share one root cause; check the job log.
+The `notify` job runs website, npm, release-note draft and headless dispatches in
+that order. A failed step skips later steps by default. Check the job log before
+assuming that every downstream received a successful notification.
 
 ### Website sync commits WASM but does not deploy
 
@@ -487,14 +421,7 @@ it previously failed with exit code 127, the runner was missing the `gh` CLI.
 The workflow now uses `curl` directly, but the `actions:write` permission must
 still be granted to `GITHUB_TOKEN`.
 
-### Testsuite shows `nativeAvailable: false`
 
-The native CLI download failed or `deka run` would not execute on the dump
-host. Check the `Build site` logs for the download URL and any glibc
-compatibility warnings.
-
-### Testsuite shows `browserAvailable: false`
-
-Chromium was missing or Playwright failed to launch. Install the browser on
-the dump host (`bunx playwright install chromium`) matching the `playwright`
-package version. Do not fall back to Node.
+The external corpus and testsuite-site release cascade are retired. The native
+frontend is local; remaining legacy DSC consumers must migrate before that
+repository can be archived. See [VERSIONING.md](VERSIONING.md).

@@ -1,0 +1,49 @@
+[package]
+name = "deka_vm"
+version.workspace = true
+edition = "2024"
+publish = false
+license = "MIT"
+
+
+[features]
+default = []
+compiler = ["dep:deka_syntax", "dep:bumpalo"]
+host = ["dep:tokio"]
+ui = ["dep:deka_native_ui", "dep:deka_native_ir"]
+gpu = ["ui", "deka_native_ui/runtime-shaders"]
+v8-control = ["dep:deno_core"]
+
+[dependencies]
+deka_native_ui = { path = "../deka_native_ui", optional = true }
+deka_native_ir = { path = "../deka_native_ir", optional = true }
+deno_core = { version = "=0.412.0", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+deka_syntax = { path = "../deka_syntax", optional = true }
+bumpalo = { version = "3.16", optional = true }
+tokio = { version = "1", features = ["rt", "time", "macros", "sync"], optional = true }
+
+[[bin]]
+name = "dvmc"
+path = "src/bin/compiler.rs"
+required-features = ["compiler"]
+
+[[bin]]
+name = "dvm"
+path = "src/bin/runtime.rs"
+required-features = ["host"]
+
+[[bin]]
+name = "dvm-core"
+path = "src/bin/core.rs"
+
+[[bin]]
+name = "dvm-ui"
+path = "src/bin/ui.rs"
+required-features = ["gpu"]
+
+[[bin]]
+name = "dvm-v8-ui"
+path = "src/bin/v8_ui.rs"
+required-features = ["gpu", "v8-control"]

@@ -110,7 +110,7 @@ jobs:
           DSC_VERSION="$(jq -r '.dsc_version' release.json)"
           echo "dsc_version=${DSC_VERSION}" >> "$GITHUB_OUTPUT"
 
-      # Gate (c): a testsuite run against THIS canary's own commit says
+      # Gate (c): the runtime validation against THIS canary's own commit says
       # green. A green result from a different (even newer) canary of the
       # same base version cannot be reused -- validation.json is checked
       # against the same commit as gate (b).
@@ -122,7 +122,7 @@ jobs:
           COMMIT="${{ steps.validate.outputs.commit }}"
 
           if ! curl -fsSL "https://releases.deka.gg/${CANARY_VERSION}/validation.json" -o validation.json; then
-            echo "::error::${CANARY} has not been validated yet (no validation.json on releases.deka.gg). Wait for its dump-conformance job to finish, or re-run it, before promoting."
+            echo "::error::${CANARY} has not been validated yet (no validation.json on releases.deka.gg). Wait for its runtime-validation and publish jobs to finish, or re-run it, before promoting."
             exit 1
           fi
 
@@ -134,7 +134,7 @@ jobs:
 
           GATE="$(jq -r '.gate' validation.json)"
           if [[ "$GATE" != "green" ]]; then
-            echo "::error::${CANARY}'s conformance gate is '${GATE}', not green. Fix and cut a new canary before promoting."
+            echo "::error::${CANARY}'s runtime gate is '${GATE}', not green. Fix and cut a new canary before promoting."
             exit 1
           fi
 
@@ -215,7 +215,7 @@ jobs:
           echo "Promoted ${CANARY} to ${TAG}"
           echo "  release manifest: https://releases.deka.gg/latest.json"
           echo "  compiler manifest: https://wasm.deka.gg/latest/deka-compiler-artifact.json"
-          echo "  downstream notified: website, create-deka-app (npm latest), testsuite-site, draftwriter, headless"
+          echo "  downstream notified: website, create-deka-app (npm latest), draftwriter, headless"
 
   notify:
     name: Notify downstream
@@ -226,7 +226,6 @@ jobs:
       channel: stable
       website: true
       create_deka_app: true
-      testsuite_site: true
       draftwriter: true
       headless: true
     secrets: inherit

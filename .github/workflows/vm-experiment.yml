@@ -1,8 +1,17 @@
-name: VM experiment
+name: Native runtime
 on:
+  workflow_call:
   pull_request:
     paths:
-      - 'experiments/deka-vm/**'
+      - 'crates/deka_syntax/**'
+      - 'crates/deka_native_ir/**'
+      - 'crates/deka_native_ui/**'
+      - 'crates/deka_vm/**'
+      - 'tools/deka-package/**'
+      - 'tests/fixtures/diagnostics/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'run.sh'
       - '.github/workflows/vm-experiment.yml'
 permissions:
   contents: read
@@ -19,19 +28,20 @@ jobs:
           components: rustfmt, clippy
       - uses: mozilla-actions/sccache-action@v0.0.9
       - run: sccache --show-stats
-      - working-directory: experiments/deka-vm
+      - name: Check and test the local frontend and runtime
         run: |
-          cargo fmt --check
-          cargo check --locked --workspace --all-targets --features compiler,host,ui,v8-control
-          cargo clippy --locked --workspace --all-targets --features compiler,host,ui,v8-control -- -D warnings
-          cargo test --locked --release --features compiler,host,ui,v8-control
-          cargo build --locked --release --features compiler,host,ui,v8-control
-          target/release/dvm examples/host.ds --grant-timer
-          target/release/dvmc examples/host.ds target/host.dvm.json
-          cargo build --locked --release --no-default-features --features host --bin dvm
+          cargo fmt -p deka_vm -p deka_native_ir -p deka_native_ui --check
+          cargo check --locked -p deka_vm --all-targets --features compiler,host,ui
+          cargo clippy --locked -p deka_vm --all-targets --features compiler,host,ui --no-deps -- -D warnings
+          ./run.sh
+      - name: Compile source and execute without a compiler
+        run: |
+          cargo build --locked --release -p deka_vm --features compiler,host,ui
+          target/release/dvm crates/deka_vm/examples/host.ds --grant-timer
+          target/release/dvmc crates/deka_vm/examples/host.ds target/host.dvm.json
+          cargo build --locked --release -p deka_vm --no-default-features --features host --bin dvm
           target/release/dvm target/host.dvm.json --grant-timer
-          cargo build --locked --release --no-default-features --bin dvm-core
-
+          cargo build --locked --release -p deka_vm --no-default-features --bin dvm-core
   desktop-build:
     runs-on: macos-15
     env:
@@ -40,22 +50,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - uses: mozilla-actions/sccache-action@v0.0.9
       - run: sccache --show-stats
-      - working-directory: experiments/deka-vm
+      - name: Check desktop and engine dependency boundary
         run: |
-          cargo check --locked --workspace --all-targets --all-features
-          cargo tree --locked --no-default-features --features compiler,gpu -e normal --prefix none > native-dependencies.txt
+          cargo check --locked -p deka_vm --all-targets --all-features
+          cargo tree --locked -p deka_vm --no-default-features --features compiler,gpu -e normal --prefix none > native-dependencies.txt
           if grep -Eq '^(deno_core|deno_v8|serde_v8|v8) ' native-dependencies.txt; then
             echo "VM-only feature set unexpectedly links a V8 dependency"
             exit 1
           fi
       - name: Package and exercise relocated native application
         env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/experiments/deka-vm/target
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
-          cargo fmt --manifest-path experiments/deka-vm/packaging/Cargo.toml --check
-          cargo clippy --locked --manifest-path experiments/deka-vm/packaging/Cargo.toml --workspace --all-targets --all-features -- -D warnings
-          cargo build --locked --release --manifest-path experiments/deka-vm/Cargo.toml --no-default-features --features gpu --bin dvm-ui
-          cargo build --locked --release --manifest-path experiments/deka-vm/packaging/Cargo.toml
-          python3 experiments/deka-vm/packaging/test_bundle.py experiments/deka-vm/target/release/dvm-package experiments/deka-vm/target/release/dvm-ui experiments/deka-vm/examples/packaged-counter/deka.json experiments/deka-vm/target/package-tests
+          cargo fmt --manifest-path tools/deka-package/Cargo.toml --check
+          cargo clippy --locked --manifest-path tools/deka-package/Cargo.toml --workspace --all-targets --all-features --no-deps -- -D warnings
+          cargo build --locked --profile native -p deka_vm --no-default-features --features gpu --bin dvm-ui
+          cargo build --locked --release --manifest-path tools/deka-package/Cargo.toml
+          python3 tools/deka-package/test_bundle.py target/release/dvm-package target/native/dvm-ui crates/deka_vm/examples/packaged-counter/deka.json target/package-tests
