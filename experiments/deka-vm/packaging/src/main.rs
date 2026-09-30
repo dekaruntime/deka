@@ -38,9 +38,12 @@ fn run() -> Result<()> {
         return Err("this packaging proof of concept currently targets macOS .app bundles".into());
     }
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() != 4 || args[2] != "--out" {
+    if !matches!(args.len(), 4 | 6)
+        || args[2] != "--out"
+        || (args.len() == 6 && args[4] != "--bytecode")
+    {
         return Err(
-            "usage: dvm-package path/deka.json path/to/dvm-ui --out output-directory".into(),
+            "usage: dvm-package path/deka.json path/to/runtime --out output-directory [--bytecode app.dvm.json]".into(),
         );
     }
     let manifest = fs::canonicalize(&args[0])?;
@@ -57,12 +60,18 @@ fn run() -> Result<()> {
             return Err(format!("invalid {label}").into());
         }
     }
-    let source = fs::read_to_string(project_dir.join(&project.desktop.entry))?;
-    let program = deka_vm_experiment::compiler::compile_entry(
-        &source,
-        &deka_vm_experiment::Hosts::default(),
-        &project.desktop.entry_function,
-    )?;
+    let program = if args.len() == 6 {
+        let program: deka_vm_experiment::Program = serde_json::from_slice(&fs::read(&args[5])?)?;
+        program.validate()?;
+        program
+    } else {
+        let source = fs::read_to_string(project_dir.join(&project.desktop.entry))?;
+        deka_vm_experiment::compiler::compile_entry(
+            &source,
+            &deka_vm_experiment::Hosts::default(),
+            &project.desktop.entry_function,
+        )?
+    };
     let runtime = fs::canonicalize(&args[1])?;
     let out = PathBuf::from(&args[3]);
     fs::create_dir_all(&out)?;

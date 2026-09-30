@@ -23,7 +23,12 @@ def check(packager, runtime, manifest, output):
         config_path = project / "deka.json"
         config_path.write_text(json.dumps(config))
         subprocess.run([packager, config_path, runtime, "--out", root / "stage"], check=True)
-        built = root / "stage/bundle/macos/Relocation Test.app"
+        # A separately compiled payload must work even without source files.
+        precompiled = root / "compiled.dvm.json"
+        shutil.copyfile(root / "stage/app.dvm.json", precompiled)
+        (project / "main.dsx").unlink()
+        subprocess.run([packager, config_path, runtime, "--out", root / "precompiled", "--bytecode", precompiled], check=True)
+        built = root / "precompiled/bundle/macos/Relocation Test.app"
         relocated = root / "elsewhere/Relocation Test.app"
         shutil.copytree(built, relocated)
         # Remove both build output and input project before executing the copied app.

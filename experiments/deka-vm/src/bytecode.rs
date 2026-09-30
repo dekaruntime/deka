@@ -29,6 +29,8 @@ pub enum Op {
     Await,
     Return,
     List(usize),
+    ListAppend,
+    ListHas,
     Index,
     Record(Vec<String>),
     Field(String),

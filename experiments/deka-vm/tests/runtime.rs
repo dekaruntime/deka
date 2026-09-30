@@ -266,3 +266,21 @@ async fn module_state_is_shared_inside_one_vm_and_isolated_between_instances() {
     assert_eq!(second.run().await.unwrap(), HostValue::Number(2.));
     assert_eq!(first.stats().live, 0);
 }
+
+#[tokio::test]
+async fn checked_list_lookup_rejects_invalid_indices() {
+    for (index, expected) in [(0., 11.), (1., 22.), (-1., 99.), (2., 99.), (0.5, 99.)] {
+        let index = if index < 0. {
+            format!("0 - {}", -index)
+        } else {
+            index.to_string()
+        };
+        let source = format!(
+            "fn main() number {{ const values = [11,22]; const index = {index}; if (values.has(index)) {{ return values[index]; }} return 99; }}"
+        );
+        assert_eq!(
+            vm(&source, Hosts::default()).run().await.unwrap(),
+            HostValue::Number(expected)
+        );
+    }
+}

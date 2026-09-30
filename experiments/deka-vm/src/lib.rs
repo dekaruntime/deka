@@ -15,6 +15,8 @@ pub use machine::Vm;
 pub type Result<T> = std::result::Result<T, String>;
 
 #[cfg(feature = "ui")]
+pub mod component;
+#[cfg(feature = "ui")]
 pub mod ui;
 #[cfg(feature = "v8-control")]
 #[cfg(feature = "ui")]

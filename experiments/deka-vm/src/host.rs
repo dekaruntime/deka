@@ -11,6 +11,7 @@ pub enum HostValue {
     Number(f64),
     Bool(bool),
     String(String),
+    Strings(Vec<String>),
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum HostType {
@@ -18,6 +19,7 @@ pub enum HostType {
     Number,
     Bool,
     String,
+    Strings,
 }
 impl HostType {
     pub fn accepts(self, value: &HostValue) -> bool {
@@ -27,6 +29,7 @@ impl HostType {
                 | (Self::Number, HostValue::Number(_))
                 | (Self::Bool, HostValue::Bool(_))
                 | (Self::String, HostValue::String(_))
+                | (Self::Strings, HostValue::Strings(_))
         )
     }
     pub fn source(self) -> &'static str {
@@ -35,6 +38,7 @@ impl HostType {
             Self::Number => "number",
             Self::Bool => "bool",
             Self::String => "string",
+            Self::Strings => "Array<string>",
         }
     }
 }
@@ -139,6 +143,7 @@ impl Hosts {
                     HostType::Unit => "",
                     HostType::Number => "return 0;",
                     HostType::Bool => "return false;",
+                    HostType::Strings => "return [];",
                     HostType::String => "return \"\";",
                 };
                 format!(

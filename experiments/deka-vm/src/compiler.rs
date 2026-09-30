@@ -308,20 +308,23 @@ impl Lower {
     fn expr(&mut self, e: &Expr<'_>, c: &mut Context) -> Result<()> {
         match e {
             Expr::JsxElement { element, .. } => {
-                if !matches!(element.tag, "view" | "div" | "p" | "span" | "button") {
+                if !matches!(
+                    element.tag,
+                    "view" | "div" | "p" | "span" | "button" | "input"
+                ) {
                     return Err(format!("unsupported VM UI primitive: {}", element.tag));
                 }
                 c.emit(Op::Const(Literal::String(element.tag.into())));
                 let mut names = vec!["tag".into()];
                 for attr in element.attributes {
-                    if !matches!(attr.name, "className" | "onClick") {
+                    if !matches!(
+                        attr.name,
+                        "className" | "onClick" | "value" | "placeholder" | "onInput" | "onKeyDown"
+                    ) {
                         return Err(format!("unsupported VM UI attribute: {}", attr.name));
                     }
                     let value = attr.value.as_ref().ok_or("UI attribute requires a value")?;
-                    if attr.name == "className" && !matches!(value, Expr::String { .. }) {
-                        return Err("VM UI className must currently be a string literal".into());
-                    }
-                    if attr.name == "onClick"
+                    if matches!(attr.name, "onClick" | "onInput" | "onKeyDown")
                         && !matches!(
                             value,
                             Expr::Function {
@@ -335,7 +338,17 @@ impl Lower {
                                 .into(),
                         );
                     }
-                    self.expr(value, c)?;
+                    if matches!(attr.name, "className" | "value" | "placeholder")
+                        && !matches!(value, Expr::String { .. })
+                    {
+                        let body = [Stmt::Return {
+                            value: Some(value.clone()),
+                            span: value.span(),
+                        }];
+                        self.function("<ui attribute>", &[], &body, false, c)?;
+                    } else {
+                        self.expr(value, c)?;
+                    }
                     names.push(attr.name.into());
                 }
                 let mut children = 0;
@@ -430,6 +443,79 @@ impl Lower {
             } => {
                 if !type_args.is_empty() {
                     return Err("explicit type arguments unsupported".into());
+                }
+                if let Expr::FieldAccess {
+                    object,
+                    field: "has",
+                    ..
+                } = callee
+                {
+                    let [index] = *args else {
+                        return Err("has requires one index".into());
+                    };
+                    self.expr(object, c)?;
+                    self.expr(index, c)?;
+                    c.emit(Op::ListHas);
+                    return Ok(());
+                }
+                if let Expr::FieldAccess {
+                    object,
+                    field: "map",
+                    ..
+                } = callee
+                {
+                    let [mapper] = *args else {
+                        return Err("map requires one callback".into());
+                    };
+                    let Expr::Function {
+                        params,
+                        is_async: false,
+                        ..
+                    } = mapper
+                    else {
+                        return Err("map requires a synchronous function literal".into());
+                    };
+                    if !(1..=2).contains(&params.len()) {
+                        return Err("map callback takes value and optional index".into());
+                    }
+                    // Evaluate receiver/callback once; each Call allocates fresh parameter cells.
+                    let array = c.bind(&format!("<map array {}>", c.function.locals));
+                    let callback = c.bind(&format!("<map callback {}>", c.function.locals));
+                    let result = c.bind(&format!("<map result {}>", c.function.locals));
+                    let index = c.bind(&format!("<map index {}>", c.function.locals));
+                    self.expr(object, c)?;
+                    c.emit(Op::Store(array));
+                    self.expr(mapper, c)?;
+                    c.emit(Op::Store(callback));
+                    c.emit(Op::List(0));
+                    c.emit(Op::Store(result));
+                    c.emit(Op::Const(Literal::Number(0.)));
+                    c.emit(Op::Store(index));
+                    let start = c.function.code.len();
+                    c.emit(Op::Load(index));
+                    c.emit(Op::Load(array));
+                    c.emit(Op::Field("length".into()));
+                    c.emit(Op::Less);
+                    let end = c.emit(Op::JumpIfFalse(0));
+                    c.emit(Op::Load(result));
+                    c.emit(Op::Load(callback));
+                    c.emit(Op::Load(array));
+                    c.emit(Op::Load(index));
+                    c.emit(Op::Index);
+                    if params.len() == 2 {
+                        c.emit(Op::Load(index));
+                    }
+                    c.emit(Op::Call(params.len()));
+                    c.emit(Op::ListAppend);
+                    c.emit(Op::Store(result));
+                    c.emit(Op::Load(index));
+                    c.emit(Op::Const(Literal::Number(1.)));
+                    c.emit(Op::Add);
+                    c.emit(Op::Store(index));
+                    c.emit(Op::Jump(start));
+                    c.patch(end);
+                    c.emit(Op::Load(result));
+                    return Ok(());
                 }
                 let host = if let Expr::Identifier { name, .. } = callee {
                     if !c.names.contains_key(*name) {

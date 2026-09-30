@@ -133,13 +133,22 @@ impl Vm {
             stack: Stack::new(),
         })
     }
-    fn to_host(&self, h: Handle) -> Result<HostValue> {
+    pub(crate) fn to_host(&self, h: Handle) -> Result<HostValue> {
         Ok(match self.heap.get(h)? {
             Value::Unit => HostValue::Unit,
             Value::Number(n) => HostValue::Number(*n),
             Value::Bool(b) => HostValue::Bool(*b),
             Value::String(s) => HostValue::String(s.clone()),
-            _ => return Err("host wire supports scalar values only in this experiment".into()),
+            Value::List(items) => HostValue::Strings(
+                items
+                    .iter()
+                    .map(|h| match self.heap.get(*h)? {
+                        Value::String(s) => Ok(s.clone()),
+                        _ => Err("host list values must contain strings".into()),
+                    })
+                    .collect::<Result<_>>()?,
+            ),
+            _ => return Err("unsupported host wire value".into()),
         })
     }
     fn host_result(&mut self, value: Result<HostValue>, expected: HostType) -> Result<Handle> {
@@ -147,12 +156,22 @@ impl Vm {
         if !expected.accepts(&value) {
             return Err("host returned the wrong result type".into());
         }
-        Ok(self.heap.alloc(match value {
+        Ok(self.alloc_host_value(value))
+    }
+    pub(crate) fn alloc_host_value(&mut self, value: HostValue) -> Handle {
+        let value = match value {
             HostValue::Unit => Value::Unit,
             HostValue::Number(n) => Value::Number(n),
             HostValue::Bool(b) => Value::Bool(b),
             HostValue::String(s) => Value::String(s),
-        }))
+            HostValue::Strings(items) => Value::List(
+                items
+                    .into_iter()
+                    .map(|s| self.heap.alloc(Value::String(s)))
+                    .collect(),
+            ),
+        };
+        self.heap.alloc(value)
     }
     pub async fn run(&mut self) -> Result<HostValue> {
         std::future::poll_fn(|cx| self.poll(cx)).await
@@ -262,14 +281,24 @@ impl Vm {
         self.pins.push(handle);
     }
     #[cfg(feature = "ui")]
+    pub(crate) fn set_pins(&mut self, pins: Vec<Handle>) {
+        self.pins = pins;
+    }
+    #[cfg(feature = "ui")]
     pub(crate) fn invoke_sync(&mut self, closure: Handle) -> Result<Handle> {
+        self.invoke_args(closure, vec![])
+    }
+    #[cfg(feature = "ui")]
+    pub(crate) fn invoke_args(&mut self, closure: Handle, args: Vec<Handle>) -> Result<Handle> {
+        // Each GUI event has its own bounded budget; cumulative instructions remain measurable.
+        self.instruction_limit = self.instructions.saturating_add(10_000_000);
         let Value::Closure { function, captures } = self.heap.get(closure)?.clone() else {
             return Err("UI handler is not a closure".into());
         };
         if self.program.functions[function].asynchronous {
             return Err("async UI callbacks are not supported yet".into());
         }
-        let frame = self.frame(function, captures, vec![])?;
+        let frame = self.frame(function, captures, args)?;
         self.root = Some(self.spawn(Work::Code(vec![frame])));
         self.finish_sync()
     }
@@ -408,6 +437,30 @@ impl Vm {
                 let items = arguments(frame, count)?;
                 frame.stack.push(self.heap.alloc(Value::List(items)));
             }
+            Op::ListHas => {
+                let index = pop(frame)?;
+                let list = pop(frame)?;
+                let Value::Number(index) = self.heap.get(index)? else {
+                    return Err("index must be number".into());
+                };
+                let Value::List(items) = self.heap.get(list)? else {
+                    return Err("has requires list".into());
+                };
+                let valid = index.is_finite()
+                    && *index >= 0.
+                    && index.fract() == 0.
+                    && *index < items.len() as f64;
+                frame.stack.push(self.heap.alloc(Value::Bool(valid)));
+            }
+            Op::ListAppend => {
+                let item = pop(frame)?;
+                let list = pop(frame)?;
+                let Value::List(mut items) = self.heap.get(list)?.clone() else {
+                    return Err("append requires list".into());
+                };
+                items.push(item);
+                frame.stack.push(self.heap.alloc(Value::List(items)));
+            }
             Op::Record(names) => {
                 let items = arguments(frame, names.len())?;
                 frame.stack.push(
@@ -417,10 +470,14 @@ impl Vm {
             }
             Op::Field(name) => {
                 let h = pop(frame)?;
-                let Value::Record(fields) = self.heap.get(h)? else {
-                    return Err("field access needs a record".into());
+                let value = match self.heap.get(h)? {
+                    Value::List(items) if name == "length" => {
+                        self.heap.alloc(Value::Number(items.len() as f64))
+                    }
+                    Value::Record(fields) => *fields.get(&name).ok_or("missing field")?,
+                    _ => return Err("unsupported field access".into()),
                 };
-                frame.stack.push(*fields.get(&name).ok_or("missing field")?);
+                frame.stack.push(value);
             }
             Op::Index => {
                 let index = pop(frame)?;
