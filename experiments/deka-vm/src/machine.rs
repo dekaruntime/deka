@@ -33,7 +33,8 @@ enum Step {
 pub struct Vm {
     program: Rc<Program>,
     hosts: Hosts,
-    heap: Heap,
+    pub(crate) heap: Heap,
+    pins: Vec<Handle>,
     tasks: BTreeMap<u64, Task>,
     next_task: u64,
     root: Option<Handle>,
@@ -50,6 +51,7 @@ impl Vm {
             program: Rc::new(program),
             hosts,
             heap: Heap::default(),
+            pins: vec![],
             tasks: BTreeMap::new(),
             next_task: 0,
             root: None,
@@ -74,11 +76,16 @@ impl Vm {
     }
     pub fn cancel(&mut self) -> Result<()> {
         self.tasks.clear();
+        self.pins.clear();
         self.root = None;
         self.heap.collect([])
     }
     pub fn collect(&mut self) -> Result<()> {
-        let mut roots: Vec<_> = self.root.into_iter().collect();
+        let mut roots: Vec<_> = self
+            .root
+            .into_iter()
+            .chain(self.pins.iter().copied())
+            .collect();
         for task in self.tasks.values() {
             roots.push(task.promise);
             if let Work::Code(frames) = &task.work {
@@ -152,13 +159,16 @@ impl Vm {
     }
     /// Poll all runnable tasks in bounded instruction slices. Host futures use the caller's waker.
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<HostValue>> {
-        let outcome = self.poll_inner(cx);
-        if matches!(outcome, Poll::Ready(Err(_))) {
-            let _ = self.cancel();
+        match self.poll_inner(cx) {
+            Poll::Ready(result) => {
+                let result = result.and_then(|h| self.to_host(h));
+                let _ = self.cancel();
+                Poll::Ready(result)
+            }
+            Poll::Pending => Poll::Pending,
         }
-        outcome
     }
-    fn poll_inner(&mut self, cx: &mut Context<'_>) -> Poll<Result<HostValue>> {
+    fn poll_inner(&mut self, cx: &mut Context<'_>) -> Poll<Result<Handle>> {
         let Some(root) = self.root else {
             return Poll::Ready(Err("VM cancelled".into()));
         };
@@ -211,12 +221,7 @@ impl Vm {
             return Poll::Ready(Err(e));
         }
         match self.heap.get(root) {
-            Ok(Value::Promise(Some(Ok(h)))) => {
-                let value = self.to_host(*h);
-                // Main owns this experiment's task scope: finish cancels unawaited work.
-                let _ = self.cancel();
-                Poll::Ready(value)
-            }
+            Ok(Value::Promise(Some(Ok(h)))) => Poll::Ready(Ok(*h)),
             Ok(Value::Promise(Some(Err(e)))) => Poll::Ready(Err(e.clone())),
             Ok(Value::Promise(None)) => {
                 if progressed {
@@ -226,6 +231,47 @@ impl Vm {
             }
             _ => Poll::Ready(Err("invalid entry promise".into())),
         }
+    }
+    #[cfg(feature = "ui")]
+    pub(crate) fn finish_sync(&mut self) -> Result<Handle> {
+        let mut cx = Context::from_waker(std::task::Waker::noop());
+        loop {
+            match self.poll_inner(&mut cx) {
+                Poll::Ready(result) => {
+                    self.tasks.clear();
+                    // Leave the result promise rooted until the caller pins or reads it.
+                    return result;
+                }
+                Poll::Pending => {
+                    if self
+                        .tasks
+                        .values()
+                        .any(|t| matches!(t.work, Work::Host { .. }))
+                    {
+                        self.tasks.clear();
+                        self.root = None;
+                        self.collect()?;
+                        return Err("this UI adapter currently supports synchronous handlers and bindings only".into());
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(feature = "ui")]
+    pub(crate) fn pin(&mut self, handle: Handle) {
+        self.pins.push(handle);
+    }
+    #[cfg(feature = "ui")]
+    pub(crate) fn invoke_sync(&mut self, closure: Handle) -> Result<Handle> {
+        let Value::Closure { function, captures } = self.heap.get(closure)?.clone() else {
+            return Err("UI handler is not a closure".into());
+        };
+        if self.program.functions[function].asynchronous {
+            return Err("async UI callbacks are not supported yet".into());
+        }
+        let frame = self.frame(function, captures, vec![])?;
+        self.root = Some(self.spawn(Work::Code(vec![frame])));
+        self.finish_sync()
     }
     fn step(&mut self, frames: &mut Vec<Frame>) -> Result<Step> {
         let frame = frames.last_mut().ok_or("empty call stack")?;

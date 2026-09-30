@@ -22,12 +22,31 @@ jobs:
       - working-directory: experiments/deka-vm
         run: |
           cargo fmt --check
-          cargo check --locked --workspace --all-targets --all-features
-          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-          cargo test --locked --release --all-features
-          cargo build --locked --release --all-features
+          cargo check --locked --workspace --all-targets --features compiler,host,ui,v8-control
+          cargo clippy --locked --workspace --all-targets --features compiler,host,ui,v8-control -- -D warnings
+          cargo test --locked --release --features compiler,host,ui,v8-control
+          cargo build --locked --release --features compiler,host,ui,v8-control
           target/release/dvm examples/host.ds --grant-timer
           target/release/dvmc examples/host.ds target/host.dvm.json
           cargo build --locked --release --no-default-features --features host --bin dvm
           target/release/dvm target/host.dvm.json --grant-timer
           cargo build --locked --release --no-default-features --bin dvm-core
+
+  desktop-build:
+    runs-on: macos-15
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: sccache --show-stats
+      - working-directory: experiments/deka-vm
+        run: |
+          cargo check --locked --workspace --all-targets --all-features
+          cargo tree --locked --no-default-features --features compiler,gpu -e normal --prefix none > native-dependencies.txt
+          if grep -Eq '^(deno_core|deno_v8|serde_v8|v8) ' native-dependencies.txt; then
+            echo "VM-only feature set unexpectedly links a V8 dependency"
+            exit 1
+          fi

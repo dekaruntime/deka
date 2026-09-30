@@ -12,8 +12,14 @@ license = "MIT"
 default = []
 compiler = ["dep:deka_syntax", "dep:bumpalo"]
 host = ["dep:tokio"]
+ui = ["dep:deka_native_ui", "dep:deka_native_ir"]
+gpu = ["ui", "deka_native_ui/runtime-shaders"]
+v8-control = ["dep:deno_core"]
 
 [dependencies]
+deka_native_ui = { git = "https://github.com/dekaruntime/deka", rev = "fd8e705d9622e19bf19fd78ad963971c15925c2d", optional = true }
+deka_native_ir = { git = "https://github.com/dekaruntime/dsc", rev = "ff1d486813088df977aa5c3fe5400995ec67a710", optional = true }
+deno_core = { version = "=0.412.0", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 deka_syntax = { git = "https://github.com/dekaruntime/dsc", rev = "ff1d486813088df977aa5c3fe5400995ec67a710", optional = true }
@@ -40,3 +46,13 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[[bin]]
+name = "dvm-ui"
+path = "src/bin/ui.rs"
+required-features = ["gpu"]
+
+[[bin]]
+name = "dvm-v8-ui"
+path = "src/bin/v8_ui.rs"
+required-features = ["gpu", "v8-control"]

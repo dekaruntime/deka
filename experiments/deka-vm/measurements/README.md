@@ -1,5 +1,9 @@
 # Initial measurements — September 30, 2026
 
+These initial figures cover the headless VM. The subsequent
+[native window comparison](NATIVE.md) includes the renderer and a matched V8
+control, measured separately with three visible-window samples per build.
+
 Intel iMac, macOS 26.7, Rust 1.96.0. Release profile in this experiment:
 `opt-level=s`, LTO, one codegen unit, panic abort, stripped symbols. These are
 native Mach-O executable bytes, not gzip/download sizes. System libraries are
@@ -41,7 +45,7 @@ From the repository root (normal repository build environment):
 
 ```sh
 export CARGO_TARGET_DIR="$PWD/.target" TMPDIR="$PWD/.tmp"
-cargo build --locked --release --manifest-path experiments/deka-vm/Cargo.toml --all-features
+cargo build --locked --release --manifest-path experiments/deka-vm/Cargo.toml --features compiler,host
 .target/release/dvmc experiments/deka-vm/examples/allocation.ds .tmp/allocation.dvm.json
 /usr/bin/time -l .target/release/dvm experiments/deka-vm/examples/allocation.ds
 # Record/copy this source-running binary before selecting another feature set.
@@ -51,6 +55,6 @@ cargo build --locked --release --manifest-path experiments/deka-vm/Cargo.toml --
 /usr/bin/time -l .target/release/dvm-core .tmp/allocation.dvm.json
 ```
 
-Restore `--all-features` to run `.ds` files directly again. To sample idle RSS,
+Restore `--features compiler,host` to run `.ds` files directly again. To sample idle RSS,
 compile `examples/idle.ds` similarly, run its bytecode with `--grant-timer`, and
 sample that specific process while it waits. No shared processes need stopping.

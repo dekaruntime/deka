@@ -10,7 +10,7 @@ runtime or change the main language's semantics.
 From this directory, with the repository's usual `CARGO_TARGET_DIR`:
 
 ```sh
-cargo build --locked --release --all-features
+cargo build --locked --release --features compiler,host
 ../../.target/release/dvm examples/host.ds --grant-timer
 ```
 
@@ -110,7 +110,7 @@ closures, explicit scalar parameters, imported host calls, async functions and
 assignment, selected arithmetic/comparison, blocks, `if`, and C-style `for`.
 Exactly one zero-argument `main` entry is invoked after module initialization.
 
-Unsupported source forms fail compilation. This includes JSX/rendering, arbitrary
+Unsupported source forms fail compilation. This includes arbitrary
 module graphs, generics, enums/match, exceptions/try/catch, collection methods,
 struct methods, default/tuple parameters, most operators and closures inside
 loops. Forward references not already bound during lowering are rejected, even
@@ -122,14 +122,14 @@ operands; execution checks stack underflow, types, calls and handles. There is
 an instruction limit and call-depth limit, but no complete memory/resource quota
 or hostile-bytecode verifier. Only run trusted source/artifacts.
 
-There is no browser or UI integration in this experiment and no claim of broad
-language conformance or V8 feature parity. The next useful gate is expanding
-host/resource contracts and semantic coverage before wiring this VM into UI.
+There is no browser integration or claim of broad language conformance or V8
+feature parity. An optional native UI adapter now connects a restricted DSX
+component to the existing renderer; see [NATIVE.md](NATIVE.md).
 
 ## Verification
 
 ```sh
-cargo test --locked --release --all-features
+cargo test --locked --release --features compiler,host,ui,v8-control
 cargo check --locked --workspace --all-targets --all-features
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 ```

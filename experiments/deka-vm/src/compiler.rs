@@ -4,6 +4,10 @@ use deka_syntax::{Diagnostic, Severity, ast::*};
 use std::collections::{BTreeMap, HashMap};
 
 pub fn compile(source: &str, hosts: &Hosts) -> Result<Program> {
+    compile_entry(source, hosts, "main")
+}
+/// Compile a chosen component export with the same parser/checker as ordinary source.
+pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Program> {
     let arena = bumpalo::Bump::new();
     let declarations = hosts.declarations();
     let host_parse = deka_syntax::parse(&declarations, &arena);
@@ -43,27 +47,18 @@ pub fn compile(source: &str, hosts: &Hosts) -> Result<Program> {
     }
     let main = entry
         .names
-        .get("main")
+        .get(entry_name)
         .copied()
-        .ok_or("VM source requires fn main()")?;
+        .ok_or_else(|| format!("VM source requires fn {entry_name}()"))?;
     entry.emit(Op::Load(main));
     entry.emit(Op::Call(0));
-    let is_async = ast.statements.iter().any(|s| {
-        matches!(
-            s,
-            Stmt::Function {
-                name: "main",
-                is_async: true,
-                ..
-            } | Stmt::Export {
-                decl: ExportDecl::Function {
-                    name: "main",
-                    is_async: true,
-                    ..
-                },
-                ..
-            }
-        )
+    let is_async = ast.statements.iter().any(|s| match s {
+        Stmt::Function { name, is_async, .. }
+        | Stmt::Export {
+            decl: ExportDecl::Function { name, is_async, .. },
+            ..
+        } => *name == entry_name && *is_async,
+        _ => false,
     });
     if is_async {
         entry.emit(Op::Await);
@@ -312,6 +307,62 @@ impl Lower {
     }
     fn expr(&mut self, e: &Expr<'_>, c: &mut Context) -> Result<()> {
         match e {
+            Expr::JsxElement { element, .. } => {
+                if !matches!(element.tag, "view" | "div" | "p" | "span" | "button") {
+                    return Err(format!("unsupported VM UI primitive: {}", element.tag));
+                }
+                c.emit(Op::Const(Literal::String(element.tag.into())));
+                let mut names = vec!["tag".into()];
+                for attr in element.attributes {
+                    if !matches!(attr.name, "className" | "onClick") {
+                        return Err(format!("unsupported VM UI attribute: {}", attr.name));
+                    }
+                    let value = attr.value.as_ref().ok_or("UI attribute requires a value")?;
+                    if attr.name == "className" && !matches!(value, Expr::String { .. }) {
+                        return Err("VM UI className must currently be a string literal".into());
+                    }
+                    if attr.name == "onClick"
+                        && !matches!(
+                            value,
+                            Expr::Function {
+                                is_async: false,
+                                ..
+                            }
+                        )
+                    {
+                        return Err(
+                            "VM UI click handlers must currently be synchronous function literals"
+                                .into(),
+                        );
+                    }
+                    self.expr(value, c)?;
+                    names.push(attr.name.into());
+                }
+                let mut children = 0;
+                for child in element.children {
+                    match child {
+                        Expr::JsxText { value, .. } => {
+                            let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+                            if value.is_empty() {
+                                continue;
+                            }
+                            c.emit(Op::Const(Literal::String(value)));
+                        }
+                        Expr::JsxElement { .. } => self.expr(child, c)?,
+                        _ => {
+                            let body = [Stmt::Return {
+                                value: Some(child.clone()),
+                                span: child.span(),
+                            }];
+                            self.function("<ui binding>", &[], &body, false, c)?;
+                        }
+                    }
+                    children += 1;
+                }
+                c.emit(Op::List(children));
+                names.push("children".into());
+                c.emit(Op::Record(names));
+            }
             Expr::Number { value, .. } => {
                 c.emit(Op::Const(Literal::Number(*value)));
             }
