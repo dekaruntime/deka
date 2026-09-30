@@ -1,0 +1,33 @@
+name: VM experiment
+on:
+  pull_request:
+    paths:
+      - 'experiments/deka-vm/**'
+      - '.github/workflows/vm-experiment.yml'
+permissions:
+  contents: read
+jobs:
+  vm:
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: sccache --show-stats
+      - working-directory: experiments/deka-vm
+        run: |
+          cargo fmt --check
+          cargo check --locked --workspace --all-targets --all-features
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          cargo test --locked --release --all-features
+          cargo build --locked --release --all-features
+          target/release/dvm examples/host.ds --grant-timer
+          target/release/dvmc examples/host.ds target/host.dvm.json
+          cargo build --locked --release --no-default-features --features host --bin dvm
+          target/release/dvm target/host.dvm.json --grant-timer
+          cargo build --locked --release --no-default-features --bin dvm-core
