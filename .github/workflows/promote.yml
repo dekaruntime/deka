@@ -107,6 +107,8 @@ jobs:
             exit 1
           fi
 
+          jq -e '.native_ui.abi == 1 and .native_ui.manifest == "native-ui/manifest.json" and (.native_ui.sha256 | test("^[a-f0-9]{64}$"))' release.json >/dev/null
+
           DSC_VERSION="$(jq -r '.dsc_version' release.json)"
           echo "dsc_version=${DSC_VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -191,7 +193,7 @@ jobs:
           for f in deka-compiler-artifact.json deka-diagnostics-artifact.json deka_compiler.wasm deka_diagnostics.wasm; do
             aws s3 cp "s3://${R2_BUCKET_WASM}/${TAG}/${f}" "s3://${R2_BUCKET_WASM}/latest/${f}" --endpoint-url="${R2_ENDPOINT}"
           done
-          aws s3 sync "s3://${R2_BUCKET_WASM}/${TAG}/conformance/" "s3://${R2_BUCKET_WASM}/latest/conformance/" --endpoint-url="${R2_ENDPOINT}"
+          # The website resolves native-ui from the immutable version in latest.json.
 
       # The stable tag itself is the record of promotion -- created here,
       # never pushed by a human, always at the canary's own commit.

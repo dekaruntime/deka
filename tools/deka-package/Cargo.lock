@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "deka_syntax"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "bumpalo",
  "serde",
@@ -1209,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "deka_vm"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "bumpalo",
  "deka_syntax",

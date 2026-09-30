@@ -83,6 +83,35 @@ jobs:
           echo "sha7=${SHA7}" >> "$GITHUB_OUTPUT"
           echo "commit=${COMMIT}" >> "$GITHUB_OUTPUT"
 
+  build-native-web:
+    name: Build and exercise native browser runtime
+    needs: resolve
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: sccache --show-stats
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: cargo install --locked wasm-bindgen-cli --version 0.2.128
+      - name: Build versioned package
+        run: python3 scripts/build-native-web.py --out dist/native-ui
+      - name: Execute the distributable package
+        run: node scripts/test-native-web-package.mjs dist/native-ui "${{ needs.resolve.outputs.base_version }}" "${{ needs.resolve.outputs.commit }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deka-native-web
+          path: dist/native-ui/*
+          if-no-files-found: error
+          retention-days: 1
+
   fetch-dsc-wasm:
     name: Fetch published dsc WASM
     needs: [resolve]
@@ -390,7 +419,7 @@ jobs:
 
   publish:
     name: Publish to R2
-    needs: [resolve, fetch-dsc-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, smoke, runtime-validation]
+    needs: [resolve, build-native-web, fetch-dsc-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, smoke, runtime-validation]
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -436,7 +465,11 @@ jobs:
             cp "${src}" "${dst}"
           done
 
-          # WASM artifacts
+          # Combined compiler/VM/renderer, copied unchanged on stable promotion.
+          mkdir -p "release/${TAG}/native-ui"
+          cp artifacts/deka-native-web/* "release/${TAG}/native-ui/"
+
+          # Legacy WASM artifacts retained for CLI/downstream compatibility.
           cp artifacts/deka-wasm/deka_compiler.wasm "release/${TAG}/"
           cp artifacts/deka-wasm/deka_diagnostics.wasm "release/${TAG}/"
 
@@ -591,6 +624,11 @@ jobs:
               }
             }' > "release/${TAG}/release.json"
 
+          jq --arg sha "$(sha256 "release/${TAG}/native-ui/manifest.json")" \
+            --argjson bytes "$(stat -c%s "release/${TAG}/native-ui/manifest.json")" \
+            '.native_ui = {manifest: "native-ui/manifest.json", sha256: $sha, bytes: $bytes, abi: 1}' \
+            "release/${TAG}/release.json" > "release/${TAG}/release.with-native.json"
+          mv "release/${TAG}/release.with-native.json" "release/${TAG}/release.json"
           cp "release/${TAG}/release.json" "release/${TAG}/canary.json"
 
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
@@ -682,7 +720,7 @@ jobs:
             --arg commit "${{ needs.resolve.outputs.commit }}" \
             --arg tag "${{ needs.resolve.outputs.tag }}" \
             --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            '{schema: 1, kind: "native-runtime", commit: $commit, tag: $tag, gate: "green", checks: ["frontend-vm-renderer", "packaged-native-app"], run_url: $run_url}' > validation.json
+            '{schema: 1, kind: "native-runtime", commit: $commit, tag: $tag, gate: "green", checks: ["frontend-vm-renderer", "packaged-native-app", "browser-wasm-package"], run_url: $run_url}' > validation.json
           aws s3 cp validation.json "s3://${R2_BUCKET_RELEASES}/${{ needs.resolve.outputs.version }}/validation.json" --endpoint-url="${R2_ENDPOINT}"
 
   # Downstream consumers are notified from a SEPARATE JOB that needs

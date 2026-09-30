@@ -1469,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1635,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "compile"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "anyhow",
  "compiler",
@@ -1649,7 +1649,7 @@ dependencies = [
 
 [[package]]
 name = "compiler"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "dcore",
  "stdio",
@@ -2298,7 +2298,7 @@ checksum = "5c297a1c74b71ae29df00c3e22dd9534821d60eb9af5a0192823fa2acea70c2a"
 
 [[package]]
 name = "dcore"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "deka-cli-core",
 ]
@@ -2321,7 +2321,7 @@ checksum = "ac6b926516df9c60bfa16e107b21086399f8285a44ca9711344b9e553c5146e2"
 
 [[package]]
 name = "deka-build"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "compiler",
  "deka-cli-core",
@@ -2337,7 +2337,7 @@ dependencies = [
 
 [[package]]
 name = "deka-cache"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "compiler",
  "deka-cli-core",
@@ -2358,7 +2358,7 @@ checksum = "959a3a6061fd69200fa3e0653f51dd985a12948e4a55c83c36ba9756b61cb208"
 
 [[package]]
 name = "deka-db"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "deka-cli-core",
  "postgres",
@@ -2370,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "deka-deploy"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "deka-cli-core",
  "serde",
@@ -2393,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "deka-registry"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "anyhow",
  "deka-cli-core",
@@ -2408,7 +2408,7 @@ dependencies = [
 
 [[package]]
 name = "deka-task"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "deka-cli-core",
  "deno_task_shell",
@@ -2421,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "deka-test"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "deka-cli-core",
  "deka-modules",
@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "deka-wasm-guest"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "deka-wasm-guest-macros",
  "serde",
@@ -2450,7 +2450,7 @@ dependencies = [
 
 [[package]]
 name = "deka-wasm-guest-macros"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2459,7 +2459,7 @@ dependencies = [
 
 [[package]]
 name = "deka_host"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2503,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "deka_http"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2528,14 +2528,14 @@ dependencies = [
 
 [[package]]
 name = "deka_native_ir"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "deka_native_ui"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "deka_native_ir",
  "fontdue",
@@ -2548,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "deka_native_web"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "deka_native_ui",
  "deka_vm",
@@ -2558,7 +2558,7 @@ dependencies = [
 
 [[package]]
 name = "deka_syntax"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "bumpalo",
  "insta",
@@ -2567,7 +2567,7 @@ dependencies = [
 
 [[package]]
 name = "deka_vm"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "bumpalo",
  "deka_native_ir",
@@ -3548,7 +3548,7 @@ dependencies = [
 
 [[package]]
 name = "dev"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "compiler",
  "dcore",
@@ -4015,7 +4015,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
 name = "engine"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "deno_core",
  "pool",
@@ -6146,7 +6146,7 @@ dependencies = [
 
 [[package]]
 name = "introspect"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "dcore",
  "runtime",
@@ -7010,7 +7010,7 @@ dependencies = [
 
 [[package]]
 name = "modules_common"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "deno_core",
  "deno_permissions",
@@ -8137,7 +8137,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "permissions"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "security",
  "serde",
@@ -8429,14 +8429,14 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "platform_server"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "anyhow",
  "deka_host",
@@ -8450,7 +8450,7 @@ dependencies = [
 
 [[package]]
 name = "pm"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -8543,7 +8543,7 @@ dependencies = [
 
 [[package]]
 name = "pool"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "compiler",
  "core_affinity",
@@ -9679,7 +9679,7 @@ dependencies = [
 
 [[package]]
 name = "run"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "engine",
  "runtime_core",
@@ -9690,7 +9690,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "axum",
  "base64 0.21.7",
@@ -9727,7 +9727,7 @@ dependencies = [
 
 [[package]]
 name = "runtime_core"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "dcore",
  "deka-modules",
@@ -10161,7 +10161,7 @@ dependencies = [
 
 [[package]]
 name = "security"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "serde_json",
 ]
@@ -10230,7 +10230,7 @@ checksum = "2ab42ca02749e120097e328d91d415325bdf43b1c72c4c8badf37375fe40a813"
 
 [[package]]
 name = "self_cmd"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "axum",
  "compiler",
@@ -10451,7 +10451,7 @@ dependencies = [
 
 [[package]]
 name = "serve"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -12695,7 +12695,7 @@ dependencies = [
 
 [[package]]
 name = "transport"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "axum",
  "deka_http",
@@ -13280,7 +13280,7 @@ dependencies = [
 
 [[package]]
 name = "wasm_cli"
-version = "0.60.0"
+version = "0.60.1"
 dependencies = [
  "dcore",
  "run",

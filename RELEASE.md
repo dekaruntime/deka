@@ -25,7 +25,7 @@ Run this **before** opening the bump PR (and before tagging):
 
 That updates `[workspace.package]`, any crate that still inlines a version, and `Cargo.lock`. It refuses to go backwards, to reuse a version that already has a `v*` tag, or to land at or below the latest published tag — the failure mode behind `v0.26.1` (tagged on a 0.26.0 tree) and `v0.28.0` (tagged on a 0.27.0 tree).
 
-It does not commit or tag. Open a PR with the bump, merge it, then tag from `main`.
+It does not commit or tag. Open a PR with the bump. Merging to `main` automatically creates a canary; stable tags are created by promotion only.
 
 ## Triggering a release
 
@@ -80,14 +80,14 @@ canary's own commit, and notifies the remaining downstreams (website, npm
 `latest`, draftwriter, headless).
 
 The old workflow (build the three CLI binaries, browser WASM, checksum,
-`manifest.json`/`release.json`, upload) still happens — just once per
-version line, inside the canary's `release.yml` run, not on every promotion:
+`manifest.json`/`release.json`, upload) still happens — once per
+canary, inside the canary's `release.yml` run, not on every promotion:
 
 1. Build the `deka` CLI binary in release mode for:
    - `linux-x64`
    - `darwin-x64`
    - `darwin-arm64`
-2. Build the browser compiler WASM artifacts (`deka_compiler.wasm`, `deka_diagnostics.wasm`).
+2. Build and execute the combined native browser package (`native-ui/`). Fetch the pinned legacy DSC artifacts for compatibility consumers.
 3. Compute SHA-256 checksums and write `release.json`.
 4. Upload CLI binaries and WASM to the `deka-releases` bucket under
    `<VERSION>/` (no `v` prefix — the R2 releases bucket never had one) and to
@@ -188,3 +188,9 @@ The legacy CLI's DSC dependency remains during consolidation. See
 - The workflow renames the built binary from `cli` to `deka` when staging artifacts.
 - Each platform build uses its own sccache bucket to avoid cross-platform cache poisoning.
 - R2 is the single source of truth. The npm packages (`create-deka-app`, `@dekaruntime/deka*`) are copies of these R2 binaries, published by `dekaruntime/create-deka-app` after each release at the same version number; nothing is compiled there.
+
+The active website follows `release.json.native_ui` on promoted stable releases.
+The package's immutable manifest records ABI 1, source commit, base version and
+checksums for its matching WASM, loader, declarations and font license. See
+[PUBLISH.md](PUBLISH.md#native-browser-package-0601) for the producer/consumer
+contract and the remaining compatibility CLI boundary.

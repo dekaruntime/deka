@@ -79,3 +79,13 @@ sync still follows DSC. The 0.60.0 R2 release path was absent when checked durin
 this work. These boundaries must be resolved before claiming a 0.60.0 VM release.
 
 -codex
+
+### Release pipeline follow-up (0.60.1)
+
+The native browser package now builds from this repo in release CI and is
+checksum-addressed by `release.json.native_ui`. Promotion preserves package
+bytes. Website#201 moves the active tour from DSC's bucket to Deka's stable
+release, validates all lessons and browser input before committing/deploying,
+and removes obsolete tour/APS network dependencies. The compatibility CLI
+still ships separately under its existing names; its DSC pin is published stable
+0.53.5. The application CLI/module/testing migration above remains unfinished.

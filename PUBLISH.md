@@ -9,7 +9,7 @@ artifacts land, and how downstream sites pick them up automatically.
 See [rfd#68](https://github.com/dekaruntime/rfd/issues/68) for the full design.
 Every build is a **canary**; a **stable** release is a canary that a human
 promotes, republishing the exact same bytes under the plain version. There is
-exactly one compilation per version line.
+one build per canary; promotion never rebuilds it.
 
 - **canary** (`vX.Y.Z-canary-<sha>`): every merge to `main` gets one,
   automatically. `.github/workflows/tag-canary.yml` tags the merge commit and
@@ -151,33 +151,30 @@ flowchart LR
     cda --> npmDeka[npm: deka + create-deka-app]
 ```
 
-### Website (`dekaruntime/website`) — the tour
+### Website (`dekaruntime/website`) — the native tour
 
-Stable-only: a canary never dispatches this (rfd#68). Triggered by:
-- `workflow_dispatch` on `.github/workflows/sync-deka-compiler.yml`, sent by
-  `promote.yml`'s `notify` job using `DISPATCH_WEBSITE_SYNC_TOKEN`.
-- Independently, an hourly cron (`17 * * * *`) inside that same workflow.
+Stable promotion dispatches `sync-deka-compiler.yml`; its filename is retained
+for compatibility. An hourly schedule is the fallback. The workflow now reads
+`https://releases.deka.gg/latest.json`, requires `channel: stable`, and follows
+its `native_ui` record to `<version>/native-ui/manifest.json`.
 
-What it does: `scripts/sync-deka-wasm-from-r2.ts` fetches
-`https://dsc-wasm.deka.gg/latest/release.json` and the `dsc.wasm` /
-`dsc_diagnostics.wasm` binaries **directly from dsc's own release bucket, not
-from deka's `wasm.deka.gg` re-publish**. It commits them under `public/tour/`
-only if the version or sha256 changed, then dispatches `deploy.yml` (pushed
-with `GITHUB_TOKEN`, which cannot trigger a push-based deploy on its own, so
-the sync workflow explicitly queues one).
+The package contains the matching JS loader, TypeScript declarations, WASM
+compiler/VM/renderer, and font license. Its schema/ABI, source commit, base
+version, sizes and SHA-256 hashes are checked before any files are replaced.
+The loader and WASM always move together. Unsupported ABI changes require an
+explicit website integration update. An older stable release cannot downgrade
+a newer pinned development preview.
 
-Verified against the workflow, correcting an assumption in an earlier version
-of this doc: **a dsc release updates the tour on its own**, via that hourly
-cron, whether or not deka ever releases. A deka release's dispatch just makes
-the sync happen sooner. deka's own `fetch-dsc-wasm` job — which downloads the
-same dsc wasm at the version pinned in `scripts/dsc-version` and republishes
-it to `wasm.deka.gg` for the legacy CLI-facing manifest — is a **separate
-path that does not feed the tour**. The tour can therefore briefly be ahead of
-what `wasm.deka.gg` (and deka's own pin) report, if dsc ships a version deka
-has not picked up yet.
+The website runs all local tour examples and Playwright against the downloaded
+package before committing the artifact set, source pin and build-input manifest.
+It then explicitly dispatches deployment: its GITHUB_TOKEN commit alone does
+not trigger push workflows. Deploy dispatch HTTP failures must fail the job.
+Concurrent main changes cause a push rejection and a fresh hourly retry, never
+an untested merge or force-push.
 
-Silent on a missing token: if `DISPATCH_WEBSITE_SYNC_TOKEN` is unset, the
-dispatch step logs and exits 0; the hourly cron is the safety net.
+DSC releases no longer feed the active tour. Its lessons are authored inside the
+website repo. No external tour/corpus download or APS refresh is needed to ship
+this runtime. The old DSC artifacts remain for legacy CLI consumers only.
 
 ### Headless (`dekaruntime/headless`)
 
@@ -425,3 +422,18 @@ still be granted to `GITHUB_TOKEN`.
 The external corpus and testsuite-site release cascade are retired. The native
 frontend is local; remaining legacy DSC consumers must migrate before that
 repository can be archived. See [VERSIONING.md](VERSIONING.md).
+
+## Native browser package (0.60.1)
+
+`release.yml` builds `deka_native_web` for `wasm32-unknown-unknown`, runs
+wasm-bindgen 0.2.128, and executes the distributable loader/WASM before upload.
+`scripts/build-native-web.py` owns this recipe for CI and website preview builds.
+The package manifest uses the source base version; canary-to-stable promotion
+copies its exact bytes. `release.json.native_ui` authenticates that manifest.
+The current native browser ABI is 1. Change it deliberately with the consumer.
+
+This release still includes the compatibility CLI under the existing installer
+names. It has not been replaced by `dvm`. Its external DSC pin is now published
+stable 0.53.5, tested by the executable smoke gate, so stable promotion does not
+silently waive the existing stable-dependency rule. Full CLI/app-module migration
+remains tracked in #1197. The browser package itself has no DSC dependency.
