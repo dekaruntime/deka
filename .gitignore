@@ -21,3 +21,7 @@ tests/dump/.cache/
 .php_modules/.phpx-cache-*
 /testsuite/
 /tour/
+
+/.target/
+
+/.tmp/

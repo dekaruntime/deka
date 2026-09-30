@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/dcore",
+    "crates/deka_native_ui",
+    "crates/deka-native",
     "crates/cli",
     "crates/runtime",
     "crates/runtime_core",

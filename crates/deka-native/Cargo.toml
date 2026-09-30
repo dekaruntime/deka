@@ -1,0 +1,19 @@
+[package]
+name = "deka-native"
+version.workspace = true
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[features]
+default = []
+gpu = ["deka_native_ui/gpu"]
+runtime-shaders = ["gpu", "deka_native_ui/runtime-shaders"]
+
+[dependencies]
+deka_native_ui = { path = "../deka_native_ui" }
+deka_native_ir = { git = "https://github.com/dekaruntime/dsc", rev = "b6a82fd48fe29497c553783b2cc448e52966dc2b", features = ["program"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+deka_native_compile = { git = "https://github.com/dekaruntime/dsc", rev = "b6a82fd48fe29497c553783b2cc448e52966dc2b" }
