@@ -40,6 +40,7 @@ impl NativePreview {
             if reset || matches!(reload, Reload::Reset) {
                 host.state = host.app.initial_state();
                 self.focus = None;
+                self.renderer.reset_animations();
                 "reset"
             } else {
                 "preserved"
@@ -48,11 +49,37 @@ impl NativePreview {
             self.host = Some(Host::new(ProgramApp::new(program)?));
             "started"
         };
+        // Template paths may be reused after source edits; begin a fresh presentation lifecycle.
+        self.renderer.reset_animations();
         Ok(status.into())
     }
     pub fn frame(&mut self, width: f32, height: f32, scale: f32) -> String {
         if let Some(host) = &self.host {
             self.scene = self.renderer.render(&host.render(), width, height, scale);
+            if let Some(id) = &self.focus {
+                self.scene.focus_ring(id);
+            }
+        }
+        serde_json::to_string(&self.scene).expect("finite scene")
+    }
+    /// Explicit animation clock makes browser frames and CI deterministic.
+    pub fn frame_at(
+        &mut self,
+        width: f32,
+        height: f32,
+        scale: f32,
+        milliseconds: f64,
+        reduced_motion: bool,
+    ) -> String {
+        if let Some(host) = &self.host {
+            self.scene = self.renderer.render_at(
+                &host.render(),
+                width,
+                height,
+                scale,
+                milliseconds,
+                reduced_motion,
+            );
             if let Some(id) = &self.focus {
                 self.scene.focus_ring(id);
             }

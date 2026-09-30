@@ -1,9 +1,17 @@
 use crate::{Application as NativeApplication, Host, scene::Scene};
 use gpui::{prelude::*, *};
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::Rc,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 struct View<A: NativeApplication> {
     host: Host<A>,
+    clock: Instant,
+    reduced_motion: bool,
     focus: FocusHandle,
     focused: Option<String>,
     renderer: Rc<crate::scene::Renderer>,
@@ -13,6 +21,8 @@ struct View<A: NativeApplication> {
 impl<A: NativeApplication> Render for View<A> {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let root = self.host.render();
+        let clock = self.clock;
+        let reduced_motion = self.reduced_motion;
         let renderer = self.renderer.clone();
         let scene_store = self.scene.clone();
         let images = self.images.clone();
@@ -71,12 +81,17 @@ impl<A: NativeApplication> Render for View<A> {
             .child(
                 canvas(
                     move |bounds, window, _| {
-                        let mut scene = renderer.render(
+                        let mut scene = renderer.render_at(
                             &root,
                             bounds.size.width.into(),
                             bounds.size.height.into(),
                             window.scale_factor(),
+                            clock.elapsed().as_secs_f64() * 1000.,
+                            reduced_motion,
                         );
+                        if scene.animating {
+                            window.request_animation_frame();
+                        }
                         if let Some(id) = focused {
                             scene.focus_ring(&id);
                         }
@@ -86,23 +101,13 @@ impl<A: NativeApplication> Render for View<A> {
                     move |bounds, scene, window, _| {
                         window.paint_quad(fill(bounds, rgb(scene.background)));
                         let mut cache = images.borrow_mut();
-                        cache.retain(|id, _| scene.images.iter().any(|image| &image.id == id));
-                        for glyph in &scene.images {
-                            cache.entry(glyph.id.clone()).or_insert_with(|| {
-                                let mut bgra = glyph.rgba.clone();
-                                for pixel in bgra.chunks_exact_mut(4) {
-                                    pixel.swap(0, 2);
-                                }
-                                let rgba = image::RgbaImage::from_raw(
-                                    glyph.width as u32,
-                                    glyph.height as u32,
-                                    bgra,
-                                )
-                                .expect("glyph dimensions");
-                                Arc::new(RenderImage::new(vec![image::Frame::new(rgba)]))
-                            });
-                        }
+                        // Opacity is applied to cached glyph alpha because GPUI's canvas image API
+                        // takes opacity from private element state. Keep only this frame's variants.
+                        let mut used = std::collections::HashSet::new();
                         for paint in &scene.paint {
+                            if paint.opacity <= 0. {
+                                continue;
+                            }
                             let rect = Bounds {
                                 origin: bounds.origin + point(px(paint.rect.x), px(paint.rect.y)),
                                 size: size(px(paint.rect.width), px(paint.rect.height)),
@@ -116,7 +121,28 @@ impl<A: NativeApplication> Render for View<A> {
                             };
                             window.with_content_mask(Some(mask), |window| {
                                 if let Some(id) = &paint.image {
-                                    if let Some(image) = cache.get(id) {
+                                    let alpha = (paint.opacity * 255.).round() as u8;
+                                    let key = format!("{id}@{alpha}");
+                                    used.insert(key.clone());
+                                    if let Some(glyph) = scene.images.iter().find(|g| &g.id == id) {
+                                        let image = cache.entry(key).or_insert_with(|| {
+                                            let mut bgra = glyph.rgba.clone();
+                                            for pixel in bgra.chunks_exact_mut(4) {
+                                                pixel.swap(0, 2);
+                                                pixel[3] = (u16::from(pixel[3]) * u16::from(alpha)
+                                                    / 255)
+                                                    as u8;
+                                            }
+                                            let rgba = image::RgbaImage::from_raw(
+                                                glyph.width as u32,
+                                                glyph.height as u32,
+                                                bgra,
+                                            )
+                                            .expect("glyph dimensions");
+                                            Arc::new(RenderImage::new(vec![image::Frame::new(
+                                                rgba,
+                                            )]))
+                                        });
                                         let _ = window.paint_image(
                                             rect,
                                             Corners::default(),
@@ -127,11 +153,19 @@ impl<A: NativeApplication> Render for View<A> {
                                     }
                                 } else {
                                     window.paint_quad(
-                                        fill(rect, rgb(paint.color)).corner_radii(px(paint.radius)),
+                                        fill(
+                                            rect,
+                                            rgba(
+                                                (paint.color << 8)
+                                                    | (paint.opacity * 255.).round() as u32,
+                                            ),
+                                        )
+                                        .corner_radii(px(paint.radius)),
                                     );
                                 }
                             });
                         }
+                        cache.retain(|id, _| used.contains(id));
                     },
                 )
                 .size_full(),
@@ -150,6 +184,7 @@ pub fn run<A: NativeApplication>(app: A) {
         return;
     }
     let live = app.live();
+    let reduced_motion = args.iter().any(|arg| arg == "--reduced-motion");
     gpui::Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(560.), px(300.)), cx);
         cx.open_window(
@@ -185,6 +220,8 @@ pub fn run<A: NativeApplication>(app: A) {
                     }
                     View {
                         host: Host::new(app),
+                        clock: Instant::now(),
+                        reduced_motion,
                         focus: cx.focus_handle(),
                         focused: None,
                         renderer: std::rc::Rc::new(crate::scene::Renderer::new()),

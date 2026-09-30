@@ -18,16 +18,25 @@ function compare(a, b, path) {
 }
 let count = 0;
 for (const fixture of cases) {
-  const preview = new NativePreview();
-  try {
-    preview.compile(fixture.source, false);
-    for (const scale of [1, 2]) {
-      const expected = native.find(n => n.name === fixture.name && n.scale === scale);
-      assert(expected, `Missing native scene: ${fixture.name}/${scale}`);
-      compare(JSON.parse(preview.frame(fixture.width, fixture.height, scale)), expected.scene, fixture.name);
-      count++;
-    }
-  } finally { preview.free(); }
+  for (const scale of [1, 2]) {
+    const preview = new NativePreview();
+    try {
+      preview.compile(fixture.source, false);
+      let scene;
+      for (const [index, step] of (fixture.steps || [{}]).entries()) {
+        if (step.click) {
+          const r = scene.targets[0].rect;
+          assert(preview.pointer(r.x + 4, r.y + 4));
+        }
+        const expected = native.find(n => n.name === fixture.name && n.scale === scale && n.step === index);
+        assert(expected, `Missing native scene: ${fixture.name}/${scale}/${index}`);
+        scene = JSON.parse(step.time === undefined ? preview.frame(fixture.width, fixture.height, scale)
+          : preview.frame_at(fixture.width, fixture.height, scale, step.time, !!step.reduced));
+        compare(scene, expected.scene, fixture.name);
+        count++;
+      }
+    } finally { preview.free(); }
+  }
 }
 assert.equal(native.length, count);
 console.log(`PASS: ${count} native/WASM scenes agree (layout, clips, paint, glyph pixels and targets).`);

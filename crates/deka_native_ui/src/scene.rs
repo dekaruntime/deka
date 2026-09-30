@@ -38,6 +38,7 @@ pub struct Paint {
     pub color: u32,
     pub radius: f32,
     pub image: Option<String>,
+    pub opacity: f32,
 }
 #[derive(Clone, Serialize)]
 pub struct GlyphImage {
@@ -69,6 +70,7 @@ pub struct Scene {
     pub images: Vec<GlyphImage>,
     pub targets: Vec<Target>,
     pub nodes: Vec<NodeBox>,
+    pub animating: bool,
 }
 impl Scene {
     pub fn hit(&self, x: f32, y: f32) -> Option<&Target> {
@@ -115,6 +117,7 @@ impl Scene {
                     color: 0xffc800,
                     radius: 0.,
                     image: None,
+                    opacity: 1.,
                 });
             }
         }
@@ -122,6 +125,7 @@ impl Scene {
 }
 pub struct Renderer {
     font: Font,
+    animator: std::cell::RefCell<crate::animation::Animator>,
 }
 impl Default for Renderer {
     fn default() -> Self {
@@ -131,12 +135,33 @@ impl Default for Renderer {
 impl Renderer {
     pub fn new() -> Self {
         Self {
+            animator: Default::default(),
             font: Font::from_bytes(
                 include_bytes!("../assets/AtkinsonHyperlegible-Regular.ttf") as &[u8],
                 FontSettings::default(),
             )
             .expect("bundled font"),
         }
+    }
+    pub fn reset_animations(&self) {
+        self.animator.borrow_mut().clear();
+    }
+    pub fn render_at(
+        &self,
+        root: &Node,
+        width: f32,
+        height: f32,
+        scale: f32,
+        milliseconds: f64,
+        reduced_motion: bool,
+    ) -> Scene {
+        let (root, active) = self
+            .animator
+            .borrow_mut()
+            .sample(root, milliseconds, reduced_motion);
+        let mut scene = self.render(&root, width, height, scale);
+        scene.animating = active;
+        scene
     }
     pub fn render(&self, root: &Node, width: f32, height: f32, scale: f32) -> Scene {
         let width = width.clamp(1., 8192.);
@@ -180,6 +205,7 @@ impl Renderer {
             0.,
             0.,
             scale,
+            1.,
             &mut scene,
             &mut images,
         );
@@ -196,13 +222,15 @@ impl Renderer {
         x: f32,
         y: f32,
         scale: f32,
+        opacity: f32,
         scene: &mut Scene,
         images: &mut HashMap<String, GlyphImage>,
     ) {
         let layout = tree.layout(item.layout).expect("computed layout");
+        let opacity = opacity * item.node.style.opacity.clamp(0., 1.);
         let rect = Rect {
-            x: x + layout.location.x,
-            y: y + layout.location.y,
+            x: x + layout.location.x + item.node.style.translate_x,
+            y: y + layout.location.y + item.node.style.translate_y,
             width: layout.size.width,
             height: layout.size.height,
         };
@@ -219,9 +247,11 @@ impl Renderer {
                 color,
                 radius: item.node.style.radius,
                 image: None,
+                opacity,
             });
         }
         if let Some(handler) = item.node.on_click
+            && opacity > 0.
             && rect.intersection(clip).is_some()
         {
             scene.targets.push(Target {
@@ -282,6 +312,7 @@ impl Renderer {
                     color: item.color,
                     radius: 0.,
                     image: Some(id),
+                    opacity,
                 });
             }
         }
@@ -293,6 +324,7 @@ impl Renderer {
                 rect.x,
                 rect.y,
                 scale,
+                opacity,
                 scene,
                 images,
             );

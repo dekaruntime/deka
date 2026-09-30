@@ -2,6 +2,7 @@
 pub use deka_native_ir::{Align, Edges, Justify, Length, Node, Style};
 #[cfg(feature = "gpu")]
 mod gpu;
+pub mod animation;
 mod layout;
 mod text;
 #[cfg(feature = "gpu")]

@@ -4,7 +4,7 @@ The experimental native renderer lays out owned UI nodes. It does not create
 HTML elements. The same Rust layout and text code runs in the desktop host and
 WASM preview. The desktop component host supports normal DekaScript components
 and computed class strings; the tour still uses the restricted single-component
-native compiler with literal classes and numeric state.
+native compiler with literal class alternatives and numeric state.
 
 ## Defaults
 
@@ -83,8 +83,10 @@ styles. Resize the preview, edit alignment/gaps, and click the counter.
 ## Boundaries
 
 This adds box layout, text wrapping and rectangular clipping. It does not add
-scrolling, Grid, absolute positioning, borders, opacity, animations, editable
+scrolling, Grid, absolute positioning, borders, editable
 controls, accessibility bridges, event bubbling, complete pointer gestures or
 incremental Rust tree updates. Existing pointer activation timing is still a
 prototype difference between desktop and browser; this slice verifies shared
 layout/paint/hit regions rather than claiming full input parity.
+
+Presentation transitions are documented in [Native animation](native-animation.md).

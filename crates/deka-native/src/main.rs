@@ -11,12 +11,14 @@ fn main() -> ExitCode {
 }
 #[cfg(feature = "runtime")]
 fn runtime(args: &[String]) -> Result<(), String> {
-    if !(args.len() == 8 || (args.len() == 10 && args[8] == "--exercise"))
+    if !(args.len() == 8
+        || (args.len() == 9 && args[8] == "--reduced-motion")
+        || (args.len() == 10 && args[8] == "--exercise"))
         || args[2] != "--project"
         || args[4] != "--compiler"
         || args[6] != "--component"
     {
-        return Err("usage: deka-native runtime <source.dsx> --project <root> --compiler <dsc> --component <export> [--exercise <clicks>]".into());
+        return Err("usage: deka-native runtime <source.dsx> --project <root> --compiler <dsc> --component <export> [--exercise <clicks> | --reduced-motion]".into());
     }
     let session = deka_native::runtime::Session::open(
         Path::new(&args[3]),
@@ -50,7 +52,7 @@ fn run() -> Result<(), String> {
     }
     if args.as_slice() == ["--help"] || args.as_slice() == ["-h"] {
         println!(
-            "deka-native runtime <source.dsx> --project <root> --compiler <dsc> --component <export> [--exercise <clicks>] (requires runtime + gpu features)\ndeka-native dev <source.dsx> --compiler <dsc-native> [--exercise <clicks>]\ndeka-native build <source.dsx> --compiler <dsc-native> --out <fresh-directory> [--runtime-shaders]"
+            "deka-native runtime <source.dsx> --project <root> --compiler <dsc> --component <export> [--exercise <clicks> | --reduced-motion] (requires runtime + gpu features)\ndeka-native dev <source.dsx> --compiler <dsc-native> [--exercise <clicks> | --reduced-motion]\ndeka-native build <source.dsx> --compiler <dsc-native> --out <fresh-directory> [--runtime-shaders]"
         );
         return Ok(());
     }
@@ -72,7 +74,7 @@ fn run() -> Result<(), String> {
     }
     if args.len() < 4 || args[0] != "dev" || args[2] != "--compiler" {
         return Err(
-            "usage: deka-native dev <source.dsx> --compiler <dsc-native> [--exercise <clicks>]"
+            "usage: deka-native dev <source.dsx> --compiler <dsc-native> [--exercise <clicks> | --reduced-motion]"
                 .into(),
         );
     }
@@ -86,7 +88,7 @@ fn run() -> Result<(), String> {
         println!("{}", deka_native_ui::exercise(app, count));
         return Ok(());
     }
-    if args.len() != 4 {
+    if args.len() != 4 && !(args.len() == 5 && args[4] == "--reduced-motion") {
         return Err("unexpected command arguments".into());
     }
     #[cfg(feature = "gpu")]

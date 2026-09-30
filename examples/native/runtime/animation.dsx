@@ -1,0 +1,11 @@
+export fn App() ReactNode {
+    const [large, setLarge] = useState(false);
+    return (
+        <div className="w-full h-full p-4 gap-4 bg-[#F3EFE3] items-start">
+            <span className="text-xl">React state, Rust motion</span>
+            <button className={large ? "w-64 h-20 bg-[#0C8B43] text-[#ffffff] transition-all duration-600 ease-in-out" : "w-40 h-12 bg-[#663399] text-[#ffffff] transition-all duration-600 ease-in-out"}
+                onClick={fn() { setLarge(!large); }}>Click to resize</button>
+            <span className="w-64">Click midway to reverse. Neighbouring elements follow the animated layout.</span>
+        </div>
+    );
+}

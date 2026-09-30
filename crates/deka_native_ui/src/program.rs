@@ -1,6 +1,6 @@
 //! Portable development interpreter used by the native watcher and browser host.
 use crate::{Application, Reload};
-use deka_native_ir::{FORMAT_VERSION, Node, Number, Program, Template, Text};
+use deka_native_ir::{Condition, FORMAT_VERSION, Node, Number, Program, Template, Text};
 
 pub struct ProgramApp {
     program: Program,
@@ -52,7 +52,18 @@ fn number(expr: &Number, state: &[f64]) -> f64 {
 fn render(template: &Template, state: &[f64]) -> Node {
     Node {
         id: template.id.clone(),
-        style: template.style.clone(),
+        style: template.style_when.as_ref().map_or_else(
+            || template.style.clone(),
+            |s| {
+                if match &s.condition {
+                    Condition::Equal(a, b) => number(a, state) == number(b, state),
+                } {
+                    s.then_style.clone()
+                } else {
+                    s.else_style.clone()
+                }
+            },
+        ),
         on_click: template.on_click,
         text: template.text.as_ref().map(|text| match text {
             Text::Literal(s) => s.clone(),
@@ -84,7 +95,11 @@ pub fn validate(program: &Program) -> Result<(), String> {
         }
     }
     fn check_node(node: &Template, program: &Program) -> bool {
-        node.on_click.is_none_or(|i| i < program.handlers.len())
+        node.style_when.as_ref().is_none_or(|s| match &s.condition {
+            Condition::Equal(a, b) => {
+                check_number(a, program.states.len()) && check_number(b, program.states.len())
+            }
+        }) && node.on_click.is_none_or(|i| i < program.handlers.len())
             && node.text.as_ref().is_none_or(|t| match t {
                 Text::Literal(_) => true,
                 Text::Number(n) => check_number(n, program.states.len()),

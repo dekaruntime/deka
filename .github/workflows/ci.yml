@@ -570,7 +570,7 @@ jobs:
           echo "TMPDIR=$PWD/.tmp" >> "$GITHUB_ENV"
           command -v sccache
       - name: Test real layout, text and clipped input bounds
-        run: cargo test --locked --release -p deka_native_web
+        run: cargo test --locked --release -p deka_native_ui -p deka_native_web
       - name: Build both targets from the same source
         run: |
           cargo run --locked --release -p deka_native_web --example layout-scenes > .tmp/native-scenes.json

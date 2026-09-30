@@ -2476,7 +2476,7 @@ dependencies = [
 [[package]]
 name = "deka_native_compile"
 version = "0.53.7"
-source = "git+https://github.com/dekaruntime/dsc?rev=ecce328406280ab3415ec0b1c28a6f6303dc1357#ecce328406280ab3415ec0b1c28a6f6303dc1357"
+source = "git+https://github.com/dekaruntime/dsc?rev=2588f05281a6d384276ef87c41706d65786096ab#2588f05281a6d384276ef87c41706d65786096ab"
 dependencies = [
  "bumpalo",
  "deka_native_ir",
@@ -2487,7 +2487,7 @@ dependencies = [
 [[package]]
 name = "deka_native_ir"
 version = "0.53.7"
-source = "git+https://github.com/dekaruntime/dsc?rev=ecce328406280ab3415ec0b1c28a6f6303dc1357#ecce328406280ab3415ec0b1c28a6f6303dc1357"
+source = "git+https://github.com/dekaruntime/dsc?rev=2588f05281a6d384276ef87c41706d65786096ab#2588f05281a6d384276ef87c41706d65786096ab"
 dependencies = [
  "serde",
 ]
@@ -2517,7 +2517,7 @@ dependencies = [
 [[package]]
 name = "deka_syntax"
 version = "0.53.7"
-source = "git+https://github.com/dekaruntime/dsc?rev=ecce328406280ab3415ec0b1c28a6f6303dc1357#ecce328406280ab3415ec0b1c28a6f6303dc1357"
+source = "git+https://github.com/dekaruntime/dsc?rev=2588f05281a6d384276ef87c41706d65786096ab#2588f05281a6d384276ef87c41706d65786096ab"
 dependencies = [
  "bumpalo",
  "serde",

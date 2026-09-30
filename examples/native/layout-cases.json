@@ -46,5 +46,41 @@
     "source": "export fn App() ReactNode { return (<div className=\"w-20 h-10 overflow-hidden\"><div className=\"w-40 h-20 shrink-0 bg-[#663399]\"><span>Hello wonderful world</span></div></div>); }",
     "width": 320,
     "height": 200
+  },
+  {
+    "name": "animation",
+    "width": 400,
+    "height": 320,
+    "source": "export fn App() ReactNode {\n    const [large, setLarge] = useState(0);\n    return (\n        <div className=\"w-full h-full p-4 gap-4 bg-[#F3EFE3] items-start\">\n            <span className=\"text-xl\">Make room</span>\n            <button className={large == 1 ? \"w-64 h-20 bg-[#0C8B43] text-[#ffffff] transition-all duration-600 ease-in-out\" : \"w-40 h-12 bg-[#663399] text-[#ffffff] transition-all duration-600 ease-in-out\"}\n                onClick={fn() { setLarge(1 - large); }}>Click to resize</button>\n            <span className=\"w-64\">The next box moves as the button grows. This is animated layout, not a stretched image.</span>\n        </div>\n    );\n}\n",
+    "steps": [
+      {
+        "time": 0
+      },
+      {
+        "time": 0,
+        "click": true
+      },
+      {
+        "time": 150
+      },
+      {
+        "time": 300
+      },
+      {
+        "time": 300,
+        "click": true
+      },
+      {
+        "time": 450
+      },
+      {
+        "time": 900
+      },
+      {
+        "time": 1000,
+        "click": true,
+        "reduced": true
+      }
+    ]
   }
 ]

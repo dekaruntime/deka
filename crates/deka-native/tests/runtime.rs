@@ -233,3 +233,45 @@ fn component_state_updates_layout_and_text_measurement() {
     near(restored.targets[0].rect.x, 16.);
     near(restored.targets[0].rect.y, 16.);
 }
+
+#[test]
+fn react_commits_targets_once_and_rust_animates_between_commits() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/native/runtime");
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path();
+    for name in ["animation.dsx", "deka.json", "deka.lock"] {
+        std::fs::copy(fixture.join(name), project.join(name)).unwrap();
+    }
+    let mut app =
+        Session::open(project, &project.join("animation.dsx"), &compiler(), "App").unwrap();
+    let renderer = Renderer::new();
+    let first = renderer.render_at(app.tree(), 560., 300., 1., 0., false);
+    let id = first.targets[0].id.clone();
+    let handler = first.targets[0].handler;
+    near(first.targets[0].rect.width, 160.);
+    app.click(handler).unwrap();
+    assert_eq!(
+        renderer.render(app.tree(), 560., 300., 1.).targets[0]
+            .rect
+            .width,
+        256.
+    );
+    renderer.render_at(app.tree(), 560., 300., 1., 100., false);
+    // No JS event or pump occurs between these samples.
+    let half = renderer.render_at(app.tree(), 560., 300., 1., 400., false);
+    assert_eq!(half.targets[0].id, id);
+    near(half.targets[0].rect.width, 208.);
+    assert!(half.animating);
+    app.click(handler).unwrap();
+    near(
+        renderer
+            .render_at(app.tree(), 560., 300., 1., 400., false)
+            .targets[0]
+            .rect
+            .width,
+        208.,
+    );
+    let end = renderer.render_at(app.tree(), 560., 300., 1., 1000., false);
+    near(end.targets[0].rect.width, 160.);
+    assert!(!end.animating);
+}
