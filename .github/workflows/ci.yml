@@ -241,6 +241,9 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install native audio build dependency
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+
       - name: Check workspace
         run: cargo check --locked --workspace --all-targets
 
@@ -574,8 +577,12 @@ jobs:
       - name: Build both targets from the same source
         run: |
           cargo run --locked --release -p deka_native_web --example layout-scenes > .tmp/native-scenes.json
+          cargo run --locked --release -p deka_native_web --example world-scenes > .tmp/native-world.json
           cargo build --locked --release --target wasm32-unknown-unknown -p deka_native_web
           cargo install wasm-bindgen-cli --version 0.2.128 --locked
           wasm-bindgen .target/wasm32-unknown-unknown/release/deka_native_web.wasm --target web --omit-default-module-path --out-dir .tmp/native-web
       - name: Compare native scenes with real WASM output
         run: node scripts/test-native-layout.mjs .tmp/native-web .tmp/native-scenes.json
+
+      - name: Compare native world with WASM movement, rooms and pixels
+        run: node scripts/test-native-world.mjs .tmp/native-web/deka_native_web.js .tmp/native-web/deka_native_web_bg.wasm .tmp/native-world.json

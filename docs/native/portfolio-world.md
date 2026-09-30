@@ -26,4 +26,6 @@ This is a renderer/world proof of concept, not a finished game engine or a DekaS
 
 The transport still serializes paint commands and visible texture bytes per frame. It is intentionally simple and suitable for this small example; a production world should retain texture handles and batch sprite draws. Do not infer a production game performance or bundle-size claim from this demo.
 
-Tests cover blocked movement, diagonal speed, frame cadence, focus release, depth ordering, room entry/exit, reduced motion, bounded clocks and PCM/mute behavior. `deka_native_web`'s `world-scenes` example emits native results for the website's `scripts/test-native-world.mjs` to compare against shipped WASM. Playwright exercises the real keyboard, canvas and audio host.
+Tests cover blocked movement, diagonal speed, frame cadence, focus release, depth ordering, room entry/exit, reduced motion, bounded clocks and PCM/mute behavior. `deka_native_web`'s `world-scenes` example emits native results for the shared `scripts/test-native-world.mjs` to compare against shipped WASM. Playwright exercises the real keyboard, canvas and audio host.
+
+The parity check permits one alpha level of variation in font rasterization between native SIMD and WASM. Sprite RGBA remains exact; scene coordinates use a 0.002 logical-unit tolerance.
