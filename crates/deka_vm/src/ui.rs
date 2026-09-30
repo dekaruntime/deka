@@ -1,8 +1,5 @@
 //! Adapter from VM-owned component instances to the existing retained Rust UI tree.
-use crate::{
-    heap::{Handle, Value},
-    *,
-};
+use crate::*;
 use deka_native_ui::{Application, Node};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -43,135 +40,58 @@ impl WireNode {
         })
     }
 }
-struct Binding {
-    path: Vec<usize>,
-    closure: Handle,
-}
+/// Shared event-to-tree adapter for both desktop windows and the WASM canvas.
+/// VM execution happens on load/events; presentation frames only read this tree.
 pub struct UiSession {
-    vm: Vm,
+    component: component::Component,
     tree: Node,
-    handlers: Vec<Handle>,
-    bindings: Vec<Binding>,
-    evaluations: usize,
 }
 impl UiSession {
     pub fn new(program: Program) -> Result<Self> {
-        let mut vm = Vm::new(program, Hosts::default())?;
-        let root = vm.finish_sync()?;
-        vm.pin(root);
-        let mut handlers = vec![];
-        let mut bindings = vec![];
-        let wire = read_node(&mut vm, root, vec![], &mut handlers, &mut bindings)?;
-        let evaluations = bindings.len();
+        let mut component = component::Component::new(program, Hosts::default())?;
+        let frame = component.render()?;
+        if !frame.inputs.is_empty() {
+            return Err("inputs require a platform text editor host".into());
+        }
         Ok(Self {
-            vm,
-            tree: wire.into_node("root".into())?,
-            handlers,
-            bindings,
-            evaluations,
+            component,
+            tree: frame.root,
         })
     }
     pub fn tree(&self) -> &Node {
         &self.tree
     }
     pub fn stats(&self) -> HeapStats {
-        self.vm.stats()
+        self.component.stats()
     }
     pub fn instructions(&self) -> u64 {
-        self.vm.instructions()
+        self.component.instructions()
     }
     pub fn evaluations(&self) -> usize {
-        self.evaluations
+        self.component.evaluations()
     }
     pub fn click(&mut self, handler: usize) -> Result<()> {
-        let closure = *self.handlers.get(handler).ok_or("unknown UI handler")?;
-        self.vm.invoke_sync(closure)?;
-        // This first VM adapter reevaluates binding closures after events. It does not
-        // rerun the component or recreate nodes. Dependency indexing is future work.
-        for binding in &self.bindings {
-            let value = self.vm.invoke_sync(binding.closure)?;
-            let text = text_value(&self.vm, value)?;
-            let mut node = &mut self.tree;
-            for index in &binding.path {
-                node = &mut node.children[*index];
-            }
-            if node.text.as_ref() != Some(&text) {
-                node.text = Some(text);
-            }
-            self.evaluations += 1;
+        self.component.event(handler, vec![])?;
+        let frame = self.component.render()?;
+        if !frame.inputs.is_empty() {
+            return Err("inputs require a platform text editor host".into());
         }
-        self.vm.collect()
+        reconcile(&mut self.tree, frame.root);
+        Ok(())
     }
 }
-fn text_value(vm: &Vm, h: Handle) -> Result<String> {
-    match vm.heap.get(h)? {
-        Value::String(s) => Ok(s.clone()),
-        Value::Number(n) => Ok(n.to_string()),
-        Value::Bool(b) => Ok(b.to_string()),
-        _ => Err("UI text bindings must produce strings, numbers or bools".into()),
-    }
-}
-fn read_node(
-    vm: &mut Vm,
-    h: Handle,
-    path: Vec<usize>,
-    handlers: &mut Vec<Handle>,
-    bindings: &mut Vec<Binding>,
-) -> Result<WireNode> {
-    match vm.heap.get(h)?.clone() {
-        Value::String(s) => Ok(WireNode {
-            text: Some(s),
-            ..Default::default()
-        }),
-        Value::Closure { .. } => {
-            let result = vm.invoke_sync(h)?;
-            let text = text_value(vm, result)?;
-            bindings.push(Binding { path, closure: h });
-            Ok(WireNode {
-                text: Some(text),
-                ..Default::default()
-            })
+// Preserve existing node allocations when positional structure is unchanged.
+// Stable keyed reconciliation is a separate feature, not implied by this adapter.
+fn reconcile(current: &mut Node, next: Node) {
+    current.style = next.style;
+    current.text = next.text;
+    current.on_click = next.on_click;
+    if current.children.len() == next.children.len() {
+        for (current, next) in current.children.iter_mut().zip(next.children) {
+            reconcile(current, next);
         }
-        Value::Record(fields) => {
-            let get_string = |name: &str| -> Result<String> {
-                fields
-                    .get(name)
-                    .map(|h| text_value(vm, *h))
-                    .unwrap_or(Ok(String::new()))
-            };
-            let tag = get_string("tag")?;
-            let classes = get_string("className")?;
-            let handler = if let Some(h) = fields.get("onClick") {
-                if !matches!(vm.heap.get(*h)?, Value::Closure { .. }) {
-                    return Err("onClick requires a VM closure".into());
-                }
-                let index = handlers.len();
-                handlers.push(*h);
-                Some(index)
-            } else {
-                None
-            };
-            let children = fields
-                .get("children")
-                .ok_or("UI node has no children list")?;
-            let Value::List(children) = vm.heap.get(*children)?.clone() else {
-                return Err("UI children must be a list".into());
-            };
-            let mut nodes = vec![];
-            for (i, child) in children.into_iter().enumerate() {
-                let mut path = path.clone();
-                path.push(i);
-                nodes.push(read_node(vm, child, path, handlers, bindings)?);
-            }
-            Ok(WireNode {
-                tag,
-                classes,
-                text: None,
-                handler,
-                children: nodes,
-            })
-        }
-        _ => Err("component did not return a UI node".into()),
+    } else {
+        current.children = next.children;
     }
 }
 pub struct VmApp {

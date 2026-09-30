@@ -355,11 +355,21 @@ impl Lower {
                 for child in element.children {
                     match child {
                         Expr::JsxText { value, .. } => {
-                            let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
-                            if value.is_empty() {
+                            let mut text = value.split_whitespace().collect::<Vec<_>>().join(" ");
+                            if text.is_empty() {
                                 continue;
                             }
-                            c.emit(Op::Const(Literal::String(value)));
+                            // Preserve inline separation around expressions, but not
+                            // indentation from multiline markup.
+                            if !value.contains('\n') {
+                                if value.starts_with(char::is_whitespace) {
+                                    text.insert(0, ' ');
+                                }
+                                if value.ends_with(char::is_whitespace) {
+                                    text.push(' ');
+                                }
+                            }
+                            c.emit(Op::Const(Literal::String(text)));
                         }
                         Expr::JsxElement { .. } => self.expr(child, c)?,
                         _ => {
@@ -384,6 +394,23 @@ impl Lower {
             }
             Expr::Boolean { value, .. } => {
                 c.emit(Op::Const(Literal::Bool(*value)));
+            }
+            Expr::None { .. } => {
+                c.emit(Op::Const(Literal::Unit));
+            }
+            Expr::Ternary {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.expr(condition, c)?;
+                let otherwise = c.emit(Op::JumpIfFalse(0));
+                self.expr(then_branch, c)?;
+                let end = c.emit(Op::Jump(0));
+                c.patch(otherwise);
+                self.expr(else_branch, c)?;
+                c.patch(end);
             }
             Expr::Identifier { name, .. } => {
                 c.emit(Op::Load(c.slot(name)?));

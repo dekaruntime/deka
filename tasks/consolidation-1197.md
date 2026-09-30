@@ -52,16 +52,30 @@ These prevent claiming DSC is safe to archive today:
 - `deka test` still uses the legacy runner and `@deka/test` implementation.
   Reimplement/port on the VM, including real application imports, before calling
   the new runtime a complete app-testing toolchain.
-- Website#197 must replace old JS/HTML lesson execution with the new VM WASM
-  adapter. Existing native-preview WASM is an earlier restricted interpreter.
+- Website#197 is migrating lessons to `deka_native_web`, now built from the local
+  VM/compiler/renderer. Desktop and browser adapters share event-to-tree execution;
+  exact scene tests cover events, errors and idle rendering.
 - npm delivery, editor tooling, website compiler sync and stdlib releases still
   need a downstream consumer audit before external DSC is retired.
 - Existing release builds still publish the legacy CLI. Runtime validation added
   here is additional evidence, not a claim that the shipped CLI has switched.
-- Browser/native parity, supported language surface and public module host
-  contracts must be demonstrated, not inferred from the renderer import.
+- Scene parity is covered for the shared core; platform text input, asynchronous
+  UI operations and public module host contracts remain explicit gaps.
 
 The pipeline conversation with Sami follows the tour demo. No new deployment,
 auto-promotion or repository archival is implied by this change.
+
+## Browser adapter follow-up
+
+`deka_native_web` uses the shared `UiSession` and `Component` adapter. Dynamic
+classes/lists/conditional children work in desktop and browser hosts. Ternary
+lowering executes one branch; None renders no child. Inline whitespace around
+bindings is preserved. The original Rust-coded world adapter remains available
+and is labelled separately from DekaScript language examples.
+
+Release audit: existing `release.yml` still publishes the legacy CLI and external
+DSC WASM. No job publishes the new combined VM/renderer payload yet. The website
+sync still follows DSC. The 0.60.0 R2 release path was absent when checked during
+this work. These boundaries must be resolved before claiming a 0.60.0 VM release.
 
 -codex

@@ -88,3 +88,35 @@ fn v8_and_vm_produce_the_same_native_scene() {
         assert_eq!(vm, v8, "scene mismatch after {clicks} clicks");
     }
 }
+
+#[test]
+fn conditionals_select_one_branch_and_dynamic_lists_keep_live_handlers() {
+    let source = r#"export fn App() {
+        let selected = "None";
+        let changed = 0;
+        const branch = fn() { changed += 1; return "chosen"; }
+        const unused = fn() { changed += 100; return "wrong"; }
+        const initial = true ? branch() : unused();
+        const rows = ["One", "Two"];
+        return (<view>
+            <p>{initial}</p><p>{changed}</p><p>{selected}</p>
+            {rows.map(fn(name: string) { return (<button
+                className={selected == name ? "bg-[#00ff00]" : "bg-[#ffffff]"}
+                onClick={fn() { selected = name; }}>{name}</button>); })}
+            {selected == "Two" ? <p>Second selected</p> : None}
+        </view>);
+    }"#;
+    let program = compiler::compile_entry(source, &Hosts::default(), "App").unwrap();
+    let mut session = ui::UiSession::new(program).unwrap();
+    assert!(texts(session.tree()).contains(&"chosen".into()));
+    assert!(texts(session.tree()).contains(&"1".into()));
+    assert!(!texts(session.tree()).contains(&"Second selected".into()));
+    for _ in 0..100 {
+        session.click(1).unwrap();
+        assert!(texts(session.tree()).contains(&"Second selected".into()));
+        assert_eq!(session.tree().children[4].style.background, Some(0x00ff00));
+        session.click(0).unwrap();
+        assert!(!texts(session.tree()).contains(&"Second selected".into()));
+    }
+    assert!(session.stats().slots < 1000, "{:?}", session.stats());
+}

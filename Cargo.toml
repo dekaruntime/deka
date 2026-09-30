@@ -5,6 +5,7 @@ members = [
     "crates/deka_native_ir",
     "crates/deka_native_ui",
     "crates/deka_vm",
+    "crates/deka_native_web",
     "crates/dcore",
     "crates/cli",
     "crates/runtime",

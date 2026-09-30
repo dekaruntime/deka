@@ -2547,6 +2547,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka_native_web"
+version = "0.60.0"
+dependencies = [
+ "deka_native_ui",
+ "deka_vm",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "deka_syntax"
 version = "0.60.0"
 dependencies = [

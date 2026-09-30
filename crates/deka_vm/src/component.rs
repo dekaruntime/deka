@@ -21,6 +21,7 @@ pub struct Component {
     vm: Vm,
     instance: Handle,
     handlers: Vec<Handle>,
+    evaluations: usize,
 }
 impl Component {
     pub fn new(program: Program, hosts: Hosts) -> Result<Self> {
@@ -34,6 +35,7 @@ impl Component {
             vm,
             instance,
             handlers: vec![],
+            evaluations: 0,
         })
     }
     fn method(&self, name: &str) -> Result<Handle> {
@@ -63,12 +65,28 @@ impl Component {
         self.vm.invoke_args(handler, args)?;
         Ok(())
     }
+    pub fn instructions(&self) -> u64 {
+        self.vm.instructions()
+    }
+    pub fn evaluations(&self) -> usize {
+        self.evaluations
+    }
     pub fn stats(&self) -> HeapStats {
         self.vm.stats()
     }
     pub fn render(&mut self) -> Result<ComponentFrame> {
         self.vm.set_pins(vec![self.instance]);
-        let view = self.vm.invoke_sync(self.method("view")?)?;
+        // A plain DSX root holds live binding closures. Native host integrations
+        // may instead provide a record of callbacks with a view method.
+        let view = if let Value::Record(fields) = self.vm.heap.get(self.instance)? {
+            if fields.contains_key("tag") {
+                self.instance
+            } else {
+                self.vm.invoke_sync(self.method("view")?)?
+            }
+        } else {
+            return Err("component entry must return a view or callback record".into());
+        };
         self.vm.pin(view);
         self.handlers.clear();
         let mut inputs = vec![];
@@ -79,6 +97,7 @@ impl Component {
     }
     fn resolve(&mut self, value: Handle) -> Result<Handle> {
         if matches!(self.vm.heap.get(value)?, Value::Closure { .. }) {
+            self.evaluations += 1;
             let result = self.vm.invoke_sync(value)?;
             // Dynamic lists own event closures which must survive until the next frame.
             self.vm.pin(result);
