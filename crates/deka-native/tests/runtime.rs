@@ -160,8 +160,8 @@ fn unsupported_props_styles_cleanup_and_permission_failures_are_reported() {
             "Unsupported native prop: style",
         ),
         (
-            "return React.createElement('div', {className: 'items-center'});",
-            "unsupported native utility: items-center",
+            "return React.createElement('div', {className: 'items-magic'});",
+            "unsupported native utility: items-magic",
         ),
     ] {
         std::fs::write(
@@ -195,4 +195,41 @@ fn unsupported_props_styles_cleanup_and_permission_failures_are_reported() {
         error.contains("cleanup-ran"),
         "effect cleanup must execute: {error}"
     );
+}
+
+#[test]
+fn component_state_updates_layout_and_text_measurement() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/native/runtime");
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path();
+    for name in ["layout.dsx", "deka.json", "deka.lock"] {
+        std::fs::copy(fixture.join(name), project.join(name)).unwrap();
+    }
+    let mut app = Session::open(project, &project.join("layout.dsx"), &compiler(), "App").unwrap();
+    let renderer = Renderer::new();
+    let first = renderer.render(app.tree(), 560., 300., 1.);
+    let button = &first.targets[0];
+    near(button.rect.x, 16.);
+    near(button.rect.y, 16.);
+    app.click(button.handler).unwrap();
+    let centered = renderer.render(app.tree(), 560., 300., 1.);
+    near(centered.targets[0].rect.x, 184.);
+    assert!(centered.targets[0].rect.y > 16.);
+    assert!(
+        centered.hit(20., 20.).is_none(),
+        "old location must not remain clickable"
+    );
+    let text = centered
+        .nodes
+        .iter()
+        .find(|n| n.text.as_ref().is_some_and(|t| t.starts_with("This text")))
+        .unwrap();
+    assert!(
+        text.rect.height > 32.,
+        "wrapped text reserves multiple lines"
+    );
+    app.click(button.handler).unwrap();
+    let restored = renderer.render(app.tree(), 560., 300., 1.);
+    near(restored.targets[0].rect.x, 16.);
+    near(restored.targets[0].rect.y, 16.);
 }

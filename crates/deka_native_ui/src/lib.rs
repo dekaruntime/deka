@@ -1,7 +1,9 @@
 //! Native UI shared by interpreted development applications and compiled applications.
-pub use deka_native_ir::{Node, Style};
+pub use deka_native_ir::{Align, Edges, Justify, Length, Node, Style};
 #[cfg(feature = "gpu")]
 mod gpu;
+mod layout;
+mod text;
 #[cfg(feature = "gpu")]
 pub use gpu::run;
 

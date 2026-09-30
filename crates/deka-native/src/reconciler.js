@@ -91,7 +91,10 @@ globalThis.__dekaNative = Object.freeze({
   frame() {
     flush();
     handlers.clear();
-    const tree = snapshot(container);
+    // A single application root owns viewport sizing; do not insert an auto-height layout box.
+    const tree = container.children.length === 1
+      ? snapshot(container.children[0]) || snapshot(container)
+      : snapshot(container);
     return {version, tree};
   },
   click(id) {

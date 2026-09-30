@@ -55,8 +55,9 @@ impl Application for App {
         Node {
             id: "root".into(),
             style: Style {
-                padding: 24.,
-                gap: 16.,
+                padding: deka_native_ui::Edges::all(24.),
+                gap_x: 16.,
+                gap_y: 16.,
                 background: Some(0xf3efe3),
                 ..Default::default()
             },
@@ -76,7 +77,7 @@ impl Application for App {
                 Node {
                     id: "counter".into(),
                     style: Style {
-                        padding: 16.,
+                        padding: deka_native_ui::Edges::all(16.),
                         radius: 8.,
                         color: Some(0xffffff),
                         background: Some(0x0c8b43),

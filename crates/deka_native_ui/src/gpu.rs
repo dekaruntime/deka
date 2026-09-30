@@ -107,21 +107,30 @@ impl<A: NativeApplication> Render for View<A> {
                                 origin: bounds.origin + point(px(paint.rect.x), px(paint.rect.y)),
                                 size: size(px(paint.rect.width), px(paint.rect.height)),
                             };
-                            if let Some(id) = &paint.image {
-                                if let Some(image) = cache.get(id) {
-                                    let _ = window.paint_image(
-                                        rect,
-                                        Corners::default(),
-                                        image.clone(),
-                                        0,
-                                        false,
+                            let c = paint.clip;
+                            let mask = ContentMask {
+                                bounds: Bounds {
+                                    origin: bounds.origin + point(px(c.x), px(c.y)),
+                                    size: size(px(c.width), px(c.height)),
+                                },
+                            };
+                            window.with_content_mask(Some(mask), |window| {
+                                if let Some(id) = &paint.image {
+                                    if let Some(image) = cache.get(id) {
+                                        let _ = window.paint_image(
+                                            rect,
+                                            Corners::default(),
+                                            image.clone(),
+                                            0,
+                                            false,
+                                        );
+                                    }
+                                } else {
+                                    window.paint_quad(
+                                        fill(rect, rgb(paint.color)).corner_radii(px(paint.radius)),
                                     );
                                 }
-                            } else {
-                                window.paint_quad(
-                                    fill(rect, rgb(paint.color)).corner_radii(px(paint.radius)),
-                                );
-                            }
+                            });
                         }
                     },
                 )

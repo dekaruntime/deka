@@ -1,0 +1,13 @@
+export fn App() ReactNode {
+    const [centered, setCentered] = useState(false);
+    const alignment = centered ? "items-center justify-center" : "items-start justify-start";
+    return (
+        <div className={"w-full h-full p-4 gap-3 bg-[#F3EFE3] " + alignment}>
+            <button className="w-48 h-12 shrink-0 p-2 rounded-lg bg-[#663399] text-[#ffffff]"
+                onClick={fn() { setCentered(!centered); }}>
+                Toggle alignment
+            </button>
+            <span className="w-48">This text wraps inside a fixed-width box. Click to move both boxes.</span>
+        </div>
+    );
+}
