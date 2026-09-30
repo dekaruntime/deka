@@ -12,7 +12,7 @@ program = ["deka_native_ir/program"]
 runtime-shaders = ["gpu", "gpui/runtime_shaders"]
 
 [dependencies]
-deka_native_ir = { git = "https://github.com/dekaruntime/dsc", rev = "2588f05281a6d384276ef87c41706d65786096ab" }
+deka_native_ir = { git = "https://github.com/dekaruntime/dsc", rev = "f66cd08d20d4e8e6f4b207dc3597bd4ea49d3730" }
 gpui = { version = "=0.2.2", optional = true }
 
 fontdue = "0.9.3"

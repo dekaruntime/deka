@@ -13,7 +13,7 @@ runtime-shaders = ["gpu", "deka_native_ui/runtime-shaders"]
 
 [dependencies]
 deka_native_ui = { path = "../deka_native_ui", features = ["program"] }
-deka_native_ir = { git = "https://github.com/dekaruntime/dsc", rev = "2588f05281a6d384276ef87c41706d65786096ab", features = ["program"] }
+deka_native_ir = { git = "https://github.com/dekaruntime/dsc", rev = "f66cd08d20d4e8e6f4b207dc3597bd4ea49d3730", features = ["program"] }
 serde_json = "1.0"
 
 deno_core = { workspace = true, optional = true }
@@ -26,4 +26,4 @@ serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
-deka_native_compile = { git = "https://github.com/dekaruntime/dsc", rev = "2588f05281a6d384276ef87c41706d65786096ab" }
+deka_native_compile = { git = "https://github.com/dekaruntime/dsc", rev = "f66cd08d20d4e8e6f4b207dc3597bd4ea49d3730" }

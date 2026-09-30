@@ -72,6 +72,11 @@ fn render(template: &Template, state: &[f64]) -> Node {
         children: template
             .children
             .iter()
+            .filter(|child| {
+                child.visible_when.as_ref().is_none_or(|c| match c {
+                    Condition::Equal(a, b) => number(a, state) == number(b, state),
+                })
+            })
             .map(|child| render(child, state))
             .collect(),
     }
@@ -95,7 +100,11 @@ pub fn validate(program: &Program) -> Result<(), String> {
         }
     }
     fn check_node(node: &Template, program: &Program) -> bool {
-        node.style_when.as_ref().is_none_or(|s| match &s.condition {
+        node.visible_when.as_ref().is_none_or(|c| match c {
+            Condition::Equal(a, b) => {
+                check_number(a, program.states.len()) && check_number(b, program.states.len())
+            }
+        }) && node.style_when.as_ref().is_none_or(|s| match &s.condition {
             Condition::Equal(a, b) => {
                 check_number(a, program.states.len()) && check_number(b, program.states.len())
             }

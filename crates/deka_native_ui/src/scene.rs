@@ -1,6 +1,9 @@
 //! Portable layout, font rasterization, paint commands and hit testing.
 //! Both platform adapters consume this scene; neither lays out application elements.
-use crate::Node;
+use crate::{
+    Node,
+    geometry::{Clip, Transform},
+};
 use fontdue::{Font, FontSettings};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -49,6 +52,7 @@ pub struct GlyphImage {
 }
 #[derive(Clone, Serialize)]
 pub struct NodeBox {
+    pub layout_rect: Rect,
     pub id: String,
     pub rect: Rect,
     pub clip: Rect,
@@ -56,6 +60,7 @@ pub struct NodeBox {
 }
 #[derive(Clone, Serialize)]
 pub struct Target {
+    pub hit_shapes: Vec<Clip>,
     pub id: String,
     pub handler: usize,
     pub rect: Rect,
@@ -77,10 +82,11 @@ impl Scene {
         if x < 0. || y < 0. || x >= self.width || y >= self.height {
             return None;
         }
-        self.targets
-            .iter()
-            .rev()
-            .find(|target| target.rect.contains(x, y) && target.clip.contains(x, y))
+        self.targets.iter().rev().find(|target| {
+            target.rect.contains(x, y)
+                && target.clip.contains(x, y)
+                && target.hit_shapes.iter().all(|c| c.contains(x, y))
+        })
     }
     pub fn focus_ring(&mut self, id: &str) {
         if let Some(target) = self.targets.iter().find(|t| t.id == id) {
@@ -125,6 +131,7 @@ impl Scene {
 }
 pub struct Renderer {
     font: Font,
+    layout_motion: std::cell::RefCell<crate::layout_motion::LayoutMotion>,
     animator: std::cell::RefCell<crate::animation::Animator>,
 }
 impl Default for Renderer {
@@ -136,6 +143,7 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             animator: Default::default(),
+            layout_motion: Default::default(),
             font: Font::from_bytes(
                 include_bytes!("../assets/AtkinsonHyperlegible-Regular.ttf") as &[u8],
                 FontSettings::default(),
@@ -145,6 +153,7 @@ impl Renderer {
     }
     pub fn reset_animations(&self) {
         self.animator.borrow_mut().clear();
+        self.layout_motion.borrow_mut().clear();
     }
     pub fn render_at(
         &self,
@@ -155,12 +164,19 @@ impl Renderer {
         milliseconds: f64,
         reduced_motion: bool,
     ) -> Scene {
-        let (root, active) = self
-            .animator
-            .borrow_mut()
-            .sample(root, milliseconds, reduced_motion);
+        let (mut root, active) =
+            self.animator
+                .borrow_mut()
+                .sample(root, milliseconds, reduced_motion);
         let mut scene = self.render(&root, width, height, scale);
-        scene.animating = active;
+        let layout_active =
+            self.layout_motion
+                .borrow_mut()
+                .apply(&mut root, &scene, milliseconds, reduced_motion);
+        if layout_active {
+            scene = self.render(&root, width, height, scale);
+        }
+        scene.animating = active || layout_active;
         scene
     }
     pub fn render(&self, root: &Node, width: f32, height: f32, scale: f32) -> Scene {
@@ -206,6 +222,8 @@ impl Renderer {
             0.,
             scale,
             1.,
+            Transform::default(),
+            &[],
             &mut scene,
             &mut images,
         );
@@ -223,49 +241,76 @@ impl Renderer {
         y: f32,
         scale: f32,
         opacity: f32,
+        parent_transform: Transform,
+        clips: &[Clip],
         scene: &mut Scene,
         images: &mut HashMap<String, GlyphImage>,
     ) {
         let layout = tree.layout(item.layout).expect("computed layout");
         let opacity = opacity * item.node.style.opacity.clamp(0., 1.);
         let rect = Rect {
-            x: x + layout.location.x + item.node.style.translate_x,
-            y: y + layout.location.y + item.node.style.translate_y,
+            x: x + layout.location.x,
+            y: y + layout.location.y,
             width: layout.size.width,
             height: layout.size.height,
         };
+        let transform = parent_transform
+            .compose(Transform::translation(
+                item.node.style.translate_x,
+                item.node.style.translate_y,
+            ))
+            .compose(Transform::around(
+                rect,
+                item.node.style.scale,
+                item.node.style.rotate,
+            ));
+        let world = transform.bounds(rect);
+        let mut effective_clip = clip;
+        for shape in clips {
+            effective_clip = effective_clip
+                .intersection(shape.transform.bounds(shape.rect))
+                .unwrap_or_default();
+        }
         scene.nodes.push(NodeBox {
+            layout_rect: rect,
             id: item.node.id.clone(),
-            rect,
-            clip,
+            rect: world,
+            clip: effective_clip,
             text: item.node.text.clone(),
         });
         if let Some(color) = item.node.style.background {
-            scene.paint.push(Paint {
+            let paint = Paint {
                 rect,
                 clip,
                 color,
                 radius: item.node.style.radius,
                 image: None,
                 opacity,
-            });
+            };
+            if let Some(paint) = crate::geometry::paint(paint, transform, clips, scale, images) {
+                scene.paint.push(paint);
+            }
         }
         if let Some(handler) = item.node.on_click
             && opacity > 0.
-            && rect.intersection(clip).is_some()
+            && world.intersection(effective_clip).is_some()
         {
             scene.targets.push(Target {
+                hit_shapes: {
+                    let mut shapes = clips.to_vec();
+                    shapes.push(Clip { rect, transform });
+                    shapes
+                },
                 id: item.node.id.clone(),
                 handler,
-                rect,
-                clip,
+                rect: world,
+                clip: effective_clip,
             });
         }
-        let content_clip = if item.node.style.clip {
-            rect.intersection(clip).unwrap_or_default()
-        } else {
-            clip
-        };
+        let mut content_clips = clips.to_vec();
+        if item.node.style.clip {
+            content_clips.push(Clip { rect, transform });
+        }
         if let Some(text) = &item.node.text {
             let padding = layout.padding;
             let width = (rect.width - padding.left - padding.right).max(0.);
@@ -299,7 +344,7 @@ impl Renderer {
                         })
                         .collect(),
                 });
-                scene.paint.push(Paint {
+                let paint = Paint {
                     rect: Rect {
                         x: rect.x + padding.left + g.x - logical.xmin as f32
                             + metrics.xmin as f32 / scale,
@@ -308,23 +353,30 @@ impl Renderer {
                         width: metrics.width as f32 / scale,
                         height: metrics.height as f32 / scale,
                     },
-                    clip: content_clip,
+                    clip,
                     color: item.color,
                     radius: 0.,
                     image: Some(id),
                     opacity,
-                });
+                };
+                if let Some(paint) =
+                    crate::geometry::paint(paint, transform, &content_clips, scale, images)
+                {
+                    scene.paint.push(paint);
+                }
             }
         }
         for child in &item.children {
             self.paint(
                 child,
                 tree,
-                content_clip,
+                clip,
                 rect.x,
                 rect.y,
                 scale,
                 opacity,
+                transform,
+                &content_clips,
                 scene,
                 images,
             );

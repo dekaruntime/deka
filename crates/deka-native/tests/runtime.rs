@@ -275,3 +275,40 @@ fn react_commits_targets_once_and_rust_animates_between_commits() {
     near(end.targets[0].rect.width, 160.);
     assert!(!end.animating);
 }
+
+#[test]
+fn react_removes_hosts_while_rust_finishes_inert_exit() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/native/runtime");
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path();
+    for name in ["motion.dsx", "deka.json", "deka.lock"] {
+        std::fs::copy(fixture.join(name), project.join(name)).unwrap();
+    }
+    let mut app = Session::open(project, &project.join("motion.dsx"), &compiler(), "App").unwrap();
+    let r = Renderer::new();
+    let first = r.render_at(app.tree(), 500., 400., 1., 0., false);
+    let handler = first.targets[0].handler;
+    app.click(handler).unwrap();
+    assert!(text(app.tree()).contains("Hello again"));
+    assert!(
+        r.render_at(app.tree(), 500., 400., 1., 10., false)
+            .animating
+    );
+    r.render_at(app.tree(), 500., 400., 1., 1000., false);
+    app.click(handler).unwrap();
+    assert!(!text(app.tree()).contains("Hello again"));
+    let exit = r.render_at(app.tree(), 500., 400., 1., 1100., false);
+    assert!(
+        exit.nodes
+            .iter()
+            .any(|n| n.text.as_deref() == Some("Hello again"))
+    );
+    assert!(exit.animating);
+    let end = r.render_at(app.tree(), 500., 400., 1., 1800., false);
+    assert!(
+        !end.nodes
+            .iter()
+            .any(|n| n.text.as_deref() == Some("Hello again"))
+    );
+    assert!(!end.animating);
+}

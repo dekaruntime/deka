@@ -1,4 +1,4 @@
-# Native presentation transitions
+# Native presentation motion
 
 React commits target styles. Rust retains current styles by node ID and advances
 transitions using the host's monotonic clock. Component code does not run once
@@ -22,7 +22,7 @@ export fn App() ReactNode {
 
 - `transition-opacity`: `opacity-0` through `opacity-100`.
 - `transition-transform`: `translate-x-N`, `translate-y-N`, including negative
-  prefixes. Numeric spacing uses four logical pixels per unit.
+  prefixes, `scale-N` (percent, 1–400), and `rotate-N` (degrees, negative prefix supported). Numeric translation spacing uses four logical pixels per unit.
 - `transition-size`: width/height between two pixel values or two percentages.
   Auto-to-fixed changes snap. Layout runs at each sample, moving neighbours.
 - `transition-colors`: two explicit text/background colours, interpolated in
@@ -31,12 +31,10 @@ export fn App() ReactNode {
 - `duration-N`: milliseconds, 0–4096; default 200. Zero snaps.
 - `ease-linear`, `ease-out` (default cubic), `ease-in-out` (smoothstep).
 
-First mount snaps to its initial style. A later target change starts a transition
+First mount snaps unless an `enter-*` effect is requested. A later target change starts a transition
 from the currently displayed value. Interruption samples the old transition
-before changing direction. Removing a node removes its animation state on the
-next frame. React keys preserve host identity across reordering; remounts get
-fresh identity. Keep an element mounted to fade it out; deferred unmount and
-enter/exit lifecycles are not implemented.
+before changing direction. Removing a node normally removes its animation state on the next frame. React keys preserve host identity across reordering; remounts get
+fresh identity. Use `exit-*` to retain an inert visual copy after removal. React unmounts immediately; effects and handlers are not retained. The visual copy occupies its old layout slot until the exit completes. Removing a whole subtree uses the removed parent's exit effect.
 
 Opacity multiplies through descendants and is applied per paint primitive. It
 is not isolated offscreen group compositing: overlapping children/backgrounds
@@ -72,5 +70,17 @@ The native React example is `examples/native/runtime/animation.dsx`:
   --project examples/native/runtime --compiler /absolute/path/to/dsc --component App
 ```
 
-Springs, keyframes, scale/rotation, layout-position transitions, layout-property
-interpolation beyond width/height, and GPU group compositing remain future work.
+## Additional motion families
+
+- `spring` selects an analytic unit-mass spring for transitions, presence and layout movement. Default stiffness 180 and damping 20; `spring-stiffness-N` (1–1000), `spring-damping-N` (1–100) tune it. `spring-none` returns to timed motion. Springs settle by an envelope threshold, capped at ten seconds. `duration-0` disables motion. Retargeting preserves position, but resets velocity in this first implementation.
+- `animate-pulse`, `animate-bounce`, `animate-shake`, `animate-spin` are preset keyframes. `animate-none` cancels them. `duration-N` is one cycle; `repeat-N` counts cycles, `repeat-infinite` repeats until removed or cancelled, and `alternate` reverses every other cycle. Finite animations retain their last sampled value.
+- Custom `frames-x-[0:0,50:80,100:0]`, `frames-y-[...]`, `frames-opacity-[0:0,100:1]`, `frames-scale-[0:1,50:1.2,100:1]`, and `frames-rotate-[0:0,100:360]` may be combined. Points are percentages, strictly increasing from 0 to 100, 2–32 points per property. Keyframe segments are linear. Translation/rotation add to the base style; scale/opacity multiply it.
+- `enter-fade`, `enter-slide`, `enter-scale` and corresponding `exit-*` control presence; `enter-none` / `exit-none` disable it. Slide adds 24 logical pixels vertically; scale starts/ends at 85%; all three fade. Tour conditional children use `{open == 1 ? <div ... /> : None}`. Full React components may use normal conditional rendering.
+- `transition-layout` moves an element from its previously displayed layout position to its new one after alignment, reordering or resize changes. Its ID must remain stable; React keys preserve identity. It uses the timing/spring settings on that element. `layout-none` disables it. Width/height interpolation remains `transition-size`.
+- `delay-N` delays a track in milliseconds (0–10000). `stagger-N` on a parent spaces immediate children's starts (0–2000ms each). Delays also support simple sequences: give successive elements delay 0, 200, 400. This is declarative scheduling, not a general timeline API or completion callback system.
+
+All motion runs in Rust. Reduced motion snaps transitions/layout, skips keyframes and entrances, and removes exits immediately. Infinite keyframes continue requesting frames until cancelled, removed or reduced motion is enabled.
+
+Scale and rotation happen around each box's centre, compose through descendants, and transform clips and hit regions. Transforms do not reserve extra layout space. Scale/translation use GPU quads. Rotation currently uses shared CPU rasterization into textures, bounded to about one megapixel per primitive; large rotations may look softer. This guarantees both adapters use the same geometry but is not the final high-throughput GPU implementation. Focus outlines currently use the transformed bounding rectangle.
+
+Group compositing, spring velocity continuity, arbitrary timeline orchestration, layout property interpolation beyond width/height, and automatic layout movement inside scaled/rotated ancestors need further work. Motion is presentation; accessibility semantics for dialogs and menus are separate.
