@@ -1,92 +1,132 @@
-use crate::{Application as NativeApplication, Host, Node};
+use crate::{Application as NativeApplication, Host, scene::Scene};
 use gpui::{prelude::*, *};
-use std::{collections::HashMap, time::Duration};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, time::Duration};
 
 struct View<A: NativeApplication> {
     host: Host<A>,
-    focus: HashMap<String, FocusHandle>,
-}
-impl<A: NativeApplication> View<A> {
-    fn element(&mut self, node: Node, cx: &mut Context<Self>) -> AnyElement {
-        let style = node.style;
-        let mut el = div()
-            .id(SharedString::from(node.id.clone()))
-            .flex()
-            .p(px(style.padding))
-            .gap(px(style.gap))
-            .rounded(px(style.radius));
-        el = if style.row {
-            el.flex_row()
-        } else {
-            el.flex_col()
-        };
-        if let Some(color) = style.background {
-            el = el.bg(rgb(color));
-        }
-        if let Some(color) = style.color {
-            el = el.text_color(rgb(color));
-        }
-        if let Some(size) = style.font_size {
-            el = el.text_size(px(size));
-        }
-        if let Some(width) = style.width {
-            el = el.w(px(width));
-        }
-        if let Some(height) = style.height {
-            el = el.h(px(height));
-        }
-        if let Some(text) = node.text {
-            el = el.child(text);
-        }
-        if let Some(handler) = node.on_click {
-            let focus = self
-                .focus
-                .entry(node.id)
-                .or_insert_with(|| cx.focus_handle())
-                .clone();
-            el = el
-                .track_focus(&focus)
-                .tab_index(0)
-                .focus(|style| style.border_2().border_color(rgb(0x0c8b43)))
-                .on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
-                .cursor_pointer()
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    view.host.click(handler);
-                    cx.notify();
-                }))
-                .on_key_down(cx.listener(move |view, event: &KeyDownEvent, _, cx| {
-                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        view.host.click(handler);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
-                }));
-        }
-        for child in node.children {
-            el = el.child(self.element(child, cx));
-        }
-        el.into_any_element()
-    }
+    focus: FocusHandle,
+    focused: Option<String>,
+    renderer: Rc<crate::scene::Renderer>,
+    scene: Rc<RefCell<Scene>>,
+    images: Rc<RefCell<HashMap<String, Arc<RenderImage>>>>,
 }
 impl<A: NativeApplication> Render for View<A> {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let root = self.host.render();
-        fn ids(node: &Node, set: &mut std::collections::HashSet<String>) {
-            set.insert(node.id.clone());
-            for child in &node.children {
-                ids(child, set);
-            }
-        }
-        let mut active = std::collections::HashSet::new();
-        ids(&root, &mut active);
-        self.focus.retain(|id, _| active.contains(id));
-        let background = root.style.background.unwrap_or(0xffffff);
+        let renderer = self.renderer.clone();
+        let scene_store = self.scene.clone();
+        let images = self.images.clone();
+        let focused = self.focused.clone();
+        let focus = self.focus.clone();
         div()
             .size_full()
-            .bg(rgb(background))
-            .text_color(rgb(0x1a1611))
-            .text_size(px(16.))
-            .child(self.element(root, cx))
+            .overflow_hidden()
+            .track_focus(&self.focus)
+            .tab_index(0)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+                    window.focus(&focus);
+                    let scene = view.scene.borrow();
+                    if let Some(target) =
+                        scene.hit(f32::from(event.position.x), f32::from(event.position.y))
+                    {
+                        view.focused = Some(target.id.clone());
+                        view.host.click(target.handler);
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
+                let scene = view.scene.borrow();
+                if event.keystroke.key == "tab" {
+                    let current = scene
+                        .targets
+                        .iter()
+                        .position(|t| Some(&t.id) == view.focused.as_ref());
+                    let next = match (current, event.keystroke.modifiers.shift) {
+                        (None, false) => Some(0),
+                        (None, true) => scene.targets.len().checked_sub(1),
+                        (Some(i), false) => Some(i + 1),
+                        (Some(i), true) => i.checked_sub(1),
+                    };
+                    view.focused = next
+                        .and_then(|i| scene.targets.get(i))
+                        .map(|t| t.id.clone());
+                    cx.notify();
+                    if view.focused.is_some() {
+                        cx.stop_propagation();
+                    }
+                } else if matches!(event.keystroke.key.as_str(), "enter" | "space")
+                    && let Some(target) = scene
+                        .targets
+                        .iter()
+                        .find(|t| Some(&t.id) == view.focused.as_ref())
+                {
+                    view.host.click(target.handler);
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }))
+            .child(
+                canvas(
+                    move |bounds, window, _| {
+                        let mut scene = renderer.render(
+                            &root,
+                            bounds.size.width.into(),
+                            bounds.size.height.into(),
+                            window.scale_factor(),
+                        );
+                        if let Some(id) = focused {
+                            scene.focus_ring(&id);
+                        }
+                        *scene_store.borrow_mut() = scene.clone();
+                        scene
+                    },
+                    move |bounds, scene, window, _| {
+                        window.paint_quad(fill(bounds, rgb(scene.background)));
+                        let mut cache = images.borrow_mut();
+                        cache.retain(|id, _| scene.images.iter().any(|image| &image.id == id));
+                        for glyph in &scene.images {
+                            cache.entry(glyph.id.clone()).or_insert_with(|| {
+                                let mut bgra = glyph.rgba.clone();
+                                for pixel in bgra.chunks_exact_mut(4) {
+                                    pixel.swap(0, 2);
+                                }
+                                let rgba = image::RgbaImage::from_raw(
+                                    glyph.width as u32,
+                                    glyph.height as u32,
+                                    bgra,
+                                )
+                                .expect("glyph dimensions");
+                                Arc::new(RenderImage::new(vec![image::Frame::new(rgba)]))
+                            });
+                        }
+                        for paint in &scene.paint {
+                            let rect = Bounds {
+                                origin: bounds.origin + point(px(paint.rect.x), px(paint.rect.y)),
+                                size: size(px(paint.rect.width), px(paint.rect.height)),
+                            };
+                            if let Some(id) = &paint.image {
+                                if let Some(image) = cache.get(id) {
+                                    let _ = window.paint_image(
+                                        rect,
+                                        Corners::default(),
+                                        image.clone(),
+                                        0,
+                                        false,
+                                    );
+                                }
+                            } else {
+                                window.paint_quad(
+                                    fill(rect, rgb(paint.color)).corner_radii(px(paint.radius)),
+                                );
+                            }
+                        }
+                    },
+                )
+                .size_full(),
+            )
     }
 }
 pub fn run<A: NativeApplication>(app: A) {
@@ -136,7 +176,13 @@ pub fn run<A: NativeApplication>(app: A) {
                     }
                     View {
                         host: Host::new(app),
-                        focus: HashMap::new(),
+                        focus: cx.focus_handle(),
+                        focused: None,
+                        renderer: std::rc::Rc::new(crate::scene::Renderer::new()),
+                        scene: std::rc::Rc::new(std::cell::RefCell::new(
+                            crate::scene::Scene::default(),
+                        )),
+                        images: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
                     }
                 })
             },

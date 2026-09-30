@@ -7,9 +7,15 @@ publish = false
 
 [features]
 default = []
-gpu = ["dep:gpui"]
+gpu = ["dep:gpui", "dep:image"]
+program = ["deka_native_ir/program"]
 runtime-shaders = ["gpu", "gpui/runtime_shaders"]
 
 [dependencies]
-deka_native_ir = { git = "https://github.com/dekaruntime/dsc", rev = "b6a82fd48fe29497c553783b2cc448e52966dc2b" }
+deka_native_ir = { git = "https://github.com/dekaruntime/dsc", rev = "f3524ef87ab312d2fa7195d42d6ec14cdc0f1384" }
 gpui = { version = "=0.2.2", optional = true }
+
+fontdue = "0.9.3"
+serde = { version = "1", features = ["derive"] }
+taffy = { version = "=0.9.0", default-features = false, features = ["std", "taffy_tree", "flexbox"] }
+image = { version = "0.25", default-features = false, optional = true }

@@ -76,8 +76,8 @@ application semantics, not native pointer routing or rendered pixels.
 - Logical-pixel layout, inherited text styles, pointer activation and focused
   Enter/Space activation. Controls/text are custom-drawn through GPUI.
 
-Utilities apply left to right. Containers default to column layout; buttons
-default to row layout. These are explicit prototype rules, not CSS compatibility.
+Utilities apply left to right. Containers default to column layout; text containers (`span`, `p`) and buttons
+default to row layout. Deliberate spaces next to expressions are preserved. These are explicit prototype rules, not CSS compatibility.
 Unsupported elements, attributes, styles, imports, props, effect/async constructs,
 state shapes and expressions are diagnosed. General CSS, text inputs, IME,
 accessibility semantics, arbitrary modules, multiple components, navigation,
@@ -88,8 +88,33 @@ This first fixed-palette fixture is not a complete light/dark/system theme imple
 
 ## Browser teaching
 
-The compiler remains separate from GPUI. The native compiler library passes a
-`wasm32-unknown-unknown` target check, and existing JavaScript compilation is
-unchanged. A browser-facing export of the new native target and a browser preview
-renderer remain future work; this proof of concept does not claim either exists.
-The native root background also supplies the window canvas background.
+`deka_native_web` combines DSC's portable native compiler with `ProgramApp`, the
+same Rust development interpreter used by the native watcher. It exposes source
+compilation, frames, pointer events, keyboard events and focus reset through
+wasm-bindgen. No GPUI platform code, V8 or JavaScript code generation is linked
+into the browser target.
+
+`deka_native_ui::scene::Renderer` owns Taffy layout, inherited text styles,
+Atkinson Hyperlegible font rasterization, paint commands and hit targets. The
+native GPUI adapter now paints this scene on a canvas instead of constructing
+GPUI element layouts. The website's WebGL 2 adapter paints the same rectangles
+and glyph images. The font is bundled under its OFL license, included in assets.
+The native root background also supplies the canvas background.
+
+```
+cargo build --locked --release --target wasm32-unknown-unknown -p deka_native_web
+wasm-bindgen .target/wasm32-unknown-unknown/release/deka_native_web.wasm \
+  --target web --omit-default-module-path --out-dir .tmp/native-web
+```
+
+Use wasm-bindgen CLI 0.2.128. Website issue #191 hosts this at `/tour/native`,
+with the canvas replacing the bottom-right RAW JavaScript pane. The tour ships
+its own reproducible artifact rebuild script and commit/hash manifest.
+
+This is development-mode source evaluation in WASM. Production native builds
+still use emitted Rust without the interpreter or compiler. Sharing a scene
+establishes shared layout and glyph data, not a pixel-parity guarantee across
+GPU backends. Visual polishing, text wrapping/shaping, accessibility semantics,
+scrolling and async application features remain subsequent work. The browser
+bridge currently serializes scenes and glyph bytes as JSON; it is intentionally
+a proof of concept, not the final buffer/atlas protocol.

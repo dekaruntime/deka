@@ -1,0 +1,21 @@
+[package]
+name = "deka_native_bench"
+version.workspace = true
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "deka-native-backend-bench"
+path = "src/main.rs"
+required-features = ["gpu"]
+
+[features]
+default = []
+gpu = ["deka_native_ui/gpu"]
+runtime-shaders = ["gpu", "deka_native_ui/runtime-shaders"]
+v8-backend = ["dep:deno_core"]
+
+[dependencies]
+deka_native_ui = { path = "../deka_native_ui" }
+deno_core = { workspace = true, optional = true }

@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/dcore",
     "crates/deka_native_ui",
+    "crates/deka_native_web",
+    "crates/deka_native_bench",
     "crates/deka-native",
     "crates/cli",
     "crates/runtime",

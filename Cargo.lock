@@ -2458,9 +2458,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka_native_bench"
+version = "0.53.7"
+dependencies = [
+ "deka_native_ui",
+ "deno_core",
+]
+
+[[package]]
 name = "deka_native_compile"
 version = "0.53.7"
-source = "git+https://github.com/dekaruntime/dsc?rev=b6a82fd48fe29497c553783b2cc448e52966dc2b#b6a82fd48fe29497c553783b2cc448e52966dc2b"
+source = "git+https://github.com/dekaruntime/dsc?rev=f3524ef87ab312d2fa7195d42d6ec14cdc0f1384#f3524ef87ab312d2fa7195d42d6ec14cdc0f1384"
 dependencies = [
  "bumpalo",
  "deka_native_ir",
@@ -2471,7 +2479,7 @@ dependencies = [
 [[package]]
 name = "deka_native_ir"
 version = "0.53.7"
-source = "git+https://github.com/dekaruntime/dsc?rev=b6a82fd48fe29497c553783b2cc448e52966dc2b#b6a82fd48fe29497c553783b2cc448e52966dc2b"
+source = "git+https://github.com/dekaruntime/dsc?rev=f3524ef87ab312d2fa7195d42d6ec14cdc0f1384#f3524ef87ab312d2fa7195d42d6ec14cdc0f1384"
 dependencies = [
  "serde",
 ]
@@ -2481,13 +2489,27 @@ name = "deka_native_ui"
 version = "0.53.7"
 dependencies = [
  "deka_native_ir",
+ "fontdue",
  "gpui",
+ "image",
+ "serde",
+ "taffy",
+]
+
+[[package]]
+name = "deka_native_web"
+version = "0.53.7"
+dependencies = [
+ "deka_native_compile",
+ "deka_native_ui",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]
 name = "deka_syntax"
 version = "0.53.7"
-source = "git+https://github.com/dekaruntime/dsc?rev=b6a82fd48fe29497c553783b2cc448e52966dc2b#b6a82fd48fe29497c553783b2cc448e52966dc2b"
+source = "git+https://github.com/dekaruntime/dsc?rev=f3524ef87ab312d2fa7195d42d6ec14cdc0f1384#f3524ef87ab312d2fa7195d42d6ec14cdc0f1384"
 dependencies = [
  "bumpalo",
  "serde",
@@ -4345,6 +4367,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fontdue"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7894823fa221401399e2598f8b63f81ac77ff5c63248b7656779bff1632d7d3d"
+dependencies = [
+ "hashbrown 0.15.5",
+ "ttf-parser 0.25.1",
+]
+
+[[package]]
 name = "foreign-types"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5346,6 +5378,8 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.1.5",
 ]
 

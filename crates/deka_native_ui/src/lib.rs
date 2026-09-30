@@ -75,3 +75,7 @@ fn collect_text(node: &Node, output: &mut String) {
         collect_text(child, output);
     }
 }
+
+#[cfg(feature = "program")]
+pub mod program;
+pub mod scene;
