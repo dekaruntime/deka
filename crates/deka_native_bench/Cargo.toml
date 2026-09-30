@@ -10,12 +10,23 @@ name = "deka-native-backend-bench"
 path = "src/main.rs"
 required-features = ["gpu"]
 
+[[bin]]
+name = "deka-native-quickjs-bench"
+path = "src/quickjs_main.rs"
+required-features = ["gpu", "quickjs-backend"]
+
 [features]
 default = []
 gpu = ["deka_native_ui/gpu"]
 runtime-shaders = ["gpu", "deka_native_ui/runtime-shaders"]
 v8-backend = ["dep:deno_core"]
+quickjs-backend = ["dep:rquickjs"]
 
 [dependencies]
 deka_native_ui = { path = "../deka_native_ui" }
 deno_core = { workspace = true, optional = true }
+rquickjs = { version = "=0.14.0", optional = true, features = ["loader", "futures"] }
+
+[dev-dependencies]
+deka_compile = { git = "https://github.com/dekaruntime/dsc", rev = "f3524ef87ab312d2fa7195d42d6ec14cdc0f1384" }
+tokio = { version = "1", features = ["rt", "time", "macros"] }

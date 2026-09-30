@@ -1,0 +1,9 @@
+let count: number = 0;
+
+fn increment() void {
+    count = count + 1;
+}
+
+export fn Counter() ReactNode {
+    return <button onClick={increment}>{string(count)}</button>;
+}

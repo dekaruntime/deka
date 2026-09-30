@@ -1,0 +1,85 @@
+{
+  "utc": "2026-09-30T05:08:50.263467+00:00",
+  "host": "macOS-26.7-x86_64-i386-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "git_head": "67e669b4bb27ee9386b150c8567c171134aaf2d5",
+  "working_diff_sha256": "f7e4c5deca8dc1f1e095aec87c1ec856a04a9daf231e7d1bcc5426f50302442b",
+  "idle_seconds": 5,
+  "variants": {
+    "rust": {
+      "bytes": 4805948,
+      "gzip_bytes": 2143910,
+      "sha256": "296dc04b65571c5f390418922b916de96be8319f036b6ed9861e620e34e2a054",
+      "exercise": "Deka native backend comparison Count: 3",
+      "samples": [
+        {
+          "pid": 48756,
+          "rss_kib": 48340,
+          "physical_mib": 29.4
+        },
+        {
+          "pid": 51797,
+          "rss_kib": 44032,
+          "physical_mib": 28.2
+        },
+        {
+          "pid": 52894,
+          "rss_kib": 43724,
+          "physical_mib": 28.1
+        }
+      ],
+      "median_physical_mib": 28.2,
+      "median_rss_kib": 44032
+    },
+    "v8": {
+      "bytes": 50562996,
+      "gzip_bytes": 19090160,
+      "sha256": "a9db5f77721c019eb536dd73a3db442ac133a1e2b1b9c0c37a8a6f14ee6d9976",
+      "exercise": "Deka native backend comparison Count: 3",
+      "samples": [
+        {
+          "pid": 49464,
+          "rss_kib": 56256,
+          "physical_mib": 33.2
+        },
+        {
+          "pid": 50966,
+          "rss_kib": 55464,
+          "physical_mib": 32.5
+        },
+        {
+          "pid": 53571,
+          "rss_kib": 55240,
+          "physical_mib": 32.4
+        }
+      ],
+      "median_physical_mib": 32.5,
+      "median_rss_kib": 55464
+    },
+    "quickjs": {
+      "bytes": 5887636,
+      "gzip_bytes": 2682740,
+      "sha256": "a8ad6dcb77917d7cee8772c01f2c404aefa19015bdb6edbbf5aa3b96088bd618",
+      "exercise": "Deka native backend comparison Count: 3",
+      "samples": [
+        {
+          "pid": 50038,
+          "rss_kib": 45004,
+          "physical_mib": 28.7
+        },
+        {
+          "pid": 51141,
+          "rss_kib": 43936,
+          "physical_mib": 27.9
+        },
+        {
+          "pid": 52455,
+          "rss_kib": 44360,
+          "physical_mib": 28.2
+        }
+      ],
+      "median_physical_mib": 28.2,
+      "median_rss_kib": 44360
+    }
+  }
+}

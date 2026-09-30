@@ -54,11 +54,12 @@ and RSS for that exact PID. Close only the process started for the sample. Recor
 three alternating samples. The `runtime-shaders` feature is used because this
 Mac has Command Line Tools rather than the complete Xcode Metal toolchain.
 
-Sami's preference is to retain V8 if its size and memory cost are acceptable.
-These results support retaining it as an optional backend capability, independently
-of the renderer. That is a recommendation; this experiment does not impose a new
-runtime packaging contract or implement the complete JavaScript interoperability
-layer. V8's embedding APIs and the `deno_core` engine are described at
+V8 remains Deka's production baseline. The Rust-only build is a measurement
+control, not a commitment to a second production execution runtime. A later
+QuickJS comparison is recorded in `tasks/quickjs-1175.md`; that isolated
+experiment does not switch the production backend.
+
+V8's embedding APIs and the `deno_core` engine are described at
 https://v8.dev/docs/embed and https://github.com/denoland/deno_core.
 
 -codex

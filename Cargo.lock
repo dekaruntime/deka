@@ -2389,6 +2389,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka_compile"
+version = "0.53.7"
+source = "git+https://github.com/dekaruntime/dsc?rev=f3524ef87ab312d2fa7195d42d6ec14cdc0f1384#f3524ef87ab312d2fa7195d42d6ec14cdc0f1384"
+dependencies = [
+ "bumpalo",
+ "deka_emit",
+ "deka_project",
+ "deka_syntax",
+ "serde",
+ "serde_json",
+ "swc_common 18.0.1",
+ "swc_ecma_ast 19.0.0",
+ "swc_ecma_parser 31.0.0",
+ "swc_ecma_visit 19.0.0",
+]
+
+[[package]]
+name = "deka_emit"
+version = "0.53.7"
+source = "git+https://github.com/dekaruntime/dsc?rev=f3524ef87ab312d2fa7195d42d6ec14cdc0f1384#f3524ef87ab312d2fa7195d42d6ec14cdc0f1384"
+dependencies = [
+ "deka_syntax",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "deka_host"
 version = "0.53.7"
 dependencies = [
@@ -2461,8 +2488,11 @@ dependencies = [
 name = "deka_native_bench"
 version = "0.53.7"
 dependencies = [
+ "deka_compile",
  "deka_native_ui",
  "deno_core",
+ "rquickjs",
+ "tokio",
 ]
 
 [[package]]
@@ -2504,6 +2534,14 @@ dependencies = [
  "deka_native_ui",
  "serde_json",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "deka_project"
+version = "0.53.7"
+source = "git+https://github.com/dekaruntime/dsc?rev=f3524ef87ab312d2fa7195d42d6ec14cdc0f1384#f3524ef87ab312d2fa7195d42d6ec14cdc0f1384"
+dependencies = [
+ "deka-modules",
 ]
 
 [[package]]
@@ -5399,6 +5437,11 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "hashlink"
@@ -9381,6 +9424,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "relative-path"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bca40a312222d8ba74837cb474edef44b37f561da5f773981007a10bbaa992b0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9517,6 +9569,36 @@ name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
+
+[[package]]
+name = "rquickjs"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0a22bf72f515cc4189dd7c63d016f6de92a11eee98ddf7dd64794198f6eb34e"
+dependencies = [
+ "rquickjs-core",
+]
+
+[[package]]
+name = "rquickjs-core"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6657979a24d543e5fc66f32cef2f47ca82ce8eb55cec5f7d59a12b7b570bbf24"
+dependencies = [
+ "async-lock",
+ "hashbrown 0.17.1",
+ "relative-path",
+ "rquickjs-sys",
+]
+
+[[package]]
+name = "rquickjs-sys"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cee271d0eeba64f0915b846cb7ae02e16faf3dfdffdca91731101d9d30fe3423"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "rsa"

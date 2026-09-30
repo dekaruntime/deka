@@ -1,0 +1,12 @@
+export fn increment(value: number) number {
+    const add = (n: number) => n + 1;
+    return add(value);
+}
+
+export fn label(value: number) string {
+    return "Count: " + string(value);
+}
+
+export async fn later(value: number) Promise<number> {
+    return increment(value);
+}
