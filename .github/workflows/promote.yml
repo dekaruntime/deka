@@ -148,9 +148,16 @@ jobs:
           aws configure set default.s3.max_concurrent_requests 4
           aws configure set default.retry_mode adaptive
           aws configure set default.max_attempts 10
-          # deka-releases: no "v" prefix (releases.deka.gg/0.53.4/, not
-          # /v0.53.4/). deka-wasm: keeps its existing "v"-prefixed dirs.
-          aws s3 cp --recursive "s3://${R2_BUCKET_RELEASES}/${CANARY_VERSION}/" "s3://${R2_BUCKET_RELEASES}/${VERSION}/" --endpoint-url="${R2_ENDPOINT}"
+          # R2 rejects tagging headers used by AWS server-side copies.
+          # Download, verify and upload the exact canary bytes; never rebuild.
+          aws s3 sync "s3://${R2_BUCKET_RELEASES}/${CANARY_VERSION}/" promotion-artifacts/ --endpoint-url="${R2_ENDPOINT}"
+          {
+            jq -r '.binaries[] | "\(.sha256)  \(.name)"' promotion-artifacts/release.json
+            jq -r '"\(.native_ui.sha256)  \(.native_ui.manifest)"' promotion-artifacts/release.json
+            jq -r '.files | to_entries[] | "\(.value.sha256)  native-ui/\(.key)"' promotion-artifacts/native-ui/manifest.json
+          } > promotion-sha256.txt
+          (cd promotion-artifacts && sha256sum --check ../promotion-sha256.txt)
+          aws s3 sync promotion-artifacts/ "s3://${R2_BUCKET_RELEASES}/${VERSION}/" --endpoint-url="${R2_ENDPOINT}"
 
       # Same manifest keys, bytes and checksums as the canary -- only
       # version/tag/channel/promoted_from change. This is a republish of the
