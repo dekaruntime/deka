@@ -46,7 +46,7 @@ def check(packager, runtime, manifest, output):
         command = [executable, "--exercise", "3"]
         result = subprocess.run(command, cwd=root, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
-        assert "Count: 21" in result.stdout, result.stdout
+        assert "Count: 21" in " ".join(result.stdout.split()), result.stdout
         subprocess.run(["/usr/bin/codesign", "--verify", "--strict", relocated], check=True)
         # Missing bundled bytecode must fail, not silently fall back to a demo/checkout.
         (contents / "Resources/app.dvm.json").unlink()

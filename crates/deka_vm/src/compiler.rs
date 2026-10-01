@@ -6,63 +6,241 @@ use std::collections::{BTreeMap, HashMap};
 pub fn compile(source: &str, hosts: &Hosts) -> Result<Program> {
     compile_entry(source, hosts, "main")
 }
-/// Compile a chosen component export with the same parser/checker as ordinary source.
+/// Compile an in-memory module with a required entry function.
 pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Program> {
+    compile_modules(
+        &[(std::path::PathBuf::from("<source>"), source.to_owned())],
+        hosts,
+        Some(entry_name),
+    )
+}
+/// Compile a source file and its relative modules, once each, in dependency order.
+/// Cycles and external packages fail explicitly; no compiler process is launched.
+pub fn compile_file(path: &std::path::Path, hosts: &Hosts, entry: Option<&str>) -> Result<Program> {
+    compile_modules(&load_modules(path)?, hosts, entry)
+}
+/// Watch dependencies even while an imported file is absent or being edited.
+/// Compilation still fails closed; this list only controls development reload.
+pub fn source_files(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
+    fn visit(path: std::path::PathBuf, files: &mut std::collections::BTreeSet<std::path::PathBuf>) {
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        if !files.insert(path.clone()) {
+            return;
+        }
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let arena = bumpalo::Bump::new();
+        let parsed = deka_syntax::parse(&source, &arena);
+        if let Some(ast) = parsed.program {
+            for stmt in ast.statements {
+                if let Stmt::Import { source, .. } = stmt
+                    && (source.starts_with("./") || source.starts_with("../"))
+                    && let Some(parent) = path.parent()
+                {
+                    visit(parent.join(source), files);
+                }
+            }
+        }
+    }
+    let mut files = Default::default();
+    visit(
+        std::fs::canonicalize(path).map_err(|e| e.to_string())?,
+        &mut files,
+    );
+    Ok(files.into_iter().collect())
+}
+pub fn test_entries(path: &std::path::Path) -> Result<Vec<String>> {
+    let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let arena = bumpalo::Bump::new();
+    let parsed = deka_syntax::parse(&source, &arena);
+    diagnostics(&parsed.errors)?;
+    let ast = parsed.program.ok_or("missing source program")?;
+    Ok(ast
+        .statements
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Function { name, params, .. }
+            | Stmt::Export {
+                decl: ExportDecl::Function { name, params, .. },
+                ..
+            } if name.starts_with("test_") && params.is_empty() => Some((*name).to_owned()),
+            _ => None,
+        })
+        .collect())
+}
+fn host_module(source: &str) -> bool {
+    matches!(source, "vm:host" | "io" | "test")
+}
+fn module_path(parent: &std::path::Path, source: &str) -> Result<std::path::PathBuf> {
+    if !source.starts_with("./") && !source.starts_with("../") {
+        return Err(format!(
+            "unsupported module: {source}; use a relative .ds/.dsx path or a built-in module"
+        ));
+    }
+    let path = parent.parent().ok_or("module has no parent")?.join(source);
+    std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()))
+}
+fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, String)>> {
+    fn visit(
+        path: std::path::PathBuf,
+        visiting: &mut std::collections::BTreeSet<std::path::PathBuf>,
+        loaded: &mut Vec<(std::path::PathBuf, String)>,
+    ) -> Result<()> {
+        if loaded.iter().any(|(p, _)| *p == path) {
+            return Ok(());
+        }
+        if !visiting.insert(path.clone()) {
+            return Err(format!("cyclic module import: {}", path.display()));
+        }
+        let source =
+            std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let arena = bumpalo::Bump::new();
+        let parsed = deka_syntax::parse(&source, &arena);
+        diagnostics(&parsed.errors).map_err(|e| format!("{}: {e}", path.display()))?;
+        for stmt in parsed.program.ok_or("missing source program")?.statements {
+            if let Stmt::Import { source, .. } = stmt
+                && !host_module(source)
+            {
+                visit(module_path(&path, source)?, visiting, loaded)?;
+            }
+        }
+        visiting.remove(&path);
+        loaded.push((path, source));
+        Ok(())
+    }
+    let mut loaded = vec![];
+    visit(
+        std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?,
+        &mut Default::default(),
+        &mut loaded,
+    )?;
+    Ok(loaded)
+}
+fn compile_modules(
+    modules: &[(std::path::PathBuf, String)],
+    hosts: &Hosts,
+    entry_name: Option<&str>,
+) -> Result<Program> {
     let arena = bumpalo::Bump::new();
     let declarations = hosts.declarations();
     let host_parse = deka_syntax::parse(&declarations, &arena);
     diagnostics(&host_parse.errors)?;
     let host_ast = host_parse.program.ok_or("missing host declarations")?;
-    let exports = deka_syntax::collect_module_exports(&host_ast, &arena);
-    let parsed = deka_syntax::parse(source, &arena);
-    diagnostics(&parsed.errors)?;
-    let ast = parsed.program.ok_or("missing source program")?;
-    let imports = HashMap::from([("vm:host", &exports)]);
-    diagnostics(&deka_syntax::check_program_with_imports(&ast, source, &imports).errors)?;
+    let host_exports = deka_syntax::collect_module_exports(&host_ast, &arena);
+    let mut module_exports = HashMap::new();
+    let mut bindings: HashMap<std::path::PathBuf, BTreeMap<String, usize>> = HashMap::new();
     let mut lower = Lower {
         functions: vec![],
         hosts: BTreeMap::new(),
     };
-    for statement in ast.statements {
-        if let Stmt::Import {
-            source, specifiers, ..
-        } = statement
-        {
-            if *source != "vm:host" {
-                return Err("VM experiment only imports vm:host".into());
-            }
-            for spec in *specifiers {
-                hosts.operation(spec.imported)?;
-                if spec.is_type_only {
-                    return Err("type-only host imports are unsupported".into());
-                }
-                lower.hosts.insert(spec.local.into(), spec.imported.into());
-            }
-        }
-    }
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
-    for s in ast.statements {
-        lower.statement(s, &mut entry)?;
+    let mut last_async = false;
+    let mut top_async = false;
+    for (path, source) in modules {
+        let parsed = deka_syntax::parse(source, &arena);
+        diagnostics(&parsed.errors)?;
+        let ast = arena.alloc(parsed.program.ok_or("missing source program")?);
+        let mut imports = HashMap::new();
+        for stmt in ast.statements {
+            if let Stmt::Import { source, .. } = stmt {
+                let exports = if host_module(source) {
+                    &host_exports
+                } else {
+                    module_exports
+                        .get(&module_path(path, source)?)
+                        .ok_or("module was not loaded")?
+                };
+                imports.insert(*source, exports);
+            }
+        }
+        diagnostics(&deka_syntax::check_program_with_imports(ast, source, &imports).errors)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        entry.names.clear();
+        lower.hosts.clear();
+        for stmt in ast.statements {
+            if let Stmt::Import {
+                source, specifiers, ..
+            } = stmt
+            {
+                for spec in *specifiers {
+                    if spec.is_type_only {
+                        return Err("type-only imports are not supported by the native VM".into());
+                    }
+                    if host_module(source) {
+                        hosts.operation(spec.imported)?;
+                        lower.hosts.insert(spec.local.into(), spec.imported.into());
+                    } else {
+                        let slot = bindings
+                            .get(&module_path(path, source)?)
+                            .and_then(|b| b.get(spec.imported))
+                            .ok_or("missing module export")?;
+                        entry.names.insert(spec.local.into(), *slot);
+                    }
+                }
+            }
+        }
+        let mut exported = BTreeMap::new();
+        for stmt in ast.statements {
+            lower.statement(stmt, &mut entry)?;
+            if let Stmt::Export { decl, .. } = stmt {
+                match decl {
+                    ExportDecl::Function {
+                        name, is_default, ..
+                    } => {
+                        exported.insert(
+                            if *is_default { "default" } else { name }.to_string(),
+                            entry.slot(name)?,
+                        );
+                    }
+                    ExportDecl::Const { name, .. } => {
+                        exported.insert((*name).to_string(), entry.slot(name)?);
+                    }
+                    _ => {
+                        return Err(
+                            "native module exports currently support functions and constants"
+                                .into(),
+                        );
+                    }
+                }
+            }
+        }
+        module_exports.insert(
+            path.clone(),
+            deka_syntax::collect_module_exports(ast, &arena),
+        );
+        bindings.insert(path.clone(), exported);
+        top_async |= ast.has_top_level_await;
+        if let Some(name) = entry_name {
+            last_async = ast.statements.iter().any(|s| match s {
+                Stmt::Function {
+                    name: n, is_async, ..
+                }
+                | Stmt::Export {
+                    decl:
+                        ExportDecl::Function {
+                            name: n, is_async, ..
+                        },
+                    ..
+                } => *n == name && *is_async,
+                _ => false,
+            });
+        }
     }
-    let main = entry
-        .names
-        .get(entry_name)
-        .copied()
-        .ok_or_else(|| format!("VM source requires fn {entry_name}()"))?;
-    entry.emit(Op::Load(main));
-    entry.emit(Op::Call(0));
-    let is_async = ast.statements.iter().any(|s| match s {
-        Stmt::Function { name, is_async, .. }
-        | Stmt::Export {
-            decl: ExportDecl::Function { name, is_async, .. },
-            ..
-        } => *name == entry_name && *is_async,
-        _ => false,
-    });
-    if is_async {
-        entry.emit(Op::Await);
+    if let Some(name) = entry_name {
+        let slot = entry
+            .slot(name)
+            .map_err(|_| format!("source requires fn {name}()"))?;
+        entry.emit(Op::Load(slot));
+        entry.emit(Op::Call(0));
+        if last_async {
+            entry.emit(Op::Await);
+        }
+    } else {
+        entry.emit(Op::Const(Literal::Unit));
     }
+    entry.function.asynchronous = top_async || last_async;
     entry.emit(Op::Return);
     lower.functions[0] = entry.function;
     let program = Program {
@@ -204,7 +382,12 @@ impl Lower {
     fn statement(&mut self, s: &Stmt<'_>, c: &mut Context) -> Result<()> {
         match s {
             Stmt::Import { .. } | Stmt::Empty { .. } => {}
-            Stmt::Const { name, value, .. } | Stmt::Let { name, value, .. } => {
+            Stmt::Const { name, value, .. }
+            | Stmt::Let { name, value, .. }
+            | Stmt::Export {
+                decl: ExportDecl::Const { name, value, .. },
+                ..
+            } => {
                 self.expr(value, c)?;
                 let slot = c.bind(name);
                 c.emit(Op::Store(slot));

@@ -1640,6 +1640,7 @@ dependencies = [
  "anyhow",
  "compiler",
  "dcore",
+ "deka_executable",
  "flate2",
  "serde",
  "serde_json",
@@ -2456,6 +2457,23 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "deka_cli"
+version = "0.60.1"
+dependencies = [
+ "deka_executable",
+ "deka_native_ui",
+ "deka_vm",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "deka_executable"
+version = "0.60.1"
 
 [[package]]
 name = "deka_host"

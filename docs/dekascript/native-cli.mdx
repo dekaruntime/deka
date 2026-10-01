@@ -1,0 +1,80 @@
+# Native Deka commands
+
+The native `deka` executable embeds the DekaScript frontend, Rust VM and desktop
+window host. A separate DSC installation is unnecessary.
+
+## Create and run an app
+
+```sh
+npx create-deka-app@latest myapp
+cd myapp
+npm run dev
+npm test
+npm run build
+```
+
+`deka.json` identifies the desktop source and zero-argument entry function:
+
+```json
+{
+  "name": "myapp",
+  "version": "0.1.0",
+  "desktop": {
+    "productName": "My App",
+    "identifier": "gg.deka.myapp",
+    "entry": "App.dsx",
+    "entryFunction": "App"
+  }
+}
+```
+
+`deka dev` watches the entry and relative source dependencies. Successful edits
+restart application state; invalid edits preserve the last working view. This is
+source reload, without a promise of state-preserving hot module replacement.
+
+`deka build` produces `dist/deka-app`, a single executable containing checked
+bytecode. `--outfile path` selects another destination. It runs without source,
+Node.js, DSC or a separate runtime installation. Local macOS builds are ad-hoc
+signed; distribution signing/notarization is a separate release concern. This
+first native executable includes the compiler code as well as the runtime.
+
+## Scripts and source modules
+
+```typescript
+import { echo } from "io"
+
+echo("Hello, DekaScript")
+```
+
+Run scripts with `deka run hello.ds`. A script's top-level statements execute;
+to invoke a named function use `--entry main` or set `entryFunction` alongside
+`entry` in a script project's `deka.json`.
+
+Relative imports use explicit `.ds` or `.dsx` paths. Exported constants and
+functions are initialized once, in dependency order, with private bindings
+isolated by module. Cyclic imports and unsupported external packages produce
+compilation errors. The native source backend currently implements a restricted
+language subset; the CLI does not promise the legacy JS/Node/React ecosystem.
+
+## Application tests
+
+```typescript
+import { assert } from "test"
+
+fn test_addition() {
+  assert(1 + 1 == 2)
+}
+```
+
+`deka test` discovers `*.test.ds` and `*.spec.ds`, excluding dependency/build
+folders. Explicit files or directories can be passed. Each zero-argument
+`test_*` function executes with a fresh VM/module state; failures are reported
+and execution continues to the next test. A failed assertion, compilation error
+or empty test discovery exits unsuccessfully. Async test functions use the VM
+scheduler. The first built-in assertion accepts a boolean; more matchers can be
+added without introducing a second language runtime.
+
+`deka check` uses the same frontend and bytecode lowering as execution, so
+unsupported source forms fail before you build an application. Use `--exercise N`
+on desktop `run` or a compiled executable to invoke its first click handler N
+times without opening a window in CI.

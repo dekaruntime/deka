@@ -89,3 +89,18 @@ release, validates all lessons and browser input before committing/deploying,
 and removes obsolete tour/APS network dependencies. The compatibility CLI
 still ships separately under its existing names; its DSC pin is published stable
 0.53.5. The application CLI/module/testing migration above remains unfinished.
+
+## Public native delivery continuation
+
+The release workflow now builds `deka_cli` (`deka`) using the Rust VM. The legacy
+CLI remains in the workspace for historical tests/consumers but is not shipped.
+Native run/check/dev/build/test/init, relative modules, single-file executable
+payloads and shared Mach-O signing helpers are implemented. npm/installer
+consumers are coordinated in create-deka-app#26 and website#201.
+
+Delivery removes DSC downloads/pins from native artifacts, npm dependencies and
+installer. Historical compiler/LSP/service APIs still need migration before DSC
+repository archival or any claim of full legacy feature parity. Source reload
+restarts app state; production embeds checked bytecode in the executable.
+
+-codex

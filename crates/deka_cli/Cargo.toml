@@ -1,0 +1,22 @@
+[package]
+name = "deka_cli"
+version.workspace = true
+edition = "2024"
+publish = false
+
+[features]
+default = ["desktop"]
+desktop = ["deka_vm/gpu", "deka_native_ui/runtime-shaders"]
+
+[dependencies]
+deka_executable = { path = "../deka_executable" }
+deka_vm = { path = "../deka_vm", features = ["compiler", "host", "ui"] }
+deka_native_ui = { path = "../deka_native_ui" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "time"] }
+tempfile = "3.23"
+
+[[bin]]
+name = "deka"
+path = "src/main.rs"

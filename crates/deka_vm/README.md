@@ -1,9 +1,9 @@
 # Deka VM experiment
 
-An isolated Rust bytecode runtime for a **restricted subset of current DekaScript**.
-DSC's parser and checker are linked directly as a crate. No compiler subprocess,
-JavaScript emission, V8, or React is involved. This does not replace the product
-runtime or change the main language's semantics.
+The Rust bytecode runtime for a **restricted subset of current DekaScript**.
+The local DekaScript parser and checker are linked directly as a crate. No compiler subprocess,
+JavaScript emission, V8, or React is involved. The public native CLI uses this backend; the historical V8 CLI remains a
+separate crate. See [native commands](../../docs/dekascript/native-cli.mdx).
 
 ## Run
 
@@ -111,8 +111,8 @@ closures, explicit scalar parameters, imported host calls, async functions and
 assignment, selected arithmetic/comparison, blocks, `if`, and C-style `for`.
 Exactly one zero-argument `main` entry is invoked after module initialization.
 
-Unsupported source forms fail compilation. This includes arbitrary
-module graphs, generics, enums/match, exceptions/try/catch, collection methods,
+Unsupported source forms fail compilation. Relative acyclic modules support
+function/constant exports. External package graphs, generics, enums/match, exceptions/try/catch, collection methods,
 struct methods, default/tuple parameters, most operators and closures inside
 loops. Forward references not already bound during lowering are rejected, even
 where the current checker permits them. Source-level host failures currently
@@ -123,8 +123,8 @@ operands; execution checks stack underflow, types, calls and handles. There is
 an instruction limit and call-depth limit, but no complete memory/resource quota
 or hostile-bytecode verifier. Only run trusted source/artifacts.
 
-There is no browser integration or claim of broad language conformance or V8
-feature parity. An optional native UI adapter now connects a restricted DSX
+The WASM browser preview uses this same VM. This does not imply broad language
+conformance or V8 feature parity. An optional native UI adapter now connects a restricted DSX
 component to the existing renderer; see [NATIVE.md](NATIVE.md).
 
 ## Verification
@@ -139,7 +139,7 @@ Tests exercise source-to-Rust execution, surviving closures, recursion, concurre
 async tasks, bounded allocation, cycles, stale handles, cancellation/future drops,
 host failures, capability denial, checker rejection, fuel limits and serialized
 bytecode execution. The dedicated CI workflow exercises source and compiler-free
-runtime paths. The product workspace does not acquire a dependency on this crate.
+runtime paths. The public native CLI and browser runtime depend on this crate.
 
 Initial executable-size and macOS memory results, raw samples and reproduction
 commands are in [measurements/README.md](measurements/README.md).

@@ -1,4 +1,4 @@
-//! Experimental PHPX-derived stack VM. No production backend is changed.
+//! PHPX-derived Rust bytecode VM shared by native Deka and browser previews.
 mod bytecode;
 #[cfg(feature = "compiler")]
 pub mod compiler;

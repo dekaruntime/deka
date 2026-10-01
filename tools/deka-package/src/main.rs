@@ -65,11 +65,10 @@ fn run() -> Result<()> {
         program.validate()?;
         program
     } else {
-        let source = fs::read_to_string(project_dir.join(&project.desktop.entry))?;
-        deka_vm::compiler::compile_entry(
-            &source,
+        deka_vm::compiler::compile_file(
+            &project_dir.join(&project.desktop.entry),
             &deka_vm::Hosts::default(),
-            &project.desktop.entry_function,
+            Some(&project.desktop.entry_function),
         )?
     };
     let runtime = fs::canonicalize(&args[1])?;

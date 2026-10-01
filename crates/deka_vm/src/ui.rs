@@ -48,7 +48,10 @@ pub struct UiSession {
 }
 impl UiSession {
     pub fn new(program: Program) -> Result<Self> {
-        let mut component = component::Component::new(program, Hosts::default())?;
+        Self::with_hosts(program, Hosts::default())
+    }
+    pub fn with_hosts(program: Program, hosts: Hosts) -> Result<Self> {
+        let mut component = component::Component::new(program, hosts)?;
         let frame = component.render()?;
         if !frame.inputs.is_empty() {
             return Err("inputs require a platform text editor host".into());
@@ -103,8 +106,11 @@ impl VmApp {
         self.session.borrow().instructions()
     }
     pub fn new(program: Program) -> Result<Self> {
+        Self::with_hosts(program, Hosts::default())
+    }
+    pub fn with_hosts(program: Program, hosts: Hosts) -> Result<Self> {
         Ok(Self {
-            session: RefCell::new(UiSession::new(program)?),
+            session: RefCell::new(UiSession::with_hosts(program, hosts)?),
             error: RefCell::new(None),
         })
     }
