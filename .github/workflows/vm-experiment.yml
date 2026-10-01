@@ -26,14 +26,14 @@ jobs:
       SCCACHE_GHA_ENABLED: 'true'
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
         with:
           components: rustfmt, clippy
       - uses: mozilla-actions/sccache-action@v0.0.9
       - run: sccache --show-stats
       - name: Check and test the local frontend and runtime
         run: |
-          cargo fmt -p deka_native_web -p deka_vm -p deka_native_ir -p deka_native_ui --check
+          cargo fmt -p deka_native_web -p deka_vm -p deka_native_ir -p deka_native_ui -p deka_cli -p deka_executable --check
           cargo check --locked -p deka_vm --all-targets --features compiler,host,ui
           cargo clippy --locked -p deka_vm --all-targets --features compiler,host,ui --no-deps -- -D warnings
           ./run.sh
@@ -53,7 +53,7 @@ jobs:
       SCCACHE_GHA_ENABLED: 'true'
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
         with:
           components: clippy, rustfmt
       - uses: mozilla-actions/sccache-action@v0.0.9
