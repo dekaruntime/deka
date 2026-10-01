@@ -36,7 +36,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Advisory analytics must not block delivery when its installer is offline.
       - uses: samifouad/cqx-action@v1
+        continue-on-error: true
         with:
           # Reporting only, to begin with. deka's score moves every day and a
           # gate that fails the author teaches the author to turn it off.

@@ -19,7 +19,6 @@ permissions:
 
 env:
   R2_BUCKET_RELEASES: "deka-releases"
-  R2_BUCKET_WASM: "deka-wasm"
 
 jobs:
   promote:
@@ -76,10 +75,12 @@ jobs:
           # releases.deka.gg path segment for this canary; deka-wasm keeps
           # its "v"-prefixed convention, so wasm paths use $CANARY (the git
           # tag, already "v"-prefixed) directly.
-          echo "canary_version=${CANARY#v}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${V}" >> "$GITHUB_OUTPUT"
-          echo "version=${V}" >> "$GITHUB_OUTPUT"
-          echo "commit=${CANARY_COMMIT}" >> "$GITHUB_OUTPUT"
+          {
+            echo "canary_version=${CANARY#v}"
+            echo "tag=v${V}"
+            echo "version=${V}"
+            echo "commit=${CANARY_COMMIT}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install AWS CLI
         run: command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
@@ -107,10 +108,11 @@ jobs:
             exit 1
           fi
 
-          DSC_VERSION="$(jq -r '.dsc_version' release.json)"
-          echo "dsc_version=${DSC_VERSION}" >> "$GITHUB_OUTPUT"
+          jq -e '.native_ui.abi == 1 and .native_ui.manifest == "native-ui/manifest.json" and (.native_ui.sha256 | test("^[a-f0-9]{64}$"))' release.json >/dev/null
 
-      # Gate (c): a testsuite run against THIS canary's own commit says
+          jq -e '.runtime == "deka_vm" and .cli_abi == 1 and (has("dsc_version") | not)' release.json >/dev/null
+
+      # Gate (c): the runtime validation against THIS canary's own commit says
       # green. A green result from a different (even newer) canary of the
       # same base version cannot be reused -- validation.json is checked
       # against the same commit as gate (b).
@@ -122,7 +124,7 @@ jobs:
           COMMIT="${{ steps.validate.outputs.commit }}"
 
           if ! curl -fsSL "https://releases.deka.gg/${CANARY_VERSION}/validation.json" -o validation.json; then
-            echo "::error::${CANARY} has not been validated yet (no validation.json on releases.deka.gg). Wait for its dump-conformance job to finish, or re-run it, before promoting."
+            echo "::error::${CANARY} has not been validated yet (no validation.json on releases.deka.gg). Wait for its runtime-validation and publish jobs to finish, or re-run it, before promoting."
             exit 1
           fi
 
@@ -134,26 +136,14 @@ jobs:
 
           GATE="$(jq -r '.gate' validation.json)"
           if [[ "$GATE" != "green" ]]; then
-            echo "::error::${CANARY}'s conformance gate is '${GATE}', not green. Fix and cut a new canary before promoting."
-            exit 1
-          fi
-
-      # Gate (d): a stable deka may not pin a prerelease dsc.
-      - name: "Gate d: stable pins stable (dsc has no prerelease suffix)"
-        run: |
-          set -euo pipefail
-          DSC_VERSION="${{ steps.manifest.outputs.dsc_version }}"
-          if [[ "$DSC_VERSION" == *-* ]]; then
-            echo "::error::this canary pins dsc ${DSC_VERSION}, which is a prerelease. A stable deka must pin a stable dsc."
+            echo "::error::${CANARY}'s runtime gate is '${GATE}', not green. Fix and cut a new canary before promoting."
             exit 1
           fi
 
       - name: Copy canary artifacts to the stable path
         run: |
           set -euo pipefail
-          CANARY="${{ steps.validate.outputs.canary }}"
           CANARY_VERSION="${{ steps.validate.outputs.canary_version }}"
-          TAG="${{ steps.validate.outputs.tag }}"
           VERSION="${{ steps.validate.outputs.version }}"
           aws configure set default.s3.max_concurrent_requests 4
           aws configure set default.retry_mode adaptive
@@ -161,7 +151,6 @@ jobs:
           # deka-releases: no "v" prefix (releases.deka.gg/0.53.4/, not
           # /v0.53.4/). deka-wasm: keeps its existing "v"-prefixed dirs.
           aws s3 cp --recursive "s3://${R2_BUCKET_RELEASES}/${CANARY_VERSION}/" "s3://${R2_BUCKET_RELEASES}/${VERSION}/" --endpoint-url="${R2_ENDPOINT}"
-          aws s3 cp --recursive "s3://${R2_BUCKET_WASM}/${CANARY}/" "s3://${R2_BUCKET_WASM}/${TAG}/" --endpoint-url="${R2_ENDPOINT}"
 
       # Same manifest keys, bytes and checksums as the canary -- only
       # version/tag/channel/promoted_from change. This is a republish of the
@@ -184,15 +173,6 @@ jobs:
           aws s3 cp release.stable.json "s3://${R2_BUCKET_RELEASES}/${VERSION}/release.json" --endpoint-url="${R2_ENDPOINT}"
           aws s3 cp release.stable.json "s3://${R2_BUCKET_RELEASES}/latest.json" --endpoint-url="${R2_ENDPOINT}"
 
-      - name: Promote wasm latest pointers
-        run: |
-          set -euo pipefail
-          TAG="${{ steps.validate.outputs.tag }}"
-          for f in deka-compiler-artifact.json deka-diagnostics-artifact.json deka_compiler.wasm deka_diagnostics.wasm; do
-            aws s3 cp "s3://${R2_BUCKET_WASM}/${TAG}/${f}" "s3://${R2_BUCKET_WASM}/latest/${f}" --endpoint-url="${R2_ENDPOINT}"
-          done
-          aws s3 sync "s3://${R2_BUCKET_WASM}/${TAG}/conformance/" "s3://${R2_BUCKET_WASM}/latest/conformance/" --endpoint-url="${R2_ENDPOINT}"
-
       # The stable tag itself is the record of promotion -- created here,
       # never pushed by a human, always at the canary's own commit.
       - name: Create and push the stable tag
@@ -214,8 +194,8 @@ jobs:
           CANARY="${{ steps.validate.outputs.canary }}"
           echo "Promoted ${CANARY} to ${TAG}"
           echo "  release manifest: https://releases.deka.gg/latest.json"
-          echo "  compiler manifest: https://wasm.deka.gg/latest/deka-compiler-artifact.json"
-          echo "  downstream notified: website, create-deka-app (npm latest), testsuite-site, draftwriter, headless"
+          echo "  browser package: https://releases.deka.gg/${{ steps.validate.outputs.version }}/native-ui/manifest.json"
+          echo "  downstream notified: website, create-deka-app (npm latest), draftwriter"
 
   notify:
     name: Notify downstream
@@ -226,7 +206,6 @@ jobs:
       channel: stable
       website: true
       create_deka_app: true
-      testsuite_site: true
       draftwriter: true
-      headless: true
+      headless: false
     secrets: inherit

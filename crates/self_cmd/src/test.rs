@@ -24,7 +24,7 @@ pub fn cmd(context: &Context) {
             None => (Err(format!("unknown self test suite '{}'", name)), true),
         },
         None => (
-            Err("missing suite name (php, suite, tour)".to_string()),
+            Err("missing suite name (php, tour)".to_string()),
             true,
         ),
     };
@@ -36,7 +36,7 @@ pub fn cmd(context: &Context) {
 }
 
 /// Run a fetched content checkout's own runner against the paired toolchain
-/// (RFD 59, deka#836): `deka self test suite|tour [--deka dir] [--dsc dir]`.
+/// (RFD 59, deka#836): `deka self test tour [--deka dir] [--dsc dir]`.
 ///
 /// The runner is owned by the content repo (RFD 59 open question 3: shell to
 /// the harness, never reimplement it); `self test` orchestrates fetch +

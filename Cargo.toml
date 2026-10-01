@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/deka_syntax",
+    "crates/deka_native_ir",
+    "crates/deka_native_ui",
+    "crates/deka_vm",
+    "crates/deka_cli",
+    "crates/deka_executable",
+    "crates/deka_native_web",
     "crates/dcore",
     "crates/cli",
     "crates/runtime",
@@ -36,7 +43,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.53.7"
+version = "0.60.1"
 
 [workspace.dependencies]
 # V8 Runtime (Deno Core)
@@ -77,3 +84,11 @@ serde_json = "1.0"
 chrono = "0.4"
 toml = "0.8"
 pm = { path = "crates/pm" }
+
+# Preserve the small shipped VM profile without changing the legacy CLI's profile.
+[profile.native]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

@@ -9,7 +9,6 @@ It compiles to JavaScript and runs both natively and in the browser via WASM.
 - **Language tour:** https://deka.gg/tour
 - **Documentation:** https://deka.gg/docs
 - **CodeQuality Explorer:** https://explorer.deka.gg
-- **Test suite:** https://testsuite.deka.gg
 - **Releases:** https://github.com/dekaruntime/deka/releases
 
 ## Repository layout
@@ -41,10 +40,8 @@ Run the language suite:
 ./run.sh
 ```
 
-That builds the CLI, fetches the pinned `dekaruntime/tour` and
-`dekaruntime/testsuite` checkouts (`deka self fetch`, into `./tour` and
-`./testsuite`), compiles every lesson of the tour, and runs the corpus on the
-native isolate. See [`TESTING.md`](./TESTING.md).
+Native runtime validation runs with `./run.sh` against local workspace crates.
+App testing remains available through `deka test`. See [TESTING.md](TESTING.md).
 
 ## Local package development
 

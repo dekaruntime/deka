@@ -21,3 +21,7 @@ tests/dump/.cache/
 .php_modules/.phpx-cache-*
 /testsuite/
 /tour/
+
+# Agent-local build and temporary outputs
+/.target/
+/.tmp/

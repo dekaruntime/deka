@@ -1,0 +1,29 @@
+[package]
+name = "deka_native_ui"
+version.workspace = true
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[features]
+default = []
+gpu = ["dep:gpui", "dep:image"]
+world-audio = ["gpu", "dep:rodio"]
+program = ["deka_native_ir/program"]
+runtime-shaders = ["gpu", "gpui/runtime_shaders"]
+
+[dependencies]
+deka_native_ir = { path = "../deka_native_ir" }
+gpui = { version = "=0.2.2", optional = true }
+
+fontdue = "0.9.3"
+serde = { version = "1", features = ["derive"] }
+taffy = { version = "=0.9.0", default-features = false, features = ["std", "taffy_tree", "flexbox"] }
+image = { version = "0.25", default-features = false, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rodio = { version = "=0.21.1", default-features = false, features = ["playback"], optional = true }
+
+[[example]]
+name = "portfolio-world"
+required-features = ["world-audio"]

@@ -1,0 +1,78 @@
+name: Native runtime
+on:
+  workflow_call:
+  pull_request:
+    paths:
+      - 'crates/deka_syntax/**'
+      - 'crates/deka_native_ir/**'
+      - 'crates/deka_native_ui/**'
+      - 'crates/deka_vm/**'
+      - 'crates/deka_cli/**'
+      - 'crates/deka_executable/**'
+      - 'crates/deka_native_web/**'
+      - 'tools/deka-package/**'
+      - 'tests/fixtures/diagnostics/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'run.sh'
+      - '.github/workflows/vm-experiment.yml'
+permissions:
+  contents: read
+jobs:
+  vm:
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt, clippy
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: sccache --show-stats
+      - name: Check and test the local frontend and runtime
+        run: |
+          cargo fmt -p deka_native_web -p deka_vm -p deka_native_ir -p deka_native_ui -p deka_cli -p deka_executable --check
+          cargo check --locked -p deka_vm --all-targets --features compiler,host,ui
+          cargo clippy --locked -p deka_vm --all-targets --features compiler,host,ui --no-deps -- -D warnings
+          ./run.sh
+          cargo test --locked --release -p deka_cli --no-default-features
+      - name: Compile source and execute without a compiler
+        run: |
+          cargo build --locked --release -p deka_vm --features compiler,host,ui
+          target/release/dvm crates/deka_vm/examples/host.ds --grant-timer
+          target/release/dvmc crates/deka_vm/examples/host.ds target/host.dvm.json
+          cargo build --locked --release -p deka_vm --no-default-features --features host --bin dvm
+          target/release/dvm target/host.dvm.json --grant-timer
+          cargo build --locked --release -p deka_vm --no-default-features --bin dvm-core
+  desktop-build:
+    runs-on: macos-15
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: clippy, rustfmt
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: sccache --show-stats
+      - name: Check desktop and engine dependency boundary
+        run: |
+          cargo check --locked -p deka_vm --all-targets --all-features
+          cargo test --locked --release -p deka_cli --lib
+          cargo tree --locked -p deka_vm --no-default-features --features compiler,gpu -e normal --prefix none > native-dependencies.txt
+          if grep -Eq '^(deno_core|deno_v8|serde_v8|v8) ' native-dependencies.txt; then
+            echo "VM-only feature set unexpectedly links a V8 dependency"
+            exit 1
+          fi
+      - name: Package and exercise relocated native application
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          cargo fmt --manifest-path tools/deka-package/Cargo.toml --check
+          cargo clippy --locked --manifest-path tools/deka-package/Cargo.toml --workspace --all-targets --all-features --no-deps -- -D warnings
+          cargo build --locked --profile native -p deka_vm --no-default-features --features gpu --bin dvm-ui
+          cargo build --locked --release --manifest-path tools/deka-package/Cargo.toml
+          python3 tools/deka-package/test_bundle.py target/release/dvm-package target/native/dvm-ui crates/deka_vm/examples/packaged-counter/deka.json target/package-tests

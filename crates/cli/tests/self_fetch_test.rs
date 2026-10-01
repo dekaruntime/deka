@@ -2,11 +2,10 @@
 //! subprocess drives the fetch-less path — checkout detection, toolchain
 //! pairing under `<checkout>/target/release/`, runner invocation via bun —
 //! against a synthetic content checkout. The synthetic checkout stands in
-//! for dekaruntime/testsuite and dekaruntime/tour content (pinned external
+//! for dekaruntime/tour content (pinned external
 //! corpora, not vendored here); its runners assert the pairing contract the
 //! real runners rely on. The conformance semantics themselves belong to the
-//! content repos and the in-tree runner tests
-//! (runner_modes_agree.rs, package_cache_key.rs).
+//! content repository. Runtime tests live in their owning crates.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -47,55 +46,6 @@ fn write_stub_dsc(dir: &Path) -> PathBuf {
     perms.set_mode(0o755);
     fs::set_permissions(&stub, perms).unwrap();
     stub
-}
-
-/// Synthetic testsuite checkout: marker file, a fixture, and a runner that
-/// verifies the pairing `self test` materialized and then grades the
-/// fixture by execing the paired cli, like the real corpus runner does.
-fn write_fake_testsuite(root: &Path) {
-    let corpus = root.join("testsuite").join("corpus");
-    fs::create_dir_all(corpus.join("basics").join("ok")).unwrap();
-    fs::write(corpus.join("expected-failures.txt"), "# none\n").unwrap();
-    fs::write(
-        corpus.join("basics").join("ok").join("ok.pass.ds"),
-        "export const ok = 1\n",
-    )
-    .unwrap();
-    fs::write(
-        corpus.join("run.mjs"),
-        r#"// Synthetic stand-in for dekaruntime/testsuite corpus/run.mjs (deka#836
-// tests). Asserts the pairing contract, then grades one fixture through the
-// paired cli exactly like the real runner does (`deka run`).
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { spawnSync } from "node:child_process";
-
-const binDir = join(import.meta.dir, "..", "target", "release");
-const cli = join(binDir, "cli");
-if (!existsSync(cli)) {
-  console.error("synthetic runner: paired cli missing at " + cli);
-  process.exit(2);
-}
-const filter = process.argv.includes("--filter");
-if (filter && !process.argv.includes("ok")) {
-  console.error("synthetic runner: --filter value was not forwarded");
-  process.exit(2);
-}
-const run = spawnSync(cli, ["run", "./fixture.pass.ds"], { encoding: "utf-8" });
-if (run.status !== 0) {
-  console.error("synthetic runner: paired cli run failed: " + run.stderr);
-  process.exit(1);
-}
-const lesson = readFileSync(join(import.meta.dir, "basics", "ok", "ok.pass.ds"), "utf8");
-if (!lesson.includes("export const ok")) {
-  console.error("synthetic runner: fixture unreadable");
-  process.exit(1);
-}
-console.log("Passed: 1 | Failed: 0 | Total: 1");
-process.exit(0);
-"#,
-    )
-    .unwrap();
 }
 
 /// Synthetic tour checkout: manifest + a runner with the same contract as
@@ -166,53 +116,63 @@ fn run_self_test(root: &Path, args: &[&str]) -> (bool, String) {
 }
 
 #[test]
-fn self_test_suite_runs_fetched_checkout_against_paired_deka() {
+fn self_test_tour_pairing_runs_fetched_checkout_against_paired_deka() {
     if !require_bun() {
         eprintln!("skipping: bun is not installed");
         return;
     }
     let root = tempfile::tempdir().unwrap();
-    write_fake_testsuite(root.path());
+    write_fake_tour(root.path());
     let stub = write_stub_deka(root.path());
 
     let (ok, output) = run_self_test(
         root.path(),
-        &["suite", "--deka", stub.to_str().unwrap(), "--filter", "ok"],
+        &[
+            "tour",
+            "--deka",
+            stub.to_str().unwrap(),
+            "--filter",
+            "hello",
+        ],
     );
-    assert!(ok, "self test suite failed: {}", output);
+    assert!(ok, "self test tour failed: {}", output);
 
     // The pairing must have been materialized inside the checkout.
-    let paired = root.path().join("testsuite/target/release/cli");
+    let paired = root.path().join("tour/target/release/cli");
     assert!(paired.is_file(), "paired cli missing: {}", paired.display());
     assert_eq!(fs::read(&paired).unwrap(), b"#!/bin/sh\nexit 0\n");
 }
 
 #[test]
-fn self_test_suite_pairs_local_dsc_wrapper() {
+fn self_test_tour_pairing_pairs_local_dsc_wrapper() {
     if !require_bun() {
         eprintln!("skipping: bun is not installed");
         return;
     }
     let root = tempfile::tempdir().unwrap();
-    write_fake_testsuite(root.path());
+    write_fake_tour(root.path());
     let stub = write_stub_deka(root.path());
     let dsc = write_stub_dsc(root.path());
 
     let (ok, output) = run_self_test(
         root.path(),
         &[
-            "testsuite",
+            "tour",
             "--deka",
             stub.to_str().unwrap(),
             "--dsc",
             dsc.to_str().unwrap(),
         ],
     );
-    assert!(ok, "self test suite --dsc failed: {}", output);
+    assert!(ok, "self test tour --dsc failed: {}", output);
 
-    let wrapper = root.path().join("testsuite/target/release/dsc");
+    let wrapper = root.path().join("tour/target/release/dsc");
     let text = fs::read_to_string(&wrapper).expect("dsc wrapper materialized");
-    assert!(text.contains("add|install"), "wrapper forwards add: {}", text);
+    assert!(
+        text.contains("add|install"),
+        "wrapper forwards add: {}",
+        text
+    );
     assert!(text.contains(dsc.to_str().unwrap()));
 }
 
@@ -228,7 +188,13 @@ fn self_test_tour_runs_fetched_checkout() {
 
     let (ok, output) = run_self_test(
         root.path(),
-        &["tour", "--deka", stub.to_str().unwrap(), "--filter", "hello"],
+        &[
+            "tour",
+            "--deka",
+            stub.to_str().unwrap(),
+            "--filter",
+            "hello",
+        ],
     );
     assert!(ok, "self test tour failed: {}", output);
     assert!(root.path().join("tour/target/release/cli").is_file());
@@ -237,10 +203,10 @@ fn self_test_tour_runs_fetched_checkout() {
 #[test]
 fn self_test_requires_fetched_checkout() {
     let root = tempfile::tempdir().unwrap();
-    let (ok, output) = run_self_test(root.path(), &["suite"]);
-    assert!(!ok, "self test suite must fail without a checkout");
+    let (ok, output) = run_self_test(root.path(), &["tour"]);
+    assert!(!ok, "self test tour must fail without a checkout");
     assert!(
-        output.contains("run `deka self fetch testsuite` first"),
+        output.contains("run `deka self fetch tour` first"),
         "unexpected output: {}",
         output
     );
@@ -255,9 +221,9 @@ fn self_test_propagates_runner_failure_exit_code() {
     let root = tempfile::tempdir().unwrap();
     // Marker present but the runner itself fails: the exit code must be the
     // runner's, not a generic 1 from the cli wrapper.
-    let corpus = root.path().join("testsuite/corpus");
+    let corpus = root.path().join("tour/tests/tour");
     fs::create_dir_all(&corpus).unwrap();
-    fs::write(corpus.join("expected-failures.txt"), "").unwrap();
+    fs::write(corpus.join("manifest.json"), "{}").unwrap();
     fs::write(
         corpus.join("run.mjs"),
         "console.error('synthetic gate failure');\nprocess.exit(1);\n",
@@ -268,7 +234,7 @@ fn self_test_propagates_runner_failure_exit_code() {
     let output = Command::new(cli_bin())
         .arg("self")
         .arg("test")
-        .arg("suite")
+        .arg("tour")
         .arg("--deka")
         .arg(&stub)
         .current_dir(root.path())
@@ -279,13 +245,13 @@ fn self_test_propagates_runner_failure_exit_code() {
 }
 
 #[test]
-fn self_test_suite_accepts_checkout_directory_override() {
+fn self_test_tour_pairing_accepts_checkout_directory_override() {
     if !require_bun() {
         eprintln!("skipping: bun is not installed");
         return;
     }
     let root = tempfile::tempdir().unwrap();
-    write_fake_testsuite(root.path());
+    write_fake_tour(root.path());
     // A checkout-shaped --deka: target/release/cli inside a directory.
     let checkout = tempfile::tempdir().unwrap();
     let built = checkout.path().join("target/release/cli");
@@ -295,8 +261,33 @@ fn self_test_suite_accepts_checkout_directory_override() {
     perms.set_mode(0o755);
     fs::set_permissions(&built, perms).unwrap();
 
-    let (ok, output) = run_self_test(root.path(), &["suite", "--deka", checkout.path().to_str().unwrap()]);
-    assert!(ok, "self test suite with checkout --deka failed: {}", output);
-    let paired = root.path().join("testsuite/target/release/cli");
+    let (ok, output) = run_self_test(
+        root.path(),
+        &["tour", "--deka", checkout.path().to_str().unwrap()],
+    );
+    assert!(ok, "self test tour with checkout --deka failed: {}", output);
+    let paired = root.path().join("tour/target/release/cli");
     assert_eq!(fs::read(&paired).unwrap(), b"#!/bin/sh\nexit 0\n");
+}
+
+#[test]
+fn retired_corpus_commands_fail_instead_of_running_zero_tests() {
+    let root = tempfile::tempdir().unwrap();
+    for (command, target) in [
+        ("test", "suite"),
+        ("test", "testsuite"),
+        ("fetch", "testsuite"),
+    ] {
+        let output = Command::new(cli_bin())
+            .args(["self", command, target])
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

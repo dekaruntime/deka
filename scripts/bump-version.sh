@@ -10,8 +10,8 @@
 # Writes [workspace.package] version, every crates/*/Cargo.toml that still
 # inlines a version, and Cargo.lock. Does not commit or tag.
 #
-# Tag from main AFTER this lands:
-#   git tag -a "v$(scripts/runtime-version.sh)" -m "deka v$(scripts/runtime-version.sh)"
+# Merge the bump PR to main; tag-canary.yml creates and builds the canary.
+# Promote validated bytes via the Promote workflow; do not tag stable by hand.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -187,12 +187,12 @@ PY
 
 if command -v cargo >/dev/null 2>&1; then
   cargo update --workspace --offline 2>/dev/null || cargo update --workspace
+  # The build-time packager has its own lockfile and local runtime dependency.
+  cargo update --workspace --manifest-path tools/deka-package/Cargo.toml --offline
 fi
 
 echo
-echo "tree is now $NEW. Open a PR with this bump, merge it, then from main:"
-echo "  git tag -a v${NEW} -m \"deka v${NEW}\""
-echo "  git push origin v${NEW}"
-echo
-echo "Confirm before tagging:"
-echo "  scripts/runtime-version.sh   # must print ${NEW}"
+echo "tree is now $NEW. Open a PR with this bump."
+echo "After merge, tag-canary.yml creates and builds the canary automatically."
+echo "Promote its validated bytes through Actions -> Promote; do not tag stable by hand."
+echo "Confirm: scripts/runtime-version.sh must print ${NEW}"

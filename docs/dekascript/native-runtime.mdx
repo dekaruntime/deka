@@ -1,0 +1,53 @@
+# Native runtime preview
+
+Deka's native runtime compiles DekaScript to VM bytecode and renders a node tree
+through its Rust layout, text and animation implementation. The compiler,
+intermediate UI model, renderer and VM live together in Deka's repository.
+
+This path does not require a JavaScript engine or WebView. Host operations expose
+Rust capabilities to source code; the renderer handles layout and drawing. The
+supported language and host surface is still a preview, not a claim of full
+compatibility with the older JavaScript backend.
+
+The runtime is tested with source compilation, execution and UI-event tests in
+its owning crates, plus a relocated packaged-app test. The retired external
+conformance corpus is no longer a release dependency.
+
+Application testing remains a first-class feature: `deka test` runs DekaScript
+tests for your application. Its current CLI implementation still uses the older
+runtime while the VM integration is being completed. For npm installations use
+`npx deka test` or your project's test script.
+
+## Browser showcase
+
+`deka_native_web` builds the local compiler, VM and Rust renderer into one WASM
+module. The tour passes edited DekaScript to that module and uploads its scene
+and glyph pixels to WebGL. It does not emit JavaScript components or style the
+application through browser HTML/CSS.
+
+A component entry named `App` returns a `view`. A `let` binding holds local state;
+inline handlers assign to it. Dynamic text, classes, mapped children and
+conditional children use the same component adapter as desktop. A conditional
+executes only its selected branch. `None` contributes no child.
+
+```tsx
+export fn App() {
+    let open = 0;
+    return (
+        <view className="p-4 gap-3">
+            <button onClick={fn() { open = 1 - open; }}>Toggle</button>
+            {open == 1 ? <p className="enter-fade exit-fade duration-500">Hello</p> : None}
+        </view>
+    );
+}
+```
+
+Clicking Toggle shows and hides Hello. The VM evaluates bindings after events;
+Rust advances the animation between events without executing more VM code.
+Node identity is positional in this preview; keyed list reconciliation is not
+implemented. Successful source edits restart state. Compilation or initial
+render errors keep the last working application.
+
+Browser text editing, asynchronous UI event scheduling, app module loading and
+accessibility semantics are still integration work. Native host-specific input
+and worker callbacks do not imply those features are available in the browser.

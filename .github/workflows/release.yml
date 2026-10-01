@@ -23,7 +23,6 @@ permissions:
 
 env:
   R2_BUCKET_RELEASES: "deka-releases"
-  R2_BUCKET_WASM: "deka-wasm"
 
 jobs:
   # Every other job reads TAG/BASE_VERSION/SHA7/COMMIT from here instead of
@@ -77,227 +76,51 @@ jobs:
             exit 1
           fi
 
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          echo "base_version=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "sha7=${SHA7}" >> "$GITHUB_OUTPUT"
-          echo "commit=${COMMIT}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=${TAG}"
+            echo "version=${TAG#v}"
+            echo "base_version=${BASE_VERSION}"
+            echo "sha7=${SHA7}"
+            echo "commit=${COMMIT}"
+          } >> "$GITHUB_OUTPUT"
 
-  fetch-dsc-wasm:
-    name: Fetch published dsc WASM
-    needs: [resolve]
+  build-native-web:
+    name: Build and exercise native browser runtime
+    needs: resolve
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Where am I
-        uses: ./.github/actions/where-am-i
-
-      - name: Download dsc browser artifacts
-        run: |
-          mkdir -p dist/deka-compiler-wasm
-          scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc" \
-            --wasm dist/deka-compiler-wasm
-
-      - name: Upload WASM artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: deka-wasm
-          path: dist/deka-compiler-wasm/*
-          retention-days: 1
-
-  build-cli-linux-x64:
-    name: Build CLI (linux-x64)
-    needs: [resolve]
-    runs-on: ubuntu-latest
-    environment: release
     env:
-      SCCACHE_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-      SCCACHE_REGION: auto
-      SCCACHE_BUCKET: deka-sccache-linux-x64
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Where am I
-        uses: ./.github/actions/where-am-i
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.96.0
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Verify sccache can reach R2
-        run: |
-          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
-          sccache --show-stats
-          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build CLI
-        env:
-          RUSTC_WRAPPER: sccache
-        run: cargo build --release -p cli
-
-      # rfd#27 2026-09-16 amendment: deka-host.d.ds is generated from the same
-      # compiled catalog the runtime executes, then published beside the binaries.
-      - name: Build bridge_diff
-        env:
-          RUSTC_WRAPPER: sccache
-        run: cargo build --release -p permissions --bin bridge_diff
-
-      - name: Generate host declaration file
-        run: |
-          mkdir -p dist
-          ./target/release/bridge_diff --dump-host-decl > dist/deka-host.d.ds
-          [ -s dist/deka-host.d.ds ] || { echo "::error::deka-host.d.ds is empty"; exit 1; }
-
-      - name: Upload host declaration artifact
-        uses: actions/upload-artifact@v7
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
         with:
-          name: deka-host-decl
-          path: dist/deka-host.d.ds
+          targets: wasm32-unknown-unknown
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: sccache --show-stats
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: cargo install --locked wasm-bindgen-cli --version 0.2.128
+      - name: Build versioned package
+        run: python3 scripts/build-native-web.py --out dist/native-ui
+      - name: Execute the distributable package
+        run: node scripts/test-native-web-package.mjs dist/native-ui "${{ needs.resolve.outputs.base_version }}" "${{ needs.resolve.outputs.commit }}"
+      - name: Verify native release manifest contract
+        run: python3 scripts/test-native-release-manifest.py dist/native-ui
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deka-native-web
+          path: dist/native-ui/*
+          if-no-files-found: error
           retention-days: 1
 
-      - name: Prepare binary
-        run: |
-          mkdir -p dist
-          cp target/release/cli dist/deka-linux-x64
-          chmod +x dist/deka-linux-x64
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v7
-        with:
-          name: deka-cli-linux-x64
-          path: dist/deka-linux-x64
-          retention-days: 1
-
-  build-cli-darwin-x64:
-    name: Build CLI (darwin-x64)
-    needs: [resolve]
-    runs-on: macos-15-intel
-    environment: release
-    env:
-      SCCACHE_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-      SCCACHE_REGION: auto
-      SCCACHE_BUCKET: deka-sccache-darwin-x64
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Where am I
-        uses: ./.github/actions/where-am-i
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.96.0
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Verify sccache can reach R2
-        run: |
-          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
-          sccache --show-stats
-          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build CLI
-        env:
-          RUSTC_WRAPPER: sccache
-        run: cargo build --release -p cli
-
-      - name: Prepare binary
-        run: |
-          mkdir -p dist
-          cp target/release/cli dist/deka-darwin-x64
-          chmod +x dist/deka-darwin-x64
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v7
-        with:
-          name: deka-cli-darwin-x64
-          path: dist/deka-darwin-x64
-          retention-days: 1
-
-  build-cli-darwin-arm64:
-    name: Build CLI (darwin-arm64)
-    needs: [resolve]
-    runs-on: macos-14
-    environment: release
-    env:
-      SCCACHE_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-      SCCACHE_REGION: auto
-      SCCACHE_BUCKET: deka-sccache-darwin-arm64
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Where am I
-        uses: ./.github/actions/where-am-i
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.96.0
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Verify sccache can reach R2
-        run: |
-          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
-          sccache --show-stats
-          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build CLI
-        env:
-          RUSTC_WRAPPER: sccache
-        run: cargo build --release -p cli
-
-      - name: Prepare binary
-        run: |
-          mkdir -p dist
-          cp target/release/cli dist/deka-darwin-arm64
-          chmod +x dist/deka-darwin-arm64
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v7
-        with:
-          name: deka-cli-darwin-arm64
-          path: dist/deka-darwin-arm64
-          retention-days: 1
-
-  # rfd#68: replaces the old `test` job's in-tree `cargo test -p cli --test
-  # compile_executable`. PR CI on the merge commit is now the unit-test gate
-  # (ci.yml already runs this same test on ubuntu and macos-14); this job
-  # proves the *shipped binary* on each host, with zero compilation -- ~30s
-  # per platform instead of a from-scratch `cargo build`/`cargo test` matrix.
-  smoke:
-    name: Smoke test compiled executable (${{ matrix.platform }})
-    needs: [resolve, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64]
+  build-cli:
+    name: Build native CLI (${{ matrix.platform }})
+    needs: resolve
     strategy:
       fail-fast: true
       matrix:
-        platform: [linux-x64, darwin-x64, darwin-arm64]
         include:
           - platform: linux-x64
             runner: ubuntu-latest
@@ -306,272 +129,50 @@ jobs:
           - platform: darwin-arm64
             runner: macos-14
     runs-on: ${{ matrix.runner }}
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Where am I
-        uses: ./.github/actions/where-am-i
-
-      - name: Download built CLI
-        uses: actions/download-artifact@v7
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: sccache --show-stats
+      - name: Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libfontconfig1-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libegl1-mesa-dev libvulkan-dev libxcb-shape0-dev libxcb-xfixes0-dev clang pkg-config libssl-dev glslc
+      - uses: Swatinem/rust-cache@v2
+      - name: Build native compiler, VM and window host
+        run: cargo build --locked --profile native -p deka_cli
+      - name: Assert native dependency boundary
+        run: |
+          cargo tree --locked -p deka_cli -e normal --prefix none > dependencies.txt
+          if grep -Eq '^(deno_core|deno_v8|serde_v8|v8|compiler|runtime) ' dependencies.txt; then
+            echo "::error::native CLI depends on the retired runtime"
+            exit 1
+          fi
+      - name: Exercise the executable that will ship
+        run: python3 scripts/smoke-native-cli.py target/native/deka native-smoke
+      - name: Prepare binary
+        run: |
+          mkdir -p dist
+          cp target/native/deka "dist/deka-${{ matrix.platform }}"
+          chmod +x "dist/deka-${{ matrix.platform }}"
+      - uses: actions/upload-artifact@v7
         with:
           name: deka-cli-${{ matrix.platform }}
-          path: artifacts
-
-      - name: Install pinned dsc
-        run: scripts/ci-install-dsc.sh "${{ runner.temp }}/dsc-pinned"
-
-      # Mirrors crates/cli/tests/compile_executable.rs exactly, but against
-      # the built artifact and with no cargo/compilation involved: a real
-      # source tree (with the checked-in @deka/io 0.1.1 fixture + its
-      # deka.lock), a private copy of dsc that gets deleted with the source
-      # dir, a codesign check on macOS, and a from-empty-environment run of
-      # the compiled binary asserting exact stdout.
-      - name: Smoke test compiled executable
-        run: |
-          set -euo pipefail
-          CLI="$(pwd)/artifacts/deka-${{ matrix.platform }}"
-          chmod +x "$CLI"
-
-          SOURCE="$(mktemp -d "${{ runner.temp }}/smoke-src.XXXXXX")"
-          DEST="$(mktemp -d "${{ runner.temp }}/smoke-dst.XXXXXX")"
-          ELSEWHERE="$(mktemp -d "${{ runner.temp }}/smoke-run.XXXXXX")"
-
-          mkdir -p "$SOURCE/ds_modules/@deka/io"
-          cp crates/cli/tests/fixtures/package-cache/cache-entry/ds_modules/@deka/io/index.ds \
-            "$SOURCE/ds_modules/@deka/io/index.ds"
-          cp crates/cli/tests/fixtures/package-cache/cache-entry/ds_modules/@deka/io/deka.json \
-            "$SOURCE/ds_modules/@deka/io/deka.json"
-          cp crates/cli/tests/fixtures/package-cache/cache-entry/deka.lock \
-            "$SOURCE/deka.lock"
-          printf '{"dependencies":{"@deka/io":"0.1.1"}}' > "$SOURCE/deka.json"
-          printf 'import { echo } from "io"\necho("hello from compiled Deka");\n' > "$SOURCE/hello.ds"
-
-          # A private copy, exactly like the in-tree test: the compiler must
-          # not be needed after this directory (and this copy) are gone.
-          cp "${{ runner.temp }}/dsc-pinned" "$SOURCE/dsc"
-          chmod +x "$SOURCE/dsc"
-
-          EXECUTABLE="$DEST/hello"
-          (cd "$SOURCE" && DEKA_DSC="$SOURCE/dsc" "$CLI" compile hello.ds --outfile "$EXECUTABLE")
-
-          rm -rf "$SOURCE"
-
-          if [ "${{ matrix.platform }}" != "linux-x64" ]; then
-            codesign --verify --strict "$EXECUTABLE"
-          fi
-
-          set +e
-          OUTPUT="$(cd "$ELSEWHERE" && env -i \
-            PATH="$ELSEWHERE" \
-            HOME="$ELSEWHERE" \
-            DEKA_DSC="$ELSEWHERE/missing-dsc" \
-            DEKA_NO_DSC=1 \
-            "$EXECUTABLE")"
-          STATUS=$?
-          set -e
-
-          if [ "$STATUS" -ne 0 ]; then
-            echo "::error::compiled executable exited $STATUS (expected 0)"
-            exit 1
-          fi
-          if [ "$OUTPUT" != "hello from compiled Deka" ]; then
-            echo "::error::unexpected stdout: $(printf '%s' "$OUTPUT" | head -c 500)"
-            exit 1
-          fi
-          echo "smoke test passed on ${{ matrix.platform }}"
-
-  # rfd#68: runs against the built artifacts, same as before -- but AFTER
-  # `publish` and blocking nothing. Its own conclusion still turns red on a
-  # red gate (so it stays visible in the run), but publishing this canary
-  # never waits on it, and neither does anything else: only promote.yml reads
-  # its result (validation.json), and only a human promoting this canary is
-  # affected by a red gate.
-  dump-conformance:
-    name: Dump Hats + pack conformance
-    needs: [resolve, publish]
-    runs-on: macos-14
-    environment: release
-    env:
-      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: auto
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Where am I
-        uses: ./.github/actions/where-am-i
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-
-      - name: Download WASM + darwin-arm64 CLI
-        uses: actions/download-artifact@v7
-        with:
-          path: artifacts
-          pattern: deka-*
-
-      # RFD 59 (deka#836): the dump and the conformance pack read the pinned
-      # content checkouts; the shipped CLI fetches them (this job previously
-      # relied on the old .cache defaults without fetching anything).
-      - name: Fetch pinned content (self fetch)
-        run: |
-          chmod +x artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
-          ./artifacts/deka-cli-darwin-arm64/deka-darwin-arm64 self fetch testsuite
-          ./artifacts/deka-cli-darwin-arm64/deka-darwin-arm64 self fetch tour
-
-      - name: Install dump deps and Chromium
-        working-directory: tests/dump
-        # --frozen-lockfile: deka#1006. Without it, an unreadable lockfile is
-        # a warning bun recovers from by re-resolving over the network --
-        # nondeterministic and exactly how the v0.53.1 dump job died further
-        # downstream instead of failing fast and clearly on this step.
-        run: |
-          bun install --frozen-lockfile
-          bunx playwright install chromium
-
-      # Not gated with `set -e`: this job must still write and upload
-      # validation.json (gate: "red") when the dump fails its own ratchets,
-      # so that promote.yml has a real answer instead of a missing file. The
-      # job's own conclusion is still made red at the bottom of this step.
-      - name: Dump native + browser
-        id: dump
-        env:
-          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
-          DEKA_NATIVE: ${{ github.workspace }}/artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
-          DEKA_WASM: ${{ github.workspace }}/artifacts/deka-wasm/deka_compiler.wasm
-        run: |
-          scripts/ci-install-dsc.sh "$DEKA_DSC"
-          chmod +x "$DEKA_NATIVE"
-          set +e
-          bun tests/dump/scripts/dump-results.mjs > "${{ runner.temp }}/dump.log" 2>&1
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-          set -e
-          cat "${{ runner.temp }}/dump.log"
-
-      - name: Fetch pinned tour
-        env:
-          DEKA_NATIVE: ${{ github.workspace }}/artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
-        run: |
-          # deka#845 replaced scripts/ci-fetch-tour.sh with the shipped CLI.
-          # pack-conformance.sh reads ./tour/tests/tour -- leave the checkout
-          # exactly where self fetch puts it.
-          chmod +x "$DEKA_NATIVE"
-          "$DEKA_NATIVE" self fetch tour
-
-      - name: Pack conformance tree + dump
-        run: |
-          chmod +x scripts/pack-conformance.sh
-          scripts/pack-conformance.sh
-
-      - name: Upload conformance pack (workflow artifact)
-        uses: actions/upload-artifact@v7
-        with:
-          name: deka-conformance
-          path: dist/conformance
+          path: dist/deka-${{ matrix.platform }}
+          if-no-files-found: error
           retention-days: 1
 
-      - name: Install AWS CLI
-        run: command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-
-      - name: Publish conformance pack to R2
-        run: |
-          TAG="${{ needs.resolve.outputs.tag }}"
-          aws s3 sync dist/conformance/ "s3://${R2_BUCKET_WASM}/${TAG}/conformance/" --endpoint-url="${R2_ENDPOINT}"
-
-      # Parses the same summary line the gate itself prints
-      # (tests/dump/scripts/dump-results.mjs): on a red gate it prints
-      # `[hats] gate FAILED: exit=N overall.fail=A unexpectedDivergences=B
-      # staleDivergences=C unexpectedFailures=D staleFailures=E`; on green
-      # that line is absent (nothing to ratchet) and the always-printed
-      # `[hats] summary total=... overall(pass=... fail=...)` line supplies
-      # the pass/fail counts with the four ratchet counters implicitly 0.
-      - name: Write validation.json
-        id: gate
-        run: |
-          LOG="${{ runner.temp }}/dump.log"
-          TAG="${{ needs.resolve.outputs.tag }}"
-          VERSION="${{ needs.resolve.outputs.version }}"
-          COMMIT="${{ needs.resolve.outputs.commit }}"
-          BASE_VERSION="${{ needs.resolve.outputs.base_version }}"
-          DSC_VERSION="$(tr -d '[:space:]' < scripts/dsc-version)"
-          CORPUS_SHA="$(sed -n '2p' scripts/testsuite-corpus-version | tr -d '[:space:]')"
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          WRITTEN_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-          if grep -q '^\[hats\] gate FAILED:' "$LOG"; then
-            GATE="red"
-            LINE="$(grep '^\[hats\] gate FAILED:' "$LOG" | tail -1)"
-            FAIL="$(echo "$LINE" | grep -oE 'overall\.fail=[0-9]+' | head -1 | cut -d= -f2)"
-            UNEXPECTED_DIV="$(echo "$LINE" | grep -oE 'unexpectedDivergences=[0-9]+' | head -1 | cut -d= -f2)"
-            STALE_DIV="$(echo "$LINE" | grep -oE 'staleDivergences=[0-9]+' | head -1 | cut -d= -f2)"
-            UNEXPECTED_FAIL="$(echo "$LINE" | grep -oE 'unexpectedFailures=[0-9]+' | head -1 | cut -d= -f2)"
-            STALE_FAIL="$(echo "$LINE" | grep -oE 'staleFailures=[0-9]+' | head -1 | cut -d= -f2)"
-          else
-            GATE="green"
-            LINE="$(grep '^\[hats\] summary ' "$LOG" | tail -1)"
-            FAIL="$(echo "$LINE" | grep -oE 'fail=[0-9]+' | head -1 | cut -d= -f2)"
-            UNEXPECTED_DIV=0
-            STALE_DIV=0
-            UNEXPECTED_FAIL=0
-            STALE_FAIL=0
-          fi
-
-          jq -n \
-            --arg tag "$TAG" \
-            --arg commit "$COMMIT" \
-            --arg base_version "$BASE_VERSION" \
-            --arg dsc_version "$DSC_VERSION" \
-            --arg corpus_sha "$CORPUS_SHA" \
-            --arg gate "$GATE" \
-            --argjson fail "${FAIL:-0}" \
-            --argjson unexpected_divergences "${UNEXPECTED_DIV:-0}" \
-            --argjson stale_divergences "${STALE_DIV:-0}" \
-            --argjson unexpected_failures "${UNEXPECTED_FAIL:-0}" \
-            --argjson stale_failures "${STALE_FAIL:-0}" \
-            --arg run_url "$RUN_URL" \
-            --arg written_at "$WRITTEN_AT" \
-            '{
-              tag: $tag,
-              commit: $commit,
-              base_version: $base_version,
-              dsc_version: $dsc_version,
-              corpus_sha: $corpus_sha,
-              gate: $gate,
-              summary: {
-                fail: $fail,
-                unexpectedDivergences: $unexpected_divergences,
-                staleDivergences: $stale_divergences,
-                unexpectedFailures: $unexpected_failures,
-                staleFailures: $stale_failures
-              },
-              run_url: $run_url,
-              written_at: $written_at
-            }' > validation.json
-
-          cat validation.json
-          # deka-releases has no "v" prefix on its versioned dirs (today's
-          # releases.deka.gg/<version>/, no leading v) -- VERSION here, not
-          # TAG. deka-wasm keeps its existing "v"-prefixed convention, which
-          # is why the conformance upload above used TAG.
-          aws s3 cp validation.json "s3://${R2_BUCKET_RELEASES}/${VERSION}/validation.json" --endpoint-url="${R2_ENDPOINT}"
-          echo "gate=${GATE}" >> "$GITHUB_OUTPUT"
-
-      # validation.json is uploaded regardless of outcome (the step above);
-      # this is the only place the job's own conclusion is decided, so a red
-      # gate is visible on the run without having blocked publish above.
-      - name: Fail this job's conclusion on a red gate
-        if: ${{ steps.gate.outputs.gate == 'red' }}
-        run: |
-          echo "::error::conformance gate is red for ${{ needs.resolve.outputs.tag }}; validation.json was still published, but this canary cannot be promoted until a green canary follows it."
-          exit 1
+  # Local runtime tests replace the retired external corpus release gate.
+  runtime-validation:
+    name: Validate native runtime
+    needs: resolve
+    uses: ./.github/workflows/vm-experiment.yml
 
   publish:
     name: Publish to R2
-    needs: [resolve, fetch-dsc-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, smoke]
+    needs: [resolve, build-native-web, build-cli, runtime-validation]
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -603,185 +204,18 @@ jobs:
         run: |
           TAG="${{ needs.resolve.outputs.tag }}"
           VERSION="${{ needs.resolve.outputs.version }}"
-          BASE_VERSION="${{ needs.resolve.outputs.base_version }}"
           COMMIT="${{ needs.resolve.outputs.commit }}"
           PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          DSC_VERSION="$(tr -d '[:space:]' < scripts/dsc-version)"
-          CORPUS_SHA="$(sed -n '2p' scripts/testsuite-corpus-version | tr -d '[:space:]')"
-
-          mkdir -p "release/${TAG}"
-
-          # CLI binaries
+          mkdir -p "release/${TAG}/native-ui"
           for platform in linux-x64 darwin-x64 darwin-arm64; do
-            src="artifacts/deka-cli-${platform}/deka-${platform}"
-            dst="release/${TAG}/deka-${platform}"
-            cp "${src}" "${dst}"
+            cp "artifacts/deka-cli-${platform}/deka-${platform}" "release/${TAG}/"
           done
-
-          # WASM artifacts
-          cp artifacts/deka-wasm/deka_compiler.wasm "release/${TAG}/"
-          cp artifacts/deka-wasm/deka_diagnostics.wasm "release/${TAG}/"
-
-          # Host declaration file (rfd#27 2026-09-16 amendment)
-          cp artifacts/deka-host-decl/deka-host.d.ds "release/${TAG}/"
-
-          # Compute sha256s and sizes
-          sha256() { sha256sum "$1" | awk '{print $1}'; }
-
-          COMPILER_SHA256="$(sha256 "release/${TAG}/deka_compiler.wasm")"
-          COMPILER_SIZE="$(stat -c%s "release/${TAG}/deka_compiler.wasm")"
-          DIAGNOSTICS_SHA256="$(sha256 "release/${TAG}/deka_diagnostics.wasm")"
-          DIAGNOSTICS_SIZE="$(stat -c%s "release/${TAG}/deka_diagnostics.wasm")"
-          HOST_DECL_SHA256="$(sha256 "release/${TAG}/deka-host.d.ds")"
-          CARGO_LOCK_SHA256="$(sha256sum Cargo.lock | awk '{print $1}')"
-
-          LINUX_X64_SHA256="$(sha256 "release/${TAG}/deka-linux-x64")"
-          DARWIN_X64_SHA256="$(sha256 "release/${TAG}/deka-darwin-x64")"
-          DARWIN_ARM64_SHA256="$(sha256 "release/${TAG}/deka-darwin-arm64")"
-
-          # Website-compatible compiler manifest
-          jq -n \
-            --arg version "${VERSION}" \
-            --arg commit "${COMMIT}" \
-            --arg cargo_lock "${CARGO_LOCK_SHA256}" \
-            --arg sha256 "${COMPILER_SHA256}" \
-            --argjson bytes "${COMPILER_SIZE}" \
-            '{
-              schemaVersion: 1,
-              compiler: {
-                name: "deka-browser-compiler",
-                version: $version,
-                sourceCommit: $commit,
-                abiVersion: 2
-              },
-              producer: {
-                schemaVersion: 1,
-                target: "wasm32-unknown-unknown",
-                cargoLockSha256: $cargo_lock
-              },
-              artifact: {
-                file: "deka_compiler.wasm",
-                sha256: $sha256,
-                bytes: $bytes
-              }
-            }' > "release/${TAG}/deka-compiler-artifact.json"
-
-          # Website-compatible diagnostics manifest
-          jq -n \
-            --arg commit "${COMMIT}" \
-            --arg cargo_lock "${CARGO_LOCK_SHA256}" \
-            --arg sha256 "${DIAGNOSTICS_SHA256}" \
-            --argjson bytes "${DIAGNOSTICS_SIZE}" \
-            '{
-              schemaVersion: 1,
-              diagnostics: {
-                name: "deka_diagnostics",
-                abiVersion: 1,
-                sourceCommit: $commit
-              },
-              producer: {
-                schemaVersion: 1,
-                target: "wasm32-unknown-unknown",
-                cargoLockSha256: $cargo_lock
-              },
-              artifact: {
-                file: "deka_diagnostics.wasm",
-                sha256: $sha256,
-                bytes: $bytes
-              }
-            }' > "release/${TAG}/deka-diagnostics-artifact.json"
-
-          # WASM metadata sidecars consumed by the website sync job
-          jq -n \
-            --arg artifact "deka_compiler.wasm" \
-            --arg sha256 "${COMPILER_SHA256}" \
-            --arg source_commit "${COMMIT}" \
-            --arg target "wasm32-unknown-unknown" \
-            --arg cargo_lock "${CARGO_LOCK_SHA256}" \
-            --arg name "deka-browser-compiler" \
-            --arg version "${VERSION}" \
-            --argjson abi_version 2 \
-            '{
-              schema_version: 1,
-              artifact: $artifact,
-              sha256: $sha256,
-              source_commit: $source_commit,
-              target: $target,
-              cargo_lock_sha256: $cargo_lock,
-              compiler: { name: $name, version: $version, abi_version: $abi_version }
-            }' > "release/${TAG}/deka_compiler.wasm.metadata.json"
-
-          jq -n \
-            --arg artifact "deka_diagnostics.wasm" \
-            --arg sha256 "${DIAGNOSTICS_SHA256}" \
-            --arg source_commit "${COMMIT}" \
-            --arg target "wasm32-unknown-unknown" \
-            --arg cargo_lock "${CARGO_LOCK_SHA256}" \
-            --arg name "deka_diagnostics" \
-            --argjson abi_version 1 \
-            '{
-              schema_version: 1,
-              artifact: $artifact,
-              sha256: $sha256,
-              source_commit: $source_commit,
-              target: $target,
-              cargo_lock_sha256: $cargo_lock,
-              adapter: { name: $name, abi_version: $abi_version }
-            }' > "release/${TAG}/deka_diagnostics.wasm.metadata.json"
-
-          # Release manifest consumed by the website sync job and by
-          # promote.yml's gates. rfd#68 additions: channel, base_version,
-          # dsc_version, corpus_sha, promoted_from (always null here --
-          # only promote.yml's rewrite of this same file sets it).
-          jq -n \
-            --arg version "${VERSION}" \
-            --arg tag "${TAG}" \
-            --arg commit "${COMMIT}" \
-            --arg published_at "${PUBLISHED_AT}" \
-            --arg linux_x64_sha "${LINUX_X64_SHA256}" \
-            --arg darwin_x64_sha "${DARWIN_X64_SHA256}" \
-            --arg darwin_arm64_sha "${DARWIN_ARM64_SHA256}" \
-            --arg compiler_sha "${COMPILER_SHA256}" \
-            --arg diagnostics_sha "${DIAGNOSTICS_SHA256}" \
-            --arg host_decl_sha "${HOST_DECL_SHA256}" \
-            --arg channel "canary" \
-            --arg base_version "${BASE_VERSION}" \
-            --arg dsc_version "${DSC_VERSION}" \
-            --arg corpus_sha "${CORPUS_SHA}" \
-            '{
-              version: $version,
-              tag: $tag,
-              commit: $commit,
-              published_at: $published_at,
-              channel: $channel,
-              base_version: $base_version,
-              dsc_version: $dsc_version,
-              corpus_sha: $corpus_sha,
-              promoted_from: null,
-              binaries: {
-                "linux-x64": { name: "deka-linux-x64", sha256: $linux_x64_sha },
-                "darwin-x64": { name: "deka-darwin-x64", sha256: $darwin_x64_sha },
-                "darwin-arm64": { name: "deka-darwin-arm64", sha256: $darwin_arm64_sha }
-              },
-              wasm: {
-                compiler: "deka_compiler.wasm",
-                compiler_sha256: $compiler_sha,
-                diagnostics: "deka_diagnostics.wasm",
-                diagnostics_sha256: $diagnostics_sha
-              },
-              host_decl: {
-                file: "deka-host.d.ds",
-                sha256: $host_decl_sha
-              }
-            }' > "release/${TAG}/release.json"
-
-          cp "release/${TAG}/release.json" "release/${TAG}/canary.json"
-
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "compiler_sha256=${COMPILER_SHA256}" >> "$GITHUB_OUTPUT"
-          echo "diagnostics_sha256=${DIAGNOSTICS_SHA256}" >> "$GITHUB_OUTPUT"
-          echo "host_decl_sha256=${HOST_DECL_SHA256}" >> "$GITHUB_OUTPUT"
+          cp artifacts/deka-native-web/* "release/${TAG}/native-ui/"
+          python3 scripts/native-release-manifest.py "release/${TAG}" "$VERSION" "$COMMIT" "$PUBLISHED_AT"
+          {
+            echo "tag=${TAG}"
+            echo "version=${VERSION}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload versioned release to R2
         run: |
@@ -797,12 +231,6 @@ jobs:
           # releases.deka.gg/0.53.4/, not /v0.53.4/) -- VERSION here, not TAG.
           aws s3 sync "release/${TAG}/" "s3://${R2_BUCKET_RELEASES}/${VERSION}/" --endpoint-url="${R2_ENDPOINT}" --exclude "canary.json"
 
-      - name: Upload versioned WASM to R2
-        run: |
-          TAG="${{ steps.prepare.outputs.tag }}"
-          # The declaration file lives in the releases bucket only.
-          aws s3 sync "release/${TAG}/" "s3://${R2_BUCKET_WASM}/${TAG}/" --endpoint-url="${R2_ENDPOINT}" --exclude "canary.json" --exclude "deka-host.d.ds"
-
       # rfd#68: canary.json / canary/* instead of latest.json / latest/* --
       # `latest` is stable-only and is never touched by this workflow.
       - name: Publish canary release pointer
@@ -810,23 +238,15 @@ jobs:
           TAG="${{ steps.prepare.outputs.tag }}"
           aws s3 cp "release/${TAG}/canary.json" "s3://${R2_BUCKET_RELEASES}/canary.json" --endpoint-url="${R2_ENDPOINT}"
 
-      - name: Publish canary WASM pointers
-        run: |
-          TAG="${{ steps.prepare.outputs.tag }}"
-          aws s3 cp "release/${TAG}/deka-compiler-artifact.json" "s3://${R2_BUCKET_WASM}/canary/deka-compiler-artifact.json" --endpoint-url="${R2_ENDPOINT}"
-          aws s3 cp "release/${TAG}/deka-diagnostics-artifact.json" "s3://${R2_BUCKET_WASM}/canary/deka-diagnostics-artifact.json" --endpoint-url="${R2_ENDPOINT}"
-          aws s3 cp "release/${TAG}/deka_compiler.wasm" "s3://${R2_BUCKET_WASM}/canary/deka_compiler.wasm" --endpoint-url="${R2_ENDPOINT}"
-          aws s3 cp "release/${TAG}/deka_diagnostics.wasm" "s3://${R2_BUCKET_WASM}/canary/deka_diagnostics.wasm" --endpoint-url="${R2_ENDPOINT}"
-
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.prepare.outputs.tag }}"
-          TMPDIR="$(mktemp -d)"
-          curl -fsSL -o "${TMPDIR}/gh.tar.gz" "https://github.com/cli/cli/releases/download/v2.98.0/gh_2.98.0_linux_amd64.tar.gz"
-          tar -xzf "${TMPDIR}/gh.tar.gz" -C "${TMPDIR}"
-          GH_BIN="${TMPDIR}/gh_2.98.0_linux_amd64/bin/gh"
+          RELEASE_TOOLS="$(mktemp -d)"
+          curl -fsSL -o "${RELEASE_TOOLS}/gh.tar.gz" "https://github.com/cli/cli/releases/download/v2.98.0/gh_2.98.0_linux_amd64.tar.gz"
+          tar -xzf "${RELEASE_TOOLS}/gh.tar.gz" -C "${RELEASE_TOOLS}"
+          GH_BIN="${RELEASE_TOOLS}/gh_2.98.0_linux_amd64/bin/gh"
 
           # The release may already exist if the workflow is retried. Make
           # this step idempotent so downstream triggers still run.
@@ -855,15 +275,22 @@ jobs:
           echo "Published deka canary ${TAG}"
           echo "  release manifest: https://releases.deka.gg/${VERSION}/release.json"
           echo "  canary pointer: https://releases.deka.gg/canary.json"
-          echo "  compiler manifest: https://wasm.deka.gg/canary/deka-compiler-artifact.json"
-          echo "  diagnostics manifest: https://wasm.deka.gg/canary/deka-diagnostics-artifact.json"
-          echo "  conformance pack (after dump-conformance): https://wasm.deka.gg/${TAG}/conformance/manifest.json"
-          echo "  downstream notified: create-deka-app (npm canary tag), testsuite-site"
+          echo "  native browser package: https://releases.deka.gg/${VERSION}/native-ui/manifest.json"
+          echo "  downstream notified: create-deka-app (npm canary tag)"
           echo "  to promote: gh workflow run promote.yml -f canary=${TAG}"
+
+      - name: Publish runtime validation evidence
+        run: |
+          jq -n \
+            --arg commit "${{ needs.resolve.outputs.commit }}" \
+            --arg tag "${{ needs.resolve.outputs.tag }}" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{schema: 1, kind: "native-runtime", commit: $commit, tag: $tag, gate: "green", checks: ["frontend-vm-renderer", "packaged-native-app", "browser-wasm-package"], run_url: $run_url}' > validation.json
+          aws s3 cp validation.json "s3://${R2_BUCKET_RELEASES}/${{ needs.resolve.outputs.version }}/validation.json" --endpoint-url="${R2_ENDPOINT}"
 
   # Downstream consumers are notified from a SEPARATE JOB that needs
   # `publish`, not from steps inside it -- a canary's downstream footprint is
-  # deliberately narrow (npm canary dist-tag + testsuite-site only; website,
+  # deliberately narrow (npm canary dist-tag only; website,
   # headless and draftwriter are stable-only, see promote.yml).
   notify:
     name: Notify downstream
@@ -873,5 +300,4 @@ jobs:
       tag: ${{ needs.resolve.outputs.tag }}
       channel: canary
       create_deka_app: true
-      testsuite_site: true
     secrets: inherit
