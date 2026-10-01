@@ -120,3 +120,101 @@ fn conditionals_select_one_branch_and_dynamic_lists_keep_live_handlers() {
     }
     assert!(session.stats().slots < 1000, "{:?}", session.stats());
 }
+
+#[test]
+fn component_tags_keep_local_state_and_read_live_named_props() {
+    let source = r#"
+interface CardProps { title: string; count: number }
+fn Card(props: CardProps) {
+    let clicks = 0;
+    return (<div><p>{props.title}</p><p>{props.count}</p>
+        <button onClick={fn() { clicks += 1; }}>{clicks}</button></div>);
+}
+interface ShellProps { children: ReactNode }
+fn Shell(props: ShellProps) { return <div>{props.children}</div>; }
+fn Badge() { return <span>Ready</span>; }
+export fn App() {
+    let count = 0;
+    return (<view><Shell><Card count={count + 1} title="Deka" />
+        <Card title="Zega" count={count + 2} /></Shell><Badge />
+        <button onClick={fn() { count += 10; }}>Update</button></view>);
+}"#;
+    let p = compiler::compile_entry(source, &Hosts::default(), "App").unwrap();
+    let encoded = serde_json::to_string(&p).unwrap();
+    let mut session = ui::UiSession::new(serde_json::from_str(&encoded).unwrap()).unwrap();
+    assert_eq!(
+        texts(session.tree()),
+        ["Deka", "1", "0", "Zega", "2", "0", "Ready", "Update"]
+    );
+    session.click(0).unwrap();
+    session.click(2).unwrap();
+    assert_eq!(
+        texts(session.tree()),
+        ["Deka", "11", "1", "Zega", "12", "0", "Ready", "Update"]
+    );
+    for _ in 0..100 {
+        session.click(0).unwrap();
+    }
+    assert!(texts(session.tree()).contains(&"101".into()));
+    assert!(session.stats().slots < 500, "{:?}", session.stats());
+}
+
+#[test]
+fn component_tags_reject_invalid_props_before_execution() {
+    let prefix =
+        "interface Props { title: string } fn Card(props: Props) { return <p>{props.title}</p>; }";
+    for (markup, error) in [
+        ("<Card />", "missing required prop"),
+        ("<Card title={42} />", "expects type"),
+        ("<Card title=\"ok\" typo=\"bad\" />", "has no prop"),
+    ] {
+        let source = format!("{prefix} export fn App() {{ return {markup}; }}");
+        assert!(
+            compiler::compile_entry(&source, &Hosts::default(), "App")
+                .unwrap_err()
+                .contains(error)
+        );
+    }
+}
+
+#[test]
+fn component_tags_load_exported_components_from_relative_modules() {
+    let directory = std::env::temp_dir().join(format!("deka-jsx-modules-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("card.ds"), "interface Props { title: string } export fn Card(props: Props) { return <p>{props.title}</p>; }").unwrap();
+    std::fs::write(directory.join("app.ds"), "import { Card } from \"./card.ds\"; export fn App() { return <view><Card title=\"Imported\" /></view>; }").unwrap();
+    let p =
+        compiler::compile_file(&directory.join("app.ds"), &Hosts::default(), Some("App")).unwrap();
+    let session = ui::UiSession::new(p).unwrap();
+    assert_eq!(texts(session.tree()), ["Imported"]);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn component_boolean_and_callback_props_work_without_react() {
+    let source = r#"
+interface Props { active: boolean; fn onSelect() void }
+fn Choice(props: Props) {
+    return <button onClick={fn() { props.onSelect(); }}>{props.active ? "Selected" : "Idle"}</button>;
+}
+export fn App() {
+    let selected = false;
+    return <view><Choice active={selected} onSelect={fn() { selected = true; }} /><Choice active onSelect={fn() { selected = false; }} /></view>;
+}"#;
+    let mut session =
+        ui::UiSession::new(compiler::compile_entry(source, &Hosts::default(), "App").unwrap())
+            .unwrap();
+    assert_eq!(texts(session.tree()), ["Idle", "Selected"]);
+    session.click(0).unwrap();
+    assert_eq!(texts(session.tree()), ["Selected", "Selected"]);
+    session.click(1).unwrap();
+    assert_eq!(texts(session.tree()), ["Idle", "Selected"]);
+    for replacement in ["onSelect={42}", ""] {
+        let invalid = source.replace("onSelect={fn() { selected = true; }}", replacement);
+        let error = compiler::compile_entry(&invalid, &Hosts::default(), "App").unwrap_err();
+        assert!(
+            error.contains("expects type") || error.contains("missing required prop"),
+            "{error}"
+        );
+    }
+}

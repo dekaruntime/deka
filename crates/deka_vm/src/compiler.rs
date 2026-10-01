@@ -381,7 +381,10 @@ impl Lower {
     }
     fn statement(&mut self, s: &Stmt<'_>, c: &mut Context) -> Result<()> {
         match s {
-            Stmt::Import { .. } | Stmt::Empty { .. } => {}
+            Stmt::Import { .. }
+            | Stmt::Empty { .. }
+            | Stmt::Interface { .. }
+            | Stmt::TypeAlias { .. } => {}
             Stmt::Const { name, value, .. }
             | Stmt::Let { name, value, .. }
             | Stmt::Export {
@@ -488,9 +491,70 @@ impl Lower {
         }
         Ok(())
     }
+    fn jsx_children(&mut self, values: &[Expr<'_>], c: &mut Context) -> Result<usize> {
+        let mut children = 0;
+        for child in values {
+            match child {
+                Expr::JsxText { value, .. } => {
+                    let mut text = value.split_whitespace().collect::<Vec<_>>().join(" ");
+                    if text.is_empty() {
+                        continue;
+                    }
+                    // Preserve inline separation around expressions, but not
+                    // indentation from multiline markup.
+                    if !value.contains('\n') {
+                        if value.starts_with(char::is_whitespace) {
+                            text.insert(0, ' ');
+                        }
+                        if value.ends_with(char::is_whitespace) {
+                            text.push(' ');
+                        }
+                    }
+                    c.emit(Op::Const(Literal::String(text)));
+                }
+                Expr::JsxElement { .. } => self.expr(child, c)?,
+                _ => {
+                    let body = [Stmt::Return {
+                        value: Some(child.clone()),
+                        span: child.span(),
+                    }];
+                    self.function("<ui binding>", &[], &body, false, c)?;
+                }
+            }
+            children += 1;
+        }
+        Ok(children)
+    }
     fn expr(&mut self, e: &Expr<'_>, c: &mut Context) -> Result<()> {
         match e {
             Expr::JsxElement { element, .. } => {
+                if element.tag.chars().next().is_some_and(char::is_uppercase) {
+                    c.emit(Op::Load(c.slot(element.tag)?));
+                    let mut names = vec![];
+                    for attr in element.attributes {
+                        let value = attr.value.clone().unwrap_or(Expr::Boolean {
+                            value: true,
+                            span: attr.span,
+                        });
+                        let body = [Stmt::Return {
+                            value: Some(value.clone()),
+                            span: value.span(),
+                        }];
+                        self.function("<component prop>", &[], &body, false, c)?;
+                        names.push(attr.name.into());
+                    }
+                    if !element.children.is_empty() {
+                        if names.iter().any(|name| name == "children") {
+                            return Err("component children cannot be supplied both as a prop and nested markup".into());
+                        }
+                        let children = self.jsx_children(element.children, c)?;
+                        c.emit(Op::List(children));
+                        names.push("children".into());
+                    }
+                    c.emit(Op::Props(names));
+                    c.emit(Op::ComponentCall);
+                    return Ok(());
+                }
                 if !matches!(
                     element.tag,
                     "view" | "div" | "p" | "span" | "button" | "input"
@@ -534,37 +598,7 @@ impl Lower {
                     }
                     names.push(attr.name.into());
                 }
-                let mut children = 0;
-                for child in element.children {
-                    match child {
-                        Expr::JsxText { value, .. } => {
-                            let mut text = value.split_whitespace().collect::<Vec<_>>().join(" ");
-                            if text.is_empty() {
-                                continue;
-                            }
-                            // Preserve inline separation around expressions, but not
-                            // indentation from multiline markup.
-                            if !value.contains('\n') {
-                                if value.starts_with(char::is_whitespace) {
-                                    text.insert(0, ' ');
-                                }
-                                if value.ends_with(char::is_whitespace) {
-                                    text.push(' ');
-                                }
-                            }
-                            c.emit(Op::Const(Literal::String(text)));
-                        }
-                        Expr::JsxElement { .. } => self.expr(child, c)?,
-                        _ => {
-                            let body = [Stmt::Return {
-                                value: Some(child.clone()),
-                                span: child.span(),
-                            }];
-                            self.function("<ui binding>", &[], &body, false, c)?;
-                        }
-                    }
-                    children += 1;
-                }
+                let children = self.jsx_children(element.children, c)?;
                 c.emit(Op::List(children));
                 names.push("children".into());
                 c.emit(Op::Record(names));

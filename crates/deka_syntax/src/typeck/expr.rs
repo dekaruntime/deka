@@ -2083,6 +2083,18 @@ impl<'a> Checker<'a> {
                             None => self.resolve_ast_type(ty),
                         };
                         fields.push((*field, expected, *optional));
+                    } else if let ast::InterfaceMember::Method { name: field, .. } = member {
+                        let expected = self
+                            .interface_members
+                            .get(identity)
+                            .and_then(|definition| {
+                                definition.members.iter().find(|(n, _)| n == field)
+                            })
+                            .map(|(_, ty)| ty.clone())
+                            .or_else(|| self.resolve_interface_field(name, field));
+                        if let Some(expected) = expected {
+                            fields.push((*field, expected, false));
+                        }
                     }
                 }
                 Some((*name, fields))

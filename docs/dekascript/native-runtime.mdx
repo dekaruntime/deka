@@ -51,3 +51,46 @@ render errors keep the last working application.
 Browser text editing, asynchronous UI event scheduling, app module loading and
 accessibility semantics are still integration work. Native host-specific input
 and worker callbacks do not imply those features are available in the browser.
+
+## Reusable component tags
+
+A component is a function returning a view. Use an uppercase tag to compose it,
+and pass named attributes through a checked props interface:
+
+```tsx
+interface CardProps { title: string; detail: string }
+
+fn Card(props: CardProps) {
+    return (
+        <div className="p-4 gap-2">
+            <p>{props.title}</p>
+            <p>{props.detail}</p>
+        </div>
+    );
+}
+
+export fn App() {
+    return (
+        <view>
+            <Card title="Deka" detail="A component is a function that returns a view." />
+        </view>
+    );
+}
+```
+
+This displays the title and detail in the reusable card. Attribute order does
+not matter. The checker reports missing, unknown and wrongly typed props before
+execution. Parameterless components also work as tags. Relative file imports
+can provide components in native apps; the browser tour still accepts one source file.
+
+Nested markup supplies a `children` prop; declare it as `children: ReactNode`
+in the props interface. That existing type name describes renderable values;
+no React runtime is involved. A bare boolean attribute means `true`.
+
+Components in static markup are created once. Local `let` state and event
+closures survive parent updates. Prop expressions are read when the component
+uses them, so a child can display current parent state without being recreated.
+Keep those expressions free of side effects. Values copied from props into a
+local binding during creation are snapshots, not automatic derived bindings.
+Dynamic conditional or mapped child creation still follows the preview's
+existing positional identity behavior; this is not keyed reconciliation.

@@ -371,6 +371,29 @@ impl Vm {
                     .stack
                     .push(self.heap.alloc(Value::Closure { function, captures }));
             }
+            Op::ComponentCall => {
+                let props = pop(frame)?;
+                let Value::Closure { function, captures } = self.heap.get(pop(frame)?)?.clone()
+                else {
+                    return Err("component is not callable".into());
+                };
+                let target = &self.program.functions[function];
+                if target.asynchronous || target.parameters > 1 {
+                    return Err(
+                        "component must be synchronous with zero or one props parameter".into(),
+                    );
+                }
+                let args = if target.parameters == 0 {
+                    vec![]
+                } else {
+                    vec![props]
+                };
+                let next = self.frame(function, captures, args)?;
+                if frames.len() >= 1024 {
+                    return Err("call stack limit exceeded".into());
+                }
+                frames.push(next);
+            }
             Op::Call(argc) => {
                 let args = arguments(frame, argc)?;
                 let Value::Closure { function, captures } = self.heap.get(pop(frame)?)?.clone()
@@ -461,6 +484,13 @@ impl Vm {
                 items.push(item);
                 frame.stack.push(self.heap.alloc(Value::List(items)));
             }
+            Op::Props(names) => {
+                let items = arguments(frame, names.len())?;
+                frame.stack.push(
+                    self.heap
+                        .alloc(Value::Props(names.into_iter().zip(items).collect())),
+                );
+            }
             Op::Record(names) => {
                 let items = arguments(frame, names.len())?;
                 frame.stack.push(
@@ -470,6 +500,24 @@ impl Vm {
             }
             Op::Field(name) => {
                 let h = pop(frame)?;
+                if let Value::Props(fields) = self.heap.get(h)? {
+                    let value = fields.get(&name).copied();
+                    if let Some(value) = value {
+                        if let Value::Closure { function, captures } = self.heap.get(value)?.clone()
+                        {
+                            let next = self.frame(function, captures, vec![])?;
+                            if frames.len() >= 1024 {
+                                return Err("call stack limit exceeded".into());
+                            }
+                            frames.push(next);
+                        } else {
+                            frame.stack.push(value);
+                        }
+                    } else {
+                        frame.stack.push(self.heap.alloc(Value::Unit));
+                    }
+                    return Ok(Step::Continue);
+                }
                 let value = match self.heap.get(h)? {
                     Value::List(items) if name == "length" => {
                         self.heap.alloc(Value::Number(items.len() as f64))

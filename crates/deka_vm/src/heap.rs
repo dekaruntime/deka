@@ -16,6 +16,8 @@ pub(crate) enum Value {
     String(String),
     List(Vec<Handle>),
     Record(BTreeMap<String, Handle>),
+    // Component attributes are getters; nested children are retained values.
+    Props(BTreeMap<String, Handle>),
     Cell(Handle),
     Closure {
         function: usize,
@@ -106,7 +108,7 @@ impl Heap {
                 | Value::Closure {
                     captures: items, ..
                 } => todo.extend(items),
-                Value::Record(fields) => todo.extend(fields.values()),
+                Value::Record(fields) | Value::Props(fields) => todo.extend(fields.values()),
                 _ => {}
             }
         }

@@ -22,6 +22,7 @@ pub enum Op {
         captures: Vec<usize>,
     },
     Call(usize),
+    ComponentCall,
     Host {
         operation: String,
         arguments: usize,
@@ -33,6 +34,7 @@ pub enum Op {
     ListHas,
     Index,
     Record(Vec<String>),
+    Props(Vec<String>),
     Field(String),
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
