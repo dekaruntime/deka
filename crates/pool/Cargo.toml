@@ -28,7 +28,7 @@ swc_ecma_ast = { workspace = true }
 swc_ecma_parser = { workspace = true, features = ["typescript"] }
 swc_ecma_visit = { workspace = true }
 swc_ecma_codegen = "21.0.0"
-swc_ecma_minifier = "42.0.0"
+swc_ecma_minifier = "61.0.6"
 swc_ecma_transforms_base = "34.0.0"
 
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
