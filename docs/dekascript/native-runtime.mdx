@@ -83,8 +83,9 @@ not matter. The checker reports missing, unknown and wrongly typed props before
 execution. Parameterless components also work as tags. Relative file imports
 can provide components in native apps; the browser tour still accepts one source file.
 
-Nested markup supplies a `children` prop; declare it as `children: ReactNode`
-in the props interface. That existing type name describes renderable values;
+Nested markup supplies child content. Prefer `<slot />` to project it, including
+when no content is supplied. To read `props.children` explicitly, declare its type
+in the props interface. The existing `ReactNode` type describes renderable values;
 no React runtime is involved. A bare boolean attribute means `true`.
 
 Components in static markup are created once. Local `let` state and event
@@ -94,3 +95,39 @@ Keep those expressions free of side effects. Values copied from props into a
 local binding during creation are snapshots, not automatic derived bindings.
 Dynamic conditional or mapped child creation still follows the preview's
 existing positional identity behavior; this is not keyed reconciliation.
+
+### Projecting children with a default slot
+
+Place `<slot />` inside a component's view to display its nested markup:
+
+```tsx
+interface CardProps { title: string; detail: string }
+fn Hero() { return <p>Testing</p>; }
+fn Card(props: CardProps) {
+    return (
+        <div className="p-4 gap-3">
+            <p>{props.title}</p>
+            <p>{props.detail}</p>
+            <slot />
+        </div>
+    );
+}
+export fn App() {
+    return (
+        <view>
+            <Card title="Empty" detail="No nested content" />
+            <Card title="Project" detail="Nested content follows">
+                <Hero />
+            </Card>
+        </view>
+    );
+}
+```
+
+The second card shows Testing after its detail. The first slot contributes no
+nodes. A default slot does not require a `children` declaration, a props
+parameter, or pattern matching. It preserves child state and adds no layout
+wrapper. An explicit optional `children?: ReactNode` declaration is also allowed;
+`<slot />` handles its absence. Direct `{props.children}` still obeys the ordinary
+optional-value type rule. Named slots and fallback content are not supported yet.
+`<children />` is not an alias for `<slot />`.

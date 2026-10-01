@@ -218,3 +218,57 @@ export fn App() {
         );
     }
 }
+
+#[test]
+fn default_slots_project_optional_children_without_wrapper_nodes() {
+    let source = r#"
+interface CardProps { title: string; children?: ReactNode }
+interface HeroProps { title: string }
+fn Hero(props: HeroProps) { return <p>{props.title}</p>; }
+fn Card(props: CardProps) { return <div><p>{props.title}</p><slot /></div>; }
+export fn App() {
+    return <view><Card title="Empty" /><Card title="Project"><Hero title="Testing" /></Card></view>;
+}"#;
+    let p = compiler::compile_entry(source, &Hosts::default(), "App").unwrap();
+    let session = ui::UiSession::new(p).unwrap();
+    assert_eq!(texts(session.tree()), ["Empty", "Project", "Testing"]);
+    assert_eq!(session.tree().children[1].children.len(), 2);
+}
+
+#[test]
+fn slots_work_without_props_parameters_and_keep_nested_state_alive() {
+    let source = r#"
+fn Counter() { let count = 0; return <button onClick={fn() { count += 1; }}>{count}</button>; }
+fn Frame() {
+    let visible = true;
+    return <div><button onClick={fn() { visible = visible == false; }}>Toggle</button>{visible ? <slot /> : None}</div>;
+}
+export fn App() { return <view><Frame><Counter /></Frame><Frame /></view>; }
+"#;
+    let mut session =
+        ui::UiSession::new(compiler::compile_entry(source, &Hosts::default(), "App").unwrap())
+            .unwrap();
+    assert_eq!(texts(session.tree()), ["Toggle", "0", "Toggle"]);
+    session.click(1).unwrap();
+    session.click(0).unwrap();
+    assert_eq!(texts(session.tree()), ["Toggle", "Toggle"]);
+    session.click(0).unwrap();
+    assert_eq!(texts(session.tree()), ["Toggle", "1", "Toggle"]);
+    for _ in 0..100 {
+        session.click(1).unwrap();
+    }
+    assert_eq!(texts(session.tree()), ["Toggle", "101", "Toggle"]);
+    assert!(session.stats().slots < 500, "{:?}", session.stats());
+}
+
+#[test]
+fn default_slot_does_not_silently_ignore_named_or_fallback_content() {
+    for slot in ["<slot name=\"hero\" />", "<slot><p>fallback</p></slot>"] {
+        let source = format!("export fn App() {{ return <view>{slot}</view>; }}");
+        assert!(
+            compiler::compile_entry(&source, &Hosts::default(), "App")
+                .unwrap_err()
+                .contains("default slot accepts no attributes or nested content")
+        );
+    }
+}

@@ -23,6 +23,7 @@ pub enum Op {
     },
     Call(usize),
     ComponentCall,
+    Slot,
     Host {
         operation: String,
         arguments: usize,

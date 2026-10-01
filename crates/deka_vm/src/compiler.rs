@@ -528,6 +528,15 @@ impl Lower {
     fn expr(&mut self, e: &Expr<'_>, c: &mut Context) -> Result<()> {
         match e {
             Expr::JsxElement { element, .. } => {
+                if element.tag == "slot" {
+                    if !element.attributes.is_empty() || element.children.iter().any(|child| {
+                        !matches!(child, Expr::JsxText { value, .. } if value.trim().is_empty())
+                    }) {
+                        return Err("default slot accepts no attributes or nested content".into());
+                    }
+                    c.emit(Op::Slot);
+                    return Ok(());
+                }
                 if element.tag.chars().next().is_some_and(char::is_uppercase) {
                     c.emit(Op::Load(c.slot(element.tag)?));
                     let mut names = vec![];

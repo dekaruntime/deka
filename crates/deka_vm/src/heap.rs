@@ -22,6 +22,7 @@ pub(crate) enum Value {
     Closure {
         function: usize,
         captures: Vec<Handle>,
+        slot_children: Option<Handle>,
     },
     Promise(Option<Result<Handle>>),
 }
@@ -104,10 +105,15 @@ impl Heap {
             slot.marked = true;
             match slot.value.as_ref().unwrap() {
                 Value::Cell(h) | Value::Promise(Some(Ok(h))) => todo.push(*h),
-                Value::List(items)
-                | Value::Closure {
-                    captures: items, ..
-                } => todo.extend(items),
+                Value::List(items) => todo.extend(items),
+                Value::Closure {
+                    captures,
+                    slot_children,
+                    ..
+                } => {
+                    todo.extend(captures);
+                    todo.extend(slot_children);
+                }
                 Value::Record(fields) | Value::Props(fields) => todo.extend(fields.values()),
                 _ => {}
             }
