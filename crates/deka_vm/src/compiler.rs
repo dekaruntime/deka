@@ -12,6 +12,11 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
         &[(std::path::PathBuf::from("<source>"), source.to_owned())],
         hosts,
         Some(entry_name),
+        &Project {
+            root: std::path::PathBuf::from("."),
+            dependencies: BTreeMap::new(),
+            lock: BTreeMap::new(),
+        },
     )
 }
 /// Compile a source file and its relative modules, once each, in dependency order.
@@ -20,7 +25,8 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
 /// before it finishes initializing is a named error, not a silent value.
 /// Self-imports and external packages fail explicitly.
 pub fn compile_file(path: &std::path::Path, hosts: &Hosts, entry: Option<&str>) -> Result<Program> {
-    compile_modules(&load_modules(path)?, hosts, entry)
+    let project = Project::load(path)?;
+    compile_modules(&load_modules(path, &project)?, hosts, entry, &project)
 }
 /// Watch dependencies even while an imported file is absent or being edited.
 /// Compilation still fails closed; this list only controls development reload.
@@ -86,22 +92,146 @@ pub fn test_entries(path: &std::path::Path) -> Result<Vec<String>> {
 fn host_module(source: &str) -> bool {
     matches!(source, "vm:host" | "io" | "test")
 }
-fn module_path(parent: &std::path::Path, source: &str) -> Result<std::path::PathBuf> {
-    if !source.starts_with("./") && !source.starts_with("../") {
-        return Err(format!(
-            "unsupported module: {source}; use a relative .ds/.dsx path or a built-in module"
-        ));
+
+/// The project a compile resolves packages against: the nearest ancestor of
+/// the entry module with a `deka.json`, its declared dependency pins, and
+/// the lock's exact pins (deka#1212). Consumption only — nothing here
+/// touches the network.
+pub struct Project {
+    root: std::path::PathBuf,
+    dependencies: BTreeMap<String, String>,
+    lock: BTreeMap<String, String>,
+}
+
+impl Project {
+    fn load(entry: &std::path::Path) -> Result<Project> {
+        let mut directory = std::fs::canonicalize(entry)
+            .map_err(|e| format!("{}: {e}", entry.display()))?
+            .parent()
+            .ok_or("module has no parent")?
+            .to_path_buf();
+        let root = loop {
+            if directory.join("deka.json").exists() {
+                break directory;
+            }
+            if !directory.pop() {
+                return Err("deka.json not found in this directory or any parent".into());
+            }
+        };
+        let manifest: serde_json::Value = std::fs::read_to_string(root.join("deka.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_str(&bytes).ok())
+            .ok_or_else(|| format!("{}: invalid deka.json", root.display()))?;
+        let dependencies = manifest
+            .get("dependencies")
+            .and_then(|d| d.as_object())
+            .map(|deps| {
+                deps.iter()
+                    .filter_map(|(name, pin)| Some((name.clone(), pin.as_str()?.to_owned())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let lock = std::fs::read_to_string(root.join("deka.lock"))
+            .ok()
+            .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
+            .and_then(|lock| lock.get("packages")?.as_object().cloned())
+            .map(|packages| {
+                packages
+                    .iter()
+                    .filter_map(|(name, entry)| {
+                        // Lock entries are [version, tarball, deps, sha256].
+                        let version = entry.as_array()?.first()?.as_str()?;
+                        Some((name.clone(), version.to_owned()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Project {
+            root,
+            dependencies,
+            lock,
+        })
     }
-    let path = parent.parent().ok_or("module has no parent")?.join(source);
-    std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()))
+
+    /// Resolve a bare specifier to a package file: `name` (or
+    /// `@scope/name`) plus an optional subpath. Every failure names the
+    /// package and the cause.
+    fn package_path(&self, source: &str) -> Result<std::path::PathBuf> {
+        let segments: Vec<&str> = source.split('/').collect();
+        let (name, subpath) = if source.starts_with('@') {
+            if segments.len() < 2 {
+                return Err(format!("invalid package specifier: {source}"));
+            }
+            (format!("{}/{}", segments[0], segments[1]), &segments[2.min(segments.len())..])
+        } else {
+            (segments[0].to_owned(), &segments[1.min(segments.len())..])
+        };
+        let Some(declared) = self.dependencies.get(&name) else {
+            return Err(format!(
+                "package {name} is not declared in deka.json dependencies"
+            ));
+        };
+        let directory = self.root.join("ds_modules").join(&name);
+        if !directory.is_dir() {
+            return Err(format!(
+                "package {name} is not installed (ds_modules/{name} is missing)"
+            ));
+        };
+        let entry = if subpath.is_empty() {
+            let manifest_entry = std::fs::read_to_string(directory.join("deka.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
+                .and_then(|manifest| manifest.get("entry")?.as_str().map(str::to_owned));
+            let entry = manifest_entry.unwrap_or_else(|| "index.ds".into());
+            // Version agreement is checked once per package root resolution:
+            // deka.json declares, deka.lock pins, ds_modules provides.
+            let installed = std::fs::read_to_string(directory.join("deka.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
+                .and_then(|manifest| manifest.get("version")?.as_str().map(str::to_owned));
+            if let Some(installed) = installed {
+                if installed != *declared {
+                    return Err(format!(
+                        "package {name} version mismatch: deka.json expects {declared}, ds_modules has {installed}"
+                    ));
+                }
+                if let Some(pin) = self.lock.get(&name)
+                    && *pin != installed
+                {
+                    return Err(format!(
+                        "package {name} version mismatch: deka.lock pins {pin}, ds_modules has {installed}"
+                    ));
+                }
+            }
+            directory.join(entry)
+        } else {
+            directory.join(subpath.join("/"))
+        };
+        if !entry.exists() {
+            return Err(format!("package {name} has no entry file ({})", entry.display()));
+        }
+        std::fs::canonicalize(&entry).map_err(|e| format!("{}: {e}", entry.display()))
+    }
+}
+
+fn module_path(parent: &std::path::Path, source: &str, project: &Project) -> Result<std::path::PathBuf> {
+    if source.starts_with("./") || source.starts_with("../") {
+        let path = parent.parent().ok_or("module has no parent")?.join(source);
+        return std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()));
+    }
+    project.package_path(source)
 }
 /// Modules in dependency order. A module already being loaded is not loaded
 /// again (import cycles load, deka#1206); reads of exports that initialize
 /// later than the importer become checked loads during lowering, computed
 /// from the loaded order in `compile_modules`. Self-imports are refused.
-fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, String)>> {
+fn load_modules(
+    path: &std::path::Path,
+    project: &Project,
+) -> Result<Vec<(std::path::PathBuf, String)>> {
     fn visit(
         path: std::path::PathBuf,
+        project: &Project,
         visiting: &mut std::collections::BTreeSet<std::path::PathBuf>,
         loaded: &mut Vec<(std::path::PathBuf, String)>,
     ) -> Result<()> {
@@ -130,12 +260,12 @@ fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, Strin
                 _ => None,
             };
             if let Some(source) = source {
-                let target = module_path(&path, source)?;
+                let target = module_path(&path, source, project)?;
                 if target == path {
                     return Err(format!("cyclic module import: {}", path.display()));
                 }
                 if !visiting.contains(&target) {
-                    visit(target, visiting, loaded)?;
+                    visit(target, project, visiting, loaded)?;
                 }
             }
         }
@@ -146,6 +276,7 @@ fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, Strin
     let mut loaded = vec![];
     visit(
         std::fs::canonicalize(path).map_err(|e| e.to_string())?,
+        project,
         &mut Default::default(),
         &mut loaded,
     )?;
@@ -166,6 +297,7 @@ fn lower_module(
     host_exports: &deka_syntax::ModuleExports<'_>,
     module_exports: &HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'_>>,
     bindings: &HashMap<std::path::PathBuf, BTreeMap<String, usize>>,
+    project: &Project,
     forward: Option<&BTreeMap<String, (String, std::path::PathBuf)>>,
     mark_checked: bool,
     // Harvest mode only: barrel entries whose target has not been harvested
@@ -195,7 +327,7 @@ fn lower_module(
                 host_exports
             } else {
                 module_exports
-                    .get(&module_path(path, source)?)
+                    .get(&module_path(path, source, project)?)
                     .ok_or("module was not loaded")?
             };
             imports.insert(source, exports);
@@ -222,7 +354,7 @@ fn lower_module(
                     lower.hosts.insert(spec.local.into(), spec.imported.into());
                     continue;
                 }
-                let target = module_path(path, source)?;
+                let target = module_path(path, source, project)?;
                 if let Some((imported, origin)) =
                     forward.and_then(|f| f.get(spec.local).map(|f| (&f.0, &f.1)))
                 {
@@ -280,7 +412,7 @@ fn lower_module(
                     // target's slot — no copy, so timing behaves as if the
                     // consumer imported from the origin directly (deka#1210).
                     Some(source) => {
-                        let target = module_path(path, source)?;
+                        let target = module_path(path, source, project)?;
                         for name in *names {
                             let external = name.alias.unwrap_or(name.name);
                             let slot = bindings.get(&target).and_then(|b| b.get(name.name));
@@ -324,6 +456,7 @@ fn compile_modules(
     modules: &[(std::path::PathBuf, String)],
     hosts: &Hosts,
     entry_name: Option<&str>,
+    project: &Project,
 ) -> Result<Program> {
     let arena = bumpalo::Bump::new();
     let declarations = hosts.declarations();
@@ -358,7 +491,7 @@ fn compile_modules(
                 Stmt::Import {
                     source, specifiers, ..
                 } if !host_module(source) => {
-                    let target = module_path(path, source)?;
+                    let target = module_path(path, source, project)?;
                     for spec in *specifiers {
                         edges.entry(path.clone()).or_default().push((
                             spec.local.into(),
@@ -375,7 +508,7 @@ fn compile_modules(
                         },
                     ..
                 } => {
-                    let target = module_path(path, source)?;
+                    let target = module_path(path, source, project)?;
                     for name in *names {
                         barrels.entry(path.clone()).or_default().push((
                             name.alias.unwrap_or(name.name).into(),
@@ -571,6 +704,7 @@ fn compile_modules(
                     &host_exports,
                     &module_exports,
                     &scratch_bindings,
+                    project,
                     forward.get(member),
                     false,
                     Some(&mut deferred),
@@ -629,6 +763,7 @@ fn compile_modules(
             &host_exports,
             &module_exports,
             &bindings,
+            project,
             forward.get(path),
             true,
             None,

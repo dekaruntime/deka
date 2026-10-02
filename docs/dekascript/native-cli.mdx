@@ -56,7 +56,12 @@ isolated by module. Import cycles load with JavaScript module semantics: a
 module already being loaded is not loaded again, calls across the cycle work
 once both files have loaded, and reading an export that is not set yet at load
 time fails with an error naming the export and both files. A file importing
-itself and unsupported external packages produce compilation errors. The
+itself is a compilation error. Bare specifiers resolve packages from
+`ds_modules/`: `name` to `ds_modules/name/`, `@scope/name` to
+`ds_modules/@scope/name/`, rooted at the nearest ancestor with a `deka.json`.
+The project's `dependencies` must declare the package and `deka.lock` pins its
+exact version; an undeclared, uninstalled, entry-less or version-mismatched
+package is a named compilation error. Packages are DekaScript only. The
 native source backend currently implements a restricted language subset; the
 CLI does not promise the legacy JS/Node/React ecosystem.
 
