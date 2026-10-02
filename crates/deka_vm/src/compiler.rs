@@ -1066,6 +1066,31 @@ impl Lower {
                     UnOp::Plus => {}
                 }
             }
+            Expr::TemplateLiteral { parts, .. } => {
+                // Each ${…} part becomes text the way string() does it.
+                let mut count = 0;
+                for part in *parts {
+                    match part {
+                        TemplatePart::Text(text) => {
+                            // The lexer keeps `\${` verbatim (the old JS
+                            // emitter leaned on JavaScript's escape); the VM
+                            // consumes the text, so it unescapes here.
+                            c.emit(Op::Const(Literal::String(text.replace("\\${", "${"))));
+                        }
+                        TemplatePart::Expr(expr) => {
+                            self.expr(expr, c)?;
+                            c.emit(Op::ToString);
+                        }
+                    }
+                    if count > 0 {
+                        c.emit(Op::Add);
+                    }
+                    count += 1;
+                }
+                if count == 0 {
+                    c.emit(Op::Const(Literal::String("".into())));
+                }
+            }
             _ => {
                 return Err(format!(
                     "{}:{}: expression is unsupported by VM experiment",

@@ -72,6 +72,7 @@ basics-option-type-annotation-rejected
 basics-optional-chaining-rejected
 basics-strict-equality-null-rejected
 basics-string-concatenation
+basics-template-expression-rejected
 basics-ternary-operator
 basics-type-annotation
 basics-typeof-rejected
@@ -289,6 +290,7 @@ formatter-optional-chaining-rejected
 formatter-php-concatenation-rejected
 formatter-regex-literal-rejected
 formatter-struct-literal-spacing
+formatter-template-string-rejected
 formatter-unary-operator-spacing
 formatter-unclosed-block-comment
 formatter-unclosed-jsx-string-attribute
@@ -495,6 +497,8 @@ parser-semicolon-separated-statements
 parser-string-valid-escapes
 parser-struct-init-named-field-missing-comma
 parser-template-interpolation-arbitrary-js-fail
+parser-template-interpolation-forms
+parser-template-literal-rejected
 parser-throw-rejected
 parser-unary-plus
 parser-unterminated-block-comment
