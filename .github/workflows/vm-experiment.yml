@@ -10,7 +10,10 @@ on:
       - 'crates/deka_cli/**'
       - 'crates/deka_executable/**'
       - 'crates/deka_native_web/**'
+      - 'crates/corpus_gate/**'
       - 'tools/deka-package/**'
+      - 'tests/corpus-passing.txt'
+      - 'scripts/testsuite-corpus-version'
       - 'tests/fixtures/diagnostics/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -46,6 +49,33 @@ jobs:
           cargo build --locked --release -p deka_vm --no-default-features --features host --bin dvm
           target/release/dvm target/host.dvm.json --grant-timer
           cargo build --locked --release -p deka_vm --no-default-features --bin dvm-core
+  corpus-gate:
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: sccache --show-stats
+      - name: Download and verify the corpus
+        run: |
+          version=$(sed -n '1p' scripts/testsuite-corpus-version)
+          sha=$(sed -n '2p' scripts/testsuite-corpus-version)
+          curl -fsSL "https://github.com/dekaruntime/testsuite/archive/${version}.tar.gz" -o corpus.tar.gz
+          echo "${sha}  corpus.tar.gz" | sha256sum -c -
+          mkdir -p tests/testsuite
+          tar -xzf corpus.tar.gz -C tests/testsuite
+      - name: Build the runtime and the gate
+        # The gate runs programs, never a window: without the desktop feature the build needs no X11 libraries on the runner.
+        run: |
+          cargo build --locked -p deka_cli --no-default-features
+          cargo build --locked -p corpus_gate
+      - name: Run the corpus gate
+        run: |
+          corpus_dir=$(echo tests/testsuite/*/corpus)
+          target/debug/corpus-gate "$corpus_dir" tests/corpus-passing.txt target/debug/deka
   desktop-build:
     runs-on: macos-15
     env:

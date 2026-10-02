@@ -1940,6 +1940,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "corpus_gate"
+version = "0.60.1"
+dependencies = [
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "cosmic-text"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
