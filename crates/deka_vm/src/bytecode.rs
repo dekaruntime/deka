@@ -9,6 +9,10 @@ pub enum Op {
     Dup,
     Load(usize),
     Store(usize),
+    /// Replace a local's cell with a fresh one holding unit. Emitted at
+    /// declaration sites inside loops so closures capture the current
+    /// iteration's value rather than aliasing the next iteration's.
+    Rebind(usize),
     Add,
     Sub,
     Mul,
@@ -85,7 +89,7 @@ impl Program {
             }
             for op in &f.code {
                 match op {
-                    Op::Load(i) | Op::Store(i) if *i >= f.locals => {
+                    Op::Load(i) | Op::Store(i) | Op::Rebind(i) if *i >= f.locals => {
                         return Err("invalid local operand".into());
                     }
                     Op::Jump(i) | Op::JumpIfFalse(i) if *i >= f.code.len() => {

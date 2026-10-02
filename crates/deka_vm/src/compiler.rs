@@ -281,10 +281,17 @@ fn diagnostics(items: &[Diagnostic]) -> Result<()> {
         Err(errors.join("\n"))
     }
 }
+/// Patch lists for one enclosing loop: jumps emitted by `break` and
+/// `continue` inside its body, resolved when the loop is fully lowered.
+#[derive(Default)]
+struct LoopTargets {
+    breaks: Vec<usize>,
+    continues: Vec<usize>,
+}
 struct Context {
     function: Function,
     names: BTreeMap<String, usize>,
-    loop_depth: usize,
+    loops: Vec<LoopTargets>,
 }
 impl Context {
     fn new(name: &str, asynchronous: bool) -> Self {
@@ -298,7 +305,7 @@ impl Context {
                 code: vec![],
             },
             names: BTreeMap::new(),
-            loop_depth: 0,
+            loops: vec![],
         }
     }
     fn bind(&mut self, name: &str) -> usize {
@@ -319,9 +326,24 @@ impl Context {
     }
     fn patch(&mut self, at: usize) {
         let end = self.function.code.len();
+        self.patch_to(at, end);
+    }
+    fn patch_to(&mut self, at: usize, target: usize) {
         match &mut self.function.code[at] {
-            Op::Jump(i) | Op::JumpIfFalse(i) => *i = end,
+            Op::Jump(i) | Op::JumpIfFalse(i) => *i = target,
             _ => unreachable!(),
+        }
+    }
+    /// Resolve a loop's `continue` jumps to its step and its `break` jumps to
+    /// just after it, then pop it off the loop stack.
+    fn finish_loop(&mut self, continue_target: usize) {
+        let targets = self.loops.pop().unwrap();
+        for at in &targets.continues {
+            self.patch_to(*at, continue_target);
+        }
+        let end = self.function.code.len();
+        for at in &targets.breaks {
+            self.patch_to(*at, end);
         }
     }
 }
@@ -350,9 +372,6 @@ impl Lower {
         asynchronous: bool,
         outer: &mut Context,
     ) -> Result<()> {
-        if outer.loop_depth > 0 {
-            return Err("closures inside loops are not supported by this VM slice".into());
-        }
         let mut c = Context::new(name, asynchronous);
         let mut captures = vec![];
         for (name, slot) in &outer.names {
@@ -453,6 +472,12 @@ impl Lower {
             } => {
                 self.expr(value, c)?;
                 let slot = c.bind(name);
+                // A declaration inside a loop runs once per iteration; give it
+                // a fresh cell each time so a closure created this turn keeps
+                // this turn's value instead of aliasing the next turn's.
+                if !c.loops.is_empty() {
+                    c.emit(Op::Rebind(slot));
+                }
                 c.emit(Op::Store(slot));
             }
             Stmt::Function {
@@ -510,7 +535,6 @@ impl Lower {
                 ..
             } => {
                 let outer = c.names.clone();
-                c.loop_depth += 1;
                 if let Some(init) = init {
                     match init {
                         ForInit::Const { name, value } | ForInit::Let { name, value } => {
@@ -531,15 +555,68 @@ impl Lower {
                     c.emit(Op::Const(Literal::Bool(true)));
                 }
                 let end = c.emit(Op::JumpIfFalse(0));
+                c.loops.push(LoopTargets::default());
                 self.scoped(body, c)?;
+                let step_start = c.function.code.len();
                 if let Some(step) = step {
                     self.expr(step, c)?;
                     c.emit(Op::Pop);
                 }
                 c.emit(Op::Jump(start));
                 c.patch(end);
+                c.finish_loop(step_start);
                 c.names = outer;
-                c.loop_depth -= 1;
+            }
+            Stmt::ForOf {
+                name,
+                iterable,
+                body,
+                ..
+            } => {
+                let outer = c.names.clone();
+                let list = c.bind(&format!("<for-of list {}>", c.function.locals));
+                let index = c.bind(&format!("<for-of index {}>", c.function.locals));
+                self.expr(iterable, c)?;
+                c.emit(Op::Store(list));
+                c.emit(Op::Const(Literal::Number(0.)));
+                c.emit(Op::Store(index));
+                let start = c.function.code.len();
+                c.emit(Op::Load(index));
+                c.emit(Op::Load(list));
+                c.emit(Op::Field("length".into()));
+                c.emit(Op::Less);
+                let end = c.emit(Op::JumpIfFalse(0));
+                c.loops.push(LoopTargets::default());
+                let item = c.bind(name);
+                c.emit(Op::Rebind(item));
+                c.emit(Op::Load(list));
+                c.emit(Op::Load(index));
+                c.emit(Op::Index);
+                c.emit(Op::Store(item));
+                self.scoped(body, c)?;
+                let step_start = c.function.code.len();
+                c.emit(Op::Load(index));
+                c.emit(Op::Const(Literal::Number(1.)));
+                c.emit(Op::Add);
+                c.emit(Op::Store(index));
+                c.emit(Op::Jump(start));
+                c.patch(end);
+                c.finish_loop(step_start);
+                c.names = outer;
+            }
+            Stmt::Break { .. } => {
+                if c.loops.is_empty() {
+                    return Err("break outside a loop".into());
+                }
+                let jump = c.emit(Op::Jump(0));
+                c.loops.last_mut().unwrap().breaks.push(jump);
+            }
+            Stmt::Continue { .. } => {
+                if c.loops.is_empty() {
+                    return Err("continue outside a loop".into());
+                }
+                let jump = c.emit(Op::Jump(0));
+                c.loops.last_mut().unwrap().continues.push(jump);
             }
             _ => {
                 return Err(format!(

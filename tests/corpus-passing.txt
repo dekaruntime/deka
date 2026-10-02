@@ -5,6 +5,8 @@ async-async-await-in-object-literal-fail
 async-async-await-later
 async-async-await-non-promise-fail
 async-async-duplicate-await-fail
+async-async-for-await-break
+async-async-for-of-await
 async-async-function
 async-async-lambda-unsupported-fail
 async-async-method-invalid-syntax-fail
@@ -224,11 +226,17 @@ flow-control-continue-inside-match-arm-fail
 flow-control-continue-outside-loop-fail
 flow-control-continue-zero-fail
 flow-control-else-without-if-fail
+flow-control-for-break
+flow-control-for-continue
 flow-control-for-false-never-runs
 flow-control-for-loop
+flow-control-for-of-break
 flow-control-for-of-const-reassign-fail
+flow-control-for-of-continue
 flow-control-for-of-destructuring-fail
+flow-control-for-of-empty-array
 flow-control-for-of-in-keyword-fail
+flow-control-for-of-loop
 flow-control-for-of-missing-body-fail
 flow-control-for-of-missing-iterable-fail
 flow-control-for-of-missing-of-fail
@@ -249,6 +257,8 @@ flow-control-match-or-pattern-binding-fail
 flow-control-match-or-pattern-exhaustive-fail
 flow-control-match-return-type-mismatch-fail
 flow-control-match-unclosed-fail
+flow-control-nested-for-of-break
+flow-control-return-early-from-loop
 flow-control-return-type-mismatch-in-if-fail
 flow-control-unwrap-non-option-fail
 flow-control-unwrap-or-match-non-exhaustive-fail

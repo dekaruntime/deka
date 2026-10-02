@@ -332,6 +332,11 @@ impl Vm {
                 let h = pop(frame)?;
                 self.heap.replace(frame.locals[i], Value::Cell(h))?;
             }
+            Op::Rebind(i) => {
+                let unit = self.heap.alloc(Value::Unit);
+                let cell = self.heap.alloc(Value::Cell(unit));
+                frame.locals[i] = cell;
+            }
             Op::Add
             | Op::Sub
             | Op::Mul
