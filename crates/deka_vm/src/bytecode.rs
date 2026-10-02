@@ -48,6 +48,15 @@ pub enum Op {
         captures: Vec<usize>,
     },
     Call(usize),
+    /// Pop the arguments, pop the receiver record, and call its `$<name>`
+    /// member (an attached method, which receives the record as its first
+    /// argument) or its `<name>` member (a field holding a function, called
+    /// plainly). Backs interface method calls, where the concrete type is
+    /// only known at run time.
+    MethodCall {
+        name: String,
+        argc: usize,
+    },
     Host {
         operation: String,
         arguments: usize,
@@ -61,11 +70,25 @@ pub enum Op {
     /// items appended. Backs `[...xs]` in list literals.
     ListExtend,
     Index,
+    /// Pop value, pop object, set the object's field to the value, push the
+    /// value. Backs `obj.field = v` through a `let` binding; const-ness is
+    /// the typechecker's job.
+    FieldSet(String),
+    /// Pop value, pop index, pop object, set the element, push the value.
+    /// Backs `list[i] = v`; strings are immutable and reject it.
+    IndexSet,
+    /// In-place list operations behind the mutating built-ins. The receiver
+    /// list is under the arguments on the stack.
+    ListMut(ListMut),
     Record(Vec<String>),
     /// Pop a source record, pop a target record, push target with the
     /// source's fields merged over it. Backs `{...obj}` in object literals.
     RecordExtend,
     Field(String),
+    /// Like `Field`, but a record without the key stays itself. Backs the
+    /// embed-path walk in a promoted method call: a literal may nest the
+    /// embedded record under its type name or carry its fields flat.
+    FieldOrSelf(String),
     /// `string(x)`: number and bool widen to text, string passes through.
     ToString,
     /// `toNumber(x)`: bool widens to 1/0, number passes through.
@@ -82,6 +105,31 @@ pub enum Literal {
     Number(f64),
     Bool(bool),
     String(String),
+}
+/// Mutating list built-ins. Argument order on the stack matches the declared
+/// signatures; the result replaces them.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ListMut {
+    /// `push(v)`: append, result the new length.
+    Push,
+    /// `pop()`: remove the last element, result it (unit when empty).
+    Pop,
+    /// `shift()`: remove the first element, result it (unit when empty).
+    Shift,
+    /// `unshift(v)`: prepend, result the new length.
+    Unshift,
+    /// `splice(start, deleteCount)`: remove a range, result the removed list.
+    Splice,
+    /// `sort()`: order numbers ascending or strings lexicographically,
+    /// result the same list.
+    Sort,
+    /// `reverse()`: reverse in place, result the same list.
+    Reverse,
+    /// `fill(v, start)`: overwrite from `start` to the end, result the list.
+    Fill,
+    /// `copyWithin(target, start)`: copy `start..` over `target..`, result
+    /// the list.
+    CopyWithin,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Function {
