@@ -169,7 +169,11 @@ fn lower_module(
     entry.checked.clear();
     lower.hosts.clear();
     lower.declared.clear();
+    lower.newtypes.clear();
     for stmt in ast.statements {
+        if let Stmt::Newtype { name, .. } = stmt {
+            lower.newtypes.insert((*name).into());
+        }
         let declared = match stmt {
             Stmt::Const { name, .. } | Stmt::Let { name, .. } | Stmt::Function { name, .. } => {
                 Some(*name)
@@ -367,6 +371,7 @@ fn compile_modules(
         functions: vec![],
         hosts: BTreeMap::new(),
         declared: std::collections::BTreeSet::new(),
+        newtypes: std::collections::BTreeSet::new(),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -580,6 +585,10 @@ struct Lower {
     /// of these before its declaration is a forward reference; a call to any
     /// other unbound name is an unknown built-in.
     declared: std::collections::BTreeSet<String>,
+    /// Newtype names declared in the current module. A call to one is a
+    /// constructor; at run time the newtype is its payload, so the call is
+    /// the identity.
+    newtypes: std::collections::BTreeSet<String>,
 }
 impl Lower {
     fn scoped(&mut self, body: &[Stmt<'_>], c: &mut Context) -> Result<()> {
@@ -720,7 +729,11 @@ impl Lower {
     }
     fn statement(&mut self, s: &Stmt<'_>, c: &mut Context) -> Result<()> {
         match s {
-            Stmt::Import { .. } | Stmt::Empty { .. } | Stmt::TypeAlias { .. } => {}
+            Stmt::Import { .. } | Stmt::Empty { .. } => {}
+            // Types are erased at run time: an alias is the same value, a
+            // newtype is the same value the typechecker keeps apart, and an
+            // opaque name has no construction surface.
+            Stmt::TypeAlias { .. } | Stmt::Newtype { .. } | Stmt::Opaque { .. } => {}
             // Export groups lower no code; the export-collection pass either
             // erases them (type-only names) or rejects them (deka#1210).
             Stmt::Export {
@@ -1190,6 +1203,22 @@ impl Lower {
                     None
                 };
                 if let Some(name) = unbound {
+                    if self.newtypes.contains(name) {
+                        let [arg] = *args else {
+                            return Err(format!("{name} takes exactly one argument"));
+                        };
+                        self.expr(arg, c)?;
+                        return Ok(());
+                    }
+                    if name == "unboxNumber" {
+                        let [arg] = *args else {
+                            return Err("unboxNumber takes exactly one argument".into());
+                        };
+                        // The newtype is its payload at run time, so the
+                        // unbox is the identity.
+                        self.expr(arg, c)?;
+                        return Ok(());
+                    }
                     let conversion = match name {
                         "string" => Some(Op::ToString),
                         "toNumber" => Some(Op::ToNumber),
