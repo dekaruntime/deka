@@ -291,6 +291,7 @@ formatter-php-concatenation-rejected
 formatter-regex-literal-rejected
 formatter-struct-literal-spacing
 formatter-template-string-rejected
+formatter-type-alias-rejected
 formatter-unary-operator-spacing
 formatter-unclosed-block-comment
 formatter-unclosed-jsx-string-attribute
@@ -334,6 +335,7 @@ functions-hof-function-keyword-rejected
 functions-hof-function-type-name-rejected
 functions-hof-returns-function
 functions-hof-ts-arrow-type-rejected
+functions-hof-type-alias
 functions-hof-untyped-callback-rejected
 functions-method-call-without-receiver-fail
 functions-method-missing-receiver-type
@@ -404,6 +406,7 @@ hoisting-nested-struct-in-for
 hoisting-nested-struct-in-for-loop
 hoisting-nested-struct-in-if
 hoisting-nested-struct-rejected
+hoisting-type-alias-top-level
 indexing-await-invalidates
 indexing-comparison
 indexing-evaluation
@@ -560,6 +563,7 @@ types-struct-field-unknown-type
 types-struct-method-return-type-mismatch
 types-struct-returned-as-number
 types-struct-unknown-field-access
+types-type-alias-rejected
 types-typed-function-params
 types-unconstrained-var-still-checks-fail
 types-union-fail-function-member
