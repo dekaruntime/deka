@@ -30,6 +30,11 @@ enum Step {
     Blocked,
     Complete(Handle),
 }
+/// What a call setup produced: a frame to enter or a spawned task's promise.
+enum Invocation {
+    Frame(Frame),
+    Task(Handle),
+}
 pub struct Vm {
     program: Rc<Program>,
     hosts: Hosts,
@@ -491,14 +496,46 @@ impl Vm {
                 else {
                     return Err("value is not callable".into());
                 };
-                let next = self.frame(function, captures, args)?;
-                if self.program.functions[function].asynchronous {
-                    frame.stack.push(self.spawn(Work::Code(vec![next])));
-                } else {
-                    if frames.len() >= 1024 {
-                        return Err("call stack limit exceeded".into());
+                match self.invoke(function, captures, args)? {
+                    Invocation::Task(h) => frame.stack.push(h),
+                    Invocation::Frame(next) => {
+                        if frames.len() >= 1024 {
+                            return Err("call stack limit exceeded".into());
+                        }
+                        frames.push(next);
                     }
-                    frames.push(next);
+                }
+            }
+            Op::MethodCall { name, argc } => {
+                let args = arguments(frame, argc)?;
+                let receiver = pop(frame)?;
+                let Value::Record(fields) = self.heap.get(receiver)? else {
+                    return Err("method call requires a record".into());
+                };
+                let hidden = format!("${name}");
+                let (callee, with_receiver) = if let Some(f) = fields.get(&hidden) {
+                    (*f, true)
+                } else if let Some(f) = fields.get(name.as_str()) {
+                    (*f, false)
+                } else {
+                    return Err("missing field".into());
+                };
+                let Value::Closure { function, captures } = self.heap.get(callee)?.clone() else {
+                    return Err("value is not callable".into());
+                };
+                let mut all = Vec::with_capacity(args.len() + 1);
+                if with_receiver {
+                    all.push(receiver);
+                }
+                all.extend(args);
+                match self.invoke(function, captures, all)? {
+                    Invocation::Task(h) => frame.stack.push(h),
+                    Invocation::Frame(next) => {
+                        if frames.len() >= 1024 {
+                            return Err("call stack limit exceeded".into());
+                        }
+                        frames.push(next);
+                    }
                 }
             }
             Op::Host {
@@ -620,6 +657,14 @@ impl Vm {
                 };
                 frame.stack.push(value);
             }
+            Op::FieldOrSelf(name) => {
+                let h = pop(frame)?;
+                let value = match self.heap.get(h)? {
+                    Value::Record(fields) => fields.get(&name).copied().unwrap_or(h),
+                    _ => return Err("unsupported field access".into()),
+                };
+                frame.stack.push(value);
+            }
             Op::Index => {
                 let index = pop(frame)?;
                 let object = pop(frame)?;
@@ -686,6 +731,21 @@ impl Vm {
             }
         }
         Ok(Step::Continue)
+    }
+    /// Shared call setup for `Call` and `MethodCall`: build the next frame,
+    /// or spawn a task when the closure is async.
+    fn invoke(
+        &mut self,
+        function: usize,
+        captures: Vec<Handle>,
+        args: Vec<Handle>,
+    ) -> Result<Invocation> {
+        let next = self.frame(function, captures, args)?;
+        if self.program.functions[function].asynchronous {
+            Ok(Invocation::Task(self.spawn(Work::Code(vec![next]))))
+        } else {
+            Ok(Invocation::Frame(next))
+        }
     }
     fn list_mut(&mut self, frame: &mut Frame, kind: &ListMut) -> Result<()> {
         // Every variant pops its arguments (if any) then the receiver list,

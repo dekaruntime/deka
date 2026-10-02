@@ -163,25 +163,55 @@ fn lower_module<'a>(
             imports.insert(*source, exports);
         }
     }
-    diagnostics(&deka_syntax::check_program_with_imports(ast, source, &imports).errors)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let checked = deka_syntax::check_program_with_imports(ast, source, &imports);
+    diagnostics(&checked.errors).map_err(|e| format!("{}: {e}", path.display()))?;
     entry.names.clear();
     entry.checked.clear();
     lower.hosts.clear();
     lower.declared.clear();
     lower.newtypes.clear();
     lower.structs.clear();
+    lower.enums.clear();
+    lower.method_decls.clear();
+    lower.struct_embeds.clear();
+    // Static method dispatch: the typechecker recorded each receiver-method
+    // call site with the free function it rewrites to (and the embed path to
+    // the declaring receiver). Keyed by expression address, like the
+    // typechecker's own table.
+    lower.method_calls = checked
+        .method_calls
+        .iter()
+        .map(|(ptr, target)| {
+            (
+                *ptr as usize,
+                (
+                    target.mangled.clone(),
+                    target.embed_path.iter().map(|s| (*s).to_string()).collect(),
+                ),
+            )
+        })
+        .collect();
     for stmt in ast.statements {
         if let Stmt::Newtype { name, .. } = stmt {
             lower.newtypes.insert((*name).into());
         }
-        if let Stmt::Struct { name, fields, .. } = stmt {
+        if let Stmt::Struct {
+            name,
+            fields,
+            embeds,
+            ..
+        } = stmt
+        {
             lower.structs.insert(
                 (*name).into(),
                 fields
                     .iter()
                     .map(|f| (f.name.to_string(), f.default_value.as_ref(), f.optional))
                     .collect(),
+            );
+            lower.struct_embeds.insert(
+                (*name).into(),
+                embeds.iter().map(|e| e.name.to_string()).collect(),
             );
         }
         let declared = match stmt {
@@ -196,6 +226,32 @@ fn lower_module<'a>(
         };
         if let Some(name) = declared {
             lower.declared.insert(name.into());
+        }
+        if let Stmt::ReceiverMethod {
+            name,
+            receiver_type,
+            ..
+        } = stmt
+        {
+            let mangled = deka_syntax::mangle_method_name(name, receiver_type);
+            lower.declared.insert(mangled.clone());
+            lower
+                .method_decls
+                .entry((*receiver_type).into())
+                .or_default()
+                .push(((*name).into(), mangled));
+        }
+        if let Stmt::Enum { name, cases, .. } = stmt {
+            lower.enums.insert(
+                (*name).into(),
+                cases
+                    .iter()
+                    .map(|case| (case.name.to_string(), case.payload.is_some()))
+                    .collect(),
+            );
+            for case in *cases {
+                lower.declared.insert(format!("{}${}", name, case.name));
+            }
         }
     }
     for stmt in ast.statements {
@@ -250,7 +306,20 @@ fn lower_module<'a>(
         }
     }
     let mut exported = BTreeMap::new();
+    // Receiver methods hoist: a method call may precede the declaration
+    // (methods are type-level; values are not), so every method lowers before
+    // any other statement. Enum declarations hoist with them: their interned
+    // payload-free cases bind before any use. A body referencing a module
+    // value declared later is a forward-reference error.
     for stmt in ast.statements {
+        if matches!(stmt, Stmt::ReceiverMethod { .. } | Stmt::Enum { .. }) {
+            lower.statement(stmt, entry)?;
+        }
+    }
+    for stmt in ast.statements {
+        if matches!(stmt, Stmt::ReceiverMethod { .. } | Stmt::Enum { .. }) {
+            continue;
+        }
         lower.statement(stmt, entry)?;
         if let Stmt::Export { decl, .. } = stmt {
             match decl {
@@ -383,6 +452,10 @@ fn compile_modules(
         declared: std::collections::BTreeSet::new(),
         newtypes: std::collections::BTreeSet::new(),
         structs: BTreeMap::new(),
+        method_calls: HashMap::new(),
+        enums: BTreeMap::new(),
+        method_decls: BTreeMap::new(),
+        struct_embeds: BTreeMap::new(),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -606,8 +679,54 @@ struct Lower<'a> {
     /// Struct declarations in the current module. A struct value is a record;
     /// the declaration only matters when a literal omits fields.
     structs: BTreeMap<String, StructFields<'a>>,
+    /// Receiver-method call sites in the current module, keyed by expression
+    /// address: the free function the call rewrites to and the embed path to
+    /// the declaring receiver. Recorded by the typechecker.
+    method_calls: HashMap<usize, (String, Vec<String>)>,
+    /// Enum declarations in the current module: case names in declaration
+    /// order with which carry a payload. A variant is a record
+    /// `{name, index[, value]}`; payload-free cases are interned one record
+    /// per declaration, hoisted with the receiver methods.
+    enums: BTreeMap<String, Vec<(String, bool)>>,
+    /// Methods declared in the current module per receiver type: method key
+    /// and mangled free-function name. Struct literals attach them to the
+    /// record under `$<key>` so an interface-typed call finds them at run
+    /// time.
+    method_decls: BTreeMap<String, Vec<(String, String)>>,
+    /// Embedded struct names per struct declaration, for promoted-method
+    /// attachment.
+    struct_embeds: BTreeMap<String, Vec<String>>,
 }
 impl<'a> Lower<'a> {
+    /// Every method visible on a value of `type_name`: its own plus those
+    /// promoted through embedded structs, as (method key, mangled name).
+    fn methods_for(&self, type_name: &str, seen: &mut Vec<String>) -> Vec<(String, String)> {
+        if seen.iter().any(|s| s == type_name) {
+            return vec![];
+        }
+        seen.push(type_name.into());
+        let mut out = self
+            .method_decls
+            .get(type_name)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(embeds) = self.struct_embeds.get(type_name).cloned() {
+            for embed in embeds {
+                out.extend(self.methods_for(&embed, seen));
+            }
+        }
+        out
+    }
+    /// Attach a struct value's methods to the record on the stack under
+    /// `$<key>`, so an interface-typed `MethodCall` finds them at run time.
+    fn attach_methods(&self, type_name: &str, c: &mut Context) -> Result<()> {
+        for (key, mangled) in self.methods_for(type_name, &mut vec![]) {
+            c.emit_load(&mangled)?;
+            c.emit(Op::Record(vec![format!("${key}")]));
+            c.emit(Op::RecordExtend);
+        }
+        Ok(())
+    }
     fn scoped(&mut self, body: &[Stmt<'a>], c: &mut Context) -> Result<()> {
         let outer = c.names.clone();
         let outer_checked = c.checked.clone();
@@ -691,14 +810,13 @@ impl<'a> Lower<'a> {
         &mut self,
         name: &str,
         params: &[Param<'a>],
-        types: &[TypeParam<'a>],
+        _types: &[TypeParam<'a>],
         body: &[Stmt<'a>],
         asynchronous: bool,
         c: &mut Context,
     ) -> Result<()> {
-        if !types.is_empty() {
-            return Err("generic functions unsupported in VM experiment".into());
-        }
+        // Type parameters erase: one copy of the code serves every
+        // instantiation.
         let slot = c.bind(name);
         self.function(name, params, body, asynchronous, c)?;
         c.emit(Op::Store(slot));
@@ -710,16 +828,8 @@ impl<'a> Lower<'a> {
         let value = c.bind(&format!("<pipe value {}>", c.function.locals));
         self.expr(left, c)?;
         c.emit(Op::Store(value));
-        if let Expr::Call {
-            callee,
-            args,
-            type_args,
-            ..
-        } = right
-        {
-            if !type_args.is_empty() {
-                return Err("explicit type arguments unsupported".into());
-            }
+        if let Expr::Call { callee, args, .. } = right {
+            // Explicit type arguments erase.
             let has_hole = args
                 .iter()
                 .any(|a| matches!(a, Expr::Identifier { name: "_", .. }));
@@ -756,6 +866,7 @@ impl<'a> Lower<'a> {
             Stmt::TypeAlias { .. }
             | Stmt::Newtype { .. }
             | Stmt::Opaque { .. }
+            | Stmt::Interface { .. }
             | Stmt::Struct { .. } => {}
             // Export groups lower no code; the export-collection pass either
             // erases them (type-only names) or rejects them (deka#1210).
@@ -931,6 +1042,51 @@ impl<'a> Lower<'a> {
                 }
                 let jump = c.emit(Op::Jump(0));
                 c.loops.last_mut().unwrap().continues.push(jump);
+            }
+            // A receiver method is a plain function whose first parameter is
+            // the receiver; calls rewrite to it statically (see the
+            // method_calls table filled in lower_module). The receiver is a
+            // handle, so a `mut` method's field writes already land on the
+            // shared value.
+            Stmt::ReceiverMethod {
+                receiver_type,
+                receiver_name,
+                name,
+                type_params,
+                params,
+                body,
+                is_async,
+                span,
+                ..
+            } => {
+                let mangled = deka_syntax::mangle_method_name(name, receiver_type);
+                let mut all = Vec::with_capacity(params.len() + 1);
+                all.push(Param {
+                    binding: ParamBinding::Identifier(receiver_name),
+                    ty: None,
+                    default_value: None,
+                    span: *span,
+                });
+                all.extend(params.iter().cloned());
+                self.named_function(&mangled, &all, type_params, body, *is_async, c)?;
+            }
+            // An enum declaration interns each payload-free case as one
+            // record `{name, index}` bound to `Enum$Case`; payload cases
+            // build their record at each construction site.
+            Stmt::Enum { name, cases, .. } => {
+                for (index, case) in cases.iter().enumerate() {
+                    if case.payload.is_some() {
+                        continue;
+                    }
+                    c.emit(Op::Const(Literal::String(case.name.into())));
+                    c.emit(Op::Const(Literal::Number(index as f64)));
+                    c.emit(Op::Record(vec!["name".into(), "index".into()]));
+                    let slot = c.bind(&format!("{}${}", name, case.name));
+                    if !c.loops.is_empty() {
+                        c.emit(Op::Rebind(slot));
+                    }
+                    c.emit(Op::Store(slot));
+                }
             }
             _ => {
                 return Err(format!(
@@ -1156,14 +1312,27 @@ impl<'a> Lower<'a> {
                     });
                 }
             }
-            Expr::Call {
-                callee,
-                args,
-                type_args,
-                ..
-            } => {
-                if !type_args.is_empty() {
-                    return Err("explicit type arguments unsupported".into());
+            Expr::Call { callee, args, .. } => {
+                // Explicit type arguments erase; the typechecker has already
+                // verified them.
+                // A recorded receiver-method call rewrites to its free
+                // function: `r.move()` is `move$Mover(r.Mover)` — the embed
+                // path walks from the receiver value to the record the
+                // method was declared on.
+                if let Expr::FieldAccess { object, .. } = callee
+                    && let Some((mangled, embed_path)) =
+                        self.method_calls.get(&(e as *const Expr as usize)).cloned()
+                {
+                    c.emit_load(&mangled)?;
+                    self.expr(object, c)?;
+                    for step in &embed_path {
+                        c.emit(Op::FieldOrSelf(step.clone()));
+                    }
+                    for arg in *args {
+                        self.expr(arg, c)?;
+                    }
+                    c.emit(Op::Call(1 + args.len()));
+                    return Ok(());
                 }
                 if let Expr::FieldAccess {
                     object,
@@ -1278,6 +1447,16 @@ impl<'a> Lower<'a> {
                         self.expr(arg, c)?;
                         return Ok(());
                     }
+                    if self.structs.contains_key(name) {
+                        // The struct name called as a constructor takes the
+                        // record whole: `Person({name: "Ada"})`.
+                        let [arg] = *args else {
+                            return Err(format!("{name} takes exactly one record argument"));
+                        };
+                        self.expr(arg, c)?;
+                        self.attach_methods(name, c)?;
+                        return Ok(());
+                    }
                     if name == "unboxNumber" {
                         let [arg] = *args else {
                             return Err("unboxNumber takes exactly one argument".into());
@@ -1319,6 +1498,21 @@ impl<'a> Lower<'a> {
                             ));
                         }
                         return Err(format!("unknown built-in {name}"));
+                    }
+                    // A member call the typechecker did not resolve
+                    // statically dispatches at run time: an interface-typed
+                    // receiver finds its attached `$method`, a record field
+                    // holding a function is called plainly.
+                    if let Expr::FieldAccess { object, field, .. } = callee {
+                        self.expr(object, c)?;
+                        for arg in *args {
+                            self.expr(arg, c)?;
+                        }
+                        c.emit(Op::MethodCall {
+                            name: (*field).into(),
+                            argc: args.len(),
+                        });
+                        return Ok(());
                     }
                     self.expr(callee, c)?;
                     for arg in *args {
@@ -1400,10 +1594,79 @@ impl<'a> Lower<'a> {
                     }
                 }
                 c.emit(Op::Record(names));
+                self.attach_methods(name, c)?;
             }
             Expr::FieldAccess { object, field, .. } => {
+                // Enum namespace access: `Color.Red` where `Color` names an
+                // enum loads the interned case record.
+                if let Expr::Identifier { name, .. } = object
+                    && !c.names.contains_key(*name)
+                    && let Some(cases) = self.enums.get(*name)
+                {
+                    let mangled = format!("{}${}", name, field);
+                    let Some((_, has_payload)) = cases.iter().find(|(case, _)| case == field)
+                    else {
+                        return Err(format!("case `{field}` not found in enum `{name}`"));
+                    };
+                    if *has_payload {
+                        return Err(format!(
+                            "case `{field}` of enum `{name}` carries a payload; construct it with `{name}.{field}(value)`"
+                        ));
+                    }
+                    c.emit_load(&mangled)?;
+                    return Ok(());
+                }
                 self.expr(object, c)?;
                 c.emit(Op::Field((*field).into()));
+            }
+            Expr::EnumConstructor {
+                enum_name,
+                case_name,
+                payload,
+                span,
+                ..
+            } => {
+                let Some(cases) = self.enums.get(*enum_name).cloned() else {
+                    return Err(format!(
+                        "{}:{}: enum `{enum_name}` is not declared in this module (Option and Result land with note 05)",
+                        span.start.line, span.start.column
+                    ));
+                };
+                let Some((index, has_payload)) = cases
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (case, _))| case == case_name)
+                    .map(|(i, (_, p))| (i, *p))
+                else {
+                    return Err(format!(
+                        "case `{case_name}` not found in enum `{enum_name}`"
+                    ));
+                };
+                match (payload, has_payload) {
+                    (None, false) => {
+                        c.emit_load(&format!("{}${}", enum_name, case_name))?;
+                    }
+                    (Some(value), true) => {
+                        c.emit(Op::Const(Literal::String((*case_name).into())));
+                        c.emit(Op::Const(Literal::Number(index as f64)));
+                        self.expr(value, c)?;
+                        c.emit(Op::Record(vec![
+                            "name".into(),
+                            "index".into(),
+                            "value".into(),
+                        ]));
+                    }
+                    (None, true) => {
+                        return Err(format!(
+                            "case `{case_name}` of enum `{enum_name}` needs its payload"
+                        ));
+                    }
+                    (Some(_), false) => {
+                        return Err(format!(
+                            "case `{case_name}` of enum `{enum_name}` carries no payload"
+                        ));
+                    }
+                }
             }
             Expr::IndexAccess { object, index, .. } => {
                 self.expr(object, c)?;

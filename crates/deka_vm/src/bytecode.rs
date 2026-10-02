@@ -48,6 +48,15 @@ pub enum Op {
         captures: Vec<usize>,
     },
     Call(usize),
+    /// Pop the arguments, pop the receiver record, and call its `$<name>`
+    /// member (an attached method, which receives the record as its first
+    /// argument) or its `<name>` member (a field holding a function, called
+    /// plainly). Backs interface method calls, where the concrete type is
+    /// only known at run time.
+    MethodCall {
+        name: String,
+        argc: usize,
+    },
     Host {
         operation: String,
         arguments: usize,
@@ -76,6 +85,10 @@ pub enum Op {
     /// source's fields merged over it. Backs `{...obj}` in object literals.
     RecordExtend,
     Field(String),
+    /// Like `Field`, but a record without the key stays itself. Backs the
+    /// embed-path walk in a promoted method call: a literal may nest the
+    /// embedded record under its type name or carry its fields flat.
+    FieldOrSelf(String),
     /// `string(x)`: number and bool widen to text, string passes through.
     ToString,
     /// `toNumber(x)`: bool widens to 1/0, number passes through.
