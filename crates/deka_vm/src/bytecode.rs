@@ -34,6 +34,12 @@ pub enum Op {
     Index,
     Record(Vec<String>),
     Field(String),
+    /// `string(x)`: number and bool widen to text, string passes through.
+    ToString,
+    /// `toNumber(x)`: bool widens to 1/0, number passes through.
+    ToNumber,
+    /// `panic(message)`: stop the program with the message as the error.
+    Panic,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Literal {

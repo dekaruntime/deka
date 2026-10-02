@@ -357,6 +357,35 @@ impl Vm {
                 frame.stack.push(self.heap.alloc(value));
             }
             Op::Jump(ip) => frame.ip = ip,
+            Op::ToString => {
+                let h = pop(frame)?;
+                let value = match self.heap.get(h)? {
+                    Value::String(_) => h,
+                    Value::Number(n) => {
+                        let text = format!("{n}");
+                        self.heap.alloc(Value::String(text))
+                    }
+                    Value::Bool(b) => self.heap.alloc(Value::String(b.to_string())),
+                    _ => return Err("string() only accepts number, bool or string".into()),
+                };
+                frame.stack.push(value);
+            }
+            Op::ToNumber => {
+                let h = pop(frame)?;
+                let value = match self.heap.get(h)? {
+                    Value::Number(_) => h,
+                    Value::Bool(b) => self.heap.alloc(Value::Number(if *b { 1. } else { 0. })),
+                    _ => return Err("toNumber() only accepts number or bool".into()),
+                };
+                frame.stack.push(value);
+            }
+            Op::Panic => {
+                let h = pop(frame)?;
+                let Value::String(message) = self.heap.get(h)? else {
+                    return Err("panic() requires a string message".into());
+                };
+                return Err(message.clone());
+            }
             Op::JumpIfFalse(ip) => {
                 let Value::Bool(b) = self.heap.get(pop(frame)?)? else {
                     return Err("condition must be bool".into());

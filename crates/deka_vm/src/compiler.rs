@@ -133,6 +133,7 @@ fn compile_modules(
     let mut lower = Lower {
         functions: vec![],
         hosts: BTreeMap::new(),
+        declared: std::collections::BTreeSet::new(),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -159,6 +160,24 @@ fn compile_modules(
             .map_err(|e| format!("{}: {e}", path.display()))?;
         entry.names.clear();
         lower.hosts.clear();
+        lower.declared.clear();
+        for stmt in ast.statements {
+            let declared = match stmt {
+                Stmt::Const { name, .. } | Stmt::Let { name, .. } | Stmt::Function { name, .. } => {
+                    Some(*name)
+                }
+                Stmt::Export { decl, .. } => match decl {
+                    ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. } => {
+                        Some(*name)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(name) = declared {
+                lower.declared.insert(name.into());
+            }
+        }
         for stmt in ast.statements {
             if let Stmt::Import {
                 source, specifiers, ..
@@ -309,6 +328,10 @@ impl Context {
 struct Lower {
     functions: Vec<Function>,
     hosts: BTreeMap<String, String>,
+    /// Top-level names declared anywhere in the current module. A call to one
+    /// of these before its declaration is a forward reference; a call to any
+    /// other unbound name is an unknown built-in.
+    declared: std::collections::BTreeSet<String>,
 }
 impl Lower {
     fn scoped(&mut self, body: &[Stmt<'_>], c: &mut Context) -> Result<()> {
@@ -727,15 +750,28 @@ impl Lower {
                     c.emit(Op::Load(result));
                     return Ok(());
                 }
-                let host = if let Expr::Identifier { name, .. } = callee {
-                    if !c.names.contains_key(*name) {
-                        self.hosts.get(*name).cloned()
-                    } else {
-                        None
-                    }
+                let unbound = if let Expr::Identifier { name, .. } = callee {
+                    (!c.names.contains_key(*name)).then_some(*name)
                 } else {
                     None
                 };
+                if let Some(name) = unbound {
+                    let conversion = match name {
+                        "string" => Some(Op::ToString),
+                        "toNumber" => Some(Op::ToNumber),
+                        "panic" => Some(Op::Panic),
+                        _ => None,
+                    };
+                    if let Some(op) = conversion {
+                        let [arg] = *args else {
+                            return Err(format!("{name} takes exactly one argument"));
+                        };
+                        self.expr(arg, c)?;
+                        c.emit(op);
+                        return Ok(());
+                    }
+                }
+                let host = unbound.and_then(|name| self.hosts.get(name).cloned());
                 if let Some(operation) = host {
                     for arg in *args {
                         self.expr(arg, c)?;
@@ -745,6 +781,14 @@ impl Lower {
                         arguments: args.len(),
                     });
                 } else {
+                    if let Some(name) = unbound {
+                        if self.declared.contains(name) {
+                            return Err(format!(
+                                "binding {name} is unavailable here; forward references are unsupported"
+                            ));
+                        }
+                        return Err(format!("unknown built-in {name}"));
+                    }
                     self.expr(callee, c)?;
                     for arg in *args {
                         self.expr(arg, c)?;
