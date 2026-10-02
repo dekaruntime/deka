@@ -187,7 +187,10 @@ fn print_version() {
 fn render_global_help(registry: &Registry) -> Vec<String> {
     let mut lines = vec![
         "Usage: deka [options] [command]".to_string(),
-        format!("deka v{} — native DekaScript runtime", env!("CARGO_PKG_VERSION")),
+        format!(
+            "deka v{} — native DekaScript runtime",
+            env!("CARGO_PKG_VERSION")
+        ),
         String::new(),
     ];
     let mut grouped: std::collections::BTreeMap<&str, Vec<&CommandSpec>> =
@@ -299,7 +302,8 @@ fn cmd_dev(ctx: &Context) -> HandlerResult {
 fn cmd_check(ctx: &Context) -> HandlerResult {
     let source = source_arg(ctx)?;
     compile(&source).map_err(CommandError::Runtime)?;
-    ctx.out().print(format_args!("OK {}\n", source.path.display()));
+    ctx.out()
+        .print(format_args!("OK {}\n", source.path.display()));
     Ok(ExitStatus::SUCCESS)
 }
 
@@ -507,8 +511,12 @@ mod tests {
         let script = script.to_str().unwrap();
         assert_eq!(run(&["run", script, script]), ExitCode::from(2));
         assert_eq!(run(&["run", script, "--outfile", "x"]), ExitCode::from(2));
-        let (code, _out, err) =
-            registry().run_captured(&["run".into(), script.into(), "--exercise".into(), "NaN".into()]);
+        let (code, _out, err) = registry().run_captured(&[
+            "run".into(),
+            script.into(),
+            "--exercise".into(),
+            "NaN".into(),
+        ]);
         assert_eq!(code, ExitCode::from(2));
         assert!(
             err.string().starts_with("invalid value for `--exercise`: "),
@@ -526,7 +534,8 @@ mod tests {
             "import { echo } from \"io\";\necho(\"ok\");\n",
         );
         assert_eq!(run(&["check", good.to_str().unwrap()]), ExitCode::SUCCESS);
-        let (code, out, _err) = registry().run_captured(&["check".into(), good.to_str().unwrap().into()]);
+        let (code, out, _err) =
+            registry().run_captured(&["check".into(), good.to_str().unwrap().into()]);
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.string().starts_with("OK "), "{}", out.string());
         let bad = write(dir.path(), "bad.ds", "let broken = ;\n");
@@ -557,7 +566,11 @@ mod tests {
         assert_eq!(run(&["test", &path]), ExitCode::SUCCESS);
         let (code, out, _err) = registry().run_captured(&["test".into(), path.clone()]);
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.string().contains("1 passed, 0 failed"), "{}", out.string());
+        assert!(
+            out.string().contains("1 passed, 0 failed"),
+            "{}",
+            out.string()
+        );
         write(
             dir.path(),
             "broken.test.ds",
@@ -596,7 +609,10 @@ mod tests {
         assert!(!payload.desktop);
         assert_eq!(run_embedded(payload, &[]), ExitCode::SUCCESS);
         let payload = embedded(&outfile).unwrap().expect("payload embedded");
-        assert_eq!(run_embedded(payload, &["--bogus".to_string()]), ExitCode::from(2));
+        assert_eq!(
+            run_embedded(payload, &["--bogus".to_string()]),
+            ExitCode::from(2)
+        );
     }
 
     #[test]
