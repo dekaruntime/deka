@@ -171,12 +171,10 @@ fn compile_modules(
                 Stmt::Const { name, .. } | Stmt::Let { name, .. } | Stmt::Function { name, .. } => {
                     Some(*name)
                 }
-                Stmt::Export { decl, .. } => match decl {
-                    ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. } => {
-                        Some(*name)
-                    }
-                    _ => None,
-                },
+                Stmt::Export {
+                    decl: ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. },
+                    ..
+                } => Some(*name),
                 _ => None,
             };
             if let Some(name) = declared {
