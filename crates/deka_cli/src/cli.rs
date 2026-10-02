@@ -261,9 +261,12 @@ fn print_command_help(registry: &Registry, name: &str) {
 }
 
 fn runtime(result: Result<()>) -> HandlerResult {
+    // Execution failures carry the legacy runtime's "Run failed:" marker so
+    // they read as run-time errors, distinct from compile errors (the corpus
+    // gate stages on it).
     result
         .map(|()| ExitStatus::SUCCESS)
-        .map_err(CommandError::Runtime)
+        .map_err(|error| CommandError::runtime(format!("Run failed: {error}")))
 }
 
 fn source_arg(ctx: &Context) -> std::result::Result<Source, CommandError> {
