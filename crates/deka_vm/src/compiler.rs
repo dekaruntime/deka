@@ -40,10 +40,11 @@ pub fn source_files(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
                 let source = match stmt {
                     Stmt::Import { source, .. } => Some(*source),
                     Stmt::Export {
-                        decl: ExportDecl::NamedGroup {
-                            source: Some(source),
-                            ..
-                        },
+                        decl:
+                            ExportDecl::NamedGroup {
+                                source: Some(source),
+                                ..
+                            },
                         ..
                     } => Some(*source),
                     _ => None,
@@ -121,10 +122,11 @@ fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, Strin
                 Stmt::Import { source, .. } if !host_module(source) => Some(*source),
                 // `export { x } from "./y.ds"` is a load edge like an import.
                 Stmt::Export {
-                    decl: ExportDecl::NamedGroup {
-                        source: Some(source),
-                        ..
-                    },
+                    decl:
+                        ExportDecl::NamedGroup {
+                            source: Some(source),
+                            ..
+                        },
                     ..
                 } => Some(*source),
                 _ => None,
@@ -182,10 +184,11 @@ fn lower_module(
             Stmt::Import { source, .. } => Some(*source),
             // The checker resolves re-exported types through the same map.
             Stmt::Export {
-                decl: ExportDecl::NamedGroup {
-                    source: Some(source),
-                    ..
-                },
+                decl:
+                    ExportDecl::NamedGroup {
+                        source: Some(source),
+                        ..
+                    },
                 ..
             } => Some(*source),
             _ => None,
@@ -275,7 +278,6 @@ fn lower_module(
                 ExportDecl::Const { name, .. } => {
                     exported.insert((*name).to_string(), entry.slot(name)?);
                 }
-<<<<<<< HEAD
                 ExportDecl::NamedGroup { names, source } => match source {
                     // `export { x } from "./y.ds"`: the barrel aliases the
                     // target's slot — no copy, so timing behaves as if the
@@ -298,24 +300,6 @@ fn lower_module(
                                 }
                                 (None, None) => return Err("missing module export".into()),
                             }
-=======
-                ExportDecl::NamedGroup { names, source } => {
-                    // Re-export groups, whether from another module or of
-                    // local values, are the barrel work (deka#1210). A name
-                    // that resolves to a type declaration (alias, newtype,
-                    // struct, enum, opaque) is a type export: the checker
-                    // tracks it and no slot exists, so it erases here.
-                    if source.is_some() {
-                        return Err(
-                            "native module re-exports are not yet supported (deka#1210)".into()
-                        );
-                    }
-                    for name in *names {
-                        if entry.slot(name.name).is_ok() {
-                            return Err(
-                                "native module re-exports are not yet supported (deka#1210)".into(),
-                            );
->>>>>>> tip-module-forms-1208
                         }
                     }
                     // `export { a, b as c }`: re-export local values;
@@ -434,25 +418,39 @@ fn compile_modules(
                 continue;
             };
             if let Some(ty) = source.values.get(original.as_str()) {
-                exports.values.insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+                exports
+                    .values
+                    .insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
             }
             if let Some(info) = source.structs.get(original.as_str()) {
-                exports.structs.insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+                exports
+                    .structs
+                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
             }
             if let Some(info) = source.enums.get(original.as_str()) {
-                exports.enums.insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+                exports
+                    .enums
+                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
             }
             if let Some(ty) = source.aliases.get(original.as_str()) {
-                exports.aliases.insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+                exports
+                    .aliases
+                    .insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
             }
             if let Some(ty) = source.opaques.get(original.as_str()) {
-                exports.opaques.insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+                exports
+                    .opaques
+                    .insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
             }
             if let Some(info) = source.newtypes.get(original.as_str()) {
-                exports.newtypes.insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+                exports
+                    .newtypes
+                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
             }
             if let Some(info) = source.interfaces.get(original.as_str()) {
-                exports.interfaces.insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+                exports
+                    .interfaces
+                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
             }
             if let Some(tree) = source.build_fragments.get(original.as_str()) {
                 exports
@@ -518,7 +516,11 @@ fn compile_modules(
         loop {
             let hop = barrels
                 .get(&current.0)
-                .and_then(|entries| entries.iter().find(|(exported, _, _)| *exported == current.1))
+                .and_then(|entries| {
+                    entries
+                        .iter()
+                        .find(|(exported, _, _)| *exported == current.1)
+                })
                 .map(|(_, original, target)| (target.clone(), original.clone()));
             let Some(next) = hop else {
                 return current.0;
