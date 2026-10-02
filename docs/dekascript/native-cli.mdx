@@ -52,9 +52,13 @@ to invoke a named function use `--entry main` or set `entryFunction` alongside
 
 Relative imports use explicit `.ds` or `.dsx` paths. Exported constants and
 functions are initialized once, in dependency order, with private bindings
-isolated by module. Cyclic imports and unsupported external packages produce
-compilation errors. The native source backend currently implements a restricted
-language subset; the CLI does not promise the legacy JS/Node/React ecosystem.
+isolated by module. Import cycles load with JavaScript module semantics: a
+module already being loaded is not loaded again, calls across the cycle work
+once both files have loaded, and reading an export that is not set yet at load
+time fails with an error naming the export and both files. A file importing
+itself and unsupported external packages produce compilation errors. The
+native source backend currently implements a restricted language subset; the
+CLI does not promise the legacy JS/Node/React ecosystem.
 
 ## Application tests
 
