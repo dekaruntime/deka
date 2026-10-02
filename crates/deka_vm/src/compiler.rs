@@ -15,7 +15,10 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
     )
 }
 /// Compile a source file and its relative modules, once each, in dependency order.
-/// Cycles and external packages fail explicitly; no compiler process is launched.
+/// Import cycles load with JavaScript module semantics (deka#1206): a module
+/// already being loaded is not loaded again, and reading one of its exports
+/// before it finishes initializing is a named error, not a silent value.
+/// Self-imports and external packages fail explicitly.
 pub fn compile_file(path: &std::path::Path, hosts: &Hosts, entry: Option<&str>) -> Result<Program> {
     compile_modules(&load_modules(path)?, hosts, entry)
 }
@@ -81,6 +84,10 @@ fn module_path(parent: &std::path::Path, source: &str) -> Result<std::path::Path
     let path = parent.parent().ok_or("module has no parent")?.join(source);
     std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()))
 }
+/// Modules in dependency order. A module already being loaded is not loaded
+/// again (import cycles load, deka#1206); reads of exports that initialize
+/// later than the importer become checked loads during lowering, computed
+/// from the loaded order in `compile_modules`. Self-imports are refused.
 fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, String)>> {
     fn visit(
         path: std::path::PathBuf,
@@ -91,7 +98,7 @@ fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, Strin
             return Ok(());
         }
         if !visiting.insert(path.clone()) {
-            return Err(format!("cyclic module import: {}", path.display()));
+            return Ok(());
         }
         let source =
             std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -102,7 +109,13 @@ fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, Strin
             if let Stmt::Import { source, .. } = stmt
                 && !host_module(source)
             {
-                visit(module_path(&path, source)?, visiting, loaded)?;
+                let target = module_path(&path, source)?;
+                if target == path {
+                    return Err(format!("cyclic module import: {}", path.display()));
+                }
+                if !visiting.contains(&target) {
+                    visit(target, visiting, loaded)?;
+                }
             }
         }
         visiting.remove(&path);
@@ -111,12 +124,167 @@ fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, Strin
     }
     let mut loaded = vec![];
     visit(
-        std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?,
+        std::fs::canonicalize(path).map_err(|e| e.to_string())?,
         &mut Default::default(),
         &mut loaded,
     )?;
     Ok(loaded)
 }
+/// One module lowered into the shared entry function. Returns the module's
+/// export-name → slot map. `forward` holds this module's cycle-closing
+/// imports (local → (exported name, target)); in harvest mode
+/// (`mark_checked = false`) those alias a placeholder local so body lowering
+/// resolves, in the real pass they alias the exporter's slot and their reads
+/// become checked loads (deka#1206).
+#[allow(clippy::too_many_arguments)]
+fn lower_module(
+    path: &std::path::Path,
+    ast: &deka_syntax::ast::Program<'_>,
+    source: &str,
+    hosts: &Hosts,
+    host_exports: &deka_syntax::ModuleExports<'_>,
+    module_exports: &HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'_>>,
+    bindings: &HashMap<std::path::PathBuf, BTreeMap<String, usize>>,
+    forward: Option<&BTreeMap<String, (String, std::path::PathBuf)>>,
+    mark_checked: bool,
+    entry: &mut Context,
+    lower: &mut Lower,
+) -> Result<BTreeMap<String, usize>> {
+    let mut imports = HashMap::new();
+    for stmt in ast.statements {
+        if let Stmt::Import { source, .. } = stmt {
+            let exports = if host_module(source) {
+                host_exports
+            } else {
+                module_exports
+                    .get(&module_path(path, source)?)
+                    .ok_or("module was not loaded")?
+            };
+            imports.insert(*source, exports);
+        }
+    }
+    diagnostics(&deka_syntax::check_program_with_imports(ast, source, &imports).errors)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    entry.names.clear();
+    entry.checked.clear();
+    lower.hosts.clear();
+    lower.declared.clear();
+    lower.newtypes.clear();
+    for stmt in ast.statements {
+        if let Stmt::Newtype { name, .. } = stmt {
+            lower.newtypes.insert((*name).into());
+        }
+        let declared = match stmt {
+            Stmt::Const { name, .. } | Stmt::Let { name, .. } | Stmt::Function { name, .. } => {
+                Some(*name)
+            }
+            Stmt::Export {
+                decl: ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. },
+                ..
+            } => Some(*name),
+            _ => None,
+        };
+        if let Some(name) = declared {
+            lower.declared.insert(name.into());
+        }
+    }
+    for stmt in ast.statements {
+        if let Stmt::Import {
+            source, specifiers, ..
+        } = stmt
+        {
+            for spec in *specifiers {
+                if spec.is_type_only {
+                    // Type-only imports resolve for the checker (which rejects
+                    // value uses) and erase here: no slot, no host lookup.
+                    continue;
+                }
+                if host_module(source) {
+                    hosts.operation(spec.imported)?;
+                    lower.hosts.insert(spec.local.into(), spec.imported.into());
+                    continue;
+                }
+                let target = module_path(path, source)?;
+                if let Some((imported, cycle_target)) =
+                    forward.and_then(|f| f.get(spec.local).map(|f| (&f.0, &f.1)))
+                {
+                    debug_assert_eq!(imported.as_str(), spec.imported);
+                    debug_assert_eq!(cycle_target, &target);
+                    // Reserve a local in both passes so the harvest and real
+                    // allocation sequences stay identical.
+                    entry.bind(spec.local);
+                    if mark_checked {
+                        let slot = bindings
+                            .get(&target)
+                            .and_then(|b| b.get(spec.imported))
+                            .ok_or("missing module export")?;
+                        entry.names.insert(spec.local.into(), *slot);
+                        entry.checked.insert(
+                            spec.local.into(),
+                            format!(
+                                "export `{}` of `{}` is not initialized yet (import cycle with `{}`)",
+                                spec.imported,
+                                target.display(),
+                                path.display()
+                            ),
+                        );
+                    }
+                } else {
+                    let slot = bindings
+                        .get(&target)
+                        .and_then(|b| b.get(spec.imported))
+                        .ok_or("missing module export")?;
+                    entry.names.insert(spec.local.into(), *slot);
+                }
+            }
+        }
+    }
+    let mut exported = BTreeMap::new();
+    for stmt in ast.statements {
+        lower.statement(stmt, entry)?;
+        if let Stmt::Export { decl, .. } = stmt {
+            match decl {
+                ExportDecl::Function {
+                    name, is_default, ..
+                } => {
+                    exported.insert(
+                        if *is_default { "default" } else { name }.to_string(),
+                        entry.slot(name)?,
+                    );
+                }
+                ExportDecl::Const { name, .. } => {
+                    exported.insert((*name).to_string(), entry.slot(name)?);
+                }
+                ExportDecl::NamedGroup { names, source } => {
+                    // Re-export groups, whether from another module or of
+                    // local values, are the barrel work (deka#1210). A name
+                    // that resolves to a type declaration (alias, newtype,
+                    // struct, enum, opaque) is a type export: the checker
+                    // tracks it and no slot exists, so it erases here.
+                    if source.is_some() {
+                        return Err(
+                            "native module re-exports are not yet supported (deka#1210)".into()
+                        );
+                    }
+                    for name in *names {
+                        if entry.slot(name.name).is_ok() {
+                            return Err(
+                                "native module re-exports are not yet supported (deka#1210)".into(),
+                            );
+                        }
+                    }
+                }
+                _ => {
+                    return Err(
+                        "native module exports currently support functions and constants".into(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(exported)
+}
+
 fn compile_modules(
     modules: &[(std::path::PathBuf, String)],
     hosts: &Hosts,
@@ -128,7 +296,76 @@ fn compile_modules(
     diagnostics(&host_parse.errors)?;
     let host_ast = host_parse.program.ok_or("missing host declarations")?;
     let host_exports = deka_syntax::collect_module_exports(&host_ast, &arena);
+    // Parse every module up front so import checks resolve across a cycle.
+    let mut asts = HashMap::new();
     let mut module_exports = HashMap::new();
+    for (path, source) in modules {
+        let parsed = deka_syntax::parse(source, &arena);
+        diagnostics(&parsed.errors)?;
+        let ast: &deka_syntax::ast::Program<'_> =
+            arena.alloc(parsed.program.ok_or("missing source program")?);
+        module_exports.insert(
+            path.clone(),
+            deka_syntax::collect_module_exports(ast, &arena),
+        );
+        asts.insert(path.clone(), ast);
+    }
+    // The relative-import graph: importer → (local, exported name, target).
+    let mut edges: HashMap<std::path::PathBuf, Vec<(String, String, std::path::PathBuf)>> =
+        HashMap::new();
+    for (path, _source) in modules {
+        for stmt in asts[path].statements {
+            if let Stmt::Import {
+                source, specifiers, ..
+            } = stmt
+                && !host_module(source)
+            {
+                let target = module_path(path, source)?;
+                for spec in *specifiers {
+                    edges.entry(path.clone()).or_default().push((
+                        spec.local.into(),
+                        spec.imported.into(),
+                        target.clone(),
+                    ));
+                }
+            }
+        }
+    }
+    // A module is a cycle member when it can reach itself through the graph.
+    let mut members: std::collections::BTreeSet<std::path::PathBuf> = Default::default();
+    for (path, _source) in modules {
+        let mut seen: std::collections::BTreeSet<std::path::PathBuf> = Default::default();
+        let mut queue = vec![path.clone()];
+        while let Some(module) = queue.pop() {
+            for (_local, _imported, target) in edges.get(&module).cloned().unwrap_or_default() {
+                if target == *path {
+                    members.insert(path.clone());
+                }
+                if seen.insert(target.clone()) {
+                    queue.push(target);
+                }
+            }
+        }
+    }
+    // An import whose target initializes after the importer (later in loaded
+    // order) is a forward import: its reads become checked loads.
+    let position: HashMap<std::path::PathBuf, usize> = modules
+        .iter()
+        .enumerate()
+        .map(|(i, (path, _))| (path.clone(), i))
+        .collect();
+    let mut forward: HashMap<std::path::PathBuf, BTreeMap<String, (String, std::path::PathBuf)>> =
+        HashMap::new();
+    for (module, specifiers) in &edges {
+        for (local, imported, target) in specifiers {
+            if position[target] > position[module] {
+                forward
+                    .entry(module.clone())
+                    .or_default()
+                    .insert(local.clone(), (imported.clone(), target.clone()));
+            }
+        }
+    }
     let mut bindings: HashMap<std::path::PathBuf, BTreeMap<String, usize>> = HashMap::new();
     let mut lower = Lower {
         functions: vec![],
@@ -140,98 +377,71 @@ fn compile_modules(
     lower.functions.push(entry.function.clone());
     let mut last_async = false;
     let mut top_async = false;
+    let mut harvested: HashMap<std::path::PathBuf, BTreeMap<String, usize>> = HashMap::new();
     for (path, source) in modules {
-        let parsed = deka_syntax::parse(source, &arena);
-        diagnostics(&parsed.errors)?;
-        let ast = arena.alloc(parsed.program.ok_or("missing source program")?);
-        let mut imports = HashMap::new();
-        for stmt in ast.statements {
-            if let Stmt::Import { source, .. } = stmt {
-                let exports = if host_module(source) {
-                    &host_exports
-                } else {
-                    module_exports
-                        .get(&module_path(path, source)?)
-                        .ok_or("module was not loaded")?
-                };
-                imports.insert(*source, exports);
-            }
-        }
-        diagnostics(&deka_syntax::check_program_with_imports(ast, source, &imports).errors)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        entry.names.clear();
-        lower.hosts.clear();
-        lower.declared.clear();
-        lower.newtypes.clear();
-        for stmt in ast.statements {
-            if let Stmt::Newtype { name, .. } = stmt {
-                lower.newtypes.insert((*name).into());
-            }
-            let declared = match stmt {
-                Stmt::Const { name, .. } | Stmt::Let { name, .. } | Stmt::Function { name, .. } => {
-                    Some(*name)
+        if harvested.is_empty() && members.contains(path) {
+            // Pre-lower every cycle member into a scratch entry to learn its
+            // export slots, then roll back. The real pass follows the same
+            // allocation sequence (verified below), so the slots line up and
+            // forward imports resolve before the exporter's code runs.
+            let snapshot = entry.clone();
+            let functions_len = lower.functions.len();
+            let mut sentinel_slots = vec![];
+            // Members harvested earlier in this pass resolve for later ones.
+            let mut scratch_bindings = bindings.clone();
+            for (member, member_source) in modules {
+                if !members.contains(member) {
+                    continue;
                 }
-                Stmt::Export {
-                    decl: ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. },
-                    ..
-                } => Some(*name),
-                _ => None,
-            };
-            if let Some(name) = declared {
-                lower.declared.insert(name.into());
+                let exported = lower_module(
+                    member,
+                    asts[member],
+                    member_source,
+                    hosts,
+                    &host_exports,
+                    &module_exports,
+                    &scratch_bindings,
+                    forward.get(member),
+                    false,
+                    &mut entry,
+                    &mut lower,
+                )?;
+                sentinel_slots.extend(exported.values().copied());
+                harvested.insert(member.clone(), exported.clone());
+                scratch_bindings.insert(member.clone(), exported);
+            }
+            entry = snapshot;
+            lower.functions.truncate(functions_len);
+            for slot in sentinel_slots {
+                entry.emit(Op::Const(Literal::Uninitialized));
+                entry.emit(Op::Store(slot));
+            }
+            for (member, exported) in &harvested {
+                bindings.insert(member.clone(), exported.clone());
             }
         }
-        for stmt in ast.statements {
-            if let Stmt::Import {
-                source, specifiers, ..
-            } = stmt
-            {
-                for spec in *specifiers {
-                    if spec.is_type_only {
-                        return Err("type-only imports are not supported by the native VM".into());
-                    }
-                    if host_module(source) {
-                        hosts.operation(spec.imported)?;
-                        lower.hosts.insert(spec.local.into(), spec.imported.into());
-                    } else {
-                        let slot = bindings
-                            .get(&module_path(path, source)?)
-                            .and_then(|b| b.get(spec.imported))
-                            .ok_or("missing module export")?;
-                        entry.names.insert(spec.local.into(), *slot);
-                    }
-                }
-            }
+        let ast = asts[path];
+        let exported = lower_module(
+            path,
+            ast,
+            source,
+            hosts,
+            &host_exports,
+            &module_exports,
+            &bindings,
+            forward.get(path),
+            true,
+            &mut entry,
+            &mut lower,
+        )?;
+        if let Some(expected) = harvested.get(path)
+            && *expected != exported
+        {
+            return Err(format!(
+                "import-cycle slot drift while lowering {}",
+                path.display()
+            ));
         }
-        let mut exported = BTreeMap::new();
-        for stmt in ast.statements {
-            lower.statement(stmt, &mut entry)?;
-            if let Stmt::Export { decl, .. } = stmt {
-                match decl {
-                    ExportDecl::Function {
-                        name, is_default, ..
-                    } => {
-                        exported.insert(
-                            if *is_default { "default" } else { name }.to_string(),
-                            entry.slot(name)?,
-                        );
-                    }
-                    ExportDecl::Const { name, .. } => {
-                        exported.insert((*name).to_string(), entry.slot(name)?);
-                    }
-                    _ => {
-                        return Err(
-                            "native module exports currently support functions and constants"
-                                .into(),
-                        );
-                    }
-                }
-            }
-        }
-        module_exports.insert(
-            path.clone(),
-            deka_syntax::collect_module_exports(ast, &arena),
-        );
         bindings.insert(path.clone(), exported);
         top_async |= ast.has_top_level_await;
         if let Some(name) = entry_name {
@@ -286,14 +496,19 @@ fn diagnostics(items: &[Diagnostic]) -> Result<()> {
 }
 /// Patch lists for one enclosing loop: jumps emitted by `break` and
 /// `continue` inside its body, resolved when the loop is fully lowered.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct LoopTargets {
     breaks: Vec<usize>,
     continues: Vec<usize>,
 }
+#[derive(Clone)]
 struct Context {
     function: Function,
     names: BTreeMap<String, usize>,
+    /// Names whose reads must check for the `Uninitialized` sentinel at
+    /// runtime: imports across a cycle-closing edge, mapped to the error
+    /// naming the export and both files (deka#1206).
+    checked: BTreeMap<String, String>,
     loops: Vec<LoopTargets>,
 }
 impl Context {
@@ -308,6 +523,7 @@ impl Context {
                 code: vec![],
             },
             names: BTreeMap::new(),
+            checked: BTreeMap::new(),
             loops: vec![],
         }
     }
@@ -315,7 +531,19 @@ impl Context {
         let i = self.function.locals;
         self.function.locals += 1;
         self.names.insert(name.into(), i);
+        // A fresh binding shadows any cycle-checked import of the same name.
+        self.checked.remove(name);
         i
+    }
+    fn emit_load(&mut self, name: &str) -> Result<()> {
+        let slot = self.slot(name)?;
+        if let Some(message) = self.checked.get(name) {
+            let message = message.clone();
+            self.emit(Op::LoadChecked { slot, message });
+        } else {
+            self.emit(Op::Load(slot));
+        }
+        Ok(())
     }
     fn slot(&self, name: &str) -> Result<usize> {
         self.names.get(name).copied().ok_or_else(|| {
@@ -365,10 +593,12 @@ struct Lower {
 impl Lower {
     fn scoped(&mut self, body: &[Stmt<'_>], c: &mut Context) -> Result<()> {
         let outer = c.names.clone();
+        let outer_checked = c.checked.clone();
         for s in body {
             self.statement(s, c)?;
         }
         c.names = outer;
+        c.checked = outer_checked;
         Ok(())
     }
     fn function(
@@ -385,6 +615,10 @@ impl Lower {
             c.bind(name);
             captures.push(*slot);
         }
+        // Reads of cycle-checked imports stay checked inside closures, so a
+        // function called while the cycle is still initializing errors by
+        // name instead of reading the sentinel.
+        c.checked = outer.checked.clone();
         c.function.captures = captures.len();
         c.function.parameters = params.len();
         let mut tuple_params = vec![];
@@ -500,6 +734,12 @@ impl Lower {
             // newtype is the same value the typechecker keeps apart, and an
             // opaque name has no construction surface.
             Stmt::TypeAlias { .. } | Stmt::Newtype { .. } | Stmt::Opaque { .. } => {}
+            // Export groups lower no code; the export-collection pass either
+            // erases them (type-only names) or rejects them (deka#1210).
+            Stmt::Export {
+                decl: ExportDecl::NamedGroup { .. },
+                ..
+            } => {}
             Stmt::Const { name, value, .. }
             | Stmt::Let { name, value, .. }
             | Stmt::Export {
@@ -787,7 +1027,7 @@ impl Lower {
                 c.patch(end);
             }
             Expr::Identifier { name, .. } => {
-                c.emit(Op::Load(c.slot(name)?));
+                c.emit_load(name)?;
             }
             Expr::Paren { expr, .. } => self.expr(expr, c)?,
             Expr::Binary {
@@ -810,7 +1050,7 @@ impl Lower {
                     };
                     let slot = c.slot(name)?;
                     if *op != BinOp::Assign {
-                        c.emit(Op::Load(slot));
+                        c.emit_load(name)?;
                     }
                     self.expr(right, c)?;
                     match op {
