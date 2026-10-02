@@ -30,6 +30,11 @@ enum Step {
     Blocked,
     Complete(Handle),
 }
+/// What a call setup produced: a frame to enter or a spawned task's promise.
+enum Invocation {
+    Frame(Frame),
+    Task(Handle),
+}
 pub struct Vm {
     program: Rc<Program>,
     hosts: Hosts,
@@ -115,7 +120,10 @@ impl Vm {
             .functions
             .get(function)
             .ok_or("unknown function")?;
-        if args.len() != f.parameters || captures.len() != f.captures {
+        // Fewer arguments than parameters is not an error: the missing cells
+        // are unit-filled below, and a default parameter's prologue fills
+        // them (JumpIfUnit).
+        if args.len() > f.parameters || captures.len() != f.captures {
             return Err("function arity mismatch".into());
         }
         let mut locals = captures;
@@ -341,7 +349,27 @@ impl Vm {
                 let h = pop(frame)?;
                 self.heap.replace(frame.locals[i], Value::Cell(h))?;
             }
-            Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Less | Op::Equal => {
+            Op::Rebind(i) => {
+                let unit = self.heap.alloc(Value::Unit);
+                let cell = self.heap.alloc(Value::Cell(unit));
+                frame.locals[i] = cell;
+            }
+            Op::Add
+            | Op::Sub
+            | Op::Mul
+            | Op::Div
+            | Op::Mod
+            | Op::Less
+            | Op::LessEq
+            | Op::Greater
+            | Op::GreaterEq
+            | Op::Equal
+            | Op::NotEqual
+            | Op::BitAnd
+            | Op::BitOr
+            | Op::BitXor
+            | Op::Shl
+            | Op::Shr => {
                 let b = self.heap.get(pop(frame)?)?.clone();
                 let a = self.heap.get(pop(frame)?)?.clone();
                 let value = match (a, b) {
@@ -350,20 +378,68 @@ impl Vm {
                         Op::Sub => Value::Number(a - b),
                         Op::Mul => Value::Number(a * b),
                         Op::Div => Value::Number(a / b),
+                        Op::Mod => Value::Number(a % b),
                         Op::Less => Value::Bool(a < b),
-                        _ => Value::Bool(a == b),
+                        Op::LessEq => Value::Bool(a <= b),
+                        Op::Greater => Value::Bool(a > b),
+                        Op::GreaterEq => Value::Bool(a >= b),
+                        Op::Equal => Value::Bool(a == b),
+                        Op::NotEqual => Value::Bool(a != b),
+                        Op::BitAnd => Value::Number((int32(a) & int32(b)) as f64),
+                        Op::BitOr => Value::Number((int32(a) | int32(b)) as f64),
+                        Op::BitXor => Value::Number((int32(a) ^ int32(b)) as f64),
+                        Op::Shl => Value::Number((int32(a) << (int32(b) & 31)) as f64),
+                        Op::Shr => Value::Number((int32(a) >> (int32(b) & 31)) as f64),
+                        _ => unreachable!(),
                     },
                     (Value::String(a), Value::String(b)) => match op {
                         Op::Add => Value::String(a + &b),
                         Op::Equal => Value::Bool(a == b),
+                        Op::NotEqual => Value::Bool(a != b),
+                        Op::Less => Value::Bool(a < b),
+                        Op::LessEq => Value::Bool(a <= b),
+                        Op::Greater => Value::Bool(a > b),
+                        Op::GreaterEq => Value::Bool(a >= b),
                         _ => return Err("unsupported string operation".into()),
                     },
-                    (Value::Bool(a), Value::Bool(b)) if matches!(op, Op::Equal) => {
-                        Value::Bool(a == b)
+                    (Value::String(a), Value::Number(b)) if matches!(op, Op::Add) => {
+                        Value::String(a + &number_text(b))
+                    }
+                    (Value::Number(a), Value::String(b)) if matches!(op, Op::Add) => {
+                        Value::String(number_text(a) + &b)
+                    }
+                    (Value::String(a), Value::Bool(b)) if matches!(op, Op::Add) => {
+                        Value::String(a + &b.to_string())
+                    }
+                    (Value::Bool(a), Value::String(b)) if matches!(op, Op::Add) => {
+                        Value::String(a.to_string() + &b)
+                    }
+                    (Value::Bool(a), Value::Bool(b)) if matches!(op, Op::Equal | Op::NotEqual) => {
+                        Value::Bool(if matches!(op, Op::Equal) {
+                            a == b
+                        } else {
+                            a != b
+                        })
                     }
                     _ => return Err("invalid arithmetic operands".into()),
                 };
                 frame.stack.push(self.heap.alloc(value));
+            }
+            Op::Neg => {
+                let h = pop(frame)?;
+                let Value::Number(n) = self.heap.get(h)? else {
+                    return Err("unary - requires a number".into());
+                };
+                let n = *n;
+                frame.stack.push(self.heap.alloc(Value::Number(-n)));
+            }
+            Op::Not => {
+                let h = pop(frame)?;
+                let Value::Bool(b) = self.heap.get(h)? else {
+                    return Err("! requires a bool".into());
+                };
+                let b = *b;
+                frame.stack.push(self.heap.alloc(Value::Bool(!b)));
             }
             Op::Jump(ip) => frame.ip = ip,
             Op::ToString => {
@@ -371,7 +447,7 @@ impl Vm {
                 let value = match self.heap.get(h)? {
                     Value::String(_) => h,
                     Value::Number(n) => {
-                        let text = format!("{n}");
+                        let text = number_text(*n);
                         self.heap.alloc(Value::String(text))
                     }
                     Value::Bool(b) => self.heap.alloc(Value::String(b.to_string())),
@@ -403,6 +479,11 @@ impl Vm {
                     frame.ip = ip;
                 }
             }
+            Op::JumpIfUnit(ip) => {
+                if matches!(self.heap.get(pop(frame)?)?, Value::Unit) {
+                    frame.ip = ip;
+                }
+            }
             Op::Closure { function, captures } => {
                 let captures = captures.into_iter().map(|i| frame.locals[i]).collect();
                 frame
@@ -415,14 +496,46 @@ impl Vm {
                 else {
                     return Err("value is not callable".into());
                 };
-                let next = self.frame(function, captures, args)?;
-                if self.program.functions[function].asynchronous {
-                    frame.stack.push(self.spawn(Work::Code(vec![next])));
-                } else {
-                    if frames.len() >= 1024 {
-                        return Err("call stack limit exceeded".into());
+                match self.invoke(function, captures, args)? {
+                    Invocation::Task(h) => frame.stack.push(h),
+                    Invocation::Frame(next) => {
+                        if frames.len() >= 1024 {
+                            return Err("call stack limit exceeded".into());
+                        }
+                        frames.push(next);
                     }
-                    frames.push(next);
+                }
+            }
+            Op::MethodCall { name, argc } => {
+                let args = arguments(frame, argc)?;
+                let receiver = pop(frame)?;
+                let Value::Record(fields) = self.heap.get(receiver)? else {
+                    return Err("method call requires a record".into());
+                };
+                let hidden = format!("${name}");
+                let (callee, with_receiver) = if let Some(f) = fields.get(&hidden) {
+                    (*f, true)
+                } else if let Some(f) = fields.get(name.as_str()) {
+                    (*f, false)
+                } else {
+                    return Err("missing field".into());
+                };
+                let Value::Closure { function, captures } = self.heap.get(callee)?.clone() else {
+                    return Err("value is not callable".into());
+                };
+                let mut all = Vec::with_capacity(args.len() + 1);
+                if with_receiver {
+                    all.push(receiver);
+                }
+                all.extend(args);
+                match self.invoke(function, captures, all)? {
+                    Invocation::Task(h) => frame.stack.push(h),
+                    Invocation::Frame(next) => {
+                        if frames.len() >= 1024 {
+                            return Err("call stack limit exceeded".into());
+                        }
+                        frames.push(next);
+                    }
                 }
             }
             Op::Host {
@@ -499,6 +612,18 @@ impl Vm {
                 items.push(item);
                 frame.stack.push(self.heap.alloc(Value::List(items)));
             }
+            Op::ListExtend => {
+                let source = pop(frame)?;
+                let target = pop(frame)?;
+                let Value::List(extra) = self.heap.get(source)?.clone() else {
+                    return Err("spread requires a list".into());
+                };
+                let Value::List(mut items) = self.heap.get(target)?.clone() else {
+                    return Err("extend requires list".into());
+                };
+                items.extend(extra);
+                frame.stack.push(self.heap.alloc(Value::List(items)));
+            }
             Op::Record(names) => {
                 let items = arguments(frame, names.len())?;
                 frame.stack.push(
@@ -506,13 +631,36 @@ impl Vm {
                         .alloc(Value::Record(names.into_iter().zip(items).collect())),
                 );
             }
+            Op::RecordExtend => {
+                let source = pop(frame)?;
+                let target = pop(frame)?;
+                let Value::Record(extra) = self.heap.get(source)?.clone() else {
+                    return Err("object spread requires a record".into());
+                };
+                let Value::Record(mut fields) = self.heap.get(target)?.clone() else {
+                    return Err("extend requires record".into());
+                };
+                fields.extend(extra);
+                frame.stack.push(self.heap.alloc(Value::Record(fields)));
+            }
             Op::Field(name) => {
                 let h = pop(frame)?;
                 let value = match self.heap.get(h)? {
                     Value::List(items) if name == "length" => {
                         self.heap.alloc(Value::Number(items.len() as f64))
                     }
+                    Value::String(text) if name == "length" => {
+                        self.heap.alloc(Value::Number(text.chars().count() as f64))
+                    }
                     Value::Record(fields) => *fields.get(&name).ok_or("missing field")?,
+                    _ => return Err("unsupported field access".into()),
+                };
+                frame.stack.push(value);
+            }
+            Op::FieldOrSelf(name) => {
+                let h = pop(frame)?;
+                let value = match self.heap.get(h)? {
+                    Value::Record(fields) => fields.get(&name).copied().unwrap_or(h),
                     _ => return Err("unsupported field access".into()),
                 };
                 frame.stack.push(value);
@@ -526,15 +674,219 @@ impl Vm {
                 if !index.is_finite() || *index < 0. || index.fract() != 0. {
                     return Err("invalid index".into());
                 }
-                let Value::List(items) = self.heap.get(object)? else {
-                    return Err("index requires a list".into());
+                let index = *index as usize;
+                match self.heap.get(object)? {
+                    Value::List(items) => {
+                        frame
+                            .stack
+                            .push(*items.get(index).ok_or("index out of bounds")?);
+                    }
+                    Value::String(text) => {
+                        let ch = text
+                            .chars()
+                            .nth(index)
+                            .ok_or("index out of bounds")?
+                            .to_string();
+                        let h = self.heap.alloc(Value::String(ch));
+                        frame.stack.push(h);
+                    }
+                    _ => return Err("index requires a list or string".into()),
+                }
+            }
+            Op::FieldSet(name) => {
+                let value = pop(frame)?;
+                let object = pop(frame)?;
+                match self.heap.get_mut(object)? {
+                    Value::Record(fields) => {
+                        fields.insert(name.clone(), value);
+                    }
+                    _ => return Err("Cannot assign to read only property".into()),
+                }
+                frame.stack.push(value);
+            }
+            Op::IndexSet => {
+                let value = pop(frame)?;
+                let index = pop(frame)?;
+                let object = pop(frame)?;
+                let Value::Number(index) = self.heap.get(index)? else {
+                    return Err("index must be number".into());
                 };
-                frame
-                    .stack
-                    .push(*items.get(*index as usize).ok_or("index out of bounds")?);
+                if !index.is_finite() || *index < 0. || index.fract() != 0. {
+                    return Err("invalid index".into());
+                }
+                let index = *index as usize;
+                match self.heap.get_mut(object)? {
+                    Value::List(items) => {
+                        *items.get_mut(index).ok_or("index out of bounds")? = value;
+                    }
+                    Value::String(_) => {
+                        return Err("Cannot assign to read only property".into());
+                    }
+                    _ => return Err("index assignment requires a list".into()),
+                }
+                frame.stack.push(value);
+            }
+            Op::ListMut(kind) => {
+                self.list_mut(frame, &kind)?;
             }
         }
         Ok(Step::Continue)
+    }
+    /// Shared call setup for `Call` and `MethodCall`: build the next frame,
+    /// or spawn a task when the closure is async.
+    fn invoke(
+        &mut self,
+        function: usize,
+        captures: Vec<Handle>,
+        args: Vec<Handle>,
+    ) -> Result<Invocation> {
+        let next = self.frame(function, captures, args)?;
+        if self.program.functions[function].asynchronous {
+            Ok(Invocation::Task(self.spawn(Work::Code(vec![next]))))
+        } else {
+            Ok(Invocation::Frame(next))
+        }
+    }
+    fn list_mut(&mut self, frame: &mut Frame, kind: &ListMut) -> Result<()> {
+        // Every variant pops its arguments (if any) then the receiver list,
+        // mutates it in place so aliases observe the change, and pushes the
+        // result the declared signature promises.
+        let numeric = |frame: &mut Frame, heap: &Heap| -> Result<f64> {
+            let h = pop(frame)?;
+            let Value::Number(n) = heap.get(h)? else {
+                return Err("list built-in index must be number".into());
+            };
+            Ok(*n)
+        };
+        let clamp = |n: f64, len: usize| -> usize {
+            if !n.is_finite() {
+                return len;
+            }
+            (n.max(0.) as usize).min(len)
+        };
+        match kind {
+            ListMut::Push => {
+                let value = pop(frame)?;
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("push requires list".into());
+                };
+                items.push(value);
+                let length = items.len();
+                frame
+                    .stack
+                    .push(self.heap.alloc(Value::Number(length as f64)));
+            }
+            ListMut::Pop | ListMut::Shift => {
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("pop/shift requires list".into());
+                };
+                let taken = match kind {
+                    ListMut::Pop => items.pop(),
+                    _ => (!items.is_empty()).then(|| items.remove(0)),
+                };
+                let value = match taken {
+                    Some(h) => h,
+                    None => self.heap.alloc(Value::Unit),
+                };
+                frame.stack.push(value);
+            }
+            ListMut::Unshift => {
+                let value = pop(frame)?;
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("unshift requires list".into());
+                };
+                items.insert(0, value);
+                let length = items.len();
+                frame
+                    .stack
+                    .push(self.heap.alloc(Value::Number(length as f64)));
+            }
+            ListMut::Splice => {
+                let delete = numeric(frame, &self.heap)?;
+                let start = numeric(frame, &self.heap)?;
+                let list = pop(frame)?;
+                let removed = {
+                    let Value::List(items) = self.heap.get_mut(list)? else {
+                        return Err("splice requires list".into());
+                    };
+                    let start = clamp(start, items.len());
+                    let end = (start + clamp(delete, items.len())).min(items.len());
+                    items.drain(start..end).collect::<Vec<_>>()
+                };
+                frame.stack.push(self.heap.alloc(Value::List(removed)));
+            }
+            ListMut::Sort => {
+                let list = pop(frame)?;
+                let mut items = match self.heap.get(list)? {
+                    Value::List(items) => items.clone(),
+                    _ => return Err("sort requires list".into()),
+                };
+                let mut keys = Vec::new();
+                for h in &items {
+                    keys.push(match self.heap.get(*h)? {
+                        Value::Number(n) => (0, *n, String::new()),
+                        Value::String(s) => (1, 0., s.clone()),
+                        _ => return Err("sort requires a list of numbers or strings".into()),
+                    });
+                }
+                let mut ranked: Vec<_> = keys.into_iter().zip(items.drain(..)).collect();
+                ranked.sort_by(|a, b| {
+                    a.0.0
+                        .cmp(&b.0.0)
+                        .then(
+                            a.0.1
+                                .partial_cmp(&b.0.1)
+                                .unwrap_or(std::cmp::Ordering::Equal),
+                        )
+                        .then(a.0.2.cmp(&b.0.2))
+                });
+                items = ranked.into_iter().map(|(_, h)| h).collect();
+                let Value::List(target) = self.heap.get_mut(list)? else {
+                    return Err("sort requires list".into());
+                };
+                *target = items;
+                frame.stack.push(list);
+            }
+            ListMut::Reverse => {
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("reverse requires list".into());
+                };
+                items.reverse();
+                frame.stack.push(list);
+            }
+            ListMut::Fill => {
+                let start = numeric(frame, &self.heap)?;
+                let value = pop(frame)?;
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("fill requires list".into());
+                };
+                let start = clamp(start, items.len());
+                for slot in items.iter_mut().skip(start) {
+                    *slot = value;
+                }
+                frame.stack.push(list);
+            }
+            ListMut::CopyWithin => {
+                let start = numeric(frame, &self.heap)?;
+                let target = numeric(frame, &self.heap)?;
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("copyWithin requires list".into());
+                };
+                let start = clamp(start, items.len());
+                let target = clamp(target, items.len());
+                for i in 0..(items.len() - start).min(items.len() - target) {
+                    items[target + i] = items[start + i];
+                }
+                frame.stack.push(list);
+            }
+        }
+        Ok(())
     }
 }
 fn pop(frame: &mut Frame) -> Result<Handle> {
@@ -542,6 +894,15 @@ fn pop(frame: &mut Frame) -> Result<Handle> {
         .stack
         .pop()
         .ok_or_else(|| "operand stack underflow".into())
+}
+/// JavaScript's ToInt32: truncate toward zero, then keep the low 32 bits.
+fn int32(n: f64) -> i32 {
+    (n.trunc() as i64) as i32
+}
+/// How `string(x)` turns a number into text; string+number concat uses the
+/// same conversion, as the note-03 decision requires.
+fn number_text(n: f64) -> String {
+    format!("{n}")
 }
 fn arguments(frame: &mut Frame, count: usize) -> Result<Vec<Handle>> {
     // Do not reserve an untrusted bytecode operand's claimed size.

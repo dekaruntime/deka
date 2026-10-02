@@ -115,7 +115,7 @@ fn invalid_or_unsupported_source_is_rejected() {
         "fn main() number {const x=1;x=2;return x;}",
         "import {sum} from \"vm:host\"; fn main() number {return sum(\"wrong\",1);}",
         "fn main() number {return missing();}",
-        "fn main() number {return 5 % 2;}",
+        "fn main() number {return 5 ** 2;}",
     ] {
         assert!(
             compiler::compile(source, &hosts).is_err(),
