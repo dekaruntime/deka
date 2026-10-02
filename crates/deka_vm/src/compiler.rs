@@ -243,14 +243,13 @@ fn lower_module(
                     // tracks it and no slot exists, so it erases here.
                     if source.is_some() {
                         return Err(
-                            "native module re-exports are not yet supported (deka#1210)".into(),
+                            "native module re-exports are not yet supported (deka#1210)".into()
                         );
                     }
                     for name in *names {
                         if entry.slot(name.name).is_ok() {
                             return Err(
-                                "native module re-exports are not yet supported (deka#1210)"
-                                    .into(),
+                                "native module re-exports are not yet supported (deka#1210)".into(),
                             );
                         }
                     }

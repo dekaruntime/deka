@@ -50,14 +50,21 @@ async fn mixed_default_and_named_imports_work() {
 #[test]
 fn default_import_without_a_default_export_is_a_named_error() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "plain.ds", "export fn other() number { return 1; }\n");
+    write(
+        dir.path(),
+        "plain.ds",
+        "export fn other() number { return 1; }\n",
+    );
     let a = write(
         dir.path(),
         "a.ds",
         "import missing from \"./plain.ds\";\nfn main() number { return missing(); }\n",
     );
     let error = compiler::compile_file(&a, &Hosts::default(), Some("main")).unwrap_err();
-    assert!(error.contains("cannot resolve imported name `default`"), "{error}");
+    assert!(
+        error.contains("cannot resolve imported name `default`"),
+        "{error}"
+    );
 }
 
 #[tokio::test]
