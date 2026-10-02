@@ -93,7 +93,7 @@ fn scaffolded_app_builds_and_clicks_after_source_is_removed() {
     assert!(ok(output).contains("Count:  4"));
 }
 #[test]
-fn invalid_source_preserves_output_and_cycles_fail() {
+fn invalid_source_preserves_output_and_self_import_cycles_fail() {
     let project = tempfile::tempdir().unwrap();
     let p = project.path();
     fs::write(p.join("bad.ds"), "this is invalid").unwrap();
@@ -105,18 +105,26 @@ fn invalid_source_preserves_output_and_cycles_fail() {
     );
     assert_eq!(fs::read(p.join("existing")).unwrap(), b"keep this");
     fs::write(
+        p.join("selfish.ds"),
+        "import { s } from \"./selfish.ds\"; export fn s() number { return 1; }",
+    )
+    .unwrap();
+    let result = cli(p, &["check", "selfish.ds"]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("cyclic module import"));
+    // Import cycles between files load with JavaScript module semantics:
+    // run-time calls across the cycle work once both files have loaded.
+    fs::write(
         p.join("a.ds"),
-        "import { b } from \"./b.ds\"; export fn a() number { return b(); }",
+        "import { b } from \"./b.ds\"; export fn a() number { return 1; } fn main() number { return a() + b(); }",
     )
     .unwrap();
     fs::write(
         p.join("b.ds"),
-        "import { a } from \"./a.ds\"; export fn b() number { return a(); }",
+        "import { a } from \"./a.ds\"; export fn b() number { return a() + 1; }",
     )
     .unwrap();
-    let result = cli(p, &["check", "a.ds"]);
-    assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("cyclic module import"));
+    assert_eq!(ok(cli(p, &["run", "a.ds", "--entry", "main"])), "");
 }
 
 #[test]
