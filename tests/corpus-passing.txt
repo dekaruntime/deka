@@ -381,9 +381,12 @@ functions-wrong-arity-fail
 generics-arithmetic-on-type-param-fail
 generics-compare-type-params-fail
 generics-field-on-type-param-fail
+generics-generic-interface-bound
 generics-generic-receiver-bound-call-site-fail
+generics-generic-receiver-method
 generics-generic-receiver-method-wrong-arg-fail
 generics-generic-receiver-unbounded-member-fail
+generics-generic-struct-signal
 generics-index-type-param-fail
 generics-interface-bound-call-site-fail
 generics-interface-bound-member-not-declared-fail

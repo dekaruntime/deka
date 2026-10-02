@@ -810,14 +810,13 @@ impl<'a> Lower<'a> {
         &mut self,
         name: &str,
         params: &[Param<'a>],
-        types: &[TypeParam<'a>],
+        _types: &[TypeParam<'a>],
         body: &[Stmt<'a>],
         asynchronous: bool,
         c: &mut Context,
     ) -> Result<()> {
-        if !types.is_empty() {
-            return Err("generic functions unsupported in VM experiment".into());
-        }
+        // Type parameters erase: one copy of the code serves every
+        // instantiation.
         let slot = c.bind(name);
         self.function(name, params, body, asynchronous, c)?;
         c.emit(Op::Store(slot));
@@ -829,16 +828,8 @@ impl<'a> Lower<'a> {
         let value = c.bind(&format!("<pipe value {}>", c.function.locals));
         self.expr(left, c)?;
         c.emit(Op::Store(value));
-        if let Expr::Call {
-            callee,
-            args,
-            type_args,
-            ..
-        } = right
-        {
-            if !type_args.is_empty() {
-                return Err("explicit type arguments unsupported".into());
-            }
+        if let Expr::Call { callee, args, .. } = right {
+            // Explicit type arguments erase.
             let has_hole = args
                 .iter()
                 .any(|a| matches!(a, Expr::Identifier { name: "_", .. }));
@@ -1321,15 +1312,9 @@ impl<'a> Lower<'a> {
                     });
                 }
             }
-            Expr::Call {
-                callee,
-                args,
-                type_args,
-                ..
-            } => {
-                if !type_args.is_empty() {
-                    return Err("explicit type arguments unsupported".into());
-                }
+            Expr::Call { callee, args, .. } => {
+                // Explicit type arguments erase; the typechecker has already
+                // verified them.
                 // A recorded receiver-method call rewrites to its free
                 // function: `r.move()` is `move$Mover(r.Mover)` — the embed
                 // path walks from the receiver value to the record the
