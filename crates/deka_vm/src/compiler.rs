@@ -1,5 +1,5 @@
 //! DSC is linked as a library; no JS emission or compiler subprocess.
-use crate::{Function, Hosts, Literal, Op, Program, Result};
+use crate::{Function, Hosts, ListMut, Literal, Op, Program, Result};
 use deka_syntax::{Diagnostic, Severity, ast::*};
 use std::collections::{BTreeMap, HashMap};
 
@@ -1065,37 +1065,55 @@ impl<'a> Lower<'a> {
                         | BinOp::DivAssign
                         | BinOp::ModAssign
                 ) {
-                    let Expr::Identifier { name, .. } = left else {
-                        return Err(
-                            "only binding assignment is supported; collections are immutable"
-                                .into(),
-                        );
-                    };
-                    let slot = c.slot(name)?;
-                    if *op != BinOp::Assign {
-                        c.emit_load(name)?;
+                    match left {
+                        Expr::Identifier { name, .. } => {
+                            let slot = c.slot(name)?;
+                            if *op != BinOp::Assign {
+                                c.emit_load(name)?;
+                            }
+                            self.expr(right, c)?;
+                            match op {
+                                BinOp::AddAssign => {
+                                    c.emit(Op::Add);
+                                }
+                                BinOp::SubAssign => {
+                                    c.emit(Op::Sub);
+                                }
+                                BinOp::MulAssign => {
+                                    c.emit(Op::Mul);
+                                }
+                                BinOp::DivAssign => {
+                                    c.emit(Op::Div);
+                                }
+                                BinOp::ModAssign => {
+                                    c.emit(Op::Mod);
+                                }
+                                _ => {}
+                            }
+                            c.emit(Op::Dup);
+                            c.emit(Op::Store(slot));
+                        }
+                        // Field and element assignment mutate the heap value,
+                        // so every alias observes the change. Const-ness is
+                        // the typechecker's guard; compound assignment stays
+                        // binding-only.
+                        Expr::FieldAccess { object, field, .. } if *op == BinOp::Assign => {
+                            self.expr(object, c)?;
+                            self.expr(right, c)?;
+                            c.emit(Op::FieldSet((*field).into()));
+                        }
+                        Expr::IndexAccess { object, index, .. } if *op == BinOp::Assign => {
+                            self.expr(object, c)?;
+                            self.expr(index, c)?;
+                            self.expr(right, c)?;
+                            c.emit(Op::IndexSet);
+                        }
+                        _ => {
+                            return Err(
+                                "only binding, field and element assignment are supported".into()
+                            );
+                        }
                     }
-                    self.expr(right, c)?;
-                    match op {
-                        BinOp::AddAssign => {
-                            c.emit(Op::Add);
-                        }
-                        BinOp::SubAssign => {
-                            c.emit(Op::Sub);
-                        }
-                        BinOp::MulAssign => {
-                            c.emit(Op::Mul);
-                        }
-                        BinOp::DivAssign => {
-                            c.emit(Op::Div);
-                        }
-                        BinOp::ModAssign => {
-                            c.emit(Op::Mod);
-                        }
-                        _ => {}
-                    }
-                    c.emit(Op::Dup);
-                    c.emit(Op::Store(slot));
                 } else if *op == BinOp::And {
                     self.expr(left, c)?;
                     let short = c.emit(Op::JumpIfFalse(0));
@@ -1159,6 +1177,33 @@ impl<'a> Lower<'a> {
                     self.expr(object, c)?;
                     self.expr(index, c)?;
                     c.emit(Op::ListHas);
+                    return Ok(());
+                }
+                // Mutating list built-ins lower to one in-place op each; the
+                // typechecker has already confined them to `let` lists.
+                if let Expr::FieldAccess { object, field, .. } = callee
+                    && let Some(kind) = match *field {
+                        "push" => Some((ListMut::Push, 1)),
+                        "pop" => Some((ListMut::Pop, 0)),
+                        "shift" => Some((ListMut::Shift, 0)),
+                        "unshift" => Some((ListMut::Unshift, 1)),
+                        "splice" => Some((ListMut::Splice, 2)),
+                        "sort" => Some((ListMut::Sort, 0)),
+                        "reverse" => Some((ListMut::Reverse, 0)),
+                        "fill" => Some((ListMut::Fill, 2)),
+                        "copyWithin" => Some((ListMut::CopyWithin, 2)),
+                        _ => None,
+                    }
+                {
+                    let (kind, arity) = kind;
+                    if args.len() != arity {
+                        return Err(format!("{field} takes {arity} argument(s)"));
+                    }
+                    self.expr(object, c)?;
+                    for arg in *args {
+                        self.expr(arg, c)?;
+                    }
+                    c.emit(Op::ListMut(kind));
                     return Ok(());
                 }
                 if let Expr::FieldAccess {

@@ -118,7 +118,9 @@ data-types-array-first-option-type-fail
 data-types-array-length-and-index
 data-types-array-literal-mixed-types-fail
 data-types-array-map-callback
+data-types-array-mutation
 data-types-array-push-const-frozen
+data-types-array-reduce-empty-no-initial-fail
 data-types-array-sort-const-frozen
 data-types-array-spread-erases-element-type-fail
 data-types-array-type-annotation-rejected
@@ -136,6 +138,8 @@ data-types-gettype-arity-fail
 data-types-index-non-collection-fail
 data-types-index-non-numeric-fail
 data-types-json-unrepresentable-field-fail
+data-types-let-array-mutating-builtins
+data-types-let-object-property-assignment
 data-types-match-nested-option-missing-fail
 data-types-match-result-missing-err-fail
 data-types-nested-object-missing-comma-fail
@@ -189,9 +193,11 @@ error-globals-null-property-access-fail
 error-globals-object-assign-frozen-fail
 error-globals-object-field-reassign-fail
 error-globals-option-unwrap-fail
+error-globals-panic-runtime-fail
 error-globals-process-bare-fail
 error-globals-reassign-const-fail
 error-globals-result-unwrap-err-fail
+error-globals-string-index-assign-fail
 error-globals-type-mismatch-fail
 error-globals-typeof-operator-fail
 error-globals-undefined-global-fail
@@ -411,6 +417,7 @@ hoisting-type-alias-top-level
 indexing-await-invalidates
 indexing-comparison
 indexing-evaluation
+indexing-has
 indexing-range
 indexing-unproven
 interfaces-interface-embedded-missing-method-fail

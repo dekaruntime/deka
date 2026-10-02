@@ -648,8 +648,185 @@ impl Vm {
                     _ => return Err("index requires a list or string".into()),
                 }
             }
+            Op::FieldSet(name) => {
+                let value = pop(frame)?;
+                let object = pop(frame)?;
+                match self.heap.get_mut(object)? {
+                    Value::Record(fields) => {
+                        fields.insert(name.clone(), value);
+                    }
+                    _ => return Err("Cannot assign to read only property".into()),
+                }
+                frame.stack.push(value);
+            }
+            Op::IndexSet => {
+                let value = pop(frame)?;
+                let index = pop(frame)?;
+                let object = pop(frame)?;
+                let Value::Number(index) = self.heap.get(index)? else {
+                    return Err("index must be number".into());
+                };
+                if !index.is_finite() || *index < 0. || index.fract() != 0. {
+                    return Err("invalid index".into());
+                }
+                let index = *index as usize;
+                match self.heap.get_mut(object)? {
+                    Value::List(items) => {
+                        *items.get_mut(index).ok_or("index out of bounds")? = value;
+                    }
+                    Value::String(_) => {
+                        return Err("Cannot assign to read only property".into());
+                    }
+                    _ => return Err("index assignment requires a list".into()),
+                }
+                frame.stack.push(value);
+            }
+            Op::ListMut(kind) => {
+                self.list_mut(frame, &kind)?;
+            }
         }
         Ok(Step::Continue)
+    }
+    fn list_mut(&mut self, frame: &mut Frame, kind: &ListMut) -> Result<()> {
+        // Every variant pops its arguments (if any) then the receiver list,
+        // mutates it in place so aliases observe the change, and pushes the
+        // result the declared signature promises.
+        let numeric = |frame: &mut Frame, heap: &Heap| -> Result<f64> {
+            let h = pop(frame)?;
+            let Value::Number(n) = heap.get(h)? else {
+                return Err("list built-in index must be number".into());
+            };
+            Ok(*n)
+        };
+        let clamp = |n: f64, len: usize| -> usize {
+            if !n.is_finite() {
+                return len;
+            }
+            (n.max(0.) as usize).min(len)
+        };
+        match kind {
+            ListMut::Push => {
+                let value = pop(frame)?;
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("push requires list".into());
+                };
+                items.push(value);
+                let length = items.len();
+                frame
+                    .stack
+                    .push(self.heap.alloc(Value::Number(length as f64)));
+            }
+            ListMut::Pop | ListMut::Shift => {
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("pop/shift requires list".into());
+                };
+                let taken = match kind {
+                    ListMut::Pop => items.pop(),
+                    _ => (!items.is_empty()).then(|| items.remove(0)),
+                };
+                let value = match taken {
+                    Some(h) => h,
+                    None => self.heap.alloc(Value::Unit),
+                };
+                frame.stack.push(value);
+            }
+            ListMut::Unshift => {
+                let value = pop(frame)?;
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("unshift requires list".into());
+                };
+                items.insert(0, value);
+                let length = items.len();
+                frame
+                    .stack
+                    .push(self.heap.alloc(Value::Number(length as f64)));
+            }
+            ListMut::Splice => {
+                let delete = numeric(frame, &self.heap)?;
+                let start = numeric(frame, &self.heap)?;
+                let list = pop(frame)?;
+                let removed = {
+                    let Value::List(items) = self.heap.get_mut(list)? else {
+                        return Err("splice requires list".into());
+                    };
+                    let start = clamp(start, items.len());
+                    let end = (start + clamp(delete, items.len())).min(items.len());
+                    items.drain(start..end).collect::<Vec<_>>()
+                };
+                frame.stack.push(self.heap.alloc(Value::List(removed)));
+            }
+            ListMut::Sort => {
+                let list = pop(frame)?;
+                let mut items = match self.heap.get(list)? {
+                    Value::List(items) => items.clone(),
+                    _ => return Err("sort requires list".into()),
+                };
+                let mut keys = Vec::new();
+                for h in &items {
+                    keys.push(match self.heap.get(*h)? {
+                        Value::Number(n) => (0, *n, String::new()),
+                        Value::String(s) => (1, 0., s.clone()),
+                        _ => return Err("sort requires a list of numbers or strings".into()),
+                    });
+                }
+                let mut ranked: Vec<_> = keys.into_iter().zip(items.drain(..)).collect();
+                ranked.sort_by(|a, b| {
+                    a.0.0
+                        .cmp(&b.0.0)
+                        .then(
+                            a.0.1
+                                .partial_cmp(&b.0.1)
+                                .unwrap_or(std::cmp::Ordering::Equal),
+                        )
+                        .then(a.0.2.cmp(&b.0.2))
+                });
+                items = ranked.into_iter().map(|(_, h)| h).collect();
+                let Value::List(target) = self.heap.get_mut(list)? else {
+                    return Err("sort requires list".into());
+                };
+                *target = items;
+                frame.stack.push(list);
+            }
+            ListMut::Reverse => {
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("reverse requires list".into());
+                };
+                items.reverse();
+                frame.stack.push(list);
+            }
+            ListMut::Fill => {
+                let start = numeric(frame, &self.heap)?;
+                let value = pop(frame)?;
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("fill requires list".into());
+                };
+                let start = clamp(start, items.len());
+                for slot in items.iter_mut().skip(start) {
+                    *slot = value;
+                }
+                frame.stack.push(list);
+            }
+            ListMut::CopyWithin => {
+                let start = numeric(frame, &self.heap)?;
+                let target = numeric(frame, &self.heap)?;
+                let list = pop(frame)?;
+                let Value::List(items) = self.heap.get_mut(list)? else {
+                    return Err("copyWithin requires list".into());
+                };
+                let start = clamp(start, items.len());
+                let target = clamp(target, items.len());
+                for i in 0..(items.len() - start).min(items.len() - target) {
+                    items[target + i] = items[start + i];
+                }
+                frame.stack.push(list);
+            }
+        }
+        Ok(())
     }
 }
 fn pop(frame: &mut Frame) -> Result<Handle> {
