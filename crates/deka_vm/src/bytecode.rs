@@ -33,6 +33,9 @@ pub enum Op {
     Not,
     Jump(usize),
     JumpIfFalse(usize),
+    /// Pop a value and jump when it is unit. Used by default parameters:
+    /// an omitted argument arrives as unit.
+    JumpIfUnit(usize),
     Closure {
         function: usize,
         captures: Vec<usize>,
@@ -47,8 +50,14 @@ pub enum Op {
     List(usize),
     ListAppend,
     ListHas,
+    /// Pop a source list, pop a target list, push target with the source's
+    /// items appended. Backs `[...xs]` in list literals.
+    ListExtend,
     Index,
     Record(Vec<String>),
+    /// Pop a source record, pop a target record, push target with the
+    /// source's fields merged over it. Backs `{...obj}` in object literals.
+    RecordExtend,
     Field(String),
     /// `string(x)`: number and bool widen to text, string passes through.
     ToString,
@@ -92,7 +101,7 @@ impl Program {
                     Op::Load(i) | Op::Store(i) | Op::Rebind(i) if *i >= f.locals => {
                         return Err("invalid local operand".into());
                     }
-                    Op::Jump(i) | Op::JumpIfFalse(i) if *i >= f.code.len() => {
+                    Op::Jump(i) | Op::JumpIfFalse(i) | Op::JumpIfUnit(i) if *i >= f.code.len() => {
                         return Err("invalid jump".into());
                     }
                     Op::Closure { function, captures } => {

@@ -115,7 +115,10 @@ impl Vm {
             .functions
             .get(function)
             .ok_or("unknown function")?;
-        if args.len() != f.parameters || captures.len() != f.captures {
+        // Fewer arguments than parameters is not an error: the missing cells
+        // are unit-filled below, and a default parameter's prologue fills
+        // them (JumpIfUnit).
+        if args.len() > f.parameters || captures.len() != f.captures {
             return Err("function arity mismatch".into());
         }
         let mut locals = captures;
@@ -462,6 +465,11 @@ impl Vm {
                     frame.ip = ip;
                 }
             }
+            Op::JumpIfUnit(ip) => {
+                if matches!(self.heap.get(pop(frame)?)?, Value::Unit) {
+                    frame.ip = ip;
+                }
+            }
             Op::Closure { function, captures } => {
                 let captures = captures.into_iter().map(|i| frame.locals[i]).collect();
                 frame
@@ -558,12 +566,36 @@ impl Vm {
                 items.push(item);
                 frame.stack.push(self.heap.alloc(Value::List(items)));
             }
+            Op::ListExtend => {
+                let source = pop(frame)?;
+                let target = pop(frame)?;
+                let Value::List(extra) = self.heap.get(source)?.clone() else {
+                    return Err("spread requires a list".into());
+                };
+                let Value::List(mut items) = self.heap.get(target)?.clone() else {
+                    return Err("extend requires list".into());
+                };
+                items.extend(extra);
+                frame.stack.push(self.heap.alloc(Value::List(items)));
+            }
             Op::Record(names) => {
                 let items = arguments(frame, names.len())?;
                 frame.stack.push(
                     self.heap
                         .alloc(Value::Record(names.into_iter().zip(items).collect())),
                 );
+            }
+            Op::RecordExtend => {
+                let source = pop(frame)?;
+                let target = pop(frame)?;
+                let Value::Record(extra) = self.heap.get(source)?.clone() else {
+                    return Err("object spread requires a record".into());
+                };
+                let Value::Record(mut fields) = self.heap.get(target)?.clone() else {
+                    return Err("extend requires record".into());
+                };
+                fields.extend(extra);
+                frame.stack.push(self.heap.alloc(Value::Record(fields)));
             }
             Op::Field(name) => {
                 let h = pop(frame)?;

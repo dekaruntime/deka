@@ -330,7 +330,7 @@ impl Context {
     }
     fn patch_to(&mut self, at: usize, target: usize) {
         match &mut self.function.code[at] {
-            Op::Jump(i) | Op::JumpIfFalse(i) => *i = target,
+            Op::Jump(i) | Op::JumpIfFalse(i) | Op::JumpIfUnit(i) => *i = target,
             _ => unreachable!(),
         }
     }
@@ -380,15 +380,40 @@ impl Lower {
         }
         c.function.captures = captures.len();
         c.function.parameters = params.len();
+        let mut tuple_params = vec![];
+        let mut defaults = vec![];
         for p in params {
-            if p.default_value.is_some() {
-                return Err("default parameters are unsupported".into());
+            let slot = match &p.binding {
+                ParamBinding::Identifier(name) => c.bind(name),
+                ParamBinding::Tuple(names) => {
+                    let slot = c.bind(&format!("<tuple param {}>", c.function.locals));
+                    tuple_params.push((slot, *names));
+                    slot
+                }
+            };
+            if let Some(default) = &p.default_value {
+                defaults.push((slot, default));
             }
-            c.bind(
-                p.binding
-                    .identifier()
-                    .ok_or("tuple parameters are unsupported")?,
-            );
+        }
+        // Defaults run first: an omitted argument arrives as unit and the
+        // prologue fills it before any destructuring reads the slot.
+        for (slot, default) in defaults {
+            c.emit(Op::Load(slot));
+            let fill = c.emit(Op::JumpIfUnit(0));
+            let done = c.emit(Op::Jump(0));
+            c.patch(fill);
+            self.expr(default, &mut c)?;
+            c.emit(Op::Store(slot));
+            c.patch(done);
+        }
+        for (slot, names) in tuple_params {
+            for (i, name) in names.iter().enumerate() {
+                c.emit(Op::Load(slot));
+                c.emit(Op::Const(Literal::Number(i as f64)));
+                c.emit(Op::Index);
+                let local = c.bind(name);
+                c.emit(Op::Store(local));
+            }
         }
         let index = self.functions.len();
         self.functions.push(c.function.clone());
@@ -603,6 +628,21 @@ impl Lower {
                 c.patch(end);
                 c.finish_loop(step_start);
                 c.names = outer;
+            }
+            Stmt::TupleBinding { names, value, .. } => {
+                let temp = c.bind(&format!("<destructure {}>", c.function.locals));
+                self.expr(value, c)?;
+                c.emit(Op::Store(temp));
+                for (i, name) in names.iter().enumerate() {
+                    c.emit(Op::Load(temp));
+                    c.emit(Op::Const(Literal::Number(i as f64)));
+                    c.emit(Op::Index);
+                    let slot = c.bind(name);
+                    if !c.loops.is_empty() {
+                        c.emit(Op::Rebind(slot));
+                    }
+                    c.emit(Op::Store(slot));
+                }
             }
             Stmt::Break { .. } => {
                 if c.loops.is_empty() {
@@ -963,18 +1003,47 @@ impl Lower {
                 c.emit(Op::Await);
             }
             Expr::Array { elements, .. } => {
-                for e in *elements {
-                    self.expr(e, c)?;
+                if elements.iter().any(|e| matches!(e, Expr::Spread { .. })) {
+                    c.emit(Op::List(0));
+                    for e in *elements {
+                        match e {
+                            Expr::Spread { expr, .. } => {
+                                self.expr(expr, c)?;
+                                c.emit(Op::ListExtend);
+                            }
+                            _ => {
+                                self.expr(e, c)?;
+                                c.emit(Op::ListAppend);
+                            }
+                        }
+                    }
+                } else {
+                    for e in *elements {
+                        self.expr(e, c)?;
+                    }
+                    c.emit(Op::List(elements.len()));
                 }
-                c.emit(Op::List(elements.len()));
             }
             Expr::Object { fields, .. } => {
-                let mut names = vec![];
-                for f in *fields {
-                    self.expr(&f.value, c)?;
-                    names.push(f.key.to_string());
+                if fields.iter().any(|f| f.key.is_empty()) {
+                    c.emit(Op::Record(vec![]));
+                    for f in *fields {
+                        self.expr(&f.value, c)?;
+                        if f.key.is_empty() {
+                            c.emit(Op::RecordExtend);
+                        } else {
+                            c.emit(Op::Record(vec![f.key.to_string()]));
+                            c.emit(Op::RecordExtend);
+                        }
+                    }
+                } else {
+                    let mut names = vec![];
+                    for f in *fields {
+                        self.expr(&f.value, c)?;
+                        names.push(f.key.to_string());
+                    }
+                    c.emit(Op::Record(names));
                 }
-                c.emit(Op::Record(names));
             }
             Expr::FieldAccess { object, field, .. } => {
                 self.expr(object, c)?;

@@ -1,5 +1,6 @@
 async-async-argument-type-mismatch-fail
 async-async-assign-to-await-fail
+async-async-await-in-default-param
 async-async-await-in-if-condition
 async-async-await-in-object-literal-fail
 async-async-await-later
@@ -307,7 +308,10 @@ functions-calling-non-function-fail
 functions-closure-captures-multiple
 functions-closure-captures-outer
 functions-closure-factory
+functions-default-param-uses-later-param
+functions-default-parameter
 functions-default-parameter-type-mismatch-fail
+functions-default-parameter-uses-prior-param
 functions-exported-const-in-function-body
 functions-factorial-recursion
 functions-function-capture-two-holes-fail
@@ -400,6 +404,7 @@ hoisting-nested-struct-in-if
 hoisting-nested-struct-rejected
 indexing-await-invalidates
 indexing-comparison
+indexing-evaluation
 indexing-range
 indexing-unproven
 interfaces-interface-embedded-missing-method-fail
