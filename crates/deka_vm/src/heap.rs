@@ -11,6 +11,7 @@ pub(crate) struct Handle {
 #[derive(Clone, Debug)]
 pub(crate) enum Value {
     Unit,
+    Uninitialized,
     Number(f64),
     Bool(bool),
     String(String),
@@ -27,6 +28,7 @@ impl From<Literal> for Value {
     fn from(v: Literal) -> Self {
         match v {
             Literal::Unit => Self::Unit,
+            Literal::Uninitialized => Self::Uninitialized,
             Literal::Number(n) => Self::Number(n),
             Literal::Bool(b) => Self::Bool(b),
             Literal::String(s) => Self::String(s),

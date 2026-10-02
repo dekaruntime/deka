@@ -47,3 +47,6 @@ required-features = ["gpu"]
 name = "dvm-v8-ui"
 path = "src/bin/v8_ui.rs"
 required-features = ["gpu", "v8-control"]
+
+[dev-dependencies]
+tempfile = "3.23"
