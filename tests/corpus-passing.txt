@@ -154,6 +154,7 @@ data-types-string-find-missing-fail
 data-types-string-index-access
 data-types-struct-embed-missing-field-fail
 data-types-struct-embed-self-fail
+data-types-struct-fields
 data-types-struct-immutable-field-fail
 data-types-struct-method-missing-receiver-fail
 data-types-struct-method-mutation-fail
@@ -488,6 +489,7 @@ parser-invalid-object-literal-colon
 parser-invalid-type-annotation-colon
 parser-missing-closing-brace
 parser-missing-closing-brace-block
+parser-missing-semicolon
 parser-missing-semicolon-multi-statement
 parser-numeric-float
 parser-numeric-literal-underscore
@@ -498,6 +500,7 @@ parser-parenthesized-expression
 parser-reserved-keyword-as-identifier
 parser-semicolon-separated-statements
 parser-string-valid-escapes
+parser-struct-embedding-valid
 parser-struct-init-named-field-missing-comma
 parser-template-interpolation-arbitrary-js-fail
 parser-template-interpolation-forms
@@ -545,6 +548,7 @@ types-nested-generic-array
 types-nested-generic-option
 types-nested-generic-return
 types-nested-object-literal-type-mismatch
+types-nested-struct-types
 types-newtype-ascription-fail
 types-newtype-construct
 types-newtype-operator-add
@@ -567,8 +571,10 @@ types-primitive-widen-string-fail
 types-return-after-if
 types-return-type-unknown
 types-string-arg-to-number-param
+types-struct-field-order-independent
 types-struct-field-unknown-type
 types-struct-method-return-type-mismatch
+types-struct-return-type
 types-struct-returned-as-number
 types-struct-unknown-field-access
 types-type-alias-rejected

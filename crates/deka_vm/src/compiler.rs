@@ -135,6 +135,7 @@ fn compile_modules(
         hosts: BTreeMap::new(),
         declared: std::collections::BTreeSet::new(),
         newtypes: std::collections::BTreeSet::new(),
+        structs: BTreeMap::new(),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -163,9 +164,19 @@ fn compile_modules(
         lower.hosts.clear();
         lower.declared.clear();
         lower.newtypes.clear();
+        lower.structs.clear();
         for stmt in ast.statements {
             if let Stmt::Newtype { name, .. } = stmt {
                 lower.newtypes.insert((*name).into());
+            }
+            if let Stmt::Struct { name, fields, .. } = stmt {
+                lower.structs.insert(
+                    (*name).into(),
+                    fields
+                        .iter()
+                        .map(|f| (f.name.to_string(), f.default_value.as_ref(), f.optional))
+                        .collect(),
+                );
             }
             let declared = match stmt {
                 Stmt::Const { name, .. } | Stmt::Let { name, .. } | Stmt::Function { name, .. } => {
@@ -352,7 +363,7 @@ impl Context {
         }
     }
 }
-struct Lower {
+struct Lower<'a> {
     functions: Vec<Function>,
     hosts: BTreeMap<String, String>,
     /// Top-level names declared anywhere in the current module. A call to one
@@ -363,9 +374,14 @@ struct Lower {
     /// constructor; at run time the newtype is its payload, so the call is
     /// the identity.
     newtypes: std::collections::BTreeSet<String>,
+    /// Struct declarations in the current module: field names in declaration
+    /// order with their default expressions, and which fields are optional.
+    /// A struct value is a record; the declaration only matters when a
+    /// literal omits fields.
+    structs: BTreeMap<String, Vec<(String, Option<&'a Expr<'a>>, bool)>>,
 }
-impl Lower {
-    fn scoped(&mut self, body: &[Stmt<'_>], c: &mut Context) -> Result<()> {
+impl<'a> Lower<'a> {
+    fn scoped(&mut self, body: &[Stmt<'a>], c: &mut Context) -> Result<()> {
         let outer = c.names.clone();
         for s in body {
             self.statement(s, c)?;
@@ -376,8 +392,8 @@ impl Lower {
     fn function(
         &mut self,
         name: &str,
-        params: &[Param<'_>],
-        body: &[Stmt<'_>],
+        params: &[Param<'a>],
+        body: &[Stmt<'a>],
         asynchronous: bool,
         outer: &mut Context,
     ) -> Result<()> {
@@ -441,9 +457,9 @@ impl Lower {
     fn named_function(
         &mut self,
         name: &str,
-        params: &[Param<'_>],
-        types: &[TypeParam<'_>],
-        body: &[Stmt<'_>],
+        params: &[Param<'a>],
+        types: &[TypeParam<'a>],
+        body: &[Stmt<'a>],
         asynchronous: bool,
         c: &mut Context,
     ) -> Result<()> {
@@ -457,7 +473,7 @@ impl Lower {
     }
     /// APS 30 pipe: `a |> f` calls `f(a)`, `a |> f(b)` calls `f(a, b)`, and a
     /// `_` in the argument list marks the slot the left side fills.
-    fn pipe(&mut self, left: &Expr<'_>, right: &Expr<'_>, c: &mut Context) -> Result<()> {
+    fn pipe(&mut self, left: &Expr<'a>, right: &Expr<'a>, c: &mut Context) -> Result<()> {
         let value = c.bind(&format!("<pipe value {}>", c.function.locals));
         self.expr(left, c)?;
         c.emit(Op::Store(value));
@@ -495,13 +511,19 @@ impl Lower {
         }
         Ok(())
     }
-    fn statement(&mut self, s: &Stmt<'_>, c: &mut Context) -> Result<()> {
+    fn statement(&mut self, s: &Stmt<'a>, c: &mut Context) -> Result<()> {
         match s {
             Stmt::Import { .. } | Stmt::Empty { .. } => {}
             // Types are erased at run time: an alias is the same value, a
             // newtype is the same value the typechecker keeps apart, and an
-            // opaque name has no construction surface.
-            Stmt::TypeAlias { .. } | Stmt::Newtype { .. } | Stmt::Opaque { .. } => {}
+            // opaque name has no construction surface. A struct declaration is
+            // a record shape; literals consult it for defaults (see the
+            // pre-scan in compile_modules), the declaration itself emits
+            // nothing.
+            Stmt::TypeAlias { .. }
+            | Stmt::Newtype { .. }
+            | Stmt::Opaque { .. }
+            | Stmt::Struct { .. } => {}
             Stmt::Const { name, value, .. }
             | Stmt::Let { name, value, .. }
             | Stmt::Export {
@@ -681,7 +703,7 @@ impl Lower {
         }
         Ok(())
     }
-    fn expr(&mut self, e: &Expr<'_>, c: &mut Context) -> Result<()> {
+    fn expr(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
         match e {
             Expr::JsxElement { element, .. } => {
                 if !matches!(
@@ -1073,6 +1095,27 @@ impl Lower {
                     }
                     c.emit(Op::Record(names));
                 }
+            }
+            Expr::StructLiteral { name, fields, .. } => {
+                // A struct value is a record. Fields the literal gives come in
+                // written order; declared fields it omits are filled from
+                // their defaults (optional fields stay absent).
+                let declared = self.structs.get(*name).cloned().unwrap_or_default();
+                let mut names = vec![];
+                for f in *fields {
+                    self.expr(&f.value, c)?;
+                    names.push(f.name.to_string());
+                }
+                for (field, default, optional) in declared {
+                    if optional || names.iter().any(|n| *n == field) {
+                        continue;
+                    }
+                    if let Some(default) = default {
+                        self.expr(default, c)?;
+                        names.push(field);
+                    }
+                }
+                c.emit(Op::Record(names));
             }
             Expr::FieldAccess { object, field, .. } => {
                 self.expr(object, c)?;
