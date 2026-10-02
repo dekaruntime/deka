@@ -1,5 +1,5 @@
 //! DSC is linked as a library; no JS emission or compiler subprocess.
-use crate::{Function, Hosts, Literal, Op, Program, Result};
+use crate::{Function, Hosts, ListMut, Literal, Op, Program, Result};
 use deka_syntax::{Diagnostic, Severity, ast::*};
 use std::collections::{BTreeMap, HashMap};
 
@@ -301,9 +301,9 @@ fn load_modules(
 /// resolves, in the real pass they alias the exporter's slot and their reads
 /// become checked loads (deka#1206).
 #[allow(clippy::too_many_arguments)]
-fn lower_module(
+fn lower_module<'a>(
     path: &std::path::Path,
-    ast: &deka_syntax::ast::Program<'_>,
+    ast: &deka_syntax::ast::Program<'a>,
     source: &str,
     hosts: &Hosts,
     host_exports: &deka_syntax::ModuleExports<'_>,
@@ -317,7 +317,7 @@ fn lower_module(
     // erroring, and resolved once every member is done.
     deferred: Option<&mut Vec<(String, String, std::path::PathBuf)>>,
     entry: &mut Context,
-    lower: &mut Lower,
+    lower: &mut Lower<'a>,
 ) -> Result<BTreeMap<String, usize>> {
     let mut deferred = deferred;
     let mut imports = HashMap::new();
@@ -346,11 +346,97 @@ fn lower_module(
             imports.insert(source, exports);
         }
     }
-    diagnostics(&deka_syntax::check_program_with_imports(ast, source, &imports).errors)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let checked = deka_syntax::check_program_with_imports(ast, source, &imports);
+    diagnostics(&checked.errors).map_err(|e| format!("{}: {e}", path.display()))?;
     entry.names.clear();
     entry.checked.clear();
     lower.hosts.clear();
+    lower.declared.clear();
+    lower.newtypes.clear();
+    lower.structs.clear();
+    lower.enums.clear();
+    lower.method_decls.clear();
+    lower.struct_embeds.clear();
+    // Static method dispatch: the typechecker recorded each receiver-method
+    // call site with the free function it rewrites to (and the embed path to
+    // the declaring receiver). Keyed by expression address, like the
+    // typechecker's own table.
+    lower.method_calls = checked
+        .method_calls
+        .iter()
+        .map(|(ptr, target)| {
+            (
+                *ptr as usize,
+                (
+                    target.mangled.clone(),
+                    target.embed_path.iter().map(|s| (*s).to_string()).collect(),
+                ),
+            )
+        })
+        .collect();
+    for stmt in ast.statements {
+        if let Stmt::Newtype { name, .. } = stmt {
+            lower.newtypes.insert((*name).into());
+        }
+        if let Stmt::Struct {
+            name,
+            fields,
+            embeds,
+            ..
+        } = stmt
+        {
+            lower.structs.insert(
+                (*name).into(),
+                fields
+                    .iter()
+                    .map(|f| (f.name.to_string(), f.default_value.as_ref(), f.optional))
+                    .collect(),
+            );
+            lower.struct_embeds.insert(
+                (*name).into(),
+                embeds.iter().map(|e| e.name.to_string()).collect(),
+            );
+        }
+        let declared = match stmt {
+            Stmt::Const { name, .. } | Stmt::Let { name, .. } | Stmt::Function { name, .. } => {
+                Some(*name)
+            }
+            Stmt::Export {
+                decl: ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. },
+                ..
+            } => Some(*name),
+            _ => None,
+        };
+        if let Some(name) = declared {
+            lower.declared.insert(name.into());
+        }
+        if let Stmt::ReceiverMethod {
+            name,
+            receiver_type,
+            ..
+        } = stmt
+        {
+            let mangled = deka_syntax::mangle_method_name(name, receiver_type);
+            lower.declared.insert(mangled.clone());
+            lower
+                .method_decls
+                .entry((*receiver_type).into())
+                .or_default()
+                .push(((*name).into(), mangled));
+        }
+        if let Stmt::Enum { name, cases, .. } = stmt {
+            lower.enums.insert(
+                (*name).into(),
+                cases
+                    .iter()
+                    .map(|case| (case.name.to_string(), case.payload.is_some()))
+                    .collect(),
+            );
+            for case in *cases {
+                lower.declared.insert(format!("{}${}", name, case.name));
+            }
+        }
+    }
     for stmt in ast.statements {
         if let Stmt::Import {
             source, specifiers, ..
@@ -405,7 +491,20 @@ fn lower_module(
         }
     }
     let mut exported = BTreeMap::new();
+    // Receiver methods hoist: a method call may precede the declaration
+    // (methods are type-level; values are not), so every method lowers before
+    // any other statement. Enum declarations hoist with them: their interned
+    // payload-free cases bind before any use. A body referencing a module
+    // value declared later is a forward-reference error.
     for stmt in ast.statements {
+        if matches!(stmt, Stmt::ReceiverMethod { .. } | Stmt::Enum { .. }) {
+            lower.statement(stmt, entry)?;
+        }
+    }
+    for stmt in ast.statements {
+        if matches!(stmt, Stmt::ReceiverMethod { .. } | Stmt::Enum { .. }) {
+            continue;
+        }
         lower.statement(stmt, entry)?;
         if let Stmt::Export { decl, .. } = stmt {
             match decl {
@@ -702,6 +801,13 @@ fn compile_modules(
     let mut lower = Lower {
         functions: vec![],
         hosts: BTreeMap::new(),
+        declared: std::collections::BTreeSet::new(),
+        newtypes: std::collections::BTreeSet::new(),
+        structs: BTreeMap::new(),
+        method_calls: HashMap::new(),
+        enums: BTreeMap::new(),
+        method_decls: BTreeMap::new(),
+        struct_embeds: BTreeMap::new(),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -861,6 +967,13 @@ fn diagnostics(items: &[Diagnostic]) -> Result<()> {
         Err(errors.join("\n"))
     }
 }
+/// Patch lists for one enclosing loop: jumps emitted by `break` and
+/// `continue` inside its body, resolved when the loop is fully lowered.
+#[derive(Clone, Default)]
+struct LoopTargets {
+    breaks: Vec<usize>,
+    continues: Vec<usize>,
+}
 #[derive(Clone)]
 struct Context {
     function: Function,
@@ -869,7 +982,7 @@ struct Context {
     /// runtime: imports across a cycle-closing edge, mapped to the error
     /// naming the export and both files (deka#1206).
     checked: BTreeMap<String, String>,
-    loop_depth: usize,
+    loops: Vec<LoopTargets>,
 }
 impl Context {
     fn new(name: &str, asynchronous: bool) -> Self {
@@ -884,7 +997,7 @@ impl Context {
             },
             names: BTreeMap::new(),
             checked: BTreeMap::new(),
-            loop_depth: 0,
+            loops: vec![],
         }
     }
     fn bind(&mut self, name: &str) -> usize {
@@ -917,18 +1030,93 @@ impl Context {
     }
     fn patch(&mut self, at: usize) {
         let end = self.function.code.len();
+        self.patch_to(at, end);
+    }
+    fn patch_to(&mut self, at: usize, target: usize) {
         match &mut self.function.code[at] {
-            Op::Jump(i) | Op::JumpIfFalse(i) => *i = end,
+            Op::Jump(i) | Op::JumpIfFalse(i) | Op::JumpIfUnit(i) => *i = target,
             _ => unreachable!(),
         }
     }
+    /// Resolve a loop's `continue` jumps to its step and its `break` jumps to
+    /// just after it, then pop it off the loop stack.
+    fn finish_loop(&mut self, continue_target: usize) {
+        let targets = self.loops.pop().unwrap();
+        for at in &targets.continues {
+            self.patch_to(*at, continue_target);
+        }
+        let end = self.function.code.len();
+        for at in &targets.breaks {
+            self.patch_to(*at, end);
+        }
+    }
 }
-struct Lower {
+/// A struct declaration's fields in declaration order: name, default
+/// expression, and whether the field is optional.
+type StructFields<'a> = Vec<(String, Option<&'a Expr<'a>>, bool)>;
+struct Lower<'a> {
     functions: Vec<Function>,
     hosts: BTreeMap<String, String>,
+    /// Top-level names declared anywhere in the current module. A call to one
+    /// of these before its declaration is a forward reference; a call to any
+    /// other unbound name is an unknown built-in.
+    declared: std::collections::BTreeSet<String>,
+    /// Newtype names declared in the current module. A call to one is a
+    /// constructor; at run time the newtype is its payload, so the call is
+    /// the identity.
+    newtypes: std::collections::BTreeSet<String>,
+    /// Struct declarations in the current module. A struct value is a record;
+    /// the declaration only matters when a literal omits fields.
+    structs: BTreeMap<String, StructFields<'a>>,
+    /// Receiver-method call sites in the current module, keyed by expression
+    /// address: the free function the call rewrites to and the embed path to
+    /// the declaring receiver. Recorded by the typechecker.
+    method_calls: HashMap<usize, (String, Vec<String>)>,
+    /// Enum declarations in the current module: case names in declaration
+    /// order with which carry a payload. A variant is a record
+    /// `{name, index[, value]}`; payload-free cases are interned one record
+    /// per declaration, hoisted with the receiver methods.
+    enums: BTreeMap<String, Vec<(String, bool)>>,
+    /// Methods declared in the current module per receiver type: method key
+    /// and mangled free-function name. Struct literals attach them to the
+    /// record under `$<key>` so an interface-typed call finds them at run
+    /// time.
+    method_decls: BTreeMap<String, Vec<(String, String)>>,
+    /// Embedded struct names per struct declaration, for promoted-method
+    /// attachment.
+    struct_embeds: BTreeMap<String, Vec<String>>,
 }
-impl Lower {
-    fn scoped(&mut self, body: &[Stmt<'_>], c: &mut Context) -> Result<()> {
+impl<'a> Lower<'a> {
+    /// Every method visible on a value of `type_name`: its own plus those
+    /// promoted through embedded structs, as (method key, mangled name).
+    fn methods_for(&self, type_name: &str, seen: &mut Vec<String>) -> Vec<(String, String)> {
+        if seen.iter().any(|s| s == type_name) {
+            return vec![];
+        }
+        seen.push(type_name.into());
+        let mut out = self
+            .method_decls
+            .get(type_name)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(embeds) = self.struct_embeds.get(type_name).cloned() {
+            for embed in embeds {
+                out.extend(self.methods_for(&embed, seen));
+            }
+        }
+        out
+    }
+    /// Attach a struct value's methods to the record on the stack under
+    /// `$<key>`, so an interface-typed `MethodCall` finds them at run time.
+    fn attach_methods(&self, type_name: &str, c: &mut Context) -> Result<()> {
+        for (key, mangled) in self.methods_for(type_name, &mut vec![]) {
+            c.emit_load(&mangled)?;
+            c.emit(Op::Record(vec![format!("${key}")]));
+            c.emit(Op::RecordExtend);
+        }
+        Ok(())
+    }
+    fn scoped(&mut self, body: &[Stmt<'a>], c: &mut Context) -> Result<()> {
         let outer = c.names.clone();
         let outer_checked = c.checked.clone();
         for s in body {
@@ -941,14 +1129,11 @@ impl Lower {
     fn function(
         &mut self,
         name: &str,
-        params: &[Param<'_>],
-        body: &[Stmt<'_>],
+        params: &[Param<'a>],
+        body: &[Stmt<'a>],
         asynchronous: bool,
         outer: &mut Context,
     ) -> Result<()> {
-        if outer.loop_depth > 0 {
-            return Err("closures inside loops are not supported by this VM slice".into());
-        }
         let mut c = Context::new(name, asynchronous);
         let mut captures = vec![];
         for (name, slot) in &outer.names {
@@ -961,15 +1146,40 @@ impl Lower {
         c.checked = outer.checked.clone();
         c.function.captures = captures.len();
         c.function.parameters = params.len();
+        let mut tuple_params = vec![];
+        let mut defaults = vec![];
         for p in params {
-            if p.default_value.is_some() {
-                return Err("default parameters are unsupported".into());
+            let slot = match &p.binding {
+                ParamBinding::Identifier(name) => c.bind(name),
+                ParamBinding::Tuple(names) => {
+                    let slot = c.bind(&format!("<tuple param {}>", c.function.locals));
+                    tuple_params.push((slot, *names));
+                    slot
+                }
+            };
+            if let Some(default) = &p.default_value {
+                defaults.push((slot, default));
             }
-            c.bind(
-                p.binding
-                    .identifier()
-                    .ok_or("tuple parameters are unsupported")?,
-            );
+        }
+        // Defaults run first: an omitted argument arrives as unit and the
+        // prologue fills it before any destructuring reads the slot.
+        for (slot, default) in defaults {
+            c.emit(Op::Load(slot));
+            let fill = c.emit(Op::JumpIfUnit(0));
+            let done = c.emit(Op::Jump(0));
+            c.patch(fill);
+            self.expr(default, &mut c)?;
+            c.emit(Op::Store(slot));
+            c.patch(done);
+        }
+        for (slot, names) in tuple_params {
+            for (i, name) in names.iter().enumerate() {
+                c.emit(Op::Load(slot));
+                c.emit(Op::Const(Literal::Number(i as f64)));
+                c.emit(Op::Index);
+                let local = c.bind(name);
+                c.emit(Op::Store(local));
+            }
         }
         let index = self.functions.len();
         self.functions.push(c.function.clone());
@@ -988,23 +1198,65 @@ impl Lower {
     fn named_function(
         &mut self,
         name: &str,
-        params: &[Param<'_>],
-        types: &[TypeParam<'_>],
-        body: &[Stmt<'_>],
+        params: &[Param<'a>],
+        _types: &[TypeParam<'a>],
+        body: &[Stmt<'a>],
         asynchronous: bool,
         c: &mut Context,
     ) -> Result<()> {
-        if !types.is_empty() {
-            return Err("generic functions unsupported in VM experiment".into());
-        }
+        // Type parameters erase: one copy of the code serves every
+        // instantiation.
         let slot = c.bind(name);
         self.function(name, params, body, asynchronous, c)?;
         c.emit(Op::Store(slot));
         Ok(())
     }
-    fn statement(&mut self, s: &Stmt<'_>, c: &mut Context) -> Result<()> {
+    /// APS 30 pipe: `a |> f` calls `f(a)`, `a |> f(b)` calls `f(a, b)`, and a
+    /// `_` in the argument list marks the slot the left side fills.
+    fn pipe(&mut self, left: &Expr<'a>, right: &Expr<'a>, c: &mut Context) -> Result<()> {
+        let value = c.bind(&format!("<pipe value {}>", c.function.locals));
+        self.expr(left, c)?;
+        c.emit(Op::Store(value));
+        if let Expr::Call { callee, args, .. } = right {
+            // Explicit type arguments erase.
+            let has_hole = args
+                .iter()
+                .any(|a| matches!(a, Expr::Identifier { name: "_", .. }));
+            self.expr(callee, c)?;
+            let mut argc = args.len();
+            if !has_hole {
+                c.emit(Op::Load(value));
+                argc += 1;
+            }
+            for arg in *args {
+                if matches!(arg, Expr::Identifier { name: "_", .. }) {
+                    c.emit(Op::Load(value));
+                } else {
+                    self.expr(arg, c)?;
+                }
+            }
+            c.emit(Op::Call(argc));
+        } else {
+            self.expr(right, c)?;
+            c.emit(Op::Load(value));
+            c.emit(Op::Call(1));
+        }
+        Ok(())
+    }
+    fn statement(&mut self, s: &Stmt<'a>, c: &mut Context) -> Result<()> {
         match s {
-            Stmt::Import { .. } | Stmt::Empty { .. } | Stmt::TypeAlias { .. } => {}
+            Stmt::Import { .. } | Stmt::Empty { .. } => {}
+            // Types are erased at run time: an alias is the same value, a
+            // newtype is the same value the typechecker keeps apart, and an
+            // opaque name has no construction surface. A struct declaration is
+            // a record shape; literals consult it for defaults (see the
+            // pre-scan in lower_module), the declaration itself emits
+            // nothing.
+            Stmt::TypeAlias { .. }
+            | Stmt::Newtype { .. }
+            | Stmt::Opaque { .. }
+            | Stmt::Interface { .. }
+            | Stmt::Struct { .. } => {}
             // Export groups lower no code; the export-collection pass either
             // erases them (type-only names) or rejects them (deka#1210).
             Stmt::Export {
@@ -1019,6 +1271,12 @@ impl Lower {
             } => {
                 self.expr(value, c)?;
                 let slot = c.bind(name);
+                // A declaration inside a loop runs once per iteration; give it
+                // a fresh cell each time so a closure created this turn keeps
+                // this turn's value instead of aliasing the next turn's.
+                if !c.loops.is_empty() {
+                    c.emit(Op::Rebind(slot));
+                }
                 c.emit(Op::Store(slot));
             }
             Stmt::Function {
@@ -1076,7 +1334,6 @@ impl Lower {
                 ..
             } => {
                 let outer = c.names.clone();
-                c.loop_depth += 1;
                 if let Some(init) = init {
                     match init {
                         ForInit::Const { name, value } | ForInit::Let { name, value } => {
@@ -1097,15 +1354,128 @@ impl Lower {
                     c.emit(Op::Const(Literal::Bool(true)));
                 }
                 let end = c.emit(Op::JumpIfFalse(0));
+                c.loops.push(LoopTargets::default());
                 self.scoped(body, c)?;
+                let step_start = c.function.code.len();
                 if let Some(step) = step {
                     self.expr(step, c)?;
                     c.emit(Op::Pop);
                 }
                 c.emit(Op::Jump(start));
                 c.patch(end);
+                c.finish_loop(step_start);
                 c.names = outer;
-                c.loop_depth -= 1;
+            }
+            Stmt::ForOf {
+                name,
+                iterable,
+                body,
+                ..
+            } => {
+                let outer = c.names.clone();
+                let list = c.bind(&format!("<for-of list {}>", c.function.locals));
+                let index = c.bind(&format!("<for-of index {}>", c.function.locals));
+                self.expr(iterable, c)?;
+                c.emit(Op::Store(list));
+                c.emit(Op::Const(Literal::Number(0.)));
+                c.emit(Op::Store(index));
+                let start = c.function.code.len();
+                c.emit(Op::Load(index));
+                c.emit(Op::Load(list));
+                c.emit(Op::Field("length".into()));
+                c.emit(Op::Less);
+                let end = c.emit(Op::JumpIfFalse(0));
+                c.loops.push(LoopTargets::default());
+                let item = c.bind(name);
+                c.emit(Op::Rebind(item));
+                c.emit(Op::Load(list));
+                c.emit(Op::Load(index));
+                c.emit(Op::Index);
+                c.emit(Op::Store(item));
+                self.scoped(body, c)?;
+                let step_start = c.function.code.len();
+                c.emit(Op::Load(index));
+                c.emit(Op::Const(Literal::Number(1.)));
+                c.emit(Op::Add);
+                c.emit(Op::Store(index));
+                c.emit(Op::Jump(start));
+                c.patch(end);
+                c.finish_loop(step_start);
+                c.names = outer;
+            }
+            Stmt::TupleBinding { names, value, .. } => {
+                let temp = c.bind(&format!("<destructure {}>", c.function.locals));
+                self.expr(value, c)?;
+                c.emit(Op::Store(temp));
+                for (i, name) in names.iter().enumerate() {
+                    c.emit(Op::Load(temp));
+                    c.emit(Op::Const(Literal::Number(i as f64)));
+                    c.emit(Op::Index);
+                    let slot = c.bind(name);
+                    if !c.loops.is_empty() {
+                        c.emit(Op::Rebind(slot));
+                    }
+                    c.emit(Op::Store(slot));
+                }
+            }
+            Stmt::Break { .. } => {
+                if c.loops.is_empty() {
+                    return Err("break outside a loop".into());
+                }
+                let jump = c.emit(Op::Jump(0));
+                c.loops.last_mut().unwrap().breaks.push(jump);
+            }
+            Stmt::Continue { .. } => {
+                if c.loops.is_empty() {
+                    return Err("continue outside a loop".into());
+                }
+                let jump = c.emit(Op::Jump(0));
+                c.loops.last_mut().unwrap().continues.push(jump);
+            }
+            // A receiver method is a plain function whose first parameter is
+            // the receiver; calls rewrite to it statically (see the
+            // method_calls table filled in lower_module). The receiver is a
+            // handle, so a `mut` method's field writes already land on the
+            // shared value.
+            Stmt::ReceiverMethod {
+                receiver_type,
+                receiver_name,
+                name,
+                type_params,
+                params,
+                body,
+                is_async,
+                span,
+                ..
+            } => {
+                let mangled = deka_syntax::mangle_method_name(name, receiver_type);
+                let mut all = Vec::with_capacity(params.len() + 1);
+                all.push(Param {
+                    binding: ParamBinding::Identifier(receiver_name),
+                    ty: None,
+                    default_value: None,
+                    span: *span,
+                });
+                all.extend(params.iter().cloned());
+                self.named_function(&mangled, &all, type_params, body, *is_async, c)?;
+            }
+            // An enum declaration interns each payload-free case as one
+            // record `{name, index}` bound to `Enum$Case`; payload cases
+            // build their record at each construction site.
+            Stmt::Enum { name, cases, .. } => {
+                for (index, case) in cases.iter().enumerate() {
+                    if case.payload.is_some() {
+                        continue;
+                    }
+                    c.emit(Op::Const(Literal::String(case.name.into())));
+                    c.emit(Op::Const(Literal::Number(index as f64)));
+                    c.emit(Op::Record(vec!["name".into(), "index".into()]));
+                    let slot = c.bind(&format!("{}${}", name, case.name));
+                    if !c.loops.is_empty() {
+                        c.emit(Op::Rebind(slot));
+                    }
+                    c.emit(Op::Store(slot));
+                }
             }
             _ => {
                 return Err(format!(
@@ -1117,7 +1487,7 @@ impl Lower {
         }
         Ok(())
     }
-    fn expr(&mut self, e: &Expr<'_>, c: &mut Context) -> Result<()> {
+    fn expr(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
         match e {
             Expr::JsxElement { element, .. } => {
                 if !matches!(
@@ -1233,33 +1603,80 @@ impl Lower {
             } => {
                 if matches!(
                     op,
-                    BinOp::Assign | BinOp::AddAssign | BinOp::SubAssign | BinOp::MulAssign
+                    BinOp::Assign
+                        | BinOp::AddAssign
+                        | BinOp::SubAssign
+                        | BinOp::MulAssign
+                        | BinOp::DivAssign
+                        | BinOp::ModAssign
                 ) {
-                    let Expr::Identifier { name, .. } = left else {
-                        return Err(
-                            "only binding assignment is supported; collections are immutable"
-                                .into(),
-                        );
-                    };
-                    let slot = c.slot(name)?;
-                    if *op != BinOp::Assign {
-                        c.emit_load(name)?;
+                    match left {
+                        Expr::Identifier { name, .. } => {
+                            let slot = c.slot(name)?;
+                            if *op != BinOp::Assign {
+                                c.emit_load(name)?;
+                            }
+                            self.expr(right, c)?;
+                            match op {
+                                BinOp::AddAssign => {
+                                    c.emit(Op::Add);
+                                }
+                                BinOp::SubAssign => {
+                                    c.emit(Op::Sub);
+                                }
+                                BinOp::MulAssign => {
+                                    c.emit(Op::Mul);
+                                }
+                                BinOp::DivAssign => {
+                                    c.emit(Op::Div);
+                                }
+                                BinOp::ModAssign => {
+                                    c.emit(Op::Mod);
+                                }
+                                _ => {}
+                            }
+                            c.emit(Op::Dup);
+                            c.emit(Op::Store(slot));
+                        }
+                        // Field and element assignment mutate the heap value,
+                        // so every alias observes the change. Const-ness is
+                        // the typechecker's guard; compound assignment stays
+                        // binding-only.
+                        Expr::FieldAccess { object, field, .. } if *op == BinOp::Assign => {
+                            self.expr(object, c)?;
+                            self.expr(right, c)?;
+                            c.emit(Op::FieldSet((*field).into()));
+                        }
+                        Expr::IndexAccess { object, index, .. } if *op == BinOp::Assign => {
+                            self.expr(object, c)?;
+                            self.expr(index, c)?;
+                            self.expr(right, c)?;
+                            c.emit(Op::IndexSet);
+                        }
+                        _ => {
+                            return Err(
+                                "only binding, field and element assignment are supported".into()
+                            );
+                        }
                     }
+                } else if *op == BinOp::And {
+                    self.expr(left, c)?;
+                    let short = c.emit(Op::JumpIfFalse(0));
                     self.expr(right, c)?;
-                    match op {
-                        BinOp::AddAssign => {
-                            c.emit(Op::Add);
-                        }
-                        BinOp::SubAssign => {
-                            c.emit(Op::Sub);
-                        }
-                        BinOp::MulAssign => {
-                            c.emit(Op::Mul);
-                        }
-                        _ => {}
-                    }
-                    c.emit(Op::Dup);
-                    c.emit(Op::Store(slot));
+                    let end = c.emit(Op::Jump(0));
+                    c.patch(short);
+                    c.emit(Op::Const(Literal::Bool(false)));
+                    c.patch(end);
+                } else if *op == BinOp::Or {
+                    self.expr(left, c)?;
+                    let try_right = c.emit(Op::JumpIfFalse(0));
+                    c.emit(Op::Const(Literal::Bool(true)));
+                    let end = c.emit(Op::Jump(0));
+                    c.patch(try_right);
+                    self.expr(right, c)?;
+                    c.patch(end);
+                } else if *op == BinOp::Pipe {
+                    self.pipe(left, right, c)?;
                 } else {
                     self.expr(left, c)?;
                     self.expr(right, c)?;
@@ -1268,20 +1685,43 @@ impl Lower {
                         BinOp::Sub => Op::Sub,
                         BinOp::Mul => Op::Mul,
                         BinOp::Div => Op::Div,
+                        BinOp::Mod => Op::Mod,
                         BinOp::Lt => Op::Less,
+                        BinOp::Le => Op::LessEq,
+                        BinOp::Gt => Op::Greater,
+                        BinOp::Ge => Op::GreaterEq,
                         BinOp::Eq => Op::Equal,
+                        BinOp::Ne => Op::NotEqual,
+                        BinOp::BitAnd => Op::BitAnd,
+                        BinOp::BitOr => Op::BitOr,
+                        BinOp::BitXor => Op::BitXor,
+                        BinOp::Shl => Op::Shl,
+                        BinOp::Shr => Op::Shr,
                         _ => return Err(format!("operator {op:?} unsupported")),
                     });
                 }
             }
-            Expr::Call {
-                callee,
-                args,
-                type_args,
-                ..
-            } => {
-                if !type_args.is_empty() {
-                    return Err("explicit type arguments unsupported".into());
+            Expr::Call { callee, args, .. } => {
+                // Explicit type arguments erase; the typechecker has already
+                // verified them.
+                // A recorded receiver-method call rewrites to its free
+                // function: `r.move()` is `move$Mover(r.Mover)` — the embed
+                // path walks from the receiver value to the record the
+                // method was declared on.
+                if let Expr::FieldAccess { object, .. } = callee
+                    && let Some((mangled, embed_path)) =
+                        self.method_calls.get(&(e as *const Expr as usize)).cloned()
+                {
+                    c.emit_load(&mangled)?;
+                    self.expr(object, c)?;
+                    for step in &embed_path {
+                        c.emit(Op::FieldOrSelf(step.clone()));
+                    }
+                    for arg in *args {
+                        self.expr(arg, c)?;
+                    }
+                    c.emit(Op::Call(1 + args.len()));
+                    return Ok(());
                 }
                 if let Expr::FieldAccess {
                     object,
@@ -1295,6 +1735,33 @@ impl Lower {
                     self.expr(object, c)?;
                     self.expr(index, c)?;
                     c.emit(Op::ListHas);
+                    return Ok(());
+                }
+                // Mutating list built-ins lower to one in-place op each; the
+                // typechecker has already confined them to `let` lists.
+                if let Expr::FieldAccess { object, field, .. } = callee
+                    && let Some(kind) = match *field {
+                        "push" => Some((ListMut::Push, 1)),
+                        "pop" => Some((ListMut::Pop, 0)),
+                        "shift" => Some((ListMut::Shift, 0)),
+                        "unshift" => Some((ListMut::Unshift, 1)),
+                        "splice" => Some((ListMut::Splice, 2)),
+                        "sort" => Some((ListMut::Sort, 0)),
+                        "reverse" => Some((ListMut::Reverse, 0)),
+                        "fill" => Some((ListMut::Fill, 2)),
+                        "copyWithin" => Some((ListMut::CopyWithin, 2)),
+                        _ => None,
+                    }
+                {
+                    let (kind, arity) = kind;
+                    if args.len() != arity {
+                        return Err(format!("{field} takes {arity} argument(s)"));
+                    }
+                    self.expr(object, c)?;
+                    for arg in *args {
+                        self.expr(arg, c)?;
+                    }
+                    c.emit(Op::ListMut(kind));
                     return Ok(());
                 }
                 if let Expr::FieldAccess {
@@ -1356,15 +1823,54 @@ impl Lower {
                     c.emit(Op::Load(result));
                     return Ok(());
                 }
-                let host = if let Expr::Identifier { name, .. } = callee {
-                    if !c.names.contains_key(*name) {
-                        self.hosts.get(*name).cloned()
-                    } else {
-                        None
-                    }
+                let unbound = if let Expr::Identifier { name, .. } = callee {
+                    (!c.names.contains_key(*name)).then_some(*name)
                 } else {
                     None
                 };
+                if let Some(name) = unbound {
+                    if self.newtypes.contains(name) {
+                        let [arg] = *args else {
+                            return Err(format!("{name} takes exactly one argument"));
+                        };
+                        self.expr(arg, c)?;
+                        return Ok(());
+                    }
+                    if self.structs.contains_key(name) {
+                        // The struct name called as a constructor takes the
+                        // record whole: `Person({name: "Ada"})`.
+                        let [arg] = *args else {
+                            return Err(format!("{name} takes exactly one record argument"));
+                        };
+                        self.expr(arg, c)?;
+                        self.attach_methods(name, c)?;
+                        return Ok(());
+                    }
+                    if name == "unboxNumber" {
+                        let [arg] = *args else {
+                            return Err("unboxNumber takes exactly one argument".into());
+                        };
+                        // The newtype is its payload at run time, so the
+                        // unbox is the identity.
+                        self.expr(arg, c)?;
+                        return Ok(());
+                    }
+                    let conversion = match name {
+                        "string" => Some(Op::ToString),
+                        "toNumber" => Some(Op::ToNumber),
+                        "panic" => Some(Op::Panic),
+                        _ => None,
+                    };
+                    if let Some(op) = conversion {
+                        let [arg] = *args else {
+                            return Err(format!("{name} takes exactly one argument"));
+                        };
+                        self.expr(arg, c)?;
+                        c.emit(op);
+                        return Ok(());
+                    }
+                }
+                let host = unbound.and_then(|name| self.hosts.get(name).cloned());
                 if let Some(operation) = host {
                     for arg in *args {
                         self.expr(arg, c)?;
@@ -1374,6 +1880,29 @@ impl Lower {
                         arguments: args.len(),
                     });
                 } else {
+                    if let Some(name) = unbound {
+                        if self.declared.contains(name) {
+                            return Err(format!(
+                                "binding {name} is unavailable here; forward references are unsupported"
+                            ));
+                        }
+                        return Err(format!("unknown built-in {name}"));
+                    }
+                    // A member call the typechecker did not resolve
+                    // statically dispatches at run time: an interface-typed
+                    // receiver finds its attached `$method`, a record field
+                    // holding a function is called plainly.
+                    if let Expr::FieldAccess { object, field, .. } = callee {
+                        self.expr(object, c)?;
+                        for arg in *args {
+                            self.expr(arg, c)?;
+                        }
+                        c.emit(Op::MethodCall {
+                            name: (*field).into(),
+                            argc: args.len(),
+                        });
+                        return Ok(());
+                    }
                     self.expr(callee, c)?;
                     for arg in *args {
                         self.expr(arg, c)?;
@@ -1392,27 +1921,183 @@ impl Lower {
                 c.emit(Op::Await);
             }
             Expr::Array { elements, .. } => {
-                for e in *elements {
-                    self.expr(e, c)?;
+                if elements.iter().any(|e| matches!(e, Expr::Spread { .. })) {
+                    c.emit(Op::List(0));
+                    for e in *elements {
+                        match e {
+                            Expr::Spread { expr, .. } => {
+                                self.expr(expr, c)?;
+                                c.emit(Op::ListExtend);
+                            }
+                            _ => {
+                                self.expr(e, c)?;
+                                c.emit(Op::ListAppend);
+                            }
+                        }
+                    }
+                } else {
+                    for e in *elements {
+                        self.expr(e, c)?;
+                    }
+                    c.emit(Op::List(elements.len()));
                 }
-                c.emit(Op::List(elements.len()));
             }
             Expr::Object { fields, .. } => {
+                if fields.iter().any(|f| f.key.is_empty()) {
+                    c.emit(Op::Record(vec![]));
+                    for f in *fields {
+                        self.expr(&f.value, c)?;
+                        if f.key.is_empty() {
+                            c.emit(Op::RecordExtend);
+                        } else {
+                            c.emit(Op::Record(vec![f.key.to_string()]));
+                            c.emit(Op::RecordExtend);
+                        }
+                    }
+                } else {
+                    let mut names = vec![];
+                    for f in *fields {
+                        self.expr(&f.value, c)?;
+                        names.push(f.key.to_string());
+                    }
+                    c.emit(Op::Record(names));
+                }
+            }
+            Expr::StructLiteral { name, fields, .. } => {
+                // A struct value is a record. Fields the literal gives come in
+                // written order; declared fields it omits are filled from
+                // their defaults (optional fields stay absent).
+                let declared = self.structs.get(*name).cloned().unwrap_or_default();
                 let mut names = vec![];
                 for f in *fields {
                     self.expr(&f.value, c)?;
-                    names.push(f.key.to_string());
+                    names.push(f.name.to_string());
+                }
+                for (field, default, optional) in declared {
+                    if optional || names.contains(&field) {
+                        continue;
+                    }
+                    if let Some(default) = default {
+                        self.expr(default, c)?;
+                        names.push(field);
+                    }
                 }
                 c.emit(Op::Record(names));
+                self.attach_methods(name, c)?;
             }
             Expr::FieldAccess { object, field, .. } => {
+                // Enum namespace access: `Color.Red` where `Color` names an
+                // enum loads the interned case record.
+                if let Expr::Identifier { name, .. } = object
+                    && !c.names.contains_key(*name)
+                    && let Some(cases) = self.enums.get(*name)
+                {
+                    let mangled = format!("{}${}", name, field);
+                    let Some((_, has_payload)) = cases.iter().find(|(case, _)| case == field)
+                    else {
+                        return Err(format!("case `{field}` not found in enum `{name}`"));
+                    };
+                    if *has_payload {
+                        return Err(format!(
+                            "case `{field}` of enum `{name}` carries a payload; construct it with `{name}.{field}(value)`"
+                        ));
+                    }
+                    c.emit_load(&mangled)?;
+                    return Ok(());
+                }
                 self.expr(object, c)?;
                 c.emit(Op::Field((*field).into()));
+            }
+            Expr::EnumConstructor {
+                enum_name,
+                case_name,
+                payload,
+                span,
+                ..
+            } => {
+                let Some(cases) = self.enums.get(*enum_name).cloned() else {
+                    return Err(format!(
+                        "{}:{}: enum `{enum_name}` is not declared in this module (Option and Result land with note 05)",
+                        span.start.line, span.start.column
+                    ));
+                };
+                let Some((index, has_payload)) = cases
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (case, _))| case == case_name)
+                    .map(|(i, (_, p))| (i, *p))
+                else {
+                    return Err(format!(
+                        "case `{case_name}` not found in enum `{enum_name}`"
+                    ));
+                };
+                match (payload, has_payload) {
+                    (None, false) => {
+                        c.emit_load(&format!("{}${}", enum_name, case_name))?;
+                    }
+                    (Some(value), true) => {
+                        c.emit(Op::Const(Literal::String((*case_name).into())));
+                        c.emit(Op::Const(Literal::Number(index as f64)));
+                        self.expr(value, c)?;
+                        c.emit(Op::Record(vec![
+                            "name".into(),
+                            "index".into(),
+                            "value".into(),
+                        ]));
+                    }
+                    (None, true) => {
+                        return Err(format!(
+                            "case `{case_name}` of enum `{enum_name}` needs its payload"
+                        ));
+                    }
+                    (Some(_), false) => {
+                        return Err(format!(
+                            "case `{case_name}` of enum `{enum_name}` carries no payload"
+                        ));
+                    }
+                }
             }
             Expr::IndexAccess { object, index, .. } => {
                 self.expr(object, c)?;
                 self.expr(index, c)?;
                 c.emit(Op::Index);
+            }
+            Expr::Unary { op, operand, .. } => {
+                self.expr(operand, c)?;
+                match op {
+                    UnOp::Neg => {
+                        c.emit(Op::Neg);
+                    }
+                    UnOp::Not => {
+                        c.emit(Op::Not);
+                    }
+                    UnOp::Plus => {}
+                }
+            }
+            Expr::TemplateLiteral { parts, .. } => {
+                // Each ${…} part becomes text the way string() does it.
+                let mut count = 0;
+                for part in *parts {
+                    match part {
+                        TemplatePart::Text(text) => {
+                            // The lexer keeps `\${` verbatim (the old JS
+                            // emitter leaned on JavaScript's escape); the VM
+                            // consumes the text, so it unescapes here.
+                            c.emit(Op::Const(Literal::String(text.replace("\\${", "${"))));
+                        }
+                        TemplatePart::Expr(expr) => {
+                            self.expr(expr, c)?;
+                            c.emit(Op::ToString);
+                        }
+                    }
+                    if count > 0 {
+                        c.emit(Op::Add);
+                    }
+                    count += 1;
+                }
+                if count == 0 {
+                    c.emit(Op::Const(Literal::String("".into())));
+                }
             }
             _ => {
                 return Err(format!(
