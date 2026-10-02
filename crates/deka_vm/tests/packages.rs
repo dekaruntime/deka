@@ -231,3 +231,37 @@ async fn a_package_imports_another_package_from_the_same_root() {
     );
     assert_eq!(result(&app).await.unwrap(), HostValue::Number(84.));
 }
+
+/// `deka.json` is needed only when a bare specifier is resolved: a program
+/// that imports no package compiles and runs without one, and a package
+/// import without one is a named error. (Meaningful only when no ancestor of
+/// the temporary directory has a `deka.json`, which the first assertion pins.)
+#[tokio::test]
+async fn deka_json_is_needed_only_to_resolve_a_package() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    assert!(
+        !root.ancestors().any(|a| a.join("deka.json").exists()),
+        "the temporary directory is inside a deka project: {}",
+        root.display()
+    );
+    write(dir.path(), "lib.ds", "export const base = 40;\n");
+    let app = write(
+        dir.path(),
+        "app.ds",
+        "import { base } from \"./lib.ds\";\nfn main() number { return base + 2; }\n",
+    );
+    assert_eq!(result(&app).await.unwrap(), HostValue::Number(42.0));
+    let app = write(
+        dir.path(),
+        "pkg.ds",
+        "import { answer } from \"mathpkg\";\nfn main() number { return answer(); }\n",
+    );
+    let error = compiler::compile_file(&app, &Hosts::default(), Some("main")).unwrap_err();
+    assert!(
+        error.contains(
+            "package mathpkg cannot be resolved: deka.json not found in this directory or any parent"
+        ),
+        "{error}"
+    );
+}

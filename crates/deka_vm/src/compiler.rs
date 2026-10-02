@@ -13,7 +13,7 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
         hosts,
         Some(entry_name),
         &Project {
-            root: std::path::PathBuf::from("."),
+            root: None,
             dependencies: BTreeMap::new(),
             lock: BTreeMap::new(),
         },
@@ -97,9 +97,11 @@ fn host_module(source: &str) -> bool {
 /// The project a compile resolves packages against: the nearest ancestor of
 /// the entry module with a `deka.json`, its declared dependency pins, and
 /// the lock's exact pins (deka#1212). Consumption only — nothing here
-/// touches the network.
+/// touches the network. A program that imports no package needs no
+/// `deka.json`: `root` is `None` then, and only resolving a bare specifier
+/// reports the missing manifest.
 pub struct Project {
-    root: std::path::PathBuf,
+    root: Option<std::path::PathBuf>,
     dependencies: BTreeMap<String, String>,
     lock: BTreeMap<String, String>,
 }
@@ -116,7 +118,11 @@ impl Project {
                 break directory;
             }
             if !directory.pop() {
-                return Err("deka.json not found in this directory or any parent".into());
+                return Ok(Project {
+                    root: None,
+                    dependencies: BTreeMap::new(),
+                    lock: BTreeMap::new(),
+                });
             }
         };
         let manifest: serde_json::Value = std::fs::read_to_string(root.join("deka.json"))
@@ -148,7 +154,7 @@ impl Project {
             })
             .unwrap_or_default();
         Ok(Project {
-            root,
+            root: Some(root),
             dependencies,
             lock,
         })
@@ -170,12 +176,17 @@ impl Project {
         } else {
             (segments[0].to_owned(), &segments[1.min(segments.len())..])
         };
+        let Some(root) = &self.root else {
+            return Err(format!(
+                "package {name} cannot be resolved: deka.json not found in this directory or any parent"
+            ));
+        };
         let Some(declared) = self.dependencies.get(&name) else {
             return Err(format!(
                 "package {name} is not declared in deka.json dependencies"
             ));
         };
-        let directory = self.root.join("ds_modules").join(&name);
+        let directory = root.join("ds_modules").join(&name);
         if !directory.is_dir() {
             return Err(format!(
                 "package {name} is not installed (ds_modules/{name} is missing)"
