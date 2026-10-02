@@ -48,6 +48,15 @@ pub enum Op {
         captures: Vec<usize>,
     },
     Call(usize),
+    /// Pop the arguments, pop the receiver record, and call its `$<name>`
+    /// member (an attached method, which receives the record as its first
+    /// argument) or its `<name>` member (a field holding a function, called
+    /// plainly). Backs interface method calls, where the concrete type is
+    /// only known at run time.
+    MethodCall {
+        name: String,
+        argc: usize,
+    },
     Host {
         operation: String,
         arguments: usize,
