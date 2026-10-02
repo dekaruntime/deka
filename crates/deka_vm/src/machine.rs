@@ -374,8 +374,24 @@ impl Vm {
                         Op::Add => Value::String(a + &b),
                         Op::Equal => Value::Bool(a == b),
                         Op::NotEqual => Value::Bool(a != b),
+                        Op::Less => Value::Bool(a < b),
+                        Op::LessEq => Value::Bool(a <= b),
+                        Op::Greater => Value::Bool(a > b),
+                        Op::GreaterEq => Value::Bool(a >= b),
                         _ => return Err("unsupported string operation".into()),
                     },
+                    (Value::String(a), Value::Number(b)) if matches!(op, Op::Add) => {
+                        Value::String(a + &number_text(b))
+                    }
+                    (Value::Number(a), Value::String(b)) if matches!(op, Op::Add) => {
+                        Value::String(number_text(a) + &b)
+                    }
+                    (Value::String(a), Value::Bool(b)) if matches!(op, Op::Add) => {
+                        Value::String(a + &b.to_string())
+                    }
+                    (Value::Bool(a), Value::String(b)) if matches!(op, Op::Add) => {
+                        Value::String(a.to_string() + &b)
+                    }
                     (Value::Bool(a), Value::Bool(b)) if matches!(op, Op::Equal | Op::NotEqual) => {
                         Value::Bool(if matches!(op, Op::Equal) {
                             a == b
@@ -409,7 +425,7 @@ impl Vm {
                 let value = match self.heap.get(h)? {
                     Value::String(_) => h,
                     Value::Number(n) => {
-                        let text = format!("{n}");
+                        let text = number_text(*n);
                         self.heap.alloc(Value::String(text))
                     }
                     Value::Bool(b) => self.heap.alloc(Value::String(b.to_string())),
@@ -550,6 +566,9 @@ impl Vm {
                     Value::List(items) if name == "length" => {
                         self.heap.alloc(Value::Number(items.len() as f64))
                     }
+                    Value::String(text) if name == "length" => {
+                        self.heap.alloc(Value::Number(text.chars().count() as f64))
+                    }
                     Value::Record(fields) => *fields.get(&name).ok_or("missing field")?,
                     _ => return Err("unsupported field access".into()),
                 };
@@ -564,12 +583,24 @@ impl Vm {
                 if !index.is_finite() || *index < 0. || index.fract() != 0. {
                     return Err("invalid index".into());
                 }
-                let Value::List(items) = self.heap.get(object)? else {
-                    return Err("index requires a list".into());
-                };
-                frame
-                    .stack
-                    .push(*items.get(*index as usize).ok_or("index out of bounds")?);
+                let index = *index as usize;
+                match self.heap.get(object)? {
+                    Value::List(items) => {
+                        frame
+                            .stack
+                            .push(*items.get(index).ok_or("index out of bounds")?);
+                    }
+                    Value::String(text) => {
+                        let ch = text
+                            .chars()
+                            .nth(index)
+                            .ok_or("index out of bounds")?
+                            .to_string();
+                        let h = self.heap.alloc(Value::String(ch));
+                        frame.stack.push(h);
+                    }
+                    _ => return Err("index requires a list or string".into()),
+                }
             }
         }
         Ok(Step::Continue)
@@ -584,6 +615,11 @@ fn pop(frame: &mut Frame) -> Result<Handle> {
 /// JavaScript's ToInt32: truncate toward zero, then keep the low 32 bits.
 fn int32(n: f64) -> i32 {
     (n.trunc() as i64) as i32
+}
+/// How `string(x)` turns a number into text; string+number concat uses the
+/// same conversion, as the note-03 decision requires.
+fn number_text(n: f64) -> String {
+    format!("{n}")
 }
 fn arguments(frame: &mut Frame, count: usize) -> Result<Vec<Handle>> {
     // Do not reserve an untrusted bytecode operand's claimed size.

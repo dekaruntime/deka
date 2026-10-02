@@ -147,6 +147,7 @@ data-types-primitive-extension-builtin-property-fail
 data-types-primitive-extension-wrong-receiver-fail
 data-types-string-concat-plus
 data-types-string-find-missing-fail
+data-types-string-index-access
 data-types-struct-embed-missing-field-fail
 data-types-struct-embed-self-fail
 data-types-struct-immutable-field-fail
@@ -308,6 +309,7 @@ functions-function-shadows-const-runtime-fail
 functions-function-type-annotation
 functions-function-without-body
 functions-higher-order-callback
+functions-hof-anonymous-argument
 functions-hof-any-type-rejected
 functions-hof-array-of-functions
 functions-hof-arrow-callback
@@ -426,14 +428,21 @@ modules-collection-element-inferred-export-negative
 modules-export-async-fn
 modules-export-const-direct-001
 modules-export-const-multiple-001
+modules-export-fn-direct-001
+modules-export-fn-with-params-001
 modules-export-named-alias-001
 modules-export-syntax-default-001
+modules-import-alias-001
 modules-import-parse-error-001
 modules-import-side-effect-only-001
 modules-import-subdirectory-nested-001
 modules-import-syntax-no-from-001
+modules-relative-import-001
+modules-relative-import-alias-001
+modules-relative-import-chain-001
 modules-relative-import-const-001
 modules-relative-import-missing-module-001
+modules-relative-import-multiple-001
 modules-relative-import-side-effect-001
 modules-relative-import-subdirectory-001
 option-struct-defaults-required
