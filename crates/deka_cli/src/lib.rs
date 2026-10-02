@@ -1,4 +1,8 @@
 //! Public native compiler/VM CLI. The legacy V8 CLI remains a separate crate.
+//! Command dispatch lives in [`cli`]; this module holds the implementations.
+pub mod cli;
+
+use deka_cli_core::registry::Output;
 use deka_vm::{HostOp, HostReply, HostType, HostValue, Hosts, Program, Result, Vm, compiler};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -8,11 +12,10 @@ use std::{
 };
 
 const TRAILER: &[u8; 16] = b"DEKA-NATIVE-APP1";
-const HELP: &str = "Deka — native DekaScript runtime\n\n  deka run [source.ds | deka.json] [--entry name]\n  deka dev [deka.json]\n  deka check [source.ds | deka.json]\n  deka build [source.ds | deka.json] --outfile executable\n  deka compile [source.ds | deka.json] --outfile executable\n  deka test [files or directories]\n  deka init [directory]\n\nDesktop projects use desktop.entry and desktop.entryFunction in deka.json.\nTests are zero-argument functions named test_*, with assert from \"test\".\n";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Payload {
+pub(crate) struct Payload {
     version: u32,
     program: Program,
     desktop: bool,
@@ -30,12 +33,12 @@ struct Desktop {
     #[serde(rename = "entryFunction")]
     entry_function: String,
 }
-struct Source {
-    path: PathBuf,
+pub(crate) struct Source {
+    pub(crate) path: PathBuf,
     entry: Option<String>,
-    desktop: bool,
+    pub(crate) desktop: bool,
 }
-fn source(path: &Path, entry: Option<String>) -> Result<Source> {
+pub(crate) fn source(path: &Path, entry: Option<String>) -> Result<Source> {
     let path = if path.is_dir() {
         path.join("deka.json")
     } else {
@@ -77,7 +80,7 @@ fn source(path: &Path, entry: Option<String>) -> Result<Source> {
         desktop,
     })
 }
-fn hosts() -> Result<Hosts> {
+pub(crate) fn hosts() -> Result<Hosts> {
     let mut hosts = Hosts::default();
     for name in ["echo", "print"] {
         hosts.register(HostOp::new(
@@ -111,14 +114,14 @@ fn hosts() -> Result<Hosts> {
     ))?;
     Ok(hosts)
 }
-fn compile(source: &Source) -> Result<Payload> {
+pub(crate) fn compile(source: &Source) -> Result<Payload> {
     Ok(Payload {
         version: 1,
         program: compiler::compile_file(&source.path, &hosts()?, source.entry.as_deref())?,
         desktop: source.desktop,
     })
 }
-fn execute(payload: Payload, exercise: Option<usize>) -> Result<()> {
+pub(crate) fn execute(payload: Payload, exercise: Option<usize>) -> Result<()> {
     if payload.version != 1 {
         return Err("unsupported application format".into());
     }
@@ -145,7 +148,7 @@ fn execute(payload: Payload, exercise: Option<usize>) -> Result<()> {
     }
     Ok(())
 }
-fn embedded(path: &Path) -> Result<Option<Payload>> {
+pub(crate) fn embedded(path: &Path) -> Result<Option<Payload>> {
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     let size = file.metadata().map_err(|e| e.to_string())?.len();
     #[cfg(target_os = "macos")]
@@ -184,7 +187,7 @@ fn embedded(path: &Path) -> Result<Option<Payload>> {
     payload.program.validate()?;
     Ok(Some(payload))
 }
-fn build(payload: Payload, destination: &Path) -> Result<()> {
+pub(crate) fn build(payload: Payload, destination: &Path, out: &Output) -> Result<()> {
     let executable = std::env::current_exe().map_err(|e| e.to_string())?;
     let parent = destination
         .parent()
@@ -218,10 +221,10 @@ fn build(payload: Payload, destination: &Path) -> Result<()> {
     #[cfg(target_os = "macos")]
     sign(staged.path(), &["--force", "--sign", "-"])?;
     staged.persist(destination).map_err(|e| e.to_string())?;
-    println!("{}", destination.display());
+    out.print(format_args!("{}\n", destination.display()));
     Ok(())
 }
-fn tests(paths: &[String]) -> Result<()> {
+pub(crate) fn tests(paths: &[String], out: &Output, err: &Output) -> Result<()> {
     fn discover(path: &Path, explicit: bool, out: &mut Vec<PathBuf>) -> Result<()> {
         if path.is_dir() {
             let mut entries = fs::read_dir(path)
@@ -271,16 +274,16 @@ fn tests(paths: &[String]) -> Result<()> {
             match result {
                 Ok(()) => {
                     passed += 1;
-                    println!("PASS {}::{entry}", file.display());
+                    out.print(format_args!("PASS {}::{entry}\n", file.display()));
                 }
                 Err(error) => {
                     failed += 1;
-                    eprintln!("FAIL {}::{entry}: {error}", file.display());
+                    err.print(format_args!("FAIL {}::{entry}: {error}\n", file.display()));
                 }
             }
         }
     }
-    println!("{passed} passed, {failed} failed");
+    out.print(format_args!("{passed} passed, {failed} failed\n"));
     if passed + failed == 0 {
         Err("no tests found (use *.test.ds and fn test_name())".into())
     } else if failed > 0 {
@@ -289,7 +292,7 @@ fn tests(paths: &[String]) -> Result<()> {
         Ok(())
     }
 }
-fn init(directory: &Path) -> Result<()> {
+pub(crate) fn init(directory: &Path) -> Result<()> {
     fs::create_dir_all(directory).map_err(|e| e.to_string())?;
     for name in ["deka.json", "App.dsx", "app.test.ds"] {
         if directory.join(name).exists() {
@@ -314,98 +317,7 @@ fn init(directory: &Path) -> Result<()> {
     }
     Ok(())
 }
-pub fn run() -> Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-    if let Some(payload) = embedded(&executable)? {
-        let exercise = if args.is_empty() {
-            None
-        } else if args.len() == 2 && args[0] == "--exercise" {
-            Some(args[1].parse().map_err(|_| "expected click count")?)
-        } else {
-            return Err("unexpected application arguments".into());
-        };
-        return execute(payload, exercise);
-    }
-    let Some(command) = args.first().map(String::as_str) else {
-        print!("{HELP}");
-        return Ok(());
-    };
-    if matches!(command, "--help" | "-h" | "help") {
-        print!("{HELP}");
-        return Ok(());
-    }
-    if matches!(command, "--version" | "-v") {
-        println!("deka {} (Rust VM)", env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
-    if command == "init" {
-        if args.len() > 2 {
-            return Err("usage: deka init [directory]".into());
-        }
-        return init(Path::new(args.get(1).map(String::as_str).unwrap_or(".")));
-    }
-    if command == "test" {
-        return if args.len() == 1 {
-            tests(&[".".into()])
-        } else {
-            tests(&args[1..])
-        };
-    }
-    let (command, rest) = if matches!(
-        command,
-        "run" | "start" | "dev" | "check" | "build" | "compile"
-    ) {
-        (command, &args[1..])
-    } else if command.ends_with(".ds") || command.ends_with(".dsx") {
-        ("run", &args[..])
-    } else {
-        return Err(format!("unknown command: {command}\n{HELP}"));
-    };
-    let mut path = None;
-    let mut entry = None;
-    let mut outfile = None;
-    let mut exercise = None;
-    let mut i = 0;
-    while i < rest.len() {
-        match rest[i].as_str() {
-            "--entry" | "--outfile" | "--exercise" => {
-                let flag = &rest[i];
-                i += 1;
-                let value = rest
-                    .get(i)
-                    .ok_or_else(|| format!("missing value for {flag}"))?;
-                match flag.as_str() {
-                    "--entry" => entry = Some(value.clone()),
-                    "--outfile" => outfile = Some(PathBuf::from(value)),
-                    _ => exercise = Some(value.parse().map_err(|_| "expected click count")?),
-                }
-            }
-            flag if flag.starts_with('-') => return Err(format!("unknown option: {flag}")),
-            value => {
-                if path.replace(PathBuf::from(value)).is_some() {
-                    return Err("expected one source path".into());
-                }
-            }
-        }
-        i += 1;
-    }
-    if outfile.is_some() && !matches!(command, "build" | "compile") {
-        return Err("--outfile requires build or compile".into());
-    }
-    let source = source(&path.unwrap_or_else(|| "deka.json".into()), entry)?;
-    let payload = compile(&source)?;
-    match command {
-        "check" => {
-            println!("OK {}", source.path.display());
-            Ok(())
-        }
-        "build" | "compile" => build(payload, &outfile.unwrap_or_else(|| "dist/deka-app".into())),
-        "dev" if source.desktop && exercise.is_none() => dev(source, payload),
-        _ => execute(payload, exercise),
-    }
-}
-fn dev(source: Source, payload: Payload) -> Result<()> {
+pub(crate) fn dev(source: Source, payload: Payload) -> Result<()> {
     #[cfg(feature = "desktop")]
     {
         let files = compiler::source_files(&source.path)?;

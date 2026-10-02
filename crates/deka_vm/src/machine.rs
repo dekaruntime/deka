@@ -328,6 +328,15 @@ impl Vm {
                 };
                 frame.stack.push(*h);
             }
+            Op::LoadChecked { slot, message } => {
+                let Value::Cell(h) = self.heap.get(frame.locals[slot])? else {
+                    return Err("invalid local cell".into());
+                };
+                if matches!(self.heap.get(*h)?, Value::Uninitialized) {
+                    return Err(message.clone());
+                }
+                frame.stack.push(*h);
+            }
             Op::Store(i) => {
                 let h = pop(frame)?;
                 self.heap.replace(frame.locals[i], Value::Cell(h))?;
