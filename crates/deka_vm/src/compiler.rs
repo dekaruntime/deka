@@ -237,19 +237,19 @@ fn lower_module(
                 }
                 ExportDecl::NamedGroup { names, source } => {
                     // Re-export groups, whether from another module or of
-                    // local values, are the barrel work (deka#1209). A name
+                    // local values, are the barrel work (deka#1210). A name
                     // that resolves to a type declaration (alias, newtype,
                     // struct, enum, opaque) is a type export: the checker
                     // tracks it and no slot exists, so it erases here.
                     if source.is_some() {
                         return Err(
-                            "native module re-exports are not yet supported (deka#1209)".into(),
+                            "native module re-exports are not yet supported (deka#1210)".into(),
                         );
                     }
                     for name in *names {
                         if entry.slot(name.name).is_ok() {
                             return Err(
-                                "native module re-exports are not yet supported (deka#1209)"
+                                "native module re-exports are not yet supported (deka#1210)"
                                     .into(),
                             );
                         }
@@ -618,7 +618,7 @@ impl Lower {
         match s {
             Stmt::Import { .. } | Stmt::Empty { .. } | Stmt::TypeAlias { .. } => {}
             // Export groups lower no code; the export-collection pass either
-            // erases them (type-only names) or rejects them (deka#1209).
+            // erases them (type-only names) or rejects them (deka#1210).
             Stmt::Export {
                 decl: ExportDecl::NamedGroup { .. },
                 ..
