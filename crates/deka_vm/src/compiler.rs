@@ -37,7 +37,18 @@ pub fn source_files(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
         let parsed = deka_syntax::parse(&source, &arena);
         if let Some(ast) = parsed.program {
             for stmt in ast.statements {
-                if let Stmt::Import { source, .. } = stmt
+                let source = match stmt {
+                    Stmt::Import { source, .. } => Some(*source),
+                    Stmt::Export {
+                        decl: ExportDecl::NamedGroup {
+                            source: Some(source),
+                            ..
+                        },
+                        ..
+                    } => Some(*source),
+                    _ => None,
+                };
+                if let Some(source) = source
                     && (source.starts_with("./") || source.starts_with("../"))
                     && let Some(parent) = path.parent()
                 {
@@ -106,9 +117,19 @@ fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, Strin
         let parsed = deka_syntax::parse(&source, &arena);
         diagnostics(&parsed.errors).map_err(|e| format!("{}: {e}", path.display()))?;
         for stmt in parsed.program.ok_or("missing source program")?.statements {
-            if let Stmt::Import { source, .. } = stmt
-                && !host_module(source)
-            {
+            let source = match stmt {
+                Stmt::Import { source, .. } if !host_module(source) => Some(*source),
+                // `export { x } from "./y.ds"` is a load edge like an import.
+                Stmt::Export {
+                    decl: ExportDecl::NamedGroup {
+                        source: Some(source),
+                        ..
+                    },
+                    ..
+                } => Some(*source),
+                _ => None,
+            };
+            if let Some(source) = source {
                 let target = module_path(&path, source)?;
                 if target == path {
                     return Err(format!("cyclic module import: {}", path.display()));
@@ -147,12 +168,29 @@ fn lower_module(
     bindings: &HashMap<std::path::PathBuf, BTreeMap<String, usize>>,
     forward: Option<&BTreeMap<String, (String, std::path::PathBuf)>>,
     mark_checked: bool,
+    // Harvest mode only: barrel entries whose target has not been harvested
+    // yet are pushed here (exported name, original name, target) instead of
+    // erroring, and resolved once every member is done.
+    deferred: Option<&mut Vec<(String, String, std::path::PathBuf)>>,
     entry: &mut Context,
     lower: &mut Lower,
 ) -> Result<BTreeMap<String, usize>> {
+    let mut deferred = deferred;
     let mut imports = HashMap::new();
     for stmt in ast.statements {
-        if let Stmt::Import { source, .. } = stmt {
+        let source = match stmt {
+            Stmt::Import { source, .. } => Some(*source),
+            // The checker resolves re-exported types through the same map.
+            Stmt::Export {
+                decl: ExportDecl::NamedGroup {
+                    source: Some(source),
+                    ..
+                },
+                ..
+            } => Some(*source),
+            _ => None,
+        };
+        if let Some(source) = source {
             let exports = if host_module(source) {
                 host_exports
             } else {
@@ -160,7 +198,7 @@ fn lower_module(
                     .get(&module_path(path, source)?)
                     .ok_or("module was not loaded")?
             };
-            imports.insert(*source, exports);
+            imports.insert(source, exports);
         }
     }
     diagnostics(&deka_syntax::check_program_with_imports(ast, source, &imports).errors)
@@ -185,15 +223,17 @@ fn lower_module(
                     continue;
                 }
                 let target = module_path(path, source)?;
-                if let Some((imported, cycle_target)) =
+                if let Some((imported, origin)) =
                     forward.and_then(|f| f.get(spec.local).map(|f| (&f.0, &f.1)))
                 {
                     debug_assert_eq!(imported.as_str(), spec.imported);
-                    debug_assert_eq!(cycle_target, &target);
                     // Reserve a local in both passes so the harvest and real
                     // allocation sequences stay identical.
                     entry.bind(spec.local);
                     if mark_checked {
+                        // The slot comes from the module the import names
+                        // (a barrel re-exports it); the error names the
+                        // origin whose assignment fills it.
                         let slot = bindings
                             .get(&target)
                             .and_then(|b| b.get(spec.imported))
@@ -204,7 +244,7 @@ fn lower_module(
                             format!(
                                 "export `{}` of `{}` is not initialized yet (import cycle with `{}`)",
                                 spec.imported,
-                                target.display(),
+                                origin.display(),
                                 path.display()
                             ),
                         );
@@ -235,26 +275,40 @@ fn lower_module(
                 ExportDecl::Const { name, .. } => {
                     exported.insert((*name).to_string(), entry.slot(name)?);
                 }
-                ExportDecl::NamedGroup { names, source } => {
-                    // Re-export groups, whether from another module or of
-                    // local values, are the barrel work (deka#1210). A name
-                    // that resolves to a type declaration (alias, newtype,
-                    // struct, enum, opaque) is a type export: the checker
-                    // tracks it and no slot exists, so it erases here.
-                    if source.is_some() {
-                        return Err(
-                            "native module re-exports are not yet supported (deka#1210)".into(),
-                        );
-                    }
-                    for name in *names {
-                        if entry.slot(name.name).is_ok() {
-                            return Err(
-                                "native module re-exports are not yet supported (deka#1210)"
-                                    .into(),
-                            );
+                ExportDecl::NamedGroup { names, source } => match source {
+                    // `export { x } from "./y.ds"`: the barrel aliases the
+                    // target's slot — no copy, so timing behaves as if the
+                    // consumer imported from the origin directly (deka#1210).
+                    Some(source) => {
+                        let target = module_path(path, source)?;
+                        for name in *names {
+                            let external = name.alias.unwrap_or(name.name);
+                            let slot = bindings.get(&target).and_then(|b| b.get(name.name));
+                            match (slot, deferred.as_deref_mut()) {
+                                (Some(slot), _) => {
+                                    exported.insert(external.to_string(), *slot);
+                                }
+                                (None, Some(pending)) => {
+                                    pending.push((
+                                        external.to_string(),
+                                        name.name.to_string(),
+                                        target.clone(),
+                                    ));
+                                }
+                                (None, None) => return Err("missing module export".into()),
+                            }
                         }
                     }
-                }
+                    // `export { a, b as c }`: re-export local values;
+                    // type-only names erase (the checker tracks them).
+                    None => {
+                        for name in *names {
+                            if let Ok(slot) = entry.slot(name.name) {
+                                exported.insert(name.alias.unwrap_or(name.name).into(), slot);
+                            }
+                        }
+                    }
+                },
                 _ => {
                     return Err(
                         "native module exports currently support functions and constants".into(),
@@ -291,34 +345,138 @@ fn compile_modules(
         );
         asts.insert(path.clone(), ast);
     }
-    // The relative-import graph: importer → (local, exported name, target).
+    // The module graph: importer → (local, exported name, target) for value
+    // imports, and barrel → (exported name, original name, target) for
+    // `export { x } from` re-exports.
     let mut edges: HashMap<std::path::PathBuf, Vec<(String, String, std::path::PathBuf)>> =
+        HashMap::new();
+    let mut barrels: HashMap<std::path::PathBuf, Vec<(String, String, std::path::PathBuf)>> =
         HashMap::new();
     for (path, _source) in modules {
         for stmt in asts[path].statements {
-            if let Stmt::Import {
-                source, specifiers, ..
-            } = stmt
-                && !host_module(source)
-            {
-                let target = module_path(path, source)?;
-                for spec in *specifiers {
-                    edges.entry(path.clone()).or_default().push((
-                        spec.local.into(),
-                        spec.imported.into(),
-                        target.clone(),
-                    ));
+            match stmt {
+                Stmt::Import {
+                    source, specifiers, ..
+                } if !host_module(source) => {
+                    let target = module_path(path, source)?;
+                    for spec in *specifiers {
+                        edges.entry(path.clone()).or_default().push((
+                            spec.local.into(),
+                            spec.imported.into(),
+                            target.clone(),
+                        ));
+                    }
                 }
+                Stmt::Export {
+                    decl:
+                        ExportDecl::NamedGroup {
+                            names,
+                            source: Some(source),
+                        },
+                    ..
+                } => {
+                    let target = module_path(path, source)?;
+                    for name in *names {
+                        barrels.entry(path.clone()).or_default().push((
+                            name.alias.unwrap_or(name.name).into(),
+                            name.name.into(),
+                            target.clone(),
+                        ));
+                    }
+                }
+                _ => {}
             }
         }
     }
-    // A module is a cycle member when it can reach itself through the graph.
+    // Flatten re-export chains so the checker resolves names through
+    // barrels without deka_syntax changes: copy the origin's export entries
+    // under the barrel's external names. Barrel cycles (re-export-only
+    // loops) are skipped here and load through the runtime machinery.
+    fn augment_reexports(
+        module: &std::path::Path,
+        barrels: &HashMap<std::path::PathBuf, Vec<(String, String, std::path::PathBuf)>>,
+        module_exports: &mut HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'_>>,
+        visiting: &mut Vec<std::path::PathBuf>,
+    ) {
+        if visiting.contains(&module.to_path_buf()) {
+            return;
+        }
+        visiting.push(module.to_path_buf());
+        let Some(entries) = barrels.get(module).cloned() else {
+            visiting.pop();
+            return;
+        };
+        for (external, original, target) in entries {
+            augment_reexports(&target, barrels, module_exports, visiting);
+            let Some(source) = module_exports.get(&target).cloned() else {
+                continue;
+            };
+            let Some(exports) = module_exports.get_mut(module) else {
+                continue;
+            };
+            if let Some(ty) = source.values.get(original.as_str()) {
+                exports.values.insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+            }
+            if let Some(info) = source.structs.get(original.as_str()) {
+                exports.structs.insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+            }
+            if let Some(info) = source.enums.get(original.as_str()) {
+                exports.enums.insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+            }
+            if let Some(ty) = source.aliases.get(original.as_str()) {
+                exports.aliases.insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+            }
+            if let Some(ty) = source.opaques.get(original.as_str()) {
+                exports.opaques.insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+            }
+            if let Some(info) = source.newtypes.get(original.as_str()) {
+                exports.newtypes.insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+            }
+            if let Some(info) = source.interfaces.get(original.as_str()) {
+                exports.interfaces.insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+            }
+            if let Some(tree) = source.build_fragments.get(original.as_str()) {
+                exports
+                    .build_fragments
+                    .insert(Box::leak(external.clone().into_boxed_str()), tree.clone());
+            }
+            if source.interactive_components.contains(original.as_str()) {
+                exports
+                    .interactive_components
+                    .insert(Box::leak(external.clone().into_boxed_str()));
+            }
+            if external == "default" {
+                exports.default_export_declared_name = Some(Box::leak(original.into_boxed_str()));
+            }
+        }
+        visiting.pop();
+    }
+    for (path, _source) in modules {
+        augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new());
+    }
+
+    // A module is a cycle member when it can reach itself through the graph
+    // (following value imports and barrel re-exports alike).
     let mut members: std::collections::BTreeSet<std::path::PathBuf> = Default::default();
     for (path, _source) in modules {
         let mut seen: std::collections::BTreeSet<std::path::PathBuf> = Default::default();
         let mut queue = vec![path.clone()];
         while let Some(module) = queue.pop() {
-            for (_local, _imported, target) in edges.get(&module).cloned().unwrap_or_default() {
+            let targets = edges
+                .get(&module)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, _, target)| target)
+                .chain(
+                    barrels
+                        .get(&module)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(_, _, target)| target),
+                );
+            for target in targets {
                 if target == *path {
                     members.insert(path.clone());
                 }
@@ -328,7 +486,35 @@ fn compile_modules(
             }
         }
     }
-    // An import whose target initializes after the importer (later in loaded
+    // The module that actually initializes an exported name: follows barrel
+    // chains to the origin, so checked reads and sentinel marking key on the
+    // module whose assignment fills the slot. A barrel cycle resolves to its
+    // latest-initializing member, which only ever makes reads *more* checked.
+    let resolve_origin = |module: &std::path::Path,
+                          name: &str,
+                          position: &HashMap<std::path::PathBuf, usize>|
+     -> std::path::PathBuf {
+        let mut current = (module.to_path_buf(), name.to_string());
+        let mut visited = vec![current.0.clone()];
+        loop {
+            let hop = barrels
+                .get(&current.0)
+                .and_then(|entries| entries.iter().find(|(exported, _, _)| *exported == current.1))
+                .map(|(_, original, target)| (target.clone(), original.clone()));
+            let Some(next) = hop else {
+                return current.0;
+            };
+            if visited.contains(&next.0) {
+                return visited
+                    .into_iter()
+                    .max_by_key(|module| position[module])
+                    .unwrap_or(current.0);
+            }
+            visited.push(next.0.clone());
+            current = next;
+        }
+    };
+    // An import whose origin initializes after the importer (later in loaded
     // order) is a forward import: its reads become checked loads.
     let position: HashMap<std::path::PathBuf, usize> = modules
         .iter()
@@ -339,11 +525,12 @@ fn compile_modules(
         HashMap::new();
     for (module, specifiers) in &edges {
         for (local, imported, target) in specifiers {
-            if position[target] > position[module] {
+            let origin = resolve_origin(target, imported, &position);
+            if position[&origin] > position[module] {
                 forward
                     .entry(module.clone())
                     .or_default()
-                    .insert(local.clone(), (imported.clone(), target.clone()));
+                    .insert(local.clone(), (imported.clone(), origin));
             }
         }
     }
@@ -365,13 +552,17 @@ fn compile_modules(
             // forward imports resolve before the exporter's code runs.
             let snapshot = entry.clone();
             let functions_len = lower.functions.len();
-            let mut sentinel_slots = vec![];
             // Members harvested earlier in this pass resolve for later ones.
             let mut scratch_bindings = bindings.clone();
+            let mut deferred_all: HashMap<
+                std::path::PathBuf,
+                Vec<(String, String, std::path::PathBuf)>,
+            > = HashMap::new();
             for (member, member_source) in modules {
                 if !members.contains(member) {
                     continue;
                 }
+                let mut deferred = vec![];
                 let exported = lower_module(
                     member,
                     asts[member],
@@ -382,15 +573,45 @@ fn compile_modules(
                     &scratch_bindings,
                     forward.get(member),
                     false,
+                    Some(&mut deferred),
                     &mut entry,
                     &mut lower,
                 )?;
-                sentinel_slots.extend(exported.values().copied());
+                deferred_all.insert(member.clone(), deferred);
                 harvested.insert(member.clone(), exported.clone());
                 scratch_bindings.insert(member.clone(), exported);
             }
+            // Second harvest pass: barrel entries whose target was still
+            // pending now resolve against the completed member exports.
+            for (member, pending) in &deferred_all {
+                for (external, original, target) in pending {
+                    let slot = *scratch_bindings
+                        .get(target)
+                        .and_then(|b| b.get(original))
+                        .ok_or("missing module export")?;
+                    harvested
+                        .get_mut(member)
+                        .expect("member harvested")
+                        .insert(external.clone(), slot);
+                    scratch_bindings
+                        .get_mut(member)
+                        .expect("member harvested")
+                        .insert(external.clone(), slot);
+                }
+            }
             entry = snapshot;
             lower.functions.truncate(functions_len);
+            // Sentinels cover only slots whose origin is a cycle member: a
+            // member barrel re-exporting an already-initialized non-member
+            // must not be clobbered.
+            let mut sentinel_slots: std::collections::BTreeSet<usize> = Default::default();
+            for (member, exported) in &harvested {
+                for (name, slot) in exported {
+                    if members.contains(&resolve_origin(member, name, &position)) {
+                        sentinel_slots.insert(*slot);
+                    }
+                }
+            }
             for slot in sentinel_slots {
                 entry.emit(Op::Const(Literal::Uninitialized));
                 entry.emit(Op::Store(slot));
@@ -410,6 +631,7 @@ fn compile_modules(
             &bindings,
             forward.get(path),
             true,
+            None,
             &mut entry,
             &mut lower,
         )?;
