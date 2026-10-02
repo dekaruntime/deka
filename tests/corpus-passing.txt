@@ -271,7 +271,6 @@ functions-hof-any-type-rejected
 functions-hof-function-keyword-rejected
 functions-hof-function-type-name-rejected
 functions-hof-ts-arrow-type-rejected
-functions-hof-type-alias
 functions-hof-untyped-callback-rejected
 functions-method-call-without-receiver-fail
 functions-method-missing-receiver-type
@@ -362,7 +361,6 @@ interfaces-interface-unknown-field-access-fail
 interfaces-interface-unknown-field-type-fail
 interfaces-interface-with-type-argument-fail
 interfaces-interface-with-visibility-modifier-fail
-modules-barrel-reexport-001
 modules-collection-element-inferred-export
 modules-collection-element-inferred-export-negative
 modules-import-parse-error-001
@@ -448,7 +446,6 @@ types-struct-field-unknown-type
 types-struct-method-return-type-mismatch
 types-struct-returned-as-number
 types-struct-unknown-field-access
-types-type-alias-rejected
 types-unconstrained-var-still-checks-fail
 types-union-fail-function-member
 types-union-fail-member-access
