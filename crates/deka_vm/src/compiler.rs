@@ -163,14 +163,31 @@ fn lower_module<'a>(
             imports.insert(*source, exports);
         }
     }
-    diagnostics(&deka_syntax::check_program_with_imports(ast, source, &imports).errors)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let checked = deka_syntax::check_program_with_imports(ast, source, &imports);
+    diagnostics(&checked.errors).map_err(|e| format!("{}: {e}", path.display()))?;
     entry.names.clear();
     entry.checked.clear();
     lower.hosts.clear();
     lower.declared.clear();
     lower.newtypes.clear();
     lower.structs.clear();
+    // Static method dispatch: the typechecker recorded each receiver-method
+    // call site with the free function it rewrites to (and the embed path to
+    // the declaring receiver). Keyed by expression address, like the
+    // typechecker's own table.
+    lower.method_calls = checked
+        .method_calls
+        .iter()
+        .map(|(ptr, target)| {
+            (
+                *ptr as usize,
+                (
+                    target.mangled.clone(),
+                    target.embed_path.iter().map(|s| (*s).to_string()).collect(),
+                ),
+            )
+        })
+        .collect();
     for stmt in ast.statements {
         if let Stmt::Newtype { name, .. } = stmt {
             lower.newtypes.insert((*name).into());
@@ -196,6 +213,16 @@ fn lower_module<'a>(
         };
         if let Some(name) = declared {
             lower.declared.insert(name.into());
+        }
+        if let Stmt::ReceiverMethod {
+            name,
+            receiver_type,
+            ..
+        } = stmt
+        {
+            lower
+                .declared
+                .insert(deka_syntax::mangle_method_name(name, receiver_type));
         }
     }
     for stmt in ast.statements {
@@ -250,7 +277,19 @@ fn lower_module<'a>(
         }
     }
     let mut exported = BTreeMap::new();
+    // Receiver methods hoist: a method call may precede the declaration
+    // (methods are type-level; values are not), so every method lowers before
+    // any other statement. A method body referencing a module value declared
+    // later is a forward-reference error.
     for stmt in ast.statements {
+        if matches!(stmt, Stmt::ReceiverMethod { .. }) {
+            lower.statement(stmt, entry)?;
+        }
+    }
+    for stmt in ast.statements {
+        if matches!(stmt, Stmt::ReceiverMethod { .. }) {
+            continue;
+        }
         lower.statement(stmt, entry)?;
         if let Stmt::Export { decl, .. } = stmt {
             match decl {
@@ -383,6 +422,7 @@ fn compile_modules(
         declared: std::collections::BTreeSet::new(),
         newtypes: std::collections::BTreeSet::new(),
         structs: BTreeMap::new(),
+        method_calls: HashMap::new(),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -606,6 +646,10 @@ struct Lower<'a> {
     /// Struct declarations in the current module. A struct value is a record;
     /// the declaration only matters when a literal omits fields.
     structs: BTreeMap<String, StructFields<'a>>,
+    /// Receiver-method call sites in the current module, keyed by expression
+    /// address: the free function the call rewrites to and the embed path to
+    /// the declaring receiver. Recorded by the typechecker.
+    method_calls: HashMap<usize, (String, Vec<String>)>,
 }
 impl<'a> Lower<'a> {
     fn scoped(&mut self, body: &[Stmt<'a>], c: &mut Context) -> Result<()> {
@@ -932,6 +976,33 @@ impl<'a> Lower<'a> {
                 let jump = c.emit(Op::Jump(0));
                 c.loops.last_mut().unwrap().continues.push(jump);
             }
+            // A receiver method is a plain function whose first parameter is
+            // the receiver; calls rewrite to it statically (see the
+            // method_calls table filled in lower_module). The receiver is a
+            // handle, so a `mut` method's field writes already land on the
+            // shared value.
+            Stmt::ReceiverMethod {
+                receiver_type,
+                receiver_name,
+                name,
+                type_params,
+                params,
+                body,
+                is_async,
+                span,
+                ..
+            } => {
+                let mangled = deka_syntax::mangle_method_name(name, receiver_type);
+                let mut all = Vec::with_capacity(params.len() + 1);
+                all.push(Param {
+                    binding: ParamBinding::Identifier(receiver_name),
+                    ty: None,
+                    default_value: None,
+                    span: *span,
+                });
+                all.extend(params.iter().cloned());
+                self.named_function(&mangled, &all, type_params, body, *is_async, c)?;
+            }
             _ => {
                 return Err(format!(
                     "{}:{}: statement is unsupported by VM experiment",
@@ -1165,6 +1236,25 @@ impl<'a> Lower<'a> {
                 if !type_args.is_empty() {
                     return Err("explicit type arguments unsupported".into());
                 }
+                // A recorded receiver-method call rewrites to its free
+                // function: `r.move()` is `move$Mover(r.Mover)` — the embed
+                // path walks from the receiver value to the record the
+                // method was declared on.
+                if let Expr::FieldAccess { object, .. } = callee
+                    && let Some((mangled, embed_path)) =
+                        self.method_calls.get(&(e as *const Expr as usize)).cloned()
+                {
+                    c.emit_load(&mangled)?;
+                    self.expr(object, c)?;
+                    for step in &embed_path {
+                        c.emit(Op::FieldOrSelf(step.clone()));
+                    }
+                    for arg in *args {
+                        self.expr(arg, c)?;
+                    }
+                    c.emit(Op::Call(1 + args.len()));
+                    return Ok(());
+                }
                 if let Expr::FieldAccess {
                     object,
                     field: "has",
@@ -1274,6 +1364,15 @@ impl<'a> Lower<'a> {
                     if self.newtypes.contains(name) {
                         let [arg] = *args else {
                             return Err(format!("{name} takes exactly one argument"));
+                        };
+                        self.expr(arg, c)?;
+                        return Ok(());
+                    }
+                    if self.structs.contains_key(name) {
+                        // The struct name called as a constructor takes the
+                        // record whole: `Person({name: "Ada"})`.
+                        let [arg] = *args else {
+                            return Err(format!("{name} takes exactly one record argument"));
                         };
                         self.expr(arg, c)?;
                         return Ok(());

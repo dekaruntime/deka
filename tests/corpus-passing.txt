@@ -29,6 +29,7 @@ async-async-return-await-wrong-type-fail
 async-async-return-missing-value-fail
 async-async-return-promise-of-promise
 async-async-return-wrong-value-type-fail
+async-async-struct-method-runtime-fail
 async-async-void-function
 async-async-void-promise-used-as-value-fail
 async-async-void-returns-value-fail
@@ -135,6 +136,7 @@ data-types-embedding-method-ambiguity-fail
 data-types-enum-duplicate-case-fail
 data-types-enum-duplicate-payload-type-fail
 data-types-gettype-arity-fail
+data-types-gettype-shadow-extension
 data-types-index-non-collection-fail
 data-types-index-non-numeric-fail
 data-types-json-unrepresentable-field-fail
@@ -152,16 +154,20 @@ data-types-object-missing-comma-fail
 data-types-object-shorthand-rejected
 data-types-object-spread
 data-types-primitive-extension-builtin-property-fail
+data-types-primitive-extension-shadow-builtin
 data-types-primitive-extension-wrong-receiver-fail
 data-types-string-concat-plus
 data-types-string-find-missing-fail
 data-types-string-index-access
 data-types-struct-embed-missing-field-fail
 data-types-struct-embed-self-fail
+data-types-struct-embed-single-promotion
 data-types-struct-fields
 data-types-struct-immutable-field-fail
+data-types-struct-method
 data-types-struct-method-missing-receiver-fail
 data-types-struct-method-mutation-fail
+data-types-struct-method-order-runtime
 data-types-struct-missing-field-fail
 data-types-type-name-reserved-fail
 diagnostics-option-bodyless
@@ -278,6 +284,7 @@ formatter-async-function-spacing
 formatter-basic-spacing
 formatter-blank-lines-collapsed
 formatter-comments-stripped
+formatter-embedding-format
 formatter-enum-trailing-commas
 formatter-for-loop-indentation
 formatter-if-else-brace-placement
@@ -390,6 +397,7 @@ hoisting-component-const-not-hoisted
 hoisting-const-after-let-in-function
 hoisting-const-after-let-preserved
 hoisting-const-referencing-future-let
+hoisting-embedded-method-promotion
 hoisting-fn-called-before-definition
 hoisting-function-called-inside-block
 hoisting-let-then-const-multiple
@@ -413,6 +421,9 @@ hoisting-nested-struct-in-for
 hoisting-nested-struct-in-for-loop
 hoisting-nested-struct-in-if
 hoisting-nested-struct-rejected
+hoisting-receiver-method-before-struct
+hoisting-struct-instantiated-inside-block
+hoisting-struct-used-before-definition
 hoisting-type-alias-top-level
 indexing-await-invalidates
 indexing-comparison
@@ -568,7 +579,9 @@ types-newtype-operator-mul-scalar
 types-newtype-operator-string-add-fail
 types-newtype-operator-sub
 types-newtype-operator-unary
+types-newtype-receiver-method
 types-newtype-receiver-method-mutable-fail
+types-newtype-receiver-method-param
 types-newtype-string
 types-number-returned-as-string
 types-object-literal-for-struct-return
@@ -580,6 +593,7 @@ types-return-type-unknown
 types-string-arg-to-number-param
 types-struct-field-order-independent
 types-struct-field-unknown-type
+types-struct-method-call
 types-struct-method-return-type-mismatch
 types-struct-return-type
 types-struct-returned-as-number

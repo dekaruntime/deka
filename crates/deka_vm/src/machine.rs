@@ -620,6 +620,14 @@ impl Vm {
                 };
                 frame.stack.push(value);
             }
+            Op::FieldOrSelf(name) => {
+                let h = pop(frame)?;
+                let value = match self.heap.get(h)? {
+                    Value::Record(fields) => fields.get(&name).copied().unwrap_or(h),
+                    _ => return Err("unsupported field access".into()),
+                };
+                frame.stack.push(value);
+            }
             Op::Index => {
                 let index = pop(frame)?;
                 let object = pop(frame)?;

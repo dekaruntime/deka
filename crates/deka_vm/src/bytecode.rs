@@ -76,6 +76,10 @@ pub enum Op {
     /// source's fields merged over it. Backs `{...obj}` in object literals.
     RecordExtend,
     Field(String),
+    /// Like `Field`, but a record without the key stays itself. Backs the
+    /// embed-path walk in a promoted method call: a literal may nest the
+    /// embedded record under its type name or carry its fields flat.
+    FieldOrSelf(String),
     /// `string(x)`: number and bool widen to text, string passes through.
     ToString,
     /// `toNumber(x)`: bool widens to 1/0, number passes through.
