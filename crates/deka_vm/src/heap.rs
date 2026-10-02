@@ -80,6 +80,13 @@ impl Heap {
             .and_then(|s| s.value.as_ref())
             .ok_or_else(|| "stale heap handle".into())
     }
+    pub fn get_mut(&mut self, h: Handle) -> Result<&mut Value> {
+        self.slots
+            .get_mut(h.index)
+            .filter(|s| s.generation == h.generation)
+            .and_then(|s| s.value.as_mut())
+            .ok_or_else(|| "stale heap handle".into())
+    }
     pub fn replace(&mut self, h: Handle, value: Value) -> Result<()> {
         self.get(h)?;
         self.slots[h.index].value = Some(value);
