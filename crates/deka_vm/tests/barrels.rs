@@ -18,8 +18,16 @@ async fn result(path: &Path) -> Result<HostValue> {
 #[tokio::test]
 async fn barrel_reexport_is_importable() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "y.ds", "export fn answer() number { return 42; }\n");
-    write(dir.path(), "barrel.ds", "export { answer } from \"./y.ds\";\n");
+    write(
+        dir.path(),
+        "y.ds",
+        "export fn answer() number { return 42; }\n",
+    );
+    write(
+        dir.path(),
+        "barrel.ds",
+        "export { answer } from \"./y.ds\";\n",
+    );
     let a = write(
         dir.path(),
         "a.ds",
@@ -31,9 +39,21 @@ async fn barrel_reexport_is_importable() {
 #[tokio::test]
 async fn barrel_of_a_barrel_resolves_to_the_origin() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "y.ds", "export fn answer() number { return 42; }\n");
-    write(dir.path(), "inner.ds", "export { answer } from \"./y.ds\";\n");
-    write(dir.path(), "outer.ds", "export { answer } from \"./inner.ds\";\n");
+    write(
+        dir.path(),
+        "y.ds",
+        "export fn answer() number { return 42; }\n",
+    );
+    write(
+        dir.path(),
+        "inner.ds",
+        "export { answer } from \"./y.ds\";\n",
+    );
+    write(
+        dir.path(),
+        "outer.ds",
+        "export { answer } from \"./inner.ds\";\n",
+    );
     let a = write(
         dir.path(),
         "a.ds",
@@ -45,7 +65,11 @@ async fn barrel_of_a_barrel_resolves_to_the_origin() {
 #[tokio::test]
 async fn renamed_and_default_barrel_reexports() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "y.ds", "export fn answer() number { return 42; }\n");
+    write(
+        dir.path(),
+        "y.ds",
+        "export fn answer() number { return 42; }\n",
+    );
     write(
         dir.path(),
         "barrel.ds",
@@ -86,7 +110,11 @@ async fn cycle_through_a_barrel_edge_loads() {
          export fn from_a() number { return 1; }\n\
          fn main() number { return from_a() + from_b(); }\n",
     );
-    write(dir.path(), "barrel.ds", "export { from_b } from \"./b.ds\";\n");
+    write(
+        dir.path(),
+        "barrel.ds",
+        "export { from_b } from \"./b.ds\";\n",
+    );
     write(
         dir.path(),
         "b.ds",
@@ -107,7 +135,11 @@ async fn load_time_read_through_a_barrel_names_the_origin() {
          export const x = 41;\n\
          fn main() number { return y; }\n",
     );
-    write(dir.path(), "barrel.ds", "export { x } from \"./a.ds\";\nexport { y } from \"./b.ds\";\n");
+    write(
+        dir.path(),
+        "barrel.ds",
+        "export { x } from \"./a.ds\";\nexport { y } from \"./b.ds\";\n",
+    );
     write(
         dir.path(),
         "b.ds",
@@ -134,7 +166,11 @@ fn barrel_self_import_is_refused() {
 #[test]
 fn barrel_of_a_missing_export_is_a_named_error() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "y.ds", "export fn other() number { return 1; }\n");
+    write(
+        dir.path(),
+        "y.ds",
+        "export fn other() number { return 1; }\n",
+    );
     let a = write(
         dir.path(),
         "a.ds",

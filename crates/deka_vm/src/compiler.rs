@@ -407,6 +407,7 @@ fn lower_module(
                 ExportDecl::Const { name, .. } => {
                     exported.insert((*name).to_string(), entry.slot(name)?);
                 }
+<<<<<<< HEAD
                 ExportDecl::NamedGroup { names, source } => match source {
                     // `export { x } from "./y.ds"`: the barrel aliases the
                     // target's slot — no copy, so timing behaves as if the
@@ -429,6 +430,24 @@ fn lower_module(
                                 }
                                 (None, None) => return Err("missing module export".into()),
                             }
+=======
+                ExportDecl::NamedGroup { names, source } => {
+                    // Re-export groups, whether from another module or of
+                    // local values, are the barrel work (deka#1210). A name
+                    // that resolves to a type declaration (alias, newtype,
+                    // struct, enum, opaque) is a type export: the checker
+                    // tracks it and no slot exists, so it erases here.
+                    if source.is_some() {
+                        return Err(
+                            "native module re-exports are not yet supported (deka#1210)".into()
+                        );
+                    }
+                    for name in *names {
+                        if entry.slot(name.name).is_ok() {
+                            return Err(
+                                "native module re-exports are not yet supported (deka#1210)".into(),
+                            );
+>>>>>>> tip-module-forms-1208
                         }
                     }
                     // `export { a, b as c }`: re-export local values;
