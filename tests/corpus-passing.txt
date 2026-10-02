@@ -398,6 +398,8 @@ hoisting-const-after-let-in-function
 hoisting-const-after-let-preserved
 hoisting-const-referencing-future-let
 hoisting-embedded-method-promotion
+hoisting-enum-accessed-inside-block
+hoisting-enum-used-before-definition
 hoisting-fn-called-before-definition
 hoisting-function-called-inside-block
 hoisting-let-then-const-multiple

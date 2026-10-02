@@ -171,6 +171,7 @@ fn lower_module<'a>(
     lower.declared.clear();
     lower.newtypes.clear();
     lower.structs.clear();
+    lower.enums.clear();
     // Static method dispatch: the typechecker recorded each receiver-method
     // call site with the free function it rewrites to (and the embed path to
     // the declaring receiver). Keyed by expression address, like the
@@ -223,6 +224,18 @@ fn lower_module<'a>(
             lower
                 .declared
                 .insert(deka_syntax::mangle_method_name(name, receiver_type));
+        }
+        if let Stmt::Enum { name, cases, .. } = stmt {
+            lower.enums.insert(
+                (*name).into(),
+                cases
+                    .iter()
+                    .map(|case| (case.name.to_string(), case.payload.is_some()))
+                    .collect(),
+            );
+            for case in *cases {
+                lower.declared.insert(format!("{}${}", name, case.name));
+            }
         }
     }
     for stmt in ast.statements {
@@ -279,15 +292,16 @@ fn lower_module<'a>(
     let mut exported = BTreeMap::new();
     // Receiver methods hoist: a method call may precede the declaration
     // (methods are type-level; values are not), so every method lowers before
-    // any other statement. A method body referencing a module value declared
-    // later is a forward-reference error.
+    // any other statement. Enum declarations hoist with them: their interned
+    // payload-free cases bind before any use. A body referencing a module
+    // value declared later is a forward-reference error.
     for stmt in ast.statements {
-        if matches!(stmt, Stmt::ReceiverMethod { .. }) {
+        if matches!(stmt, Stmt::ReceiverMethod { .. } | Stmt::Enum { .. }) {
             lower.statement(stmt, entry)?;
         }
     }
     for stmt in ast.statements {
-        if matches!(stmt, Stmt::ReceiverMethod { .. }) {
+        if matches!(stmt, Stmt::ReceiverMethod { .. } | Stmt::Enum { .. }) {
             continue;
         }
         lower.statement(stmt, entry)?;
@@ -423,6 +437,7 @@ fn compile_modules(
         newtypes: std::collections::BTreeSet::new(),
         structs: BTreeMap::new(),
         method_calls: HashMap::new(),
+        enums: BTreeMap::new(),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -650,6 +665,11 @@ struct Lower<'a> {
     /// address: the free function the call rewrites to and the embed path to
     /// the declaring receiver. Recorded by the typechecker.
     method_calls: HashMap<usize, (String, Vec<String>)>,
+    /// Enum declarations in the current module: case names in declaration
+    /// order with which carry a payload. A variant is a record
+    /// `{name, index[, value]}`; payload-free cases are interned one record
+    /// per declaration, hoisted with the receiver methods.
+    enums: BTreeMap<String, Vec<(String, bool)>>,
 }
 impl<'a> Lower<'a> {
     fn scoped(&mut self, body: &[Stmt<'a>], c: &mut Context) -> Result<()> {
@@ -1002,6 +1022,24 @@ impl<'a> Lower<'a> {
                 });
                 all.extend(params.iter().cloned());
                 self.named_function(&mangled, &all, type_params, body, *is_async, c)?;
+            }
+            // An enum declaration interns each payload-free case as one
+            // record `{name, index}` bound to `Enum$Case`; payload cases
+            // build their record at each construction site.
+            Stmt::Enum { name, cases, .. } => {
+                for (index, case) in cases.iter().enumerate() {
+                    if case.payload.is_some() {
+                        continue;
+                    }
+                    c.emit(Op::Const(Literal::String(case.name.into())));
+                    c.emit(Op::Const(Literal::Number(index as f64)));
+                    c.emit(Op::Record(vec!["name".into(), "index".into()]));
+                    let slot = c.bind(&format!("{}${}", name, case.name));
+                    if !c.loops.is_empty() {
+                        c.emit(Op::Rebind(slot));
+                    }
+                    c.emit(Op::Store(slot));
+                }
             }
             _ => {
                 return Err(format!(
@@ -1501,8 +1539,76 @@ impl<'a> Lower<'a> {
                 c.emit(Op::Record(names));
             }
             Expr::FieldAccess { object, field, .. } => {
+                // Enum namespace access: `Color.Red` where `Color` names an
+                // enum loads the interned case record.
+                if let Expr::Identifier { name, .. } = object
+                    && !c.names.contains_key(*name)
+                    && let Some(cases) = self.enums.get(*name)
+                {
+                    let mangled = format!("{}${}", name, field);
+                    let Some((_, has_payload)) = cases.iter().find(|(case, _)| case == field)
+                    else {
+                        return Err(format!("case `{field}` not found in enum `{name}`"));
+                    };
+                    if *has_payload {
+                        return Err(format!(
+                            "case `{field}` of enum `{name}` carries a payload; construct it with `{name}.{field}(value)`"
+                        ));
+                    }
+                    c.emit_load(&mangled)?;
+                    return Ok(());
+                }
                 self.expr(object, c)?;
                 c.emit(Op::Field((*field).into()));
+            }
+            Expr::EnumConstructor {
+                enum_name,
+                case_name,
+                payload,
+                span,
+                ..
+            } => {
+                let Some(cases) = self.enums.get(*enum_name).cloned() else {
+                    return Err(format!(
+                        "{}:{}: enum `{enum_name}` is not declared in this module (Option and Result land with note 05)",
+                        span.start.line, span.start.column
+                    ));
+                };
+                let Some((index, has_payload)) = cases
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (case, _))| case == case_name)
+                    .map(|(i, (_, p))| (i, *p))
+                else {
+                    return Err(format!(
+                        "case `{case_name}` not found in enum `{enum_name}`"
+                    ));
+                };
+                match (payload, has_payload) {
+                    (None, false) => {
+                        c.emit_load(&format!("{}${}", enum_name, case_name))?;
+                    }
+                    (Some(value), true) => {
+                        c.emit(Op::Const(Literal::String((*case_name).into())));
+                        c.emit(Op::Const(Literal::Number(index as f64)));
+                        self.expr(value, c)?;
+                        c.emit(Op::Record(vec![
+                            "name".into(),
+                            "index".into(),
+                            "value".into(),
+                        ]));
+                    }
+                    (None, true) => {
+                        return Err(format!(
+                            "case `{case_name}` of enum `{enum_name}` needs its payload"
+                        ));
+                    }
+                    (Some(_), false) => {
+                        return Err(format!(
+                            "case `{case_name}` of enum `{enum_name}` carries no payload"
+                        ));
+                    }
+                }
             }
             Expr::IndexAccess { object, index, .. } => {
                 self.expr(object, c)?;
