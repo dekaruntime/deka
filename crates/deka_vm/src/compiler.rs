@@ -175,7 +175,9 @@ fn lower_module(
         {
             for spec in *specifiers {
                 if spec.is_type_only {
-                    return Err("type-only imports are not supported by the native VM".into());
+                    // Type-only imports resolve for the checker (which rejects
+                    // value uses) and erase here: no slot, no host lookup.
+                    continue;
                 }
                 if host_module(source) {
                     hosts.operation(spec.imported)?;
@@ -232,6 +234,25 @@ fn lower_module(
                 }
                 ExportDecl::Const { name, .. } => {
                     exported.insert((*name).to_string(), entry.slot(name)?);
+                }
+                ExportDecl::NamedGroup { names, source } => {
+                    // Re-export groups, whether from another module or of
+                    // local values, are the barrel work (deka#1210). A name
+                    // that resolves to a type declaration (alias, newtype,
+                    // struct, enum, opaque) is a type export: the checker
+                    // tracks it and no slot exists, so it erases here.
+                    if source.is_some() {
+                        return Err(
+                            "native module re-exports are not yet supported (deka#1210)".into()
+                        );
+                    }
+                    for name in *names {
+                        if entry.slot(name.name).is_ok() {
+                            return Err(
+                                "native module re-exports are not yet supported (deka#1210)".into(),
+                            );
+                        }
+                    }
                 }
                 _ => {
                     return Err(
@@ -594,7 +615,13 @@ impl Lower {
     }
     fn statement(&mut self, s: &Stmt<'_>, c: &mut Context) -> Result<()> {
         match s {
-            Stmt::Import { .. } | Stmt::Empty { .. } => {}
+            Stmt::Import { .. } | Stmt::Empty { .. } | Stmt::TypeAlias { .. } => {}
+            // Export groups lower no code; the export-collection pass either
+            // erases them (type-only names) or rejects them (deka#1210).
+            Stmt::Export {
+                decl: ExportDecl::NamedGroup { .. },
+                ..
+            } => {}
             Stmt::Const { name, value, .. }
             | Stmt::Let { name, value, .. }
             | Stmt::Export {
