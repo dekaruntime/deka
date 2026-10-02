@@ -389,7 +389,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Minus => {
                 self.advance();
-                let operand = self.parse_expr(12)?;
+                let operand = self.parse_expr(16)?;
                 Some(Expr::Unary {
                     op: UnOp::Neg,
                     operand: alloc(self.arena, operand),
@@ -398,7 +398,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Plus => {
                 self.advance();
-                let operand = self.parse_expr(12)?;
+                let operand = self.parse_expr(16)?;
                 Some(Expr::Unary {
                     op: UnOp::Plus,
                     operand: alloc(self.arena, operand),
@@ -407,7 +407,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Not => {
                 self.advance();
-                let operand = self.parse_expr(12)?;
+                let operand = self.parse_expr(16)?;
                 Some(Expr::Unary {
                     op: UnOp::Not,
                     operand: alloc(self.arena, operand),
@@ -426,7 +426,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Await => {
                 self.advance();
-                let operand = self.parse_expr(12)?;
+                let operand = self.parse_expr(16)?;
                 Some(Expr::Await {
                     expr: alloc(self.arena, operand),
                     span: self.span_from(start, start_byte),
@@ -1019,7 +1019,7 @@ fn unescape_string(s: &str) -> String {
 
 /// Precedence used when parsing a juxtaposition argument. It is higher than
 /// every binary operator so that `fn arg + 1` parses as `(fn arg) + 1`.
-const JUXTAPOSITION_ARG_PREC: u8 = 13;
+const JUXTAPOSITION_ARG_PREC: u8 = 17;
 
 /// True when `kind` can start a primary expression that is valid as a
 /// juxtaposition call argument. Only literals and identifiers are allowed,

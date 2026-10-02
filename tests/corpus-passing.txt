@@ -20,6 +20,7 @@ async-async-no-return-type
 async-async-param-missing-type-fail
 async-async-param-missing-type-method-fail
 async-async-promise-type-missing-arg-fail
+async-async-recursive
 async-async-recursive-wrong-return-fail
 async-async-return-await-wrong-type-fail
 async-async-return-missing-value-fail
@@ -39,7 +40,9 @@ async-interface-async-method-unsupported-fail
 basics-assignment-to-literal
 basics-authoritative-corpus-pin
 basics-block-scope-shadow
+basics-boolean-logic
 basics-comments-ignored
+basics-comparison-operators
 basics-computed-key-rejected
 basics-const-increment-fail
 basics-const-mutation-fail
@@ -50,12 +53,14 @@ basics-invalid-hex-literal-fail
 basics-leading-zero-octal-fail
 basics-let-mutation
 basics-let-without-initializer
+basics-logical-short-circuit
 basics-malformed-exponent-fail
 basics-missing-comma-object-fail
 basics-missing-operand-fail
 basics-mutate-frozen-object-fail
 basics-null-literal
 basics-numeric-addition
+basics-numeric-modulo
 basics-numeric-subtraction
 basics-object-semicolon-separator-fail
 basics-object-shorthand-rejected
@@ -67,6 +72,8 @@ basics-string-concatenation
 basics-ternary-operator
 basics-type-annotation
 basics-typeof-rejected
+basics-unary-minus
+basics-unary-not
 basics-undefined-literal-fail
 basics-undefined-variable-fail
 basics-unknown-object-field-fail
@@ -229,6 +236,7 @@ flow-control-if-as-expression-fail
 flow-control-if-else-if-else
 flow-control-if-missing-condition-fail
 flow-control-if-unclosed-block-fail
+flow-control-if-without-else
 flow-control-match-arm-block-fail
 flow-control-match-arm-missing-arrow-fail
 flow-control-match-enum-unqualified-exhaustive-fail
@@ -290,6 +298,7 @@ functions-closure-captures-outer
 functions-closure-factory
 functions-default-parameter-type-mismatch-fail
 functions-exported-const-in-function-body
+functions-factorial-recursion
 functions-function-capture-two-holes-fail
 functions-function-in-expression
 functions-function-literal
@@ -319,6 +328,9 @@ functions-nested-function-declaration
 functions-optional-parameter-rejected-fail
 functions-parameter-missing-type-fail
 functions-parameter-name-reserved-fail
+functions-pipe-capture
+functions-pipe-operator
+functions-pipe-with-args
 functions-recursive-base-return-mismatch
 functions-rest-parameter-rejected-fail
 functions-return-function-as-object
@@ -375,6 +387,8 @@ hoisting-nested-struct-in-for-loop
 hoisting-nested-struct-in-if
 hoisting-nested-struct-rejected
 indexing-await-invalidates
+indexing-comparison
+indexing-range
 indexing-unproven
 interfaces-interface-embedded-missing-method-fail
 interfaces-interface-embedded-struct-field-type-mismatch-fail
@@ -458,6 +472,7 @@ parser-string-valid-escapes
 parser-struct-init-named-field-missing-comma
 parser-template-interpolation-arbitrary-js-fail
 parser-throw-rejected
+parser-unary-plus
 parser-unterminated-block-comment
 parser-unterminated-string
 parser-void-rejected
@@ -474,6 +489,7 @@ types-array-returned-as-number
 types-assign-wrong-type
 types-async-return-type-mismatch
 types-boolean-arg-to-number-param
+types-boolean-return-type
 types-boolean-returned-as-number
 types-bytes-annotation-compiles
 types-bytes-param-rejects-string
@@ -509,6 +525,7 @@ types-object-literal-for-struct-return
 types-primitive-to-number
 types-primitive-widen-string
 types-primitive-widen-string-fail
+types-return-after-if
 types-return-type-unknown
 types-string-arg-to-number-param
 types-struct-field-unknown-type

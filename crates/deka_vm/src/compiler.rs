@@ -402,6 +402,46 @@ impl Lower {
         c.emit(Op::Store(slot));
         Ok(())
     }
+    /// APS 30 pipe: `a |> f` calls `f(a)`, `a |> f(b)` calls `f(a, b)`, and a
+    /// `_` in the argument list marks the slot the left side fills.
+    fn pipe(&mut self, left: &Expr<'_>, right: &Expr<'_>, c: &mut Context) -> Result<()> {
+        let value = c.bind(&format!("<pipe value {}>", c.function.locals));
+        self.expr(left, c)?;
+        c.emit(Op::Store(value));
+        if let Expr::Call {
+            callee,
+            args,
+            type_args,
+            ..
+        } = right
+        {
+            if !type_args.is_empty() {
+                return Err("explicit type arguments unsupported".into());
+            }
+            let has_hole = args
+                .iter()
+                .any(|a| matches!(a, Expr::Identifier { name: "_", .. }));
+            self.expr(callee, c)?;
+            let mut argc = args.len();
+            if !has_hole {
+                c.emit(Op::Load(value));
+                argc += 1;
+            }
+            for arg in *args {
+                if matches!(arg, Expr::Identifier { name: "_", .. }) {
+                    c.emit(Op::Load(value));
+                } else {
+                    self.expr(arg, c)?;
+                }
+            }
+            c.emit(Op::Call(argc));
+        } else {
+            self.expr(right, c)?;
+            c.emit(Op::Load(value));
+            c.emit(Op::Call(1));
+        }
+        Ok(())
+    }
     fn statement(&mut self, s: &Stmt<'_>, c: &mut Context) -> Result<()> {
         match s {
             Stmt::Import { .. } | Stmt::Empty { .. } => {}
@@ -627,7 +667,12 @@ impl Lower {
             } => {
                 if matches!(
                     op,
-                    BinOp::Assign | BinOp::AddAssign | BinOp::SubAssign | BinOp::MulAssign
+                    BinOp::Assign
+                        | BinOp::AddAssign
+                        | BinOp::SubAssign
+                        | BinOp::MulAssign
+                        | BinOp::DivAssign
+                        | BinOp::ModAssign
                 ) {
                     let Expr::Identifier { name, .. } = left else {
                         return Err(
@@ -650,10 +695,34 @@ impl Lower {
                         BinOp::MulAssign => {
                             c.emit(Op::Mul);
                         }
+                        BinOp::DivAssign => {
+                            c.emit(Op::Div);
+                        }
+                        BinOp::ModAssign => {
+                            c.emit(Op::Mod);
+                        }
                         _ => {}
                     }
                     c.emit(Op::Dup);
                     c.emit(Op::Store(slot));
+                } else if *op == BinOp::And {
+                    self.expr(left, c)?;
+                    let short = c.emit(Op::JumpIfFalse(0));
+                    self.expr(right, c)?;
+                    let end = c.emit(Op::Jump(0));
+                    c.patch(short);
+                    c.emit(Op::Const(Literal::Bool(false)));
+                    c.patch(end);
+                } else if *op == BinOp::Or {
+                    self.expr(left, c)?;
+                    let try_right = c.emit(Op::JumpIfFalse(0));
+                    c.emit(Op::Const(Literal::Bool(true)));
+                    let end = c.emit(Op::Jump(0));
+                    c.patch(try_right);
+                    self.expr(right, c)?;
+                    c.patch(end);
+                } else if *op == BinOp::Pipe {
+                    self.pipe(left, right, c)?;
                 } else {
                     self.expr(left, c)?;
                     self.expr(right, c)?;
@@ -662,8 +731,18 @@ impl Lower {
                         BinOp::Sub => Op::Sub,
                         BinOp::Mul => Op::Mul,
                         BinOp::Div => Op::Div,
+                        BinOp::Mod => Op::Mod,
                         BinOp::Lt => Op::Less,
+                        BinOp::Le => Op::LessEq,
+                        BinOp::Gt => Op::Greater,
+                        BinOp::Ge => Op::GreaterEq,
                         BinOp::Eq => Op::Equal,
+                        BinOp::Ne => Op::NotEqual,
+                        BinOp::BitAnd => Op::BitAnd,
+                        BinOp::BitOr => Op::BitOr,
+                        BinOp::BitXor => Op::BitXor,
+                        BinOp::Shl => Op::Shl,
+                        BinOp::Shr => Op::Shr,
                         _ => return Err(format!("operator {op:?} unsupported")),
                     });
                 }
@@ -828,6 +907,18 @@ impl Lower {
                 self.expr(object, c)?;
                 self.expr(index, c)?;
                 c.emit(Op::Index);
+            }
+            Expr::Unary { op, operand, .. } => {
+                self.expr(operand, c)?;
+                match op {
+                    UnOp::Neg => {
+                        c.emit(Op::Neg);
+                    }
+                    UnOp::Not => {
+                        c.emit(Op::Not);
+                    }
+                    UnOp::Plus => {}
+                }
             }
             _ => {
                 return Err(format!(

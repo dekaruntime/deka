@@ -3690,6 +3690,15 @@ impl<'a> Checker<'a> {
                 }
                 Type::Named { name: "number" }
             }
+            BitAnd | BitOr | BitXor | Shl | Shr => {
+                if !matches!(left_type, Type::Infer) {
+                    self.expect_number(&left_type, left.span());
+                }
+                if !matches!(right_type, Type::Infer) {
+                    self.expect_number(&right_type, right.span());
+                }
+                Type::Named { name: "number" }
+            }
             Eq | Ne | Lt | Le | Gt | Ge => {
                 if left_type.is_error() || right_type.is_error() {
                     return Type::Named { name: "boolean" };

@@ -332,7 +332,22 @@ impl Vm {
                 let h = pop(frame)?;
                 self.heap.replace(frame.locals[i], Value::Cell(h))?;
             }
-            Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Less | Op::Equal => {
+            Op::Add
+            | Op::Sub
+            | Op::Mul
+            | Op::Div
+            | Op::Mod
+            | Op::Less
+            | Op::LessEq
+            | Op::Greater
+            | Op::GreaterEq
+            | Op::Equal
+            | Op::NotEqual
+            | Op::BitAnd
+            | Op::BitOr
+            | Op::BitXor
+            | Op::Shl
+            | Op::Shr => {
                 let b = self.heap.get(pop(frame)?)?.clone();
                 let a = self.heap.get(pop(frame)?)?.clone();
                 let value = match (a, b) {
@@ -341,20 +356,52 @@ impl Vm {
                         Op::Sub => Value::Number(a - b),
                         Op::Mul => Value::Number(a * b),
                         Op::Div => Value::Number(a / b),
+                        Op::Mod => Value::Number(a % b),
                         Op::Less => Value::Bool(a < b),
-                        _ => Value::Bool(a == b),
+                        Op::LessEq => Value::Bool(a <= b),
+                        Op::Greater => Value::Bool(a > b),
+                        Op::GreaterEq => Value::Bool(a >= b),
+                        Op::Equal => Value::Bool(a == b),
+                        Op::NotEqual => Value::Bool(a != b),
+                        Op::BitAnd => Value::Number((int32(a) & int32(b)) as f64),
+                        Op::BitOr => Value::Number((int32(a) | int32(b)) as f64),
+                        Op::BitXor => Value::Number((int32(a) ^ int32(b)) as f64),
+                        Op::Shl => Value::Number((int32(a) << (int32(b) & 31)) as f64),
+                        Op::Shr => Value::Number((int32(a) >> (int32(b) & 31)) as f64),
+                        _ => unreachable!(),
                     },
                     (Value::String(a), Value::String(b)) => match op {
                         Op::Add => Value::String(a + &b),
                         Op::Equal => Value::Bool(a == b),
+                        Op::NotEqual => Value::Bool(a != b),
                         _ => return Err("unsupported string operation".into()),
                     },
-                    (Value::Bool(a), Value::Bool(b)) if matches!(op, Op::Equal) => {
-                        Value::Bool(a == b)
+                    (Value::Bool(a), Value::Bool(b)) if matches!(op, Op::Equal | Op::NotEqual) => {
+                        Value::Bool(if matches!(op, Op::Equal) {
+                            a == b
+                        } else {
+                            a != b
+                        })
                     }
                     _ => return Err("invalid arithmetic operands".into()),
                 };
                 frame.stack.push(self.heap.alloc(value));
+            }
+            Op::Neg => {
+                let h = pop(frame)?;
+                let Value::Number(n) = self.heap.get(h)? else {
+                    return Err("unary - requires a number".into());
+                };
+                let n = *n;
+                frame.stack.push(self.heap.alloc(Value::Number(-n)));
+            }
+            Op::Not => {
+                let h = pop(frame)?;
+                let Value::Bool(b) = self.heap.get(h)? else {
+                    return Err("! requires a bool".into());
+                };
+                let b = *b;
+                frame.stack.push(self.heap.alloc(Value::Bool(!b)));
             }
             Op::Jump(ip) => frame.ip = ip,
             Op::ToString => {
@@ -533,6 +580,10 @@ fn pop(frame: &mut Frame) -> Result<Handle> {
         .stack
         .pop()
         .ok_or_else(|| "operand stack underflow".into())
+}
+/// JavaScript's ToInt32: truncate toward zero, then keep the low 32 bits.
+fn int32(n: f64) -> i32 {
+    (n.trunc() as i64) as i32
 }
 fn arguments(frame: &mut Frame, count: usize) -> Result<Vec<Handle>> {
     // Do not reserve an untrusted bytecode operand's claimed size.
