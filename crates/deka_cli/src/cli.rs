@@ -1,41 +1,24 @@
 //! Registry-based command dispatch for the native CLI (deka#1204).
 //!
-//! deka-cli-core 0.5.0 handlers are `fn(&Context)` with no return value, so
-//! each handler stores its result in an [`Outcome`] slot carried in the
-//! context extensions, and [`dispatch`] maps it to the process exit code in
-//! exactly one place. dekaruntime/cli-core#22 (0.6.0) makes handlers return
-//! a status directly; adopting it means deleting [`Outcome`] and [`finish`]
-//! and returning from the handlers instead.
+//! Built on the deka-cli-core 0.6.0 contract (dekaruntime/cli-core#22):
+//! handlers return `Result<ExitStatus, CommandError>`, and
+//! `Registry::run_argv` is the single place that prints errors and maps
+//! results to the process exit code. [`dispatch`] adds only the pre-registry
+//! conveniences (bare `.ds`/`.dsx` means `run`, help/version, global help on
+//! an empty invocation) and delegates everything else.
+//!
+//! Help renders locally: `dcore`'s renderers are pinned to deka-cli-core
+//! 0.5.0 for the legacy V8 CLI (and its curated copy describes that CLI),
+//! so the native CLI renders its own from this registry.
 use crate::{Payload, Source, build, compile, dev, embedded, execute, init, source, tests};
+use deka_cli_core::registry::{
+    Args, CommandError, CommandSpec, Context, ExitStatus, FlagSpec, HandlerResult, ParamKind,
+    ParamSpec, Registry, RegistryBuilder,
+};
 use deka_vm::Result;
-use dcore::{Args, CommandSpec, Context, FlagSpec, ParamSpec, ParseErrorKind, Registry, RegistryBuilder};
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-
-/// How a failed command maps to the process exit code: 2 for usage errors
-/// (GNU convention, matching the legacy CLI), 1 for runtime failures.
-enum Failure {
-    Usage(String),
-    Runtime(String),
-}
-
-/// Handler result slot for the 0.5.0 `fn(&Context)` signature (see module doc).
-#[derive(Clone, Default)]
-struct Outcome(Arc<Mutex<Option<std::result::Result<(), Failure>>>>);
-
-fn finish(ctx: &Context, result: std::result::Result<(), Failure>) {
-    if let Some(slot) = ctx.extensions().get::<Outcome>() {
-        *slot.0.lock().unwrap() = Some(result);
-    }
-}
-
-fn runtime(result: Result<()>) -> std::result::Result<(), Failure> {
-    result.map_err(Failure::Runtime)
-}
-
-fn usage(message: impl Into<String>) -> std::result::Result<(), Failure> {
-    Err(Failure::Usage(message.into()))
-}
+use std::process::ExitCode;
 
 fn register_global(registry: &mut Registry) {
     registry.add_flag(FlagSpec {
@@ -50,6 +33,14 @@ fn register_global(registry: &mut Registry) {
     });
 }
 
+fn entry_param(registry: &mut Registry) {
+    registry.add_param(ParamSpec {
+        name: "--entry",
+        description: "entry function (default: deka.json entryFunction)",
+        kind: ParamKind::Value,
+    });
+}
+
 fn register_run(registry: &mut Registry) {
     registry.add_command(CommandSpec {
         name: "run",
@@ -60,13 +51,11 @@ fn register_run(registry: &mut Registry) {
         subcommands: &[],
         handler: cmd_run,
     });
-    registry.add_param(ParamSpec {
-        name: "--entry",
-        description: "entry function (default: deka.json entryFunction)",
-    });
+    entry_param(registry);
     registry.add_param(ParamSpec {
         name: "--exercise",
         description: "invoke the first click handler N times without opening a window",
+        kind: ParamKind::Value,
     });
 }
 
@@ -80,10 +69,7 @@ fn register_dev(registry: &mut Registry) {
         subcommands: &[],
         handler: cmd_dev,
     });
-    registry.add_param(ParamSpec {
-        name: "--entry",
-        description: "entry function (default: deka.json entryFunction)",
-    });
+    entry_param(registry);
 }
 
 fn register_check(registry: &mut Registry) {
@@ -96,10 +82,7 @@ fn register_check(registry: &mut Registry) {
         subcommands: &[],
         handler: cmd_check,
     });
-    registry.add_param(ParamSpec {
-        name: "--entry",
-        description: "entry function (default: deka.json entryFunction)",
-    });
+    entry_param(registry);
 }
 
 fn register_build(registry: &mut Registry) {
@@ -112,13 +95,11 @@ fn register_build(registry: &mut Registry) {
         subcommands: &[],
         handler: cmd_build,
     });
-    registry.add_param(ParamSpec {
-        name: "--entry",
-        description: "entry function (default: deka.json entryFunction)",
-    });
+    entry_param(registry);
     registry.add_param(ParamSpec {
         name: "--outfile",
         description: "output path (default: dist/deka-app)",
+        kind: ParamKind::Value,
     });
 }
 
@@ -146,8 +127,8 @@ fn register_init(registry: &mut Registry) {
     });
 }
 
-/// Registration functions in help/ownership order (the legacy CLI pattern:
-/// the ownership index re-runs these to attribute flags to their command).
+/// Registration functions in help/ownership order (the ownership index
+/// re-runs these to attribute flags to their command).
 pub fn register_fns() -> Vec<fn(&mut Registry)> {
     vec![
         register_global,
@@ -168,31 +149,75 @@ pub fn registry() -> Registry {
     builder.build().expect("deka_cli registry")
 }
 
-fn wants_help(args: &Args) -> bool {
-    args.flags.contains_key("--help") || args.flags.contains_key("-h") || args.flags.contains_key("help")
+struct CommandFlags {
+    flags: Vec<FlagSpec>,
+    params: Vec<ParamSpec>,
 }
 
-fn wants_version(args: &Args) -> bool {
-    args.flags.contains_key("--version")
-        || args.flags.contains_key("-v")
-        || args.flags.contains_key("version")
+/// Which flags/params each command owns, derived by re-running every
+/// registration function against a scratch registry (same technique as the
+/// legacy CLI's ownership index) so `deka <command> --help` shows a
+/// command's own flags rather than every same-named one.
+fn ownership_index() -> HashMap<&'static str, CommandFlags> {
+    let mut index = HashMap::new();
+    for register in register_fns() {
+        let mut scratch = Registry::new();
+        register(&mut scratch);
+        let owned = CommandFlags {
+            flags: scratch.flags().to_vec(),
+            params: scratch.params().to_vec(),
+        };
+        for command in scratch.commands() {
+            index.insert(
+                command.name,
+                CommandFlags {
+                    flags: owned.flags.clone(),
+                    params: owned.params.clone(),
+                },
+            );
+        }
+    }
+    index
 }
 
 fn print_version() {
     println!("deka {} (Rust VM)", env!("CARGO_PKG_VERSION"));
 }
 
+fn render_global_help(registry: &Registry) -> Vec<String> {
+    let mut lines = vec![
+        "Usage: deka [options] [command]".to_string(),
+        format!("deka v{} — native DekaScript runtime", env!("CARGO_PKG_VERSION")),
+        String::new(),
+    ];
+    let mut grouped: std::collections::BTreeMap<&str, Vec<&CommandSpec>> =
+        std::collections::BTreeMap::new();
+    for command in registry.commands() {
+        grouped.entry(command.category).or_default().push(command);
+    }
+    for (category, commands) in grouped {
+        lines.push(category.to_string());
+        for command in commands {
+            lines.push(format!("  {}\t\t{}", command.name, command.summary));
+        }
+        lines.push(String::new());
+    }
+    lines.push("flags".to_string());
+    for flag in registry.flags() {
+        lines.push(format!("  {}\t\t{}", flag.name, flag.description));
+    }
+    lines.push(String::new());
+    lines.push("Run `deka <command> --help` for a command's own flags.".to_string());
+    lines
+}
+
 fn print_global_help(registry: &Registry) {
-    for line in dcore::help::render_global_help(registry, env!("CARGO_PKG_VERSION")) {
+    for line in render_global_help(registry) {
         println!("{line}");
     }
 }
 
-/// Native command help. `dcore::help::render_command_help` is not used: its
-/// curated copy describes the legacy V8 CLI (`build --bundle --minify` emits
-/// JavaScript), which is wrong here — the native `build` emits a native
-/// executable. This renders the registry truth: usage, summary, owned flags.
-fn render_native_command_help(command: &CommandSpec, owned: Option<&dcore::help::CommandFlags>) -> Vec<String> {
+fn render_command_help(command: &CommandSpec, owned: Option<&CommandFlags>) -> Vec<String> {
     let arguments = match command.name {
         "test" => "[files or directories]",
         "init" => "[directory]",
@@ -221,10 +246,10 @@ fn render_native_command_help(command: &CommandSpec, owned: Option<&dcore::help:
 }
 
 fn print_command_help(registry: &Registry, name: &str) {
-    let index = dcore::help::build_ownership_index(&register_fns());
+    let index = ownership_index();
     match registry.command_named(name) {
         Some(command) => {
-            for line in render_native_command_help(command, index.flags.get(name)) {
+            for line in render_command_help(command, index.get(name)) {
                 println!("{line}");
             }
         }
@@ -232,12 +257,18 @@ fn print_command_help(registry: &Registry, name: &str) {
     }
 }
 
-fn source_arg(ctx: &Context) -> std::result::Result<Source, Failure> {
+fn runtime(result: Result<()>) -> HandlerResult {
+    result
+        .map(|()| ExitStatus::SUCCESS)
+        .map_err(CommandError::Runtime)
+}
+
+fn source_arg(ctx: &Context) -> std::result::Result<Source, CommandError> {
     if ctx.args.positionals.len() > 1 {
-        return Err(Failure::Usage("expected one source path".into()));
+        return Err(CommandError::usage("expected one source path"));
     }
     if ctx.args.params.contains_key("--outfile") {
-        return Err(Failure::Usage("--outfile requires build".into()));
+        return Err(CommandError::usage("--outfile requires build"));
     }
     let path = ctx
         .args
@@ -245,218 +276,160 @@ fn source_arg(ctx: &Context) -> std::result::Result<Source, Failure> {
         .first()
         .map(PathBuf::from)
         .unwrap_or_else(|| "deka.json".into());
-    source(&path, ctx.args.params.get("--entry").cloned()).map_err(Failure::Runtime)
+    source(&path, ctx.param::<String>("--entry")?).map_err(CommandError::Runtime)
 }
 
-fn exercise_arg(ctx: &Context) -> std::result::Result<Option<usize>, Failure> {
-    ctx.args
-        .params
-        .get("--exercise")
-        .map(|value| {
-            value
-                .parse()
-                .map_err(|_| Failure::Usage("--exercise expects a click count".into()))
-        })
-        .transpose()
+fn cmd_run(ctx: &Context) -> HandlerResult {
+    let source = source_arg(ctx)?;
+    let exercise = ctx.param::<usize>("--exercise")?;
+    let payload = compile(&source).map_err(CommandError::Runtime)?;
+    runtime(execute(payload, exercise))
 }
 
-fn cmd_run(ctx: &Context) {
-    let result = (|| {
-        let source = source_arg(ctx)?;
-        let exercise = exercise_arg(ctx)?;
-        let payload = compile(&source).map_err(Failure::Runtime)?;
-        runtime(execute(payload, exercise))
-    })();
-    finish(ctx, result);
+fn cmd_dev(ctx: &Context) -> HandlerResult {
+    let source = source_arg(ctx)?;
+    let payload = compile(&source).map_err(CommandError::Runtime)?;
+    if source.desktop {
+        runtime(dev(source, payload))
+    } else {
+        runtime(execute(payload, None))
+    }
 }
 
-fn cmd_dev(ctx: &Context) {
-    let result = (|| {
-        let source = source_arg(ctx)?;
-        let payload = compile(&source).map_err(Failure::Runtime)?;
-        if source.desktop {
-            runtime(dev(source, payload))
-        } else {
-            runtime(execute(payload, None))
-        }
-    })();
-    finish(ctx, result);
+fn cmd_check(ctx: &Context) -> HandlerResult {
+    let source = source_arg(ctx)?;
+    compile(&source).map_err(CommandError::Runtime)?;
+    ctx.out().print(format_args!("OK {}\n", source.path.display()));
+    Ok(ExitStatus::SUCCESS)
 }
 
-fn cmd_check(ctx: &Context) {
-    let result = (|| {
-        let source = source_arg(ctx)?;
-        compile(&source).map_err(Failure::Runtime)?;
-        println!("OK {}", source.path.display());
-        Ok(())
-    })();
-    finish(ctx, result);
+fn cmd_build(ctx: &Context) -> HandlerResult {
+    if ctx.args.positionals.len() > 1 {
+        return Err(CommandError::usage("expected one source path"));
+    }
+    if ctx.args.params.contains_key("--exercise") {
+        return Err(CommandError::usage("--exercise requires run"));
+    }
+    let path = ctx
+        .args
+        .positionals
+        .first()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| "deka.json".into());
+    let source = source(&path, ctx.param::<String>("--entry")?).map_err(CommandError::Runtime)?;
+    let payload = compile(&source).map_err(CommandError::Runtime)?;
+    let outfile = ctx
+        .param::<PathBuf>("--outfile")?
+        .unwrap_or_else(|| "dist/deka-app".into());
+    runtime(build(payload, &outfile, ctx.out()))
 }
 
-fn cmd_build(ctx: &Context) {
-    let result = (|| {
-        if ctx.args.positionals.len() > 1 {
-            return usage("expected one source path");
-        }
-        if ctx.args.params.contains_key("--exercise") {
-            return usage("--exercise requires run");
-        }
-        let path = ctx
-            .args
-            .positionals
-            .first()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| "deka.json".into());
-        let source = source(&path, ctx.args.params.get("--entry").cloned())
-            .map_err(Failure::Runtime)?;
-        let payload = compile(&source).map_err(Failure::Runtime)?;
-        let outfile = ctx
-            .args
-            .params
-            .get("--outfile")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| "dist/deka-app".into());
-        runtime(build(payload, &outfile))
-    })();
-    finish(ctx, result);
-}
-
-fn cmd_test(ctx: &Context) {
+fn cmd_test(ctx: &Context) -> HandlerResult {
     let paths: Vec<String> = if ctx.args.positionals.is_empty() {
         vec![".".into()]
     } else {
         ctx.args.positionals.clone()
     };
-    finish(ctx, runtime(tests(&paths)));
+    runtime(tests(&paths, ctx.out(), ctx.err()))
 }
 
-fn cmd_init(ctx: &Context) {
-    let result = (|| {
-        if ctx.args.positionals.len() > 1 {
-            return usage("usage: deka init [directory]");
-        }
-        let directory = ctx
-            .args
-            .positionals
-            .first()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| ".".into());
-        runtime(init(&directory))
-    })();
-    finish(ctx, result);
+fn cmd_init(ctx: &Context) -> HandlerResult {
+    if ctx.args.positionals.len() > 1 {
+        return Err(CommandError::usage("usage: deka init [directory]"));
+    }
+    let directory = ctx
+        .args
+        .positionals
+        .first()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ".".into());
+    runtime(init(&directory))
 }
 
 /// Run a compiled application (its executable carries an embedded payload).
 /// Kept outside the registry: an installed app has no CLI surface beyond
 /// `--exercise N`, mirroring the pre-registry behavior.
-fn run_embedded(payload: Payload, argv: &[String]) -> i32 {
+fn run_embedded(payload: Payload, argv: &[String]) -> ExitCode {
     let exercise = match argv {
         [] => None,
         [flag, count] if flag == "--exercise" => match count.parse() {
             Ok(clicks) => Some(clicks),
             Err(_) => {
                 eprintln!("deka: expected click count");
-                return 2;
+                return ExitCode::from(2);
             }
         },
         _ => {
             eprintln!("deka: unexpected application arguments");
-            return 2;
+            return ExitCode::from(2);
         }
     };
     match execute(payload, exercise) {
-        Ok(()) => 0,
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("deka: {error}");
-            1
+            ExitCode::from(1)
         }
     }
 }
 
 /// Process entry: embedded-payload detection first (a compiled app detects
-/// its trailer and runs), then registry dispatch. Returns the exit code;
-/// `main` is the only caller of `std::process::exit` equivalent.
-pub fn main_entry(argv: Vec<String>) -> i32 {
+/// its trailer and runs), then registry dispatch. `main` is the single
+/// exit point.
+pub fn main_entry(argv: Vec<String>) -> ExitCode {
     if let Ok(executable) = std::env::current_exe() {
         match embedded(&executable) {
             Ok(Some(payload)) => return run_embedded(payload, &argv),
             Ok(None) => {}
             Err(error) => {
                 eprintln!("deka: {error}");
-                return 1;
+                return ExitCode::from(1);
             }
         }
     }
     dispatch(&registry(), &argv)
 }
 
-/// Dispatch one argv against the registry. argv in, exit code out, so tests
-/// drive every command without spawning a process.
-pub fn dispatch(registry: &Registry, argv: &[String]) -> i32 {
+/// Dispatch one argv against the registry. Handles the pre-registry
+/// conveniences (empty invocation, help/version, bare `.ds`/`.dsx` path)
+/// and delegates parsing, error printing and exit-code mapping to
+/// `Registry::run_argv`. argv in, exit code out, so tests drive every
+/// command without spawning a process.
+pub fn dispatch(registry: &Registry, argv: &[String]) -> ExitCode {
+    if argv.is_empty() {
+        print_global_help(registry);
+        return ExitCode::SUCCESS;
+    }
     let parsed = Args::collect(argv.to_vec(), registry);
-    if !parsed.errors.is_empty() {
-        for error in &parsed.errors {
-            match &error.kind {
-                ParseErrorKind::MissingParamValue { param } => {
-                    eprintln!("deka: missing value for `{param}`");
-                }
-                ParseErrorKind::UnknownToken => {
-                    eprintln!("deka: unknown argument `{}`", error.token);
-                    for suggestion in &error.suggestions {
-                        eprintln!("  did you mean `{suggestion}`?");
-                    }
-                }
+    if parsed.errors.is_empty() {
+        let args = &parsed.args;
+        if args.commands.is_empty() {
+            if args.flags.contains_key("--version") {
+                print_version();
+                return ExitCode::SUCCESS;
             }
-        }
-        return 2;
-    }
-    let mut args = parsed.args;
-    if args.commands.is_empty() {
-        if wants_version(&args) {
-            print_version();
-            return 0;
-        }
-        if wants_help(&args) {
-            print_global_help(registry);
-            return 0;
-        }
-        match args.positionals.first() {
-            Some(path) if path.ends_with(".ds") || path.ends_with(".dsx") => {
-                args.commands.push("run".into());
-            }
-            Some(token) => {
-                eprintln!("deka: unknown command `{token}`");
-                return 2;
-            }
-            None => {
+            if args.flags.contains_key("--help") {
                 print_global_help(registry);
-                return 0;
+                return ExitCode::SUCCESS;
+            }
+            match args.positionals.first() {
+                Some(path) if path.ends_with(".ds") || path.ends_with(".dsx") => {
+                    let mut rewritten = vec!["run".to_string()];
+                    rewritten.extend_from_slice(argv);
+                    return registry.run_argv(&rewritten);
+                }
+                _ => {
+                    print_global_help(registry);
+                    return ExitCode::SUCCESS;
+                }
             }
         }
-    } else if wants_help(&args) {
-        print_command_help(registry, &args.commands[0].clone());
-        return 0;
-    }
-    let slot = Outcome::default();
-    let mut context = Context::new(args);
-    context.extensions_mut().insert(slot.clone());
-    match registry.dispatch(&context) {
-        Ok(()) => match slot.0.lock().unwrap().take() {
-            None | Some(Ok(())) => 0,
-            Some(Err(Failure::Usage(message))) => {
-                eprintln!("deka: {message}");
-                2
-            }
-            Some(Err(Failure::Runtime(message))) => {
-                eprintln!("deka: {message}");
-                1
-            }
-        },
-        Err(error) => {
-            eprintln!("deka: {error}");
-            2
+        if args.flags.contains_key("--help") {
+            print_command_help(registry, &args.commands[0]);
+            return ExitCode::SUCCESS;
         }
     }
+    registry.run_argv(argv)
 }
 
 #[cfg(test)]
@@ -464,7 +437,7 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn run(argv: &[&str]) -> i32 {
+    fn run(argv: &[&str]) -> ExitCode {
         let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         dispatch(&registry(), &argv)
     }
@@ -477,20 +450,24 @@ mod tests {
 
     #[test]
     fn help_version_and_bare_invocation_succeed() {
-        assert_eq!(run(&[]), 0);
-        assert_eq!(run(&["--help"]), 0);
-        assert_eq!(run(&["-h"]), 0);
-        assert_eq!(run(&["help"]), 0);
-        assert_eq!(run(&["--version"]), 0);
-        assert_eq!(run(&["-v"]), 0);
-        assert_eq!(run(&["run", "--help"]), 0);
+        assert_eq!(run(&[]), ExitCode::SUCCESS);
+        assert_eq!(run(&["--help"]), ExitCode::SUCCESS);
+        assert_eq!(run(&["-h"]), ExitCode::SUCCESS);
+        assert_eq!(run(&["help"]), ExitCode::SUCCESS);
+        assert_eq!(run(&["--version"]), ExitCode::SUCCESS);
+        assert_eq!(run(&["-v"]), ExitCode::SUCCESS);
+        assert_eq!(run(&["run", "--help"]), ExitCode::SUCCESS);
     }
 
     #[test]
     fn unknown_command_and_bad_flags_are_usage_errors() {
-        assert_eq!(run(&["frobnicate"]), 2);
-        assert_eq!(run(&["run", "--nope"]), 2);
-        assert_eq!(run(&["--outfile"]), 2);
+        assert_eq!(run(&["frobnicate"]), ExitCode::from(2));
+        assert_eq!(run(&["run", "--nope"]), ExitCode::from(2));
+        assert_eq!(run(&["--outfile"]), ExitCode::from(2));
+        let registry = registry();
+        let (code, _out, err) = registry.run_captured(&["frobnicate".to_string()]);
+        assert_eq!(code, ExitCode::from(2));
+        assert!(err.string().contains("unknown argument `frobnicate`"));
     }
 
     #[test]
@@ -501,7 +478,7 @@ mod tests {
             "hello.ds",
             "import { echo } from \"io\";\necho(\"hi\");\n",
         );
-        assert_eq!(run(&[script.to_str().unwrap()]), 0);
+        assert_eq!(run(&[script.to_str().unwrap()]), ExitCode::SUCCESS);
     }
 
     #[test]
@@ -512,11 +489,11 @@ mod tests {
             "good.ds",
             "import { echo } from \"io\";\necho(\"ok\");\n",
         );
-        assert_eq!(run(&["run", good.to_str().unwrap()]), 0);
+        assert_eq!(run(&["run", good.to_str().unwrap()]), ExitCode::SUCCESS);
         let bad = write(dir.path(), "bad.ds", "let broken = ;\n");
-        assert_eq!(run(&["run", bad.to_str().unwrap()]), 1);
+        assert_eq!(run(&["run", bad.to_str().unwrap()]), ExitCode::from(1));
         let missing = dir.path().join("missing.ds");
-        assert_eq!(run(&["run", missing.to_str().unwrap()]), 1);
+        assert_eq!(run(&["run", missing.to_str().unwrap()]), ExitCode::from(1));
     }
 
     #[test]
@@ -528,9 +505,16 @@ mod tests {
             "import { echo } from \"io\";\necho(\"hi\");\n",
         );
         let script = script.to_str().unwrap();
-        assert_eq!(run(&["run", script, script]), 2);
-        assert_eq!(run(&["run", script, "--outfile", "x"]), 2);
-        assert_eq!(run(&["run", script, "--exercise", "NaN"]), 2);
+        assert_eq!(run(&["run", script, script]), ExitCode::from(2));
+        assert_eq!(run(&["run", script, "--outfile", "x"]), ExitCode::from(2));
+        let (code, _out, err) =
+            registry().run_captured(&["run".into(), script.into(), "--exercise".into(), "NaN".into()]);
+        assert_eq!(code, ExitCode::from(2));
+        assert!(
+            err.string().starts_with("invalid value for `--exercise`: "),
+            "{}",
+            err.string()
+        );
     }
 
     #[test]
@@ -541,21 +525,24 @@ mod tests {
             "good.ds",
             "import { echo } from \"io\";\necho(\"ok\");\n",
         );
-        assert_eq!(run(&["check", good.to_str().unwrap()]), 0);
+        assert_eq!(run(&["check", good.to_str().unwrap()]), ExitCode::SUCCESS);
+        let (code, out, _err) = registry().run_captured(&["check".into(), good.to_str().unwrap().into()]);
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.string().starts_with("OK "), "{}", out.string());
         let bad = write(dir.path(), "bad.ds", "let broken = ;\n");
-        assert_eq!(run(&["check", bad.to_str().unwrap()]), 1);
+        assert_eq!(run(&["check", bad.to_str().unwrap()]), ExitCode::from(1));
     }
 
     #[test]
     fn init_scaffolds_once() {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("app");
-        assert_eq!(run(&["init", project.to_str().unwrap()]), 0);
+        assert_eq!(run(&["init", project.to_str().unwrap()]), ExitCode::SUCCESS);
         assert!(project.join("deka.json").exists());
         assert!(project.join("App.dsx").exists());
         assert!(project.join("app.test.ds").exists());
-        assert_eq!(run(&["init", project.to_str().unwrap()]), 1);
-        assert_eq!(run(&["init", "a", "b"]), 2);
+        assert_eq!(run(&["init", project.to_str().unwrap()]), ExitCode::from(1));
+        assert_eq!(run(&["init", "a", "b"]), ExitCode::from(2));
     }
 
     #[test]
@@ -566,15 +553,22 @@ mod tests {
             "app.test.ds",
             "import { assert } from \"test\";\nfn test_addition() { assert(1 + 1 == 2); }\n",
         );
-        assert_eq!(run(&["test", dir.path().to_str().unwrap()]), 0);
+        let path = dir.path().to_str().unwrap().to_string();
+        assert_eq!(run(&["test", &path]), ExitCode::SUCCESS);
+        let (code, out, _err) = registry().run_captured(&["test".into(), path.clone()]);
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.string().contains("1 passed, 0 failed"), "{}", out.string());
         write(
             dir.path(),
             "broken.test.ds",
             "import { assert } from \"test\";\nfn test_wrong() { assert(1 + 1 == 3); }\n",
         );
-        assert_eq!(run(&["test", dir.path().to_str().unwrap()]), 1);
+        assert_eq!(run(&["test", &path]), ExitCode::from(1));
         let empty = tempfile::tempdir().unwrap();
-        assert_eq!(run(&["test", empty.path().to_str().unwrap()]), 1);
+        assert_eq!(
+            run(&["test", empty.path().to_str().unwrap()]),
+            ExitCode::from(1)
+        );
     }
 
     #[test]
@@ -593,16 +587,16 @@ mod tests {
                 "--outfile",
                 outfile.to_str().unwrap()
             ]),
-            0
+            ExitCode::SUCCESS
         );
         assert!(outfile.exists());
         // The embedded path is what an installed app takes at startup: the
         // payload round-trips through the executable trailer and runs.
         let payload = embedded(&outfile).unwrap().expect("payload embedded");
         assert!(!payload.desktop);
-        assert_eq!(run_embedded(payload, &[]), 0);
+        assert_eq!(run_embedded(payload, &[]), ExitCode::SUCCESS);
         let payload = embedded(&outfile).unwrap().expect("payload embedded");
-        assert_eq!(run_embedded(payload, &["--bogus".to_string()]), 2);
+        assert_eq!(run_embedded(payload, &["--bogus".to_string()]), ExitCode::from(2));
     }
 
     #[test]

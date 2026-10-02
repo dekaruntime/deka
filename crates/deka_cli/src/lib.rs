@@ -2,6 +2,7 @@
 //! Command dispatch lives in [`cli`]; this module holds the implementations.
 pub mod cli;
 
+use deka_cli_core::registry::Output;
 use deka_vm::{HostOp, HostReply, HostType, HostValue, Hosts, Program, Result, Vm, compiler};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -186,7 +187,7 @@ pub(crate) fn embedded(path: &Path) -> Result<Option<Payload>> {
     payload.program.validate()?;
     Ok(Some(payload))
 }
-pub(crate) fn build(payload: Payload, destination: &Path) -> Result<()> {
+pub(crate) fn build(payload: Payload, destination: &Path, out: &Output) -> Result<()> {
     let executable = std::env::current_exe().map_err(|e| e.to_string())?;
     let parent = destination
         .parent()
@@ -220,10 +221,10 @@ pub(crate) fn build(payload: Payload, destination: &Path) -> Result<()> {
     #[cfg(target_os = "macos")]
     sign(staged.path(), &["--force", "--sign", "-"])?;
     staged.persist(destination).map_err(|e| e.to_string())?;
-    println!("{}", destination.display());
+    out.print(format_args!("{}\n", destination.display()));
     Ok(())
 }
-pub(crate) fn tests(paths: &[String]) -> Result<()> {
+pub(crate) fn tests(paths: &[String], out: &Output, err: &Output) -> Result<()> {
     fn discover(path: &Path, explicit: bool, out: &mut Vec<PathBuf>) -> Result<()> {
         if path.is_dir() {
             let mut entries = fs::read_dir(path)
@@ -273,16 +274,16 @@ pub(crate) fn tests(paths: &[String]) -> Result<()> {
             match result {
                 Ok(()) => {
                     passed += 1;
-                    println!("PASS {}::{entry}", file.display());
+                    out.print(format_args!("PASS {}::{entry}\n", file.display()));
                 }
                 Err(error) => {
                     failed += 1;
-                    eprintln!("FAIL {}::{entry}: {error}", file.display());
+                    err.print(format_args!("FAIL {}::{entry}: {error}\n", file.display()));
                 }
             }
         }
     }
-    println!("{passed} passed, {failed} failed");
+    out.print(format_args!("{passed} passed, {failed} failed\n"));
     if passed + failed == 0 {
         Err("no tests found (use *.test.ds and fn test_name())".into())
     } else if failed > 0 {
