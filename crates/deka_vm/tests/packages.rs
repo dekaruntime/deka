@@ -29,7 +29,11 @@ fn project_with_mathpkg(dir: &Path) -> std::path::PathBuf {
         "ds_modules/mathpkg/main.ds",
         "import { base } from \"./consts.ds\";\nexport fn answer() number { return base + 2; }\n",
     );
-    write(dir, "ds_modules/mathpkg/consts.ds", "export const base = 40;\n")
+    write(
+        dir,
+        "ds_modules/mathpkg/consts.ds",
+        "export const base = 40;\n",
+    )
 }
 
 async fn result(path: &Path) -> Result<HostValue> {
@@ -93,7 +97,11 @@ fn check_sees_package_exports_with_types() {
 #[test]
 fn undeclared_package_is_a_named_error() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "deka.json", "{\"name\":\"app\",\"version\":\"0.1.0\"}\n");
+    write(
+        dir.path(),
+        "deka.json",
+        "{\"name\":\"app\",\"version\":\"0.1.0\"}\n",
+    );
     let app = write(
         dir.path(),
         "app.ds",
@@ -135,14 +143,21 @@ fn package_without_an_entry_file_is_a_named_error() {
         "{\"name\":\"app\",\"version\":\"0.1.0\",\"dependencies\":{\"mathpkg\":\"1.2.3\"}}\n",
     );
     // No deka.json in the package and no index.ds either.
-    write(dir.path(), "ds_modules/mathpkg/util.ds", "export fn x() number { return 1; }\n");
+    write(
+        dir.path(),
+        "ds_modules/mathpkg/util.ds",
+        "export fn x() number { return 1; }\n",
+    );
     let app = write(
         dir.path(),
         "app.ds",
         "import { x } from \"mathpkg\";\nfn main() number { return x(); }\n",
     );
     let error = compiler::compile_file(&app, &Hosts::default(), Some("main")).unwrap_err();
-    assert!(error.contains("package mathpkg has no entry file"), "{error}");
+    assert!(
+        error.contains("package mathpkg has no entry file"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -162,7 +177,9 @@ fn installed_version_must_match_the_declaration_and_lock() {
     );
     let error = compiler::compile_file(&app, &Hosts::default(), Some("main")).unwrap_err();
     assert!(
-        error.contains("package mathpkg version mismatch: deka.json expects 1.2.3, ds_modules has 1.0.0"),
+        error.contains(
+            "package mathpkg version mismatch: deka.json expects 1.2.3, ds_modules has 1.0.0"
+        ),
         "{error}"
     );
 
@@ -181,7 +198,9 @@ fn installed_version_must_match_the_declaration_and_lock() {
     );
     let error = compiler::compile_file(&app, &Hosts::default(), Some("main")).unwrap_err();
     assert!(
-        error.contains("package mathpkg version mismatch: deka.lock pins 9.9.9, ds_modules has 1.2.3"),
+        error.contains(
+            "package mathpkg version mismatch: deka.lock pins 9.9.9, ds_modules has 1.2.3"
+        ),
         "{error}"
     );
 }
