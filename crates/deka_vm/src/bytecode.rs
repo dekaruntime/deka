@@ -9,6 +9,13 @@ pub enum Op {
     Dup,
     Load(usize),
     Store(usize),
+    /// Like `Load`, but errors with `message` when the cell still holds the
+    /// `Uninitialized` sentinel — a read of an export whose module has not
+    /// finished initializing across an import cycle (deka#1206).
+    LoadChecked {
+        slot: usize,
+        message: String,
+    },
     Add,
     Sub,
     Mul,
@@ -56,6 +63,9 @@ pub enum Op {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Literal {
     Unit,
+    /// Sentinel stored into pre-allocated export slots of import-cycle
+    /// members; only `LoadChecked` reads it without erroring.
+    Uninitialized,
     Number(f64),
     Bool(bool),
     String(String),
@@ -86,6 +96,9 @@ impl Program {
             for op in &f.code {
                 match op {
                     Op::Load(i) | Op::Store(i) if *i >= f.locals => {
+                        return Err("invalid local operand".into());
+                    }
+                    Op::LoadChecked { slot, .. } if *slot >= f.locals => {
                         return Err("invalid local operand".into());
                     }
                     Op::Jump(i) | Op::JumpIfFalse(i) if *i >= f.code.len() => {
