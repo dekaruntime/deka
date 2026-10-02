@@ -40,6 +40,7 @@ members = [
     "crates/self_cmd",
     "crates/deka_cache",
     "crates/deka_build",
+    "crates/corpus_gate",
 ]
 
 [workspace.package]
