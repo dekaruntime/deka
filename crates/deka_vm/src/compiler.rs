@@ -172,6 +172,8 @@ fn lower_module<'a>(
     lower.newtypes.clear();
     lower.structs.clear();
     lower.enums.clear();
+    lower.method_decls.clear();
+    lower.struct_embeds.clear();
     // Static method dispatch: the typechecker recorded each receiver-method
     // call site with the free function it rewrites to (and the embed path to
     // the declaring receiver). Keyed by expression address, like the
@@ -193,13 +195,23 @@ fn lower_module<'a>(
         if let Stmt::Newtype { name, .. } = stmt {
             lower.newtypes.insert((*name).into());
         }
-        if let Stmt::Struct { name, fields, .. } = stmt {
+        if let Stmt::Struct {
+            name,
+            fields,
+            embeds,
+            ..
+        } = stmt
+        {
             lower.structs.insert(
                 (*name).into(),
                 fields
                     .iter()
                     .map(|f| (f.name.to_string(), f.default_value.as_ref(), f.optional))
                     .collect(),
+            );
+            lower.struct_embeds.insert(
+                (*name).into(),
+                embeds.iter().map(|e| e.name.to_string()).collect(),
             );
         }
         let declared = match stmt {
@@ -221,9 +233,13 @@ fn lower_module<'a>(
             ..
         } = stmt
         {
+            let mangled = deka_syntax::mangle_method_name(name, receiver_type);
+            lower.declared.insert(mangled.clone());
             lower
-                .declared
-                .insert(deka_syntax::mangle_method_name(name, receiver_type));
+                .method_decls
+                .entry((*receiver_type).into())
+                .or_default()
+                .push(((*name).into(), mangled));
         }
         if let Stmt::Enum { name, cases, .. } = stmt {
             lower.enums.insert(
@@ -438,6 +454,8 @@ fn compile_modules(
         structs: BTreeMap::new(),
         method_calls: HashMap::new(),
         enums: BTreeMap::new(),
+        method_decls: BTreeMap::new(),
+        struct_embeds: BTreeMap::new(),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -670,8 +688,45 @@ struct Lower<'a> {
     /// `{name, index[, value]}`; payload-free cases are interned one record
     /// per declaration, hoisted with the receiver methods.
     enums: BTreeMap<String, Vec<(String, bool)>>,
+    /// Methods declared in the current module per receiver type: method key
+    /// and mangled free-function name. Struct literals attach them to the
+    /// record under `$<key>` so an interface-typed call finds them at run
+    /// time.
+    method_decls: BTreeMap<String, Vec<(String, String)>>,
+    /// Embedded struct names per struct declaration, for promoted-method
+    /// attachment.
+    struct_embeds: BTreeMap<String, Vec<String>>,
 }
 impl<'a> Lower<'a> {
+    /// Every method visible on a value of `type_name`: its own plus those
+    /// promoted through embedded structs, as (method key, mangled name).
+    fn methods_for(&self, type_name: &str, seen: &mut Vec<String>) -> Vec<(String, String)> {
+        if seen.iter().any(|s| s == type_name) {
+            return vec![];
+        }
+        seen.push(type_name.into());
+        let mut out = self
+            .method_decls
+            .get(type_name)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(embeds) = self.struct_embeds.get(type_name).cloned() {
+            for embed in embeds {
+                out.extend(self.methods_for(&embed, seen));
+            }
+        }
+        out
+    }
+    /// Attach a struct value's methods to the record on the stack under
+    /// `$<key>`, so an interface-typed `MethodCall` finds them at run time.
+    fn attach_methods(&self, type_name: &str, c: &mut Context) -> Result<()> {
+        for (key, mangled) in self.methods_for(type_name, &mut vec![]) {
+            c.emit_load(&mangled)?;
+            c.emit(Op::Record(vec![format!("${key}")]));
+            c.emit(Op::RecordExtend);
+        }
+        Ok(())
+    }
     fn scoped(&mut self, body: &[Stmt<'a>], c: &mut Context) -> Result<()> {
         let outer = c.names.clone();
         let outer_checked = c.checked.clone();
@@ -820,6 +875,7 @@ impl<'a> Lower<'a> {
             Stmt::TypeAlias { .. }
             | Stmt::Newtype { .. }
             | Stmt::Opaque { .. }
+            | Stmt::Interface { .. }
             | Stmt::Struct { .. } => {}
             // Export groups lower no code; the export-collection pass either
             // erases them (type-only names) or rejects them (deka#1210).
@@ -1413,6 +1469,7 @@ impl<'a> Lower<'a> {
                             return Err(format!("{name} takes exactly one record argument"));
                         };
                         self.expr(arg, c)?;
+                        self.attach_methods(name, c)?;
                         return Ok(());
                     }
                     if name == "unboxNumber" {
@@ -1456,6 +1513,21 @@ impl<'a> Lower<'a> {
                             ));
                         }
                         return Err(format!("unknown built-in {name}"));
+                    }
+                    // A member call the typechecker did not resolve
+                    // statically dispatches at run time: an interface-typed
+                    // receiver finds its attached `$method`, a record field
+                    // holding a function is called plainly.
+                    if let Expr::FieldAccess { object, field, .. } = callee {
+                        self.expr(object, c)?;
+                        for arg in *args {
+                            self.expr(arg, c)?;
+                        }
+                        c.emit(Op::MethodCall {
+                            name: (*field).into(),
+                            argc: args.len(),
+                        });
+                        return Ok(());
                     }
                     self.expr(callee, c)?;
                     for arg in *args {
@@ -1537,6 +1609,7 @@ impl<'a> Lower<'a> {
                     }
                 }
                 c.emit(Op::Record(names));
+                self.attach_methods(name, c)?;
             }
             Expr::FieldAccess { object, field, .. } => {
                 // Enum namespace access: `Color.Red` where `Color` names an
