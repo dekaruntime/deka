@@ -68,7 +68,10 @@ jobs:
           mkdir -p tests/testsuite
           tar -xzf corpus.tar.gz -C tests/testsuite
       - name: Build the runtime and the gate
-        run: cargo build --locked -p deka_cli -p corpus_gate
+        # The gate runs programs, never a window: without the desktop feature the build needs no X11 libraries on the runner.
+        run: |
+          cargo build --locked -p deka_cli --no-default-features
+          cargo build --locked -p corpus_gate
       - name: Run the corpus gate
         run: |
           corpus_dir=$(echo tests/testsuite/*/corpus)
