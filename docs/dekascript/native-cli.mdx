@@ -78,3 +78,11 @@ added without introducing a second language runtime.
 unsupported source forms fail before you build an application. Use `--exercise N`
 on desktop `run` or a compiled executable to invoke its first click handler N
 times without opening a window in CI.
+
+## Command line
+
+Every command goes through one registry: `deka --help` lists the surface,
+`deka <command> --help` shows a command's own flags, and exit codes are
+decided in one place — `0` on success, `1` on a runtime failure, and `2` on a
+usage error (an unknown command or flag, or a missing flag value, with a
+did-you-mean suggestion when one is close).

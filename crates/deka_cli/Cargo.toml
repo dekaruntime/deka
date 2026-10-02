@@ -9,6 +9,7 @@ default = ["desktop"]
 desktop = ["deka_vm/gpu", "deka_native_ui/runtime-shaders"]
 
 [dependencies]
+dcore = { path = "../dcore" }
 deka_executable = { path = "../deka_executable" }
 deka_vm = { path = "../deka_vm", features = ["compiler", "host", "ui"] }
 deka_native_ui = { path = "../deka_native_ui" }
