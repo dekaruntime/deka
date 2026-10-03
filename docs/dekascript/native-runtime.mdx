@@ -560,6 +560,13 @@ echo("main returned");
 // worker completed
 ```
 
+An unawaited Promise stays a Promise after it settles. Adding it to a number,
+boolean or string produces text using `[object Promise]` for that operand; it
+does not read or await the eventual value. For example, `pending + 2` produces
+`"[object Promise]2"`, while `(await pending) + 2` adds to the resolved number.
+This concatenation rule does not make a Promise printable by `echo` or
+convertible with `string()`, and other arithmetic operators require numbers.
+
 An infinite running task keeps the program alive. Cancellation or a VM fault
 releases pending work; a VM fault cannot be hidden by a successful entry return.
 Fallible host operations still deliver operational errors as Result values.
