@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 // PHPX used a u32 index into Vec<Zval>. Add generations and actual tracing:
 // free slots now drop their payload immediately and stale handles cannot alias.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Handle {
     index: usize,
     generation: u64,
@@ -86,6 +86,8 @@ struct Slot {
     generation: u64,
     marked: bool,
     newtype: Option<String>,
+    created: usize,
+    revision: u64,
 }
 #[derive(Default)]
 pub(crate) struct Heap {
@@ -93,6 +95,7 @@ pub(crate) struct Heap {
     free: Vec<usize>,
     pub collections: usize,
     allocations: usize,
+    reads: std::cell::RefCell<Option<Reads>>,
 }
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct HeapStats {
@@ -107,6 +110,8 @@ impl Heap {
         let index = if let Some(i) = self.free.pop() {
             self.slots[i].value = Some(value);
             self.slots[i].newtype = None;
+            self.slots[i].created = self.allocations;
+            self.slots[i].revision = 0;
             i
         } else {
             self.slots.push(Slot {
@@ -114,6 +119,8 @@ impl Heap {
                 generation: 0,
                 marked: false,
                 newtype: None,
+                created: self.allocations,
+                revision: 0,
             });
             self.slots.len() - 1
         };
@@ -139,6 +146,9 @@ impl Heap {
             .ok_or_else(|| "stale heap handle".into())
     }
     pub fn get_mut(&mut self, h: Handle) -> Result<&mut Value> {
+        self.get(h)?;
+        self.observe_write(h);
+        self.slots[h.index].revision = self.slots[h.index].revision.wrapping_add(1);
         self.slots
             .get_mut(h.index)
             .filter(|s| s.generation == h.generation)
@@ -147,6 +157,8 @@ impl Heap {
     }
     pub fn replace(&mut self, h: Handle, value: Value) -> Result<()> {
         self.get(h)?;
+        self.observe_write(h);
+        self.slots[h.index].revision = self.slots[h.index].revision.wrapping_add(1);
         self.slots[h.index].value = Some(value);
         Ok(())
     }
@@ -160,6 +172,9 @@ impl Heap {
     }
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Handle>) -> Result<()> {
         let mut todo: Vec<_> = roots.into_iter().collect();
+        if let Some(reads) = self.reads.borrow().as_ref() {
+            todo.extend(reads.dependencies.iter().flat_map(Dependency::roots));
+        }
         while let Some(h) = todo.pop() {
             self.get(h)?;
             let slot = &mut self.slots[h.index];
@@ -200,6 +215,175 @@ impl Heap {
         Ok(())
     }
 }
+/// Source reads, not tracing/adapter reads. Field/index snapshots invalidate only
+/// that address; entity revisions cover operations consuming a whole container.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Read {
+    Cell,
+    Field(String),
+    Index(usize),
+    Length,
+    Entity,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Observed {
+    Address(Option<Handle>),
+    Size(usize),
+    Revision(u64),
+}
+#[derive(Clone)]
+pub(crate) struct Dependency {
+    object: Handle,
+    read: Read,
+    observed: Observed,
+}
+impl Dependency {
+    pub(crate) fn roots(&self) -> Vec<Handle> {
+        let mut roots = vec![self.object];
+        if let Observed::Address(Some(h)) = self.observed {
+            roots.push(h);
+        }
+        roots
+    }
+}
+struct Reads {
+    start: usize,
+    dependencies: Vec<Dependency>,
+    volatile: bool,
+}
+#[cfg(feature = "ui")]
+#[derive(Clone, Default)]
+pub(crate) struct Dependencies {
+    values: Vec<Dependency>,
+    volatile: bool,
+}
+#[cfg(feature = "ui")]
+impl Dependencies {
+    #[cfg(feature = "ui")]
+    pub(crate) fn roots(&self) -> Vec<Handle> {
+        self.values.iter().flat_map(Dependency::roots).collect()
+    }
+    #[cfg(feature = "ui")]
+    pub(crate) fn dirty(&self, heap: &Heap) -> bool {
+        self.volatile
+            || self
+                .values
+                .iter()
+                .any(|d| heap.observed(d.object, &d.read).ok().as_ref() != Some(&d.observed))
+    }
+}
+impl Heap {
+    fn observed(&self, object: Handle, read: &Read) -> Result<Observed> {
+        let value = self.get(object)?;
+        Ok(match (read, value) {
+            (Read::Cell, Value::Cell(h)) => Observed::Address(Some(*h)),
+            (Read::Field(name), Value::Record(fields)) => {
+                Observed::Address(fields.get(name).copied())
+            }
+            (Read::Field(name), Value::Props(fields)) => {
+                Observed::Address(fields.get(name).copied())
+            }
+            (Read::Index(i), Value::List(items)) => Observed::Address(items.get(*i).copied()),
+            (Read::Length, Value::List(items)) => Observed::Size(items.len()),
+            _ => Observed::Revision(self.slots[object.index].revision),
+        })
+    }
+    pub(crate) fn observe(&self, object: Handle, read: Read) -> Result<()> {
+        if self.reads.borrow().is_none() {
+            return Ok(());
+        }
+        let observed = self.observed(object, &read)?;
+        if let Some(reads) = self.reads.borrow_mut().as_mut()
+            && self.slots[object.index].created <= reads.start
+            && !reads
+                .dependencies
+                .iter()
+                .any(|d| d.object == object && d.read == read)
+        {
+            reads.dependencies.push(Dependency {
+                object,
+                read,
+                observed,
+            });
+        }
+        Ok(())
+    }
+    fn observe_write(&self, object: Handle) {
+        if let Some(reads) = self.reads.borrow_mut().as_mut()
+            && self.slots[object.index].created <= reads.start
+        {
+            reads.volatile = true;
+        }
+    }
+    pub(crate) fn volatile(&self) {
+        if let Some(reads) = self.reads.borrow_mut().as_mut() {
+            reads.volatile = true;
+        }
+    }
+    #[cfg(feature = "ui")]
+    pub(crate) fn begin_reads(&self) {
+        *self.reads.borrow_mut() = Some(Reads {
+            start: self.allocations,
+            dependencies: vec![],
+            volatile: false,
+        });
+    }
+    #[cfg(feature = "ui")]
+    pub(crate) fn end_reads(&self) -> Dependencies {
+        let reads = self
+            .reads
+            .borrow_mut()
+            .take()
+            .expect("binding capture started");
+        Dependencies {
+            values: reads.dependencies,
+            volatile: reads.volatile,
+        }
+    }
+}
+
+#[cfg(all(test, feature = "ui"))]
+mod binding_tests {
+    use super::*;
+    #[test]
+    fn snapshots_track_only_the_read_address_and_root_it_during_capture() {
+        let mut heap = Heap::default();
+        let first = heap.alloc(Value::Number(1.));
+        let second = heap.alloc(Value::Number(2.));
+        let list = heap.alloc(Value::List(vec![first, second]));
+        heap.begin_reads();
+        heap.observe(list, Read::Index(0)).unwrap();
+        heap.collect([]).unwrap(); // The capture itself roots source and observed addresses.
+        let deps = heap.end_reads();
+        let replacement = heap.alloc(Value::Number(3.));
+        let Value::List(items) = heap.get_mut(list).unwrap() else {
+            panic!()
+        };
+        items[1] = replacement;
+        assert!(!deps.dirty(&heap));
+        let Value::List(items) = heap.get_mut(list).unwrap() else {
+            panic!()
+        };
+        items[0] = replacement;
+        assert!(deps.dirty(&heap));
+        heap.collect([]).unwrap();
+        heap.alloc(Value::Number(7.));
+        heap.alloc(Value::Number(8.));
+        heap.alloc(Value::Number(9.));
+        assert!(deps.dirty(&heap)); // Recycled indices must never alias an old generation.
+        assert!(heap.get(list).is_err());
+    }
+    #[test]
+    fn transient_function_locals_are_not_dependencies() {
+        let mut heap = Heap::default();
+        heap.begin_reads();
+        let value = heap.alloc(Value::Number(1.));
+        let cell = heap.alloc(Value::Cell(value));
+        heap.observe(cell, Read::Cell).unwrap();
+        assert!(heap.end_reads().roots().is_empty());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
