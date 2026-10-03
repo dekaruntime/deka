@@ -459,15 +459,8 @@ impl Vm {
             Op::Jump(ip) => frame.ip = ip,
             Op::ToString => {
                 let h = pop(frame)?;
-                let value = match self.heap.get(h)? {
-                    Value::String(_) => h,
-                    Value::Number(n) => {
-                        let text = number_text(*n);
-                        self.heap.alloc(Value::String(text))
-                    }
-                    Value::Bool(b) => self.heap.alloc(Value::String(b.to_string())),
-                    _ => return Err("string() only accepts number, bool or string".into()),
-                };
+                let text = self.value_text(h)?;
+                let value = self.heap.alloc(Value::String(text));
                 frame.stack.push(value);
             }
             Op::ToNumber => {
@@ -720,6 +713,7 @@ impl Vm {
                 frame
                     .stack
                     .push(self.heap.alloc(Value::Record(crate::heap::Record {
+                        order: fields.clone(),
                         fields: fields.into_iter().zip(items).collect(),
                         struct_name: Some(name),
                         embeds,
@@ -734,7 +728,12 @@ impl Vm {
                 let Value::Record(mut fields) = self.heap.get(target)?.clone() else {
                     return Err("extend requires record".into());
                 };
-                fields.extend(extra.fields);
+                for name in extra.order {
+                    if !fields.contains_key(&name) {
+                        fields.order.push(name.clone());
+                    }
+                    fields.insert(name.clone(), extra.fields[&name]);
+                }
                 frame.stack.push(self.heap.alloc(Value::Record(fields)));
             }
             Op::Field(name) => {
@@ -811,6 +810,9 @@ impl Vm {
                 let object = self.field_owner(object, &name)?.unwrap_or(object);
                 match self.heap.get_mut(object)? {
                     Value::Record(fields) => {
+                        if !fields.contains_key(&name) {
+                            fields.order.push(name.clone());
+                        }
                         fields.insert(name.clone(), value);
                     }
                     _ => return Err("Cannot assign to read only property".into()),
@@ -844,6 +846,61 @@ impl Vm {
             }
         }
         Ok(Step::Continue)
+    }
+    /// All textual output shares one formatter. Strings are raw at the
+    /// top level and quoted within structured data, matching existing output.
+    fn value_text(&self, value: Handle) -> Result<String> {
+        self.inspect(value, false, &mut vec![])
+    }
+    fn inspect(&self, value: Handle, nested: bool, ancestors: &mut Vec<Handle>) -> Result<String> {
+        match self.heap.get(value)? {
+            Value::Unit => Ok("None".into()),
+            Value::Number(n) => Ok(number_text(*n)),
+            Value::Bool(b) => Ok(b.to_string()),
+            Value::String(s) if nested => serde_json::to_string(s).map_err(|e| e.to_string()),
+            Value::String(s) => Ok(s.clone()),
+            Value::List(_) | Value::Record(_) if ancestors.contains(&value) => {
+                Ok("[Circular]".into())
+            }
+            Value::List(_) | Value::Record(_) if ancestors.len() >= 24 => Ok("…".into()),
+            Value::List(items) => {
+                ancestors.push(value);
+                let parts = items
+                    .iter()
+                    .map(|h| self.inspect(*h, true, ancestors))
+                    .collect::<Result<Vec<_>>>()?;
+                ancestors.pop();
+                Ok(if parts.is_empty() {
+                    "[]".into()
+                } else {
+                    format!("[ {} ]", parts.join(", "))
+                })
+            }
+            Value::Record(record) => {
+                ancestors.push(value);
+                let mut parts = vec![];
+                for name in &record.order {
+                    // Receiver methods are runtime attachments, not data fields.
+                    if record.struct_name.is_some() && name.starts_with('$') {
+                        continue;
+                    }
+                    if let Some(h) = record.get(name) {
+                        parts.push(format!("{name}: {}", self.inspect(*h, true, ancestors)?));
+                    }
+                }
+                ancestors.pop();
+                let fields = if parts.is_empty() {
+                    "{}".into()
+                } else {
+                    format!("{{ {} }}", parts.join(", "))
+                };
+                Ok(match &record.struct_name {
+                    Some(name) => format!("{name} {fields}"),
+                    None => fields,
+                })
+            }
+            _ => Err("value has no printable form".into()),
+        }
     }
     /// Reads and writes use the same declared embed traversal. Own fields
     /// win; arbitrary nested records do not implicitly promote their fields.

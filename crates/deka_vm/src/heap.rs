@@ -33,6 +33,7 @@ pub(crate) enum Value {
 pub(crate) struct Record {
     pub fields: BTreeMap<String, Handle>,
     pub struct_name: Option<String>,
+    pub order: Vec<String>,
     pub embeds: Vec<String>,
 }
 impl std::ops::Deref for Record {
@@ -48,10 +49,14 @@ impl std::ops::DerefMut for Record {
 }
 impl FromIterator<(String, Handle)> for Record {
     fn from_iter<T: IntoIterator<Item = (String, Handle)>>(iter: T) -> Self {
-        Self {
-            fields: iter.into_iter().collect(),
-            ..Self::default()
+        let mut record = Self::default();
+        for (name, value) in iter {
+            if !record.fields.contains_key(&name) {
+                record.order.push(name.clone());
+            }
+            record.fields.insert(name, value);
         }
+        record
     }
 }
 impl From<Literal> for Value {

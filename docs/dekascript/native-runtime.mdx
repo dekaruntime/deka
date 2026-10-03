@@ -151,3 +151,21 @@ player.x = player.x + player.y;
 Own fields take precedence over embedded fields. Writes through `let` update the
 original embedded value, including aliases. Writes through `const` remain a
 compile error. Arbitrary nested object fields are not promoted.
+
+## Printing structs
+
+`string(value)` formats a printable struct using its declared name and supplied
+field order. Attached methods are omitted. Strings inside fields are quoted;
+nested structs and lists keep their structure. `console.log(...)` and
+`echo(string(value))` use the same Rust formatter.
+
+```tsx
+import { echo } from "io";
+struct Point { x: number; y: number; }
+const p = Point { x: 1, y: 2 };
+echo(string(p)); // Point { x: 1, y: 2 }
+```
+
+`echo` still takes text, as before. This does not make arbitrary object-to-string
+casts or string-plus-struct concatenation legal. Cyclic or deeply nested output
+uses bounded placeholders rather than recursing indefinitely.

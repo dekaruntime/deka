@@ -819,6 +819,11 @@ fn compile_modules(
         enums: BTreeMap::new(),
         method_decls: BTreeMap::new(),
         struct_embeds: BTreeMap::new(),
+        console_output: hosts.operation("echo").is_ok_and(|op| {
+            op.args == [crate::HostType::String]
+                && op.result == crate::HostType::Unit
+                && !op.asynchronous
+        }),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -1102,6 +1107,8 @@ struct Lower<'a> {
     /// Embedded struct names per struct declaration, for promoted-method
     /// attachment.
     struct_embeds: BTreeMap<String, Vec<String>>,
+    /// The host registry supplies the output sink and its wire signature.
+    console_output: bool,
 }
 impl<'a> Lower<'a> {
     /// Every method visible on a value of `type_name`: its own plus those
@@ -1816,6 +1823,45 @@ impl<'a> Lower<'a> {
                 }
             }
             Expr::Call { callee, args, .. } => {
+                // console.log is the first output primitive used by the
+                // corpus. The checker already guards its printable arguments;
+                // all formatting happens in the shared VM ToString operation.
+                if let Expr::FieldAccess {
+                    object,
+                    field: "log",
+                    ..
+                } = callee
+                    && matches!(
+                        object,
+                        Expr::Identifier {
+                            name: "console",
+                            ..
+                        }
+                    )
+                    && !c.names.contains_key("console")
+                {
+                    if !self.console_output {
+                        return Err(
+                            "console.log requires a registered echo(string) output operation"
+                                .into(),
+                        );
+                    }
+                    c.emit(Op::Const(Literal::String(String::new())));
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            c.emit(Op::Const(Literal::String(" ".into())));
+                            c.emit(Op::Add);
+                        }
+                        self.expr(arg, c)?;
+                        c.emit(Op::ToString);
+                        c.emit(Op::Add);
+                    }
+                    c.emit(Op::Host {
+                        operation: "echo".into(),
+                        arguments: 1,
+                    });
+                    return Ok(());
+                }
                 // Explicit type arguments erase; the typechecker has already
                 // verified them.
                 // A recorded receiver-method call rewrites to its free
