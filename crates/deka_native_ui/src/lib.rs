@@ -2,14 +2,28 @@
 pub use deka_native_ir::{Align, Edges, Justify, Keyframe, Length, Motion, Node, Style};
 pub mod animation;
 pub mod geometry;
-#[cfg(feature = "gpu")]
-mod gpu;
 mod layout;
 mod layout_motion;
 mod motion;
 mod text;
 #[cfg(feature = "gpu")]
-pub use gpu::run;
+pub mod window;
+#[cfg(feature = "gpu")]
+pub use window::{Snapshot, run, snapshot};
+
+/// Wakes whatever drives an [`Application`] (the desktop window's event loop)
+/// from any thread, so it runs the application's background turn. The window
+/// hands one to [`Application::set_waker`]; the VM registers it as its wake.
+#[derive(Clone)]
+pub struct Waker(std::sync::Arc<dyn Fn() + Send + Sync>);
+impl Waker {
+    pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(wake))
+    }
+    pub fn wake(&self) {
+        (self.0)()
+    }
+}
 
 pub enum Reload {
     Unchanged,
@@ -22,11 +36,10 @@ pub trait Application: 'static {
     fn event(&self, handler: usize, state: &mut [f64]);
     /// Backend-independent application scheduling. Backends supply a wake and
     /// drive finite turns; applications keep their task ownership internally.
-    fn set_waker(&self, _waker: &std::task::Waker) {}
     fn has_ready_work(&self) -> bool {
         false
     }
-    fn run_turn(&self, _budget: usize) -> bool {
+    fn run_turn(&mut self, _budget: usize) -> bool {
         false
     }
     fn poll_reload(&mut self) -> Reload {
@@ -35,6 +48,8 @@ pub trait Application: 'static {
     fn live(&self) -> bool {
         false
     }
+    /// Called once by the window with a [`Waker`] for asynchronous work.
+    fn set_waker(&mut self, _waker: Waker) {}
 }
 pub struct Host<A: Application> {
     pub app: A,
@@ -51,13 +66,13 @@ impl<A: Application> Host<A> {
     pub fn click(&mut self, handler: usize) {
         self.app.event(handler, &mut self.state);
     }
-    pub fn set_waker(&self, waker: &std::task::Waker) {
+    pub fn set_waker(&mut self, waker: Waker) {
         self.app.set_waker(waker);
     }
     pub fn has_ready_work(&self) -> bool {
         self.app.has_ready_work()
     }
-    pub fn run_turn(&self, budget: usize) -> bool {
+    pub fn run_turn(&mut self, budget: usize) -> bool {
         self.app.run_turn(budget)
     }
     pub fn refresh(&mut self) -> bool {

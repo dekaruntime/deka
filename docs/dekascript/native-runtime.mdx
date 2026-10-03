@@ -79,7 +79,8 @@ export fn App() {
 Start shows Waiting, then Done after the timer completes. Timer and network I/O
 run through Tokio's reactor; VM instructions stay on the window thread. The
 window advances finite VM turns and resumes pending operations on their wake.
-A busy handler yields between turns. Closing the window drops its pending VM
+The window redraws only when the view changes; queued wakes are coalesced and
+an idle application requests no redraws. A busy handler yields between turns. Closing the window drops its pending VM
 work and Rust futures. Successful source reloads replace the old VM and its work.
 
 Rust embedders use `Vm::set_waker`, `Vm::has_ready_work`, and

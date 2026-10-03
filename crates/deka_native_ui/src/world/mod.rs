@@ -3,9 +3,9 @@
 mod art;
 pub mod audio;
 #[cfg(feature = "world-audio")]
-mod gpu;
+mod window;
 #[cfg(feature = "world-audio")]
-pub use gpu::run;
+pub use window::{run, run_with, world_options};
 
 use crate::{
     Length, Node, Style,

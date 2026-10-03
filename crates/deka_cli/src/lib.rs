@@ -362,13 +362,13 @@ struct DevApp {
 }
 #[cfg(feature = "desktop")]
 impl deka_native_ui::Application for DevApp {
-    fn set_waker(&self, waker: &std::task::Waker) {
+    fn set_waker(&mut self, waker: deka_native_ui::Waker) {
         self.app.set_waker(waker);
     }
     fn has_ready_work(&self) -> bool {
         self.app.has_ready_work()
     }
-    fn run_turn(&self, budget: usize) -> bool {
+    fn run_turn(&mut self, budget: usize) -> bool {
         self.app.run_turn(budget)
     }
     fn initial_state(&self) -> Vec<f64> {
@@ -411,7 +411,7 @@ impl deka_native_ui::Application for DevApp {
             .and_then(|p| deka_vm::ui::VmApp::with_hosts(p.program, hosts()?))
         {
             Ok(app) => {
-                app.set_waker(&self.app.waker());
+                app.set_vm_waker(&self.app.waker());
                 self.app = app;
                 if let Ok(files) = compiler::source_files(&self.source.path) {
                     self.watched = files

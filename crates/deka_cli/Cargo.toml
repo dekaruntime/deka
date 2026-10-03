@@ -6,7 +6,7 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["deka_vm/gpu", "deka_native_ui/runtime-shaders"]
+desktop = ["deka_vm/gpu", "deka_native_ui/gpu"]
 
 [dependencies]
 deka-cli-core = { version = "0.6.0", default-features = false, features = ["registry"] }

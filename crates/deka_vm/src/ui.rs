@@ -76,8 +76,9 @@ impl UiSession {
         if !frame.inputs.is_empty() {
             return Err("inputs require a platform text editor host".into());
         }
+        let changed = self.tree != frame.root;
         reconcile(&mut self.tree, frame.root);
-        Ok(true)
+        Ok(changed)
     }
     pub fn tree(&self) -> &Node {
         &self.tree
@@ -119,7 +120,16 @@ pub struct VmApp {
     session: RefCell<UiSession>,
     error: RefCell<Option<String>>,
 }
+struct WindowWake(deka_native_ui::Waker);
+impl std::task::Wake for WindowWake {
+    fn wake(self: std::sync::Arc<Self>) {
+        self.0.wake();
+    }
+}
 impl VmApp {
+    pub fn set_vm_waker(&self, waker: &std::task::Waker) {
+        self.session.borrow_mut().set_waker(waker);
+    }
     pub fn waker(&self) -> std::task::Waker {
         self.session.borrow().component.vm_waker()
     }
@@ -137,13 +147,15 @@ impl VmApp {
     }
 }
 impl Application for VmApp {
-    fn set_waker(&self, waker: &std::task::Waker) {
-        self.session.borrow_mut().set_waker(waker);
+    fn set_waker(&mut self, waker: deka_native_ui::Waker) {
+        self.set_vm_waker(&std::task::Waker::from(std::sync::Arc::new(WindowWake(
+            waker,
+        ))));
     }
     fn has_ready_work(&self) -> bool {
         self.error.borrow().is_none() && self.session.borrow().has_ready_work()
     }
-    fn run_turn(&self, budget: usize) -> bool {
+    fn run_turn(&mut self, budget: usize) -> bool {
         if self.error.borrow().is_some() {
             return false;
         }

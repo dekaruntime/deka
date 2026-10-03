@@ -67,13 +67,13 @@ impl<A: Application> Application for Desktop<A> {
         let _entered = self.reactor.runtime.enter();
         self.app.event(handler, state);
     }
-    fn set_waker(&self, waker: &std::task::Waker) {
+    fn set_waker(&mut self, waker: deka_native_ui::Waker) {
         self.app.set_waker(waker);
     }
     fn has_ready_work(&self) -> bool {
         self.app.has_ready_work()
     }
-    fn run_turn(&self, budget: usize) -> bool {
+    fn run_turn(&mut self, budget: usize) -> bool {
         let _entered = self.reactor.runtime.enter();
         self.app.run_turn(budget)
     }
@@ -128,7 +128,8 @@ export fn App() { let message="idle"; return <view><p>{message}</p><button onCli
             }).unwrap();
             let mut host = deka_native_ui::Host::new(app);
             let (send, receive) = mpsc::sync_channel(1);
-            host.set_waker(&Waker::from(Arc::new(Signal(send))));
+            let waker = Waker::from(Arc::new(Signal(send)));
+            host.set_waker(deka_native_ui::Waker::new(move || waker.wake_by_ref()));
             host.click(0);
             for _ in 0..100 {
                 if text(&host.render()) == "finishedGo" {
@@ -170,7 +171,8 @@ export fn App() { let message="idle"; return <view><p>{message}</p><button onCli
         })
         .unwrap();
         let (send, receive) = mpsc::sync_channel(1);
-        app.set_waker(&Waker::from(Arc::new(Signal(send))));
+        let waker = Waker::from(Arc::new(Signal(send)));
+        app.set_waker(deka_native_ui::Waker::new(move || waker.wake_by_ref()));
         std::fs::write(&entry, r#"import {sleep} from "time";
 export fn App() { let message="loading"; const load=async fn() { await sleep(0); message="reloaded"; }; load(); return <p>{message}</p>; }"#).unwrap();
         app.app.last -= Duration::from_secs(1);
