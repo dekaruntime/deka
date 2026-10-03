@@ -242,3 +242,48 @@ fn uncaught_throw_prints_to_stderr_and_exits_unsuccessfully() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn run_and_relocated_executable_await_the_production_time_module() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("timer.ds"),
+        r#"
+import { echo } from "io";
+import { sleep } from "time";
+async fn main() Promise<void> {
+    const pending = sleep(1);
+    echo("before");
+    await pending;
+    echo("after");
+}
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        ok(cli(project.path(), &["run", "timer.ds", "--entry", "main"])),
+        "before\nafter\n"
+    );
+    let out = tempfile::tempdir().unwrap();
+    let executable = out.path().join("timer");
+    ok(cli(
+        project.path(),
+        &[
+            "build",
+            "timer.ds",
+            "--entry",
+            "main",
+            "--outfile",
+            executable.to_str().unwrap(),
+        ],
+    ));
+    drop(project);
+    assert_eq!(
+        ok(Command::new(executable)
+            .current_dir(out.path())
+            .env_clear()
+            .output()
+            .unwrap()),
+        "before\nafter\n"
+    );
+}
