@@ -146,6 +146,45 @@ export fn App() { let message="idle"; return <view><p>{message}</p><button onCli
         }
     }
 
+    #[test]
+    fn production_desktop_button_awaits_crypto_digest_and_stops_redrawing_when_idle() {
+        let app = Desktop::new(|| {
+            let hosts = crate::hosts()?;
+            let program = compiler::compile_entry(r#"export fn App() {
+                let message="Ready";
+                return (<view><p>{message}</p><button onClick={async fn() {
+                    message="Hashing";
+                    const hash=unwrap(await crypto.subtle.digest("SHA-256",TextEncoder().encode("abc"))) or {message="Failed";return;};
+                    message=string(hash.length)+":"+string(hash[0]);
+                }}>Hash</button></view>);
+            }"#, &hosts, "App")?;
+            ui::VmApp::with_hosts(program, hosts)
+        }).unwrap();
+        let mut host = deka_native_ui::Host::new(app);
+        let (send, receive) = mpsc::sync_channel(1);
+        let waker = Waker::from(Arc::new(Signal(send)));
+        host.set_waker(deka_native_ui::Waker::new(move || waker.wake_by_ref()));
+        assert_eq!(text(&host.render()), "ReadyHash");
+        host.click(0);
+        for _ in 0..200 {
+            if text(&host.render()) == "32:186Hash" {
+                break;
+            }
+            if host.has_ready_work() {
+                host.run_turn(32);
+            } else {
+                receive
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("digest worker did not wake the window");
+            }
+        }
+        assert_eq!(text(&host.render()), "32:186Hash");
+        assert!(!host.has_ready_work());
+        for _ in 0..32 {
+            assert!(!host.run_turn(32));
+        }
+    }
+
     mod http_fixture {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
