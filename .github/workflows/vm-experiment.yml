@@ -92,6 +92,8 @@ jobs:
         run: |
           cargo check --locked -p deka_vm --all-targets --all-features
           cargo test --locked --release -p deka_cli --lib
+          # macOS always ships Japanese and colour-emoji faces, so the system font fallback test runs here.
+          cargo test --locked --release -p deka_native_ui --lib text::
           cargo tree --locked -p deka_vm --no-default-features --features compiler,gpu -e normal --prefix none > native-dependencies.txt
           if grep -Eq '^(deno_core|deno_v8|serde_v8|v8) ' native-dependencies.txt; then
             echo "VM-only feature set unexpectedly links a V8 dependency"
