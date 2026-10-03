@@ -2169,6 +2169,76 @@ impl<'a> Lower<'a> {
         }
         Ok(children)
     }
+    fn reduce(&mut self, receiver: &Expr<'a>, callback: &Expr<'a>, c: &mut Context) -> Result<()> {
+        let array = c.bind(&format!("<reduce array {}>", c.function.locals));
+        let callback_slot = c.bind(&format!("<reduce callback {}>", c.function.locals));
+        let length = c.bind(&format!("<reduce length {}>", c.function.locals));
+        let accumulator = c.bind(&format!("<reduce accumulator {}>", c.function.locals));
+        let index = c.bind(&format!("<reduce index {}>", c.function.locals));
+        self.expr(receiver, c)?;
+        c.emit(Op::Store(array));
+        self.expr(callback, c)?;
+        c.emit(Op::Store(callback_slot));
+        // A record field or interface method named reduce keeps ordinary
+        // dispatch. Evaluate its receiver and argument only once too.
+        c.emit(Op::Load(array));
+        c.emit(Op::MatchType(crate::TypeDescriptor::new("array", "Array")));
+        let record = c.emit(Op::JumpIfFalse(0));
+        c.emit(Op::Load(array));
+        c.emit(Op::Field("length".into()));
+        c.emit(Op::Store(length));
+        c.emit(Op::Load(length));
+        c.emit(Op::Const(Literal::Number(0.)));
+        c.emit(Op::Equal);
+        let nonempty = c.emit(Op::JumpIfFalse(0));
+        c.emit(Op::Const(Literal::String(
+            "cannot reduce an empty array without an initial value".into(),
+        )));
+        c.emit(Op::Panic);
+        c.patch(nonempty);
+        c.emit(Op::Load(array));
+        c.emit(Op::Const(Literal::Number(0.)));
+        c.emit(Op::Index);
+        c.emit(Op::Store(accumulator));
+        c.emit(Op::Const(Literal::Number(1.)));
+        c.emit(Op::Store(index));
+        let start = c.function.code.len();
+        c.emit(Op::Load(index));
+        c.emit(Op::Load(length));
+        c.emit(Op::Less);
+        let end = c.emit(Op::JumpIfFalse(0));
+        // Capture the initial length, but read each still-present element
+        // when visited: callback mutations do not extend this traversal.
+        c.emit(Op::Load(array));
+        c.emit(Op::Load(index));
+        c.emit(Op::ListHas);
+        let missing = c.emit(Op::JumpIfFalse(0));
+        c.emit(Op::Load(callback_slot));
+        c.emit(Op::Load(accumulator));
+        c.emit(Op::Load(array));
+        c.emit(Op::Load(index));
+        c.emit(Op::Index);
+        c.emit(Op::Call(2));
+        c.emit(Op::Store(accumulator));
+        c.patch(missing);
+        c.emit(Op::Load(index));
+        c.emit(Op::Const(Literal::Number(1.)));
+        c.emit(Op::Add);
+        c.emit(Op::Store(index));
+        c.emit(Op::Jump(start));
+        c.patch(end);
+        c.emit(Op::Load(accumulator));
+        let done = c.emit(Op::Jump(0));
+        c.patch(record);
+        c.emit(Op::Load(array));
+        c.emit(Op::Load(callback_slot));
+        c.emit(Op::MethodCall {
+            name: "reduce".into(),
+            argc: 1,
+        });
+        c.patch(done);
+        Ok(())
+    }
     fn expr(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
         match self
             .exception_forms
@@ -2528,6 +2598,16 @@ impl<'a> Lower<'a> {
                     self.expr(object, c)?;
                     self.expr(index, c)?;
                     c.emit(Op::ListHas);
+                    return Ok(());
+                }
+                if let Expr::FieldAccess {
+                    object,
+                    field: "reduce",
+                    ..
+                } = callee
+                    && let [callback] = *args
+                {
+                    self.reduce(object, callback, c)?;
                     return Ok(());
                 }
                 // Mutating list built-ins lower to one in-place op each; the
