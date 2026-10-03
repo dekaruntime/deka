@@ -1,5 +1,5 @@
 use crate::{
-    heap::{Handle, Heap, Outcome, Value},
+    heap::{Handle, Heap, Outcome, Read, Value},
     stack::Stack,
     *,
 };
@@ -660,12 +660,14 @@ impl Vm {
                 frame.stack.push(h);
             }
             Op::Load(i) => {
+                self.heap.observe(frame.locals[i], Read::Cell)?;
                 let Value::Cell(h) = self.heap.get(frame.locals[i])? else {
                     return Err("invalid local cell".into());
                 };
                 frame.stack.push(*h);
             }
             Op::LoadChecked { slot, message } => {
+                self.heap.observe(frame.locals[slot], Read::Cell)?;
                 let Value::Cell(h) = self.heap.get(frame.locals[slot])? else {
                     return Err("invalid local cell".into());
                 };
@@ -813,6 +815,7 @@ impl Vm {
             }
             Op::MatchEnum { name, case } => {
                 let h = pop(frame)?;
+                self.heap.observe(h, Read::Field("name".into()))?;
                 let matched = match self.heap.get(h)? {
                     Value::Record(record) if record.enum_name.is_some()
                         && name.as_ref().is_none_or(|n| record.enum_name.as_ref() == Some(n)) => {
@@ -845,7 +848,10 @@ impl Vm {
                 frame.stack.push(self.heap.alloc(Value::Bool(matched)));
             }
             Op::MatchTuple(length) => {
-                let matched = matches!(self.heap.get(pop(frame)?)?, Value::List(items) if items.len() == length);
+                let h = pop(frame)?;
+                self.heap.observe(h, Read::Length)?;
+                let matched =
+                    matches!(self.heap.get(h)?, Value::List(items) if items.len() == length);
                 frame.stack.push(self.heap.alloc(Value::Bool(matched)));
             }
             Op::ToString => {
@@ -950,6 +956,9 @@ impl Vm {
             Op::MethodCall { name, argc } => {
                 let args = arguments(frame, argc)?;
                 let receiver = pop(frame)?;
+                self.heap.observe(receiver, Read::Field(name.clone()))?;
+                self.heap
+                    .observe(receiver, Read::Field(format!("${name}")))?;
                 // Component props carry no attached methods: the member is a
                 // prop getter whose current value is the function to call.
                 if let Value::Props(fields) = self.heap.get(receiver)? {
@@ -1003,6 +1012,7 @@ impl Vm {
                 operation,
                 arguments: argc,
             } => {
+                self.heap.volatile();
                 let args = arguments(frame, argc)?
                     .into_iter()
                     .map(|h| self.to_host(h))
@@ -1075,6 +1085,7 @@ impl Vm {
             Op::ListHas => {
                 let index = pop(frame)?;
                 let list = pop(frame)?;
+                self.heap.observe(list, Read::Length)?;
                 let Value::Number(index) = self.heap.get(index)? else {
                     return Err("index must be number".into());
                 };
@@ -1090,6 +1101,7 @@ impl Vm {
             Op::ListAppend => {
                 let item = pop(frame)?;
                 let list = pop(frame)?;
+                self.heap.observe(list, Read::Entity)?;
                 let Value::List(mut items) = self.heap.get(list)?.clone() else {
                     return Err("append requires list".into());
                 };
@@ -1106,6 +1118,8 @@ impl Vm {
             Op::ListExtend => {
                 let source = pop(frame)?;
                 let target = pop(frame)?;
+                self.heap.observe(source, Read::Entity)?;
+                self.heap.observe(target, Read::Entity)?;
                 let Value::List(extra) = self.heap.get(source)?.clone() else {
                     return Err("spread requires a list".into());
                 };
@@ -1143,6 +1157,8 @@ impl Vm {
             Op::RecordExtend => {
                 let source = pop(frame)?;
                 let target = pop(frame)?;
+                self.heap.observe(source, Read::Entity)?;
+                self.heap.observe(target, Read::Entity)?;
                 let Value::Record(extra) = self.heap.get(source)?.clone() else {
                     return Err("object spread requires a record".into());
                 };
@@ -1159,6 +1175,14 @@ impl Vm {
             }
             Op::Field(name) => {
                 let h = pop(frame)?;
+                self.heap.observe(
+                    h,
+                    if name == "length" && matches!(self.heap.get(h)?, Value::List(_)) {
+                        Read::Length
+                    } else {
+                        Read::Field(name.clone())
+                    },
+                )?;
                 if let Value::Props(fields) = self.heap.get(h)? {
                     let value = fields.get(&name).copied();
                     self.read_prop(frames, value, None)?;
@@ -1187,6 +1211,7 @@ impl Vm {
             }
             Op::FieldOrSelf(name) => {
                 let h = pop(frame)?;
+                self.heap.observe(h, Read::Field(name.clone()))?;
                 if let Value::Props(fields) = self.heap.get(h)?
                     && let Some(value) = fields.get(&name).copied()
                 {
@@ -1210,6 +1235,7 @@ impl Vm {
                     return Err("invalid index".into());
                 }
                 let index = *index as usize;
+                self.heap.observe(object, Read::Index(index))?;
                 match self.heap.get(object)? {
                     Value::List(items) => {
                         frame
@@ -1340,6 +1366,7 @@ impl Vm {
         self.inspect(value, false, &mut vec![])
     }
     fn inspect(&self, value: Handle, nested: bool, ancestors: &mut Vec<Handle>) -> Result<String> {
+        self.heap.observe(value, Read::Entity)?;
         match self.heap.get(value)? {
             Value::Unit => Ok("None".into()),
             Value::Number(n) => Ok(number_text(*n)),
@@ -1406,6 +1433,7 @@ impl Vm {
     /// Reads and writes use the same declared embed traversal. Own fields
     /// win; arbitrary nested records do not implicitly promote their fields.
     fn field_owner(&self, object: Handle, name: &str) -> Result<Option<Handle>> {
+        self.heap.observe(object, Read::Field(name.into()))?;
         let Value::Record(record) = self.heap.get(object)? else {
             return Ok(None);
         };
@@ -1416,6 +1444,7 @@ impl Vm {
             return Ok(None);
         }
         for embed in &record.embeds {
+            self.heap.observe(object, Read::Field(embed.clone()))?;
             if let Some(value) = record.get(embed)
                 && let Some(owner) = self.field_owner(*value, name)?
             {

@@ -179,6 +179,41 @@ mod tests {
         }
     }
     #[test]
+    fn browser_events_patch_only_bindings_affected_by_their_state() {
+        let source = r#"export fn App(){let count=0;let noise=0;
+            return (<view><p>{count}</p>
+                <button onClick={fn(){noise+=1;}}>Noise</button>
+                <button onClick={fn(){count+=1;}}>Count</button></view>);
+        }"#;
+        let mut browser = NativePreview::new();
+        browser.compile(source, false).unwrap();
+        snapshot(&mut browser);
+        let before = browser.session.as_ref().unwrap().evaluations();
+        let noise = browser.scene.targets[0].rect;
+        browser.pointer(noise.x + 2., noise.y + 2.).unwrap();
+        snapshot(&mut browser);
+        assert_eq!(browser.session.as_ref().unwrap().evaluations(), before);
+        let count = browser.scene.targets[1].rect;
+        browser.pointer(count.x + 2., count.y + 2.).unwrap();
+        snapshot(&mut browser);
+        assert_eq!(browser.session.as_ref().unwrap().evaluations(), before + 1);
+        assert!(
+            browser
+                .scene
+                .nodes
+                .iter()
+                .any(|node| node.text.as_deref() == Some("1"))
+        );
+        let instructions = browser.session.as_ref().unwrap().instructions();
+        for clock in 0..60 {
+            browser.frame_at(560., 300., 1., clock as f64 * 16., false);
+        }
+        assert_eq!(
+            browser.session.as_ref().unwrap().instructions(),
+            instructions
+        );
+    }
+    #[test]
     fn failed_edits_keep_working_state_valid_edits_reset_and_keyboard_works() {
         let mut browser = NativePreview::new();
         browser.compile(SOURCE, false).unwrap();

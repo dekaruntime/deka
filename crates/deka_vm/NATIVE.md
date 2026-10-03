@@ -14,18 +14,19 @@ is involved in the VM application.
 
 The adapter pins the returned component graph as a GC root, converts its initial
 structure to a lasting Rust node store, and emits renderer snapshots from it.
-Compatible positional elements/text keep their internal identity; removal or
+Compatible elements/text at the same structural slot keep their identity; removal or
 element-kind replacement creates a fresh identity. A button event queues the
-corresponding VM closure. Binding closures are then reevaluated and the authored
-frame updates the store. Component state survives GC between events. Independent
+corresponding VM closure. Bindings whose observed source addresses changed
+reevaluate and patch only changed authored properties. Component state survives GC between events. Independent
 application instances have independent heaps and state. Idle rendering executes
 no DekaScript instructions.
 
-This adapter reevaluates bindings after events and progressed task turns. It
+This adapter checks binding dependencies after events and progressed task turns. It
 supports dynamic classes, conditional/mapped children and async handlers through
 the backend-independent bounded turn/ready/wake interface. Runtime errors are
-displayed in the window. Dependency indexing, per-property binding patches,
-imperative node access and keyed-list reconciliation remain later work. See
+displayed in the window. Last authored properties are separate from effective properties, so unchanged
+bindings preserve direct Rust edits. Public imperative node access and keyed-list
+reconciliation remain later work. See
 [the component adapter](COMPONENTS.md) and the user-facing
 [native runtime reference](../../docs/dekascript/native-runtime.mdx).
 
