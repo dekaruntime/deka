@@ -116,6 +116,16 @@ pub enum Op {
         index: usize,
         payload: bool,
     },
+    /// Nominal pattern predicates consume a value and produce a bool, without
+    /// reading payload fields until a case has matched.
+    MatchEnum {
+        name: Option<String>,
+        case: String,
+    },
+    MatchType(TypeDescriptor),
+    MatchTuple(usize),
+    /// Scalar pattern equality returns false for a different value kind.
+    MatchEqual,
     /// `toNumber(x)`: bool widens to 1/0, number passes through.
     ToNumber,
     /// `panic(message)`: stop the program with the message as the error.

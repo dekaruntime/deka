@@ -191,3 +191,60 @@ arithmetic retain the checked result type, while unboxing returns the plain
 primitive. User-defined `getType` and `signature` methods keep precedence over
 the builtins. Descriptors survive collection while the VM runs and are released
 when it finishes or is cancelled. No JavaScript helper is involved.
+
+## Option and Result values
+
+`Option` and `Result` are prelude enums. Namespace and short constructors create
+real enum values through the same VM operation as declared enums:
+
+```tsx
+const present: Option<number> = Option.Some(7); // or Some(7)
+const absent: Option<number> = Option.None;    // or None
+const success: Result<number, string> = Result.Ok(1); // or Ok(1)
+const failure: Result<number, string> = Result.Err("boom"); // or Err("boom")
+console.log(present, absent, success, failure);
+// Some(7) None Ok(1) Err("boom")
+```
+
+`string(value)` and `console.log(value)` share the enum formatter. Use
+`echo(string(value))` for the text-only `echo` operation. Nested enums retain
+their cases (`Some(Ok(7))`); string payloads are quoted and escaped. Declared
+variants follow the same rule (`Circle(5)`, `Empty`). Objects with fields named
+`name`, `index` or `value` keep object formatting; they do not become enums.
+`None` also remains an empty child in a view. Constructors and printing do not
+change the rules for string concatenation or widen the host wire types.
+
+The native VM retains `Some` as a value, rather than erasing it to its payload
+as the former JavaScript backend did.
+
+## Matching values
+
+`match` is an expression: it evaluates its subject once, selects an arm, and
+returns that arm's value. Enum patterns extract payloads; nested patterns can
+inspect their cases or scalar values. A failed nested pattern continues to the
+next arm before reading any deeper payload.
+
+```tsx
+fn label(value: Option<Result<number, string>>) string {
+    return match (value) {
+        Some(Ok(7)) => "seven",
+        Some(Ok(n)) => "number: " + string(n),
+        Some(Err(message)) => message,
+        None => "empty",
+    };
+}
+// label(Some(Ok(8))) is "number: 8".
+```
+
+Numbers, strings and booleans support literal arms with a default (`_`), or a
+catch-all binding. Declared enums support qualified or unqualified case names;
+a payload-free case name tests that case rather than binding a variable.
+`Red | Green` groups alternatives under one arm. Tuple and struct patterns can
+extract nested fields. Arm bindings are local to their arm; closures retain
+captured bindings when a surrounding loop moves to its next iteration.
+
+The existing checker still rejects non-exhaustive matches with the missing
+cases in the diagnostic. Native type patterns for scalar, struct and enum union
+members use their actual runtime type or nominal brand. A failed case predicate
+is false, including when the runtime value has another kind. Bytes and host
+error class patterns require their corresponding host value support.

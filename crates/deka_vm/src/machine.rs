@@ -494,6 +494,38 @@ impl Vm {
                 let h = self.enum_value(name, case, index, value);
                 frame.stack.push(h);
             }
+            Op::MatchEnum { name, case } => {
+                let h = pop(frame)?;
+                let matched = match self.heap.get(h)? {
+                    Value::Record(record) if record.enum_name.is_some()
+                        && name.as_ref().is_none_or(|n| record.enum_name.as_ref() == Some(n)) => {
+                        record.get("name").is_some_and(|label| matches!(self.heap.get(*label), Ok(Value::String(label)) if label == &case))
+                    }
+                    _ => false,
+                };
+                frame.stack.push(self.heap.alloc(Value::Bool(matched)));
+            }
+            Op::MatchType(expected) => {
+                let h = pop(frame)?;
+                let matched = self.type_of(h)? == expected;
+                frame.stack.push(self.heap.alloc(Value::Bool(matched)));
+            }
+            Op::MatchEqual => {
+                let b = pop(frame)?;
+                let a = pop(frame)?;
+                let matched = match (self.heap.get(a)?, self.heap.get(b)?) {
+                    (Value::Number(a), Value::Number(b)) => a == b,
+                    (Value::String(a), Value::String(b)) => a == b,
+                    (Value::Bool(a), Value::Bool(b)) => a == b,
+                    (Value::Unit, Value::Unit) => true,
+                    _ => false,
+                };
+                frame.stack.push(self.heap.alloc(Value::Bool(matched)));
+            }
+            Op::MatchTuple(length) => {
+                let matched = matches!(self.heap.get(pop(frame)?)?, Value::List(items) if items.len() == length);
+                frame.stack.push(self.heap.alloc(Value::Bool(matched)));
+            }
             Op::ToString => {
                 let h = pop(frame)?;
                 let text = self.value_text(h)?;
@@ -979,6 +1011,20 @@ impl Vm {
             }
             Value::Record(record) => {
                 ancestors.push(value);
+                if record.enum_name.is_some() {
+                    let name = record.get("name").ok_or("enum has no case name")?;
+                    let Value::String(name) = self.heap.get(*name)? else {
+                        return Err("enum case name is not text".into());
+                    };
+                    let text = match record.get("value") {
+                        Some(payload) => {
+                            format!("{name}({})", self.inspect(*payload, true, ancestors)?)
+                        }
+                        None => name.clone(),
+                    };
+                    ancestors.pop();
+                    return Ok(text);
+                }
                 let mut parts = vec![];
                 for name in &record.order {
                     // Receiver methods are runtime attachments, not data fields.
