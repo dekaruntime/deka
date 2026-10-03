@@ -61,6 +61,25 @@ impl UiSession {
             tree: frame.root,
         })
     }
+    pub fn set_waker(&mut self, waker: &std::task::Waker) {
+        self.component.set_waker(waker);
+    }
+    pub fn has_ready_work(&self) -> bool {
+        self.component.has_ready_work()
+    }
+    pub fn run_turn(&mut self, cx: &mut std::task::Context<'_>, budget: usize) -> Result<bool> {
+        let turn = self.component.run_turn(cx, budget)?;
+        if !turn.progressed {
+            return Ok(false);
+        }
+        let frame = self.component.render()?;
+        if !frame.inputs.is_empty() {
+            return Err("inputs require a platform text editor host".into());
+        }
+        let changed = self.tree != frame.root;
+        reconcile(&mut self.tree, frame.root);
+        Ok(changed)
+    }
     pub fn tree(&self) -> &Node {
         &self.tree
     }
@@ -101,7 +120,19 @@ pub struct VmApp {
     session: RefCell<UiSession>,
     error: RefCell<Option<String>>,
 }
+struct WindowWake(deka_native_ui::Waker);
+impl std::task::Wake for WindowWake {
+    fn wake(self: std::sync::Arc<Self>) {
+        self.0.wake();
+    }
+}
 impl VmApp {
+    pub fn set_vm_waker(&self, waker: &std::task::Waker) {
+        self.session.borrow_mut().set_waker(waker);
+    }
+    pub fn waker(&self) -> std::task::Waker {
+        self.session.borrow().component.vm_waker()
+    }
     pub fn instructions(&self) -> u64 {
         self.session.borrow().instructions()
     }
@@ -116,6 +147,31 @@ impl VmApp {
     }
 }
 impl Application for VmApp {
+    fn set_waker(&mut self, waker: deka_native_ui::Waker) {
+        self.set_vm_waker(&std::task::Waker::from(std::sync::Arc::new(WindowWake(
+            waker,
+        ))));
+    }
+    fn has_ready_work(&self) -> bool {
+        self.error.borrow().is_none() && self.session.borrow().has_ready_work()
+    }
+    fn run_turn(&mut self, budget: usize) -> bool {
+        if self.error.borrow().is_some() {
+            return false;
+        }
+        let waker = self.session.borrow().component.vm_waker();
+        match self
+            .session
+            .borrow_mut()
+            .run_turn(&mut std::task::Context::from_waker(&waker), budget)
+        {
+            Ok(changed) => changed,
+            Err(error) => {
+                *self.error.borrow_mut() = Some(error);
+                true
+            }
+        }
+    }
     fn initial_state(&self) -> Vec<f64> {
         vec![]
     }
