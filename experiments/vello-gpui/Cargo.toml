@@ -57,6 +57,10 @@ required-features = ["vello"]
 name = "size-probe"
 path = "src/size_probe.rs"
 
+# graph.rs is shared between the two spike crates and names a feature of each.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("vello-backend"))'] }
+
 [profile.release]
 debug = false
 

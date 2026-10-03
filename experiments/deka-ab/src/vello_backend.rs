@@ -6,6 +6,10 @@
 #[path = "../../vello-gpui/src/graph.rs"]
 #[allow(dead_code, reason = "shared with the phase-1 crate, which also uses the Hairball layout")]
 mod graph;
+/// What graph.rs draws with.
+mod gfx {
+    pub use vello::{Scene, kurbo, peniko};
+}
 
 use crate::common::{self, App as AppKind, Args, Protocol, Step, WINDOW_H, WINDOW_W};
 use deka_native_ui::scene::{GlyphImage, Scene as DekaScene};
@@ -1156,7 +1160,54 @@ fn mem_report() {
     }
 }
 
+/// Compute vello on a device limited to WebGL2 capabilities (expected to fail).
+fn webgl2_limits() {
+    let instance = new_instance();
+    let adapter = match pollster::block_on(instance.request_adapter(&Default::default())) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("{e}");
+            return;
+        }
+    };
+    let (device, _queue) = match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+        ..Default::default()
+    })) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return;
+        }
+    };
+    let errors = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    {
+        let errors = errors.clone();
+        device.on_uncaptured_error(Arc::new(move |e| {
+            if let Ok(mut v) = errors.lock() {
+                v.push(e.to_string());
+            }
+        }));
+    }
+    let r = Renderer::new(&device, RendererOptions { antialiasing_support: AaSupport::area_only(), ..Default::default() });
+    if let Err(e) = device.poll(wgpu::PollType::wait_indefinitely()) {
+        eprintln!("poll: {e}");
+    }
+    let errs = errors.lock().map(|v| v.clone()).unwrap_or_default();
+    println!("[vello webgl2-limits] Renderer::new -> {}; wgpu validation errors: {}", if r.is_ok() { "Ok" } else { "Err" }, errs.len());
+    if let Err(e) = r {
+        println!("  {e}");
+    }
+    for e in errs.iter().take(2) {
+        println!("  {}", e.lines().take(3).collect::<Vec<_>>().join(" | "));
+    }
+}
+
 pub fn run(args: Args) {
+    if args.app == AppKind::WebGl2 {
+        webgl2_limits();
+        return;
+    }
     if args.app == AppKind::Mem {
         mem_report();
         return;

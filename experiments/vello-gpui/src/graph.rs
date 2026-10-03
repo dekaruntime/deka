@@ -15,9 +15,17 @@
 //! * `Hairball`: no physics. Nodes anywhere, edges join random far-apart nodes
 //!   (long lines across the whole canvas). Stress test for vello's buffers.
 
-use vello::Scene;
-use vello::kurbo::{Affine, Cap, Circle, Line, Shape, Stroke};
-use vello::peniko::{Color, Fill};
+// kurbo/peniko come from the including module's `gfx` (vello's re-exports or
+// vello_common's), so sparse-strips binaries can use this file without linking
+// compute vello. Only `encode`/`VelloPainter` need vello itself.
+#[cfg(any(feature = "vello", feature = "vello-backend"))]
+use super::gfx::Scene;
+#[cfg(any(feature = "vello", feature = "vello-backend"))]
+use super::gfx::kurbo::Affine;
+#[cfg(any(feature = "vello", feature = "vello-backend"))]
+use super::gfx::peniko::Fill;
+use super::gfx::kurbo::{Cap, Circle, Line, Shape, Stroke};
+use super::gfx::peniko::Color;
 
 pub const BACKGROUND: Color = Color::from_rgba8(0x14, 0x17, 0x22, 0xff);
 
@@ -202,6 +210,7 @@ impl Graph {
     }
 
     /// Encode the current positions into `scene` at device `scale`.
+    #[cfg(any(feature = "vello", feature = "vello-backend"))]
     pub fn encode(&self, scene: &mut Scene, scale: f64) {
         scene.reset();
         self.paint(&mut VelloPainter { scene, xf: Affine::scale(scale) });
@@ -231,11 +240,13 @@ pub trait Painter {
     fn stroke(&mut self, shape: &impl Shape, style: &Stroke, color: Color);
 }
 
+#[cfg(any(feature = "vello", feature = "vello-backend"))]
 struct VelloPainter<'a> {
     scene: &'a mut Scene,
     xf: Affine,
 }
 
+#[cfg(any(feature = "vello", feature = "vello-backend"))]
 impl Painter for VelloPainter<'_> {
     fn fill(&mut self, shape: &impl Shape, color: Color) {
         self.scene.fill(Fill::NonZero, self.xf, color, None, shape);

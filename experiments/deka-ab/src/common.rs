@@ -24,6 +24,10 @@ pub enum App {
     Bump,
     /// Offscreen GPU memory of vello rendering the UI and world scenes.
     Mem,
+    /// Canvas 2D coverage sheet, offscreen (sparse backends).
+    Coverage,
+    /// Try the renderer on a device limited to WebGL2 capabilities.
+    WebGl2,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +61,8 @@ impl Args {
             Some("editor") => App::Editor,
             Some("bump") => App::Bump,
             Some("mem") => App::Mem,
+            Some("coverage") => App::Coverage,
+            Some("webgl2") => App::WebGl2,
             _ => App::World,
         };
         Self {

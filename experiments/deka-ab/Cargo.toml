@@ -12,6 +12,11 @@ description = "Spike phase 2: deka_native_ui on GPUI vs on winit + wgpu + vello 
 [features]
 # Exactly one backend per binary, so each binary's size excludes the other stack.
 gpui-backend = ["dep:gpui", "dep:image", "dep:core-text", "dep:core-graphics", "dep:core-foundation"]
+# Sparse strips: vello_gpu (formerly vello_hybrid) on wgpu, and vello_cpu via softbuffer.
+hybrid-backend = ["dep:winit", "dep:wgpu", "dep:vello_gpu", "dep:pollster", "dep:skrifa", "dep:glifo"]
+cpu-backend = ["dep:winit", "dep:vello_cpu", "dep:softbuffer", "dep:skrifa"]
+# vello_cpu presented by texture upload + blit through wgpu instead of softbuffer.
+cpu-wgpu = ["cpu-backend", "dep:wgpu", "dep:pollster"]
 # vello's GPU bump counters (adds a readback per frame; diagnostics only).
 diag = ["vello-backend", "vello/debug_layers"]
 vello-backend = ["dep:winit", "dep:vello", "dep:wgpu", "dep:parley", "dep:arboard", "dep:pollster"]
@@ -37,10 +42,18 @@ core-foundation = { version = "=0.10.0", optional = true }
 # Backend B: small independent crates.
 winit = { version = "=0.30.13", optional = true }
 vello = { version = "=0.11.0", default-features = false, features = ["wgpu"], optional = true }
-wgpu = { version = "=30.0.1", default-features = false, features = ["metal"], optional = true }
+wgpu = { version = "=30.0.1", default-features = false, features = ["metal", "wgsl"], optional = true }
 parley = { version = "=0.11.1", optional = true }
 arboard = { version = "3.6", optional = true }
 pollster = { version = "0.4", optional = true }
+
+# Backends C and D: vello's sparse-strips renderers.
+vello_gpu = { version = "=0.3.0", default-features = false, features = ["wgpu", "text"], optional = true }
+vello_cpu = { version = "=0.3.0", features = ["multithreading"], optional = true }
+softbuffer = { version = "=0.4.8", optional = true }
+skrifa = { version = "0.44", optional = true }
+# Glyph type for vello_gpu's glyph runs (vello_gpu does not re-export it).
+glifo = { version = "=0.4.0", optional = true }
 
 [[bin]]
 name = "ab-gpui"
@@ -51,6 +64,25 @@ required-features = ["gpui-backend"]
 name = "ab-vello"
 path = "src/bin_vello.rs"
 required-features = ["vello-backend"]
+
+[[bin]]
+name = "ab-hybrid"
+path = "src/bin_hybrid.rs"
+required-features = ["hybrid-backend"]
+
+[[bin]]
+name = "ab-cpu"
+path = "src/bin_cpu.rs"
+required-features = ["cpu-backend"]
+
+# graph.rs is shared between the two spike crates and names a feature of each.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("vello"))'] }
+
+[[bin]]
+name = "ab-cpu-wgpu"
+path = "src/bin_cpu_wgpu.rs"
+required-features = ["cpu-wgpu"]
 
 [profile.release]
 debug = false

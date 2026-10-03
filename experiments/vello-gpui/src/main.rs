@@ -9,6 +9,10 @@
 mod coverage;
 mod gpu;
 mod graph;
+/// What graph.rs draws with.
+mod gfx {
+    pub use vello::{Scene, kurbo, peniko};
+}
 #[cfg(feature = "sparse")]
 mod sparse;
 #[cfg(target_os = "macos")]

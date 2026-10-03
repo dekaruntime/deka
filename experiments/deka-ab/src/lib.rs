@@ -5,3 +5,5 @@ pub mod common;
 pub mod gpui_backend;
 #[cfg(feature = "vello-backend")]
 pub mod vello_backend;
+#[cfg(any(feature = "hybrid-backend", feature = "cpu-backend"))]
+pub mod sparse;
