@@ -1,0 +1,69 @@
+# Response and body reads
+
+`Response` is a Rust-owned buffered HTTP response. A language alias retains the
+same response and headers. No JavaScript object or browser DOM is involved.
+
+The current constructor accepts a string body and returns `Result<Response,
+string>`. It creates a status-200 response and a `text/plain;charset=UTF-8`
+content type. Response initialization options, streams and cloning are separate
+surfaces; this constructor does not claim to implement them.
+
+```ds
+import { echo } from "io"
+
+async fn main() {
+    const response = unwrap(Response("Hello, Deka")) or { return; }
+    const text = unwrap(await response.text()) or { return; }
+    echo(text)
+    echo(string(response.status))
+    echo(string(response.bodyUsed))
+}
+```
+
+This prints `Hello, Deka`, `200` and `true` on separate lines.
+
+The read-only properties are `status`, `statusText`, `ok`, `url`, `headers` and
+`bodyUsed`. `ok` is true for statuses from 200 through 299. A constructed response
+has an empty URL and status text; network hosts supply their response metadata.
+`headers` uses the same Rust-owned `Headers` resource as the standalone global.
+
+`text()` returns `Promise<Result<string, string>>`; it decodes UTF-8 with
+replacement for malformed input and removes the leading BOM. `bytes()` returns
+`Promise<Result<bytes, string>>` and preserves the original bytes.
+
+`json<T>()` returns `Promise<Result<T, string>>`. The explicit type argument
+selects the same checked schema and nominal struct factories as `JSON.parse<T>`.
+There is no dynamic JSON value type. Required-field structs retain the existing
+JSON format, including their named wrapper, and their declared methods.
+
+```ds
+import { echo } from "io"
+
+struct Project { title: string; }
+fn (project Project) label() string { return "Project: " + project.title; }
+
+async fn main() {
+    const text = JSON.stringify(Project { title: "Deka" })
+    const response = unwrap(Response(text)) or { return; }
+    const project = unwrap(await response.json<Project>()) or { return; }
+    echo(project.label())
+    echo(match await response.text() {
+        Ok(text) => text,
+        Err(error) => error,
+    })
+}
+```
+
+This prints `Project: Deka` and `response body has already been consumed`.
+Invalid JSON and a mismatched schema return `Err`; they do not throw.
+Option/Result/enum/newtype/union JSON encodings retain the existing unresolved
+APS 43 mapping diagnostic.
+
+A present body can be read once, even when empty. Consumption starts when the
+read method is called, before awaiting its promise. Aliases and competing reads
+share that state, including `json<T>()`. A response with no body (such as a
+network 204 response) can be read as empty repeatedly and stays `bodyUsed=false`.
+
+These familiar body rules follow the [Fetch body mixin](https://fetch.spec.whatwg.org/#body-mixin).
+Deka uses typed `Result` values for failures and currently buffers the body;
+streaming, teeing, cloning and browser delegation are not part of this slice.

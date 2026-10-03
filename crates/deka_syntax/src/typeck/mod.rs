@@ -268,6 +268,8 @@ pub struct ModuleExports<'a> {
     pub newtypes: HashMap<&'a str, NewtypeInfo>,
     /// Compiler-supplied opaque property signatures, derived from host functions.
     pub native_properties: NativeProperties<'a>,
+    /// Opaque receiver identity and method -> async raw string-body host op.
+    pub native_json_bodies: HashMap<(usize, &'a str), &'a str>,
     pub receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
     /// Value bindings (functions / constants) exported by the module.
     pub values: HashMap<&'a str, Type<'a>>,
@@ -314,6 +316,7 @@ impl<'a> Default for ModuleExports<'a> {
             newtypes: HashMap::new(),
             receiver_methods: HashMap::new(),
             native_properties: HashMap::new(),
+            native_json_bodies: HashMap::new(),
             values: HashMap::new(),
             default_export_declared_name: None,
             re_exports: HashSet::new(),
@@ -2156,6 +2159,7 @@ struct Checker<'a> {
     super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
     native_receiver_methods: HashMap<(usize, &'a str), MethodInfo<'a>>,
     native_properties: NativeProperties<'a>,
+    native_json_bodies: HashMap<(usize, &'a str), &'a str>,
     native_property_calls: HashMap<*const ast::Expr<'a>, &'a str>,
     json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
     /// Builtin `Array.first()`/`Array.last()`/`Array.pop()`/`Array.shift()`
@@ -2294,6 +2298,7 @@ impl<'a> Checker<'a> {
             static_type_calls: HashMap::new(),
             super_trees: HashMap::new(),
             native_properties: HashMap::new(),
+            native_json_bodies: HashMap::new(),
             native_receiver_methods: HashMap::new(),
             native_property_calls: HashMap::new(),
             json_calls: HashMap::new(),
@@ -2599,6 +2604,8 @@ impl<'a> Checker<'a> {
             self.opaques.extend(declarations.opaques.clone());
             self.native_properties
                 .extend(declarations.native_properties.clone());
+            self.native_json_bodies
+                .extend(declarations.native_json_bodies.clone());
             for ((owner, method), info) in &declarations.build_receiver_methods {
                 if let Some(Type::Opaque { identity, .. }) = declarations.opaques.get(owner) {
                     self.native_receiver_methods

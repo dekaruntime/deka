@@ -2088,6 +2088,7 @@ dependencies = [
  "deka_syntax",
  "deno_core",
  "encoding_rs",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",

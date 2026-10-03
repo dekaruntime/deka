@@ -115,6 +115,8 @@ pub fn collect_recurse_refs<'a>(tree: &DescriptorTree<'a>, out: &mut Vec<&'a str
 pub struct JsonCall<'a> {
     pub operation: JsonOperation,
     pub shape: JsonDescriptor<'a>,
+    /// Async host body read, before the same static JSON conversion.
+    pub body_operation: Option<&'a str>,
 }
 
 /// Static structural records are JSON data without gaining a dynamic top type.

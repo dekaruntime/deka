@@ -145,6 +145,66 @@ export fn App() { let message="idle"; return <view><p>{message}</p><button onCli
             drop(host);
         }
     }
+
+    mod http_fixture {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../deka_vm/tests/support/http_server.rs"
+        ));
+    }
+    #[test]
+    fn production_desktop_button_fetches_typed_json_and_updates_without_blocking_the_window() {
+        let server = http_fixture::Server::new(|_, _| {
+            Ok(http_fixture::reply(
+                "200 OK",
+                "Content-Type: application/json\r\n",
+                br#""After""#,
+            ))
+        })
+        .unwrap();
+        let source = format!(
+            r#"export fn App() {{
+    let message="Ready";
+    return (<view><p>{{message}}</p><button onClick={{async fn() {{
+        message="Loading";
+        const response=unwrap(await fetch("{}")) or{{message="Fetch failed";return;}};
+        message=match await response.json<string>(){{Ok(text)=>text,Err(error)=>error}};
+    }}}}>Load</button></view>);
+}}"#,
+            server.url("/message")
+        );
+        let app = Desktop::new(|| {
+            let hosts = crate::hosts()?;
+            let program = compiler::compile_entry(&source, &hosts, "App")?;
+            ui::VmApp::with_hosts(program, hosts)
+        })
+        .unwrap();
+        let mut host = deka_native_ui::Host::new(app);
+        let (send, receive) = mpsc::sync_channel(1);
+        let waker = Waker::from(Arc::new(Signal(send)));
+        host.set_waker(deka_native_ui::Waker::new(move || waker.wake_by_ref()));
+        assert_eq!(text(&host.render()), "ReadyLoad");
+        host.click(0);
+        for _ in 0..200 {
+            if text(&host.render()) == "AfterLoad" {
+                break;
+            }
+            if host.has_ready_work() {
+                host.run_turn(32);
+            } else {
+                receive
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("HTTP completion did not wake the window");
+            }
+        }
+        assert_eq!(text(&host.render()), "AfterLoad");
+        assert!(!host.has_ready_work());
+        for _ in 0..32 {
+            assert!(!host.run_turn(32));
+        }
+        drop(host);
+        assert_eq!(server.finish().unwrap(), ["/message"]);
+    }
     #[cfg(feature = "desktop")]
     #[test]
     fn a_reloaded_vm_keeps_the_windows_wake_and_finishes_new_async_work() {
