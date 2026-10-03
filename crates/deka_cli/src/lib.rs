@@ -113,6 +113,7 @@ pub(crate) fn hosts() -> Result<Hosts> {
             }
         },
     ))?;
+    deka_vm::time::register(&mut hosts)?;
     Ok(hosts)
 }
 pub(crate) fn compile(source: &Source) -> Result<Payload> {
@@ -121,6 +122,12 @@ pub(crate) fn compile(source: &Source) -> Result<Payload> {
         program: compiler::compile_file(&source.path, &hosts()?, source.entry.as_deref())?,
         desktop: source.desktop,
     })
+}
+fn cli_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())
 }
 pub(crate) fn execute(payload: Payload, exercise: Option<usize>) -> Result<()> {
     if payload.version != 1 {
@@ -141,11 +148,7 @@ pub(crate) fn execute(payload: Payload, exercise: Option<usize>) -> Result<()> {
             return Err("--exercise requires a desktop application".into());
         }
         let mut vm = Vm::new(payload.program, hosts()?)?;
-        tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .map_err(|e| e.to_string())?
-            .block_on(vm.run())?;
+        cli_runtime()?.block_on(vm.run())?;
     }
     Ok(())
 }
@@ -488,5 +491,29 @@ mod dev_tests {
         app.last -= std::time::Duration::from_secs(1);
         assert!(matches!(app.poll_reload(), Reload::Reset));
         assert!(text(&app.render(&[])).contains("recovered"));
+    }
+}
+
+#[cfg(test)]
+mod async_runtime_tests {
+    use super::cli_runtime;
+    #[test]
+    fn production_runtime_drives_network_io() {
+        let runtime = cli_runtime().unwrap();
+        let result = runtime.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+                let address = listener.local_addr()?;
+                let (client, (server, peer)) =
+                    tokio::try_join!(tokio::net::TcpStream::connect(address), listener.accept())?;
+                assert_eq!(client.peer_addr()?, address);
+                assert_eq!(server.peer_addr()?, peer);
+                Ok::<_, std::io::Error>(())
+            })
+            .await
+        });
+        result
+            .expect("network operations timed out")
+            .expect("network operation failed");
     }
 }

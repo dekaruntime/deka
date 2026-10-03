@@ -328,6 +328,30 @@ value needs an imported default currently produces a named compile error;
 its default must run in the declaring module, never in the importer’s scope.
 
 
+## Native sleep
+
+Import `sleep` from `time` to suspend a task for a duration in milliseconds.
+It returns `Promise<void>` and uses Rust's tokio timer; other tasks can run
+while the caller awaits. The CLI runtime enables both timers and network I/O.
+
+```tsx
+import { echo } from "io";
+import { sleep } from "time";
+
+async fn main() Promise<void> {
+    echo("before");
+    await sleep(10);
+    echo("after");
+}
+```
+
+Running this entry prints `before`, then `after` once the timer completes.
+Use `deka run timer.ds --entry main` (or `npx deka run` in an npm project).
+A duration must be finite, nonnegative and representable by a Rust duration;
+invalid input is an argument fault. Zero duration is valid. The same operation
+is included in built executables, without a separate DSC or JavaScript runtime.
+This does not yet enable async window handlers or browser-hosted timers.
+
 ## Awaited host failures
 
 A fallible native host operation exposes `Result<T, string>` or, when async,

@@ -91,7 +91,7 @@ pub fn test_entries(path: &std::path::Path) -> Result<Vec<String>> {
         .collect())
 }
 fn host_module(source: &str) -> bool {
-    matches!(source, "vm:host" | "io" | "test")
+    matches!(source, "vm:host" | "io" | "test" | "time")
 }
 
 /// The project a compile resolves packages against: the nearest ancestor of
