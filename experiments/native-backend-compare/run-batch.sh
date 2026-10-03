@@ -3,8 +3,8 @@
 # Every window opens on a CoreGraphics virtual display that cmp-batch creates
 # for the batch and removes afterwards; nothing appears on a physical screen,
 # and the batch fails if any window does (see src/bin/batch.rs).
-# Needs an unlocked session: a locked screen occludes every window, virtual
-# displays included.
+# Refuses to run while the screen is locked (a locked screen occludes every
+# window on the physical display; not checked for a virtual one).
 # Usage: run-batch.sh OUT_DIR [ROUNDS] [cmp-batch options, e.g. --plan start]
 # Plans: content (counter: read the window back until its frame shows),
 # start, idle, animate, pixels. `--backends a,b` runs ./cmp-a and ./cmp-b
