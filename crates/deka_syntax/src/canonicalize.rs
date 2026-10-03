@@ -451,7 +451,16 @@ fn transform_expr<'a>(
     arena: &'a Bump,
     enums: &HashMap<&'a str, HashSet<&'a str>>,
 ) -> &'a Expr<'a> {
-    if let Some(resolved) = try_resolve_enum_expr(expr, enums) {
+    if let Some(mut resolved) = try_resolve_enum_expr(expr, enums) {
+        // Resolving the outer constructor must not skip constructors inside
+        // its payload (e.g. Result.Ok(Option.Some(4))).
+        if let Expr::EnumConstructor {
+            payload: Some(payload),
+            ..
+        } = &mut resolved
+        {
+            *payload = transform_expr(payload, arena, enums);
+        }
         return alloc_expr(arena, resolved);
     }
 

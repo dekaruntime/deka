@@ -216,3 +216,35 @@ change the rules for string concatenation or widen the host wire types.
 
 The native VM retains `Some` as a value, rather than erasing it to its payload
 as the former JavaScript backend did.
+
+## Matching values
+
+`match` is an expression: it evaluates its subject once, selects an arm, and
+returns that arm's value. Enum patterns extract payloads; nested patterns can
+inspect their cases or scalar values. A failed nested pattern continues to the
+next arm before reading any deeper payload.
+
+```tsx
+fn label(value: Option<Result<number, string>>) string {
+    return match (value) {
+        Some(Ok(7)) => "seven",
+        Some(Ok(n)) => "number: " + string(n),
+        Some(Err(message)) => message,
+        None => "empty",
+    };
+}
+// label(Some(Ok(8))) is "number: 8".
+```
+
+Numbers, strings and booleans support literal arms with a default (`_`), or a
+catch-all binding. Declared enums support qualified or unqualified case names;
+a payload-free case name tests that case rather than binding a variable.
+`Red | Green` groups alternatives under one arm. Tuple and struct patterns can
+extract nested fields. Arm bindings are local to their arm; closures retain
+captured bindings when a surrounding loop moves to its next iteration.
+
+The existing checker still rejects non-exhaustive matches with the missing
+cases in the diagnostic. Native type patterns for scalar, struct and enum union
+members use their actual runtime type or nominal brand. A failed case predicate
+is false, including when the runtime value has another kind. Bytes and host
+error class patterns require their corresponding host value support.
