@@ -49,10 +49,10 @@ jobs:
       - name: Compile source and execute without a compiler
         run: |
           cargo build --locked --release -p deka_vm --features compiler,host,ui
-          target/release/dvm crates/deka_vm/examples/host.ds --grant-timer
+          target/release/dvm crates/deka_vm/examples/host.ds
           target/release/dvmc crates/deka_vm/examples/host.ds target/host.dvm.json
           cargo build --locked --release -p deka_vm --no-default-features --features host --bin dvm
-          target/release/dvm target/host.dvm.json --grant-timer
+          target/release/dvm target/host.dvm.json
           cargo build --locked --release -p deka_vm --no-default-features --bin dvm-core
   corpus-gate:
     runs-on: ubuntu-latest

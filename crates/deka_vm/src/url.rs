@@ -181,7 +181,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![HostType::String, option_string.clone()],
             url_ty.clone(),
             false,
-            None,
             |args| {
                 let input = text(&args[0]);
                 let base = optional_text(&args[1]);
@@ -201,7 +200,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![HostType::String],
             params_ty.clone(),
             false,
-            None,
             |args| {
                 HostReply::Ready(Ok(HostValue::Handle(HostHandle::new(
                     "URLSearchParams",
@@ -233,7 +231,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
                 vec![url_ty.clone()],
                 HostType::String,
                 false,
-                None,
                 move |args| {
                     HostReply::Ready(
                         url_resource(&args[0]).map(|url| HostValue::String(getter(url))),
@@ -249,7 +246,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![url_ty.clone()],
             params_ty.clone(),
             false,
-            None,
             |args| {
                 HostReply::Ready(url_resource(&args[0]).map(|url| {
                     HostValue::Handle(HostHandle::from_shared(
@@ -268,7 +264,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
                 vec![url_ty.clone()],
                 HostType::String,
                 false,
-                None,
                 |args| {
                     HostReply::Ready(
                         url_resource(&args[0]).map(|url| HostValue::String(url.href())),
@@ -284,7 +279,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![params_ty.clone()],
             HostType::Number,
             false,
-            None,
             |args| {
                 HostReply::Ready(
                     params_resource(&args[0]).map(|params| HostValue::Number(params.size() as f64)),
@@ -299,7 +293,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![params_ty.clone(), HostType::String],
             option_string.clone(),
             false,
-            None,
             |args| {
                 HostReply::Ready(params_resource(&args[0]).map(|params| {
                     HostValue::Option(
@@ -318,7 +311,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![params_ty.clone(), HostType::String],
             HostType::Strings,
             false,
-            None,
             |args| {
                 HostReply::Ready(
                     params_resource(&args[0])
@@ -341,7 +333,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
                 vec![params_ty.clone(), HostType::String, HostType::String],
                 HostType::Unit,
                 false,
-                None,
                 move |args| {
                     HostReply::Ready(params_resource(&args[0]).map(|params| {
                         action(params, text(&args[1]), text(&args[2]));
@@ -358,7 +349,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![params_ty.clone(), HostType::String, option_string.clone()],
             HostType::Unit,
             false,
-            None,
             |args| {
                 HostReply::Ready(params_resource(&args[0]).map(|params| {
                     params.delete(text(&args[1]), optional_text(&args[2]));
@@ -375,7 +365,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![params_ty.clone(), HostType::String, option_string],
             HostType::Bool,
             false,
-            None,
             |args| {
                 HostReply::Ready(params_resource(&args[0]).map(|params| {
                     HostValue::Bool(params.has(text(&args[1]), optional_text(&args[2])))
@@ -391,7 +380,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![params_ty.clone()],
             HostType::Unit,
             false,
-            None,
             |args| {
                 HostReply::Ready(params_resource(&args[0]).map(|params| {
                     params.sort();
@@ -407,7 +395,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![params_ty.clone()],
             HostType::String,
             false,
-            None,
             |args| {
                 HostReply::Ready(
                     params_resource(&args[0]).map(|params| HostValue::String(params.serialize())),
@@ -429,7 +416,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
                 vec![params_ty.clone()],
                 HostType::Strings,
                 false,
-                None,
                 move |args| {
                     HostReply::Ready(
                         params_resource(&args[0]).map(|params| HostValue::Strings(action(params))),
@@ -448,7 +434,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
                 HostType::String,
             ]))),
             false,
-            None,
             |args| {
                 HostReply::Ready(params_resource(&args[0]).map(|params| {
                     HostValue::List(

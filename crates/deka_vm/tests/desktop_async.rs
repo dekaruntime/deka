@@ -49,7 +49,6 @@ fn gated(
             vec![],
             HostType::String,
             true,
-            None,
             move |_| {
                 let receive = receive.borrow_mut().take().unwrap();
                 HostReply::Pending(Box::pin(async move {
@@ -153,7 +152,6 @@ fn dropping_the_window_releases_the_pending_host_future() {
             vec![],
             HostType::Unit,
             true,
-            None,
             move |_| {
                 let resource = HeldResource(counter.clone());
                 HostReply::Pending(Box::pin(async move {
@@ -183,7 +181,6 @@ fn one_instruction_turns_are_fair_and_register_the_pending_producers_wake() {
             vec![],
             HostType::String,
             true,
-            None,
             move |_| {
                 let receive = receive.borrow_mut().take().unwrap();
                 HostReply::Pending(Box::pin(async move {
