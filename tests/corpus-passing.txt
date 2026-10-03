@@ -710,3 +710,5 @@ unsafe-unsafe-catch-rejected-fail
 unsafe-unsafe-err-message-rejected-fail
 unsafe-unsafe-error-is-jserror-fail
 unsafe-unsafe-typed-result-mismatch-fail
+async-async-return-value
+async-async-unawaited-promise-concat

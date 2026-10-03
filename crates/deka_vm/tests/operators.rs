@@ -76,3 +76,53 @@ async fn pipe_inserts_first_argument_or_fills_the_hole() {
     .unwrap();
     assert_eq!(value, HostValue::String("7,31".into()));
 }
+
+#[tokio::test]
+async fn unawaited_promise_addition_preserves_identity_before_and_after_settlement() {
+    let value = run(r#"
+        async fn value() Promise<number> { return 7; }
+        async fn main() Promise<string> {
+            const pending = value();
+            const before = pending + 2;
+            const actual = await pending;
+            return before + "|" + (2 + pending) + "|" + (pending + true)
+                + "|" + (false + pending) + "|" + (pending + "text")
+                + "|" + ("text" + pending) + "|" + (pending + pending)
+                + "|" + string(actual + 2);
+        }"#)
+    .await
+    .unwrap();
+    assert_eq!(value, HostValue::String(
+        "[object Promise]2|2[object Promise]|[object Promise]true|false[object Promise]|[object Promise]text|text[object Promise]|[object Promise][object Promise]|9".into()
+    ));
+}
+
+#[test]
+fn promise_concatenation_does_not_enable_printing_conversion_or_numeric_arithmetic() {
+    for expression in [
+        "string(pending)",
+        "pending - 2",
+        "pending * 2",
+        "pending / 2",
+    ] {
+        let source = format!(
+            "async fn value() Promise<number> {{ return 7; }} fn main() {{ const pending = value(); const invalid = {expression}; }}"
+        );
+        assert!(
+            compiler::compile(&source, &Hosts::default()).is_err(),
+            "{expression}"
+        );
+    }
+}
+
+#[test]
+fn unawaited_promises_still_have_no_direct_console_printable_form() {
+    let error = compiler::compile(
+        "async fn value() Promise<number> { return 7; } fn main() { const pending = value(); console.log(pending); }",
+        &Hosts::default(),
+    ).unwrap_err();
+    assert!(
+        error.contains("Promise<number> has no printable form"),
+        "{error}"
+    );
+}
