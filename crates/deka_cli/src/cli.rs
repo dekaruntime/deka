@@ -139,6 +139,18 @@ fn register_add(registry: &mut Registry) {
     });
 }
 
+fn register_install(registry: &mut Registry) {
+    registry.add_command(CommandSpec {
+        name: "install",
+        owner: "deka_cli",
+        category: "Packages",
+        summary: "restore exactly the packages pinned in deka.lock",
+        aliases: &[],
+        subcommands: &[],
+        handler: cmd_install,
+    });
+}
+
 /// Registration functions in help/ownership order (the ownership index
 /// re-runs these to attribute flags to their command).
 pub fn register_fns() -> Vec<fn(&mut Registry)> {
@@ -151,6 +163,7 @@ pub fn register_fns() -> Vec<fn(&mut Registry)> {
         register_test,
         register_init,
         register_add,
+        register_install,
     ]
 }
 
@@ -376,6 +389,17 @@ fn cmd_add(ctx: &Context) -> HandlerResult {
     let directory = std::env::current_dir().map_err(|e| CommandError::Runtime(e.to_string()))?;
     runtime(crate::packages::add(&directory, spec))?;
     ctx.out().print(format_args!("Added {spec}\n"));
+    Ok(ExitStatus::SUCCESS)
+}
+
+fn cmd_install(ctx: &Context) -> HandlerResult {
+    if !ctx.args.positionals.is_empty() || !ctx.args.params.is_empty() {
+        return Err(CommandError::usage("usage: deka install"));
+    }
+    let directory = std::env::current_dir().map_err(|e| CommandError::Runtime(e.to_string()))?;
+    let count = crate::packages::install(&directory).map_err(CommandError::Runtime)?;
+    ctx.out()
+        .print(format_args!("Installed {count} packages\n"));
     Ok(ExitStatus::SUCCESS)
 }
 

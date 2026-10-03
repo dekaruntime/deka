@@ -56,9 +56,13 @@ impl<'a> Registry<'a> {
             return Err(format!("unknown version {version} for package {name}"));
         }
         let url = format!("{}/{package}/{version}/{package}-{version}.tgz", self.cdn);
+        let bytes = self.download(&url, name, version)?;
+        Ok((url, bytes))
+    }
+    fn download(&self, url: &str, name: &str, version: &str) -> Result<Vec<u8>> {
         let response = self
             .client
-            .get(&url)
+            .get(url)
             .send()
             .and_then(reqwest::blocking::Response::error_for_status)
             .map_err(|e| format!("download failed for {name}@{version}: {e}"))?;
@@ -72,7 +76,7 @@ impl<'a> Registry<'a> {
                 "download failed for {name}@{version}: archive exceeds 64 MiB"
             ));
         }
-        Ok((url, bytes))
+        Ok(bytes)
     }
 }
 
@@ -162,6 +166,45 @@ fn extract(bytes: &[u8], destination: &Path) -> Result<()> {
     Ok(())
 }
 
+fn validate_package(bytes: &[u8], package: &Path, name: &str, version: &str) -> Result<()> {
+    extract(bytes, package)?;
+    let package_manifest = read_json(&package.join("deka.json"))?;
+    if package_manifest.get("name").and_then(Value::as_str) != Some(name)
+        || package_manifest.get("version").and_then(Value::as_str) != Some(version)
+    {
+        return Err(format!("package manifest does not match {name}@{version}"));
+    }
+    let entry = package_manifest
+        .get("entry")
+        .and_then(Value::as_str)
+        .unwrap_or("index.ds");
+    let entry_path = Path::new(entry);
+    if entry_path
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+        || !matches!(
+            entry_path.extension().and_then(|s| s.to_str()),
+            Some("ds" | "dsx")
+        )
+        || !package.join(entry_path).is_file()
+    {
+        return Err(format!(
+            "package {name} has no valid DekaScript entry: {entry}"
+        ));
+    }
+    if let Some(deps) = package_manifest.get("dependencies") {
+        let deps = deps
+            .as_object()
+            .ok_or_else(|| format!("invalid dependencies for package {name}"))?;
+        if !deps.is_empty() {
+            return Err(format!(
+                "package {name} declares dependencies; native transitive installation is not available"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn add(directory: &Path, spec: &str) -> Result<()> {
     add_from(directory, spec, &Registry::new(INDEX, CDN)?)
 }
@@ -216,41 +259,7 @@ fn add_from(directory: &Path, spec: &str, registry: &Registry<'_>) -> Result<()>
         .map_err(|e| e.to_string())?;
     let package = stage.path().join("package");
     fs::create_dir(&package).map_err(|e| e.to_string())?;
-    extract(&bytes, &package)?;
-    let package_manifest = read_json(&package.join("deka.json"))?;
-    if package_manifest.get("name").and_then(Value::as_str) != Some(name)
-        || package_manifest.get("version").and_then(Value::as_str) != Some(version)
-    {
-        return Err(format!("package manifest does not match {name}@{version}"));
-    }
-    let entry = package_manifest
-        .get("entry")
-        .and_then(Value::as_str)
-        .unwrap_or("index.ds");
-    let entry_path = Path::new(entry);
-    if entry_path
-        .components()
-        .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
-        || !matches!(
-            entry_path.extension().and_then(|s| s.to_str()),
-            Some("ds" | "dsx")
-        )
-        || !package.join(entry_path).is_file()
-    {
-        return Err(format!(
-            "package {name} has no valid DekaScript entry: {entry}"
-        ));
-    }
-    if let Some(deps) = package_manifest.get("dependencies") {
-        let deps = deps
-            .as_object()
-            .ok_or_else(|| format!("invalid dependencies for package {name}"))?;
-        if !deps.is_empty() {
-            return Err(format!(
-                "package {name} declares dependencies; native transitive installation is not available"
-            ));
-        }
-    }
+    validate_package(&bytes, &package, name, version)?;
     lock.packages.insert(
         name.into(),
         (
@@ -325,6 +334,63 @@ fn add_from(directory: &Path, spec: &str, registry: &Registry<'_>) -> Result<()>
         return Err(format!("package add failed: {error}"));
     }
     Ok(())
+}
+
+pub(crate) fn install(directory: &Path) -> Result<usize> {
+    install_from(directory, &Registry::new(INDEX, CDN)?)
+}
+
+fn install_from(directory: &Path, registry: &Registry<'_>) -> Result<usize> {
+    read_json(&directory.join("deka.json"))?;
+    let lock: Lock = serde_json::from_slice(
+        &fs::read(directory.join("deka.lock")).map_err(|e| format!("deka.lock: {e}"))?,
+    )
+    .map_err(|e| format!("invalid deka.lock: {e}"))?;
+    if lock.version != 1 {
+        return Err(format!("unsupported deka.lock version {}", lock.version));
+    }
+    for (name, (pin, url, _, _)) in &lock.packages {
+        let version = deka_vm::package::version_pin(name, pin);
+        parse_spec(&format!("{name}@{version}"))?;
+        let url =
+            reqwest::Url::parse(url).map_err(|e| format!("invalid tarball URL for {name}: {e}"))?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(format!("invalid tarball URL for {name}: expected HTTP(S)"));
+        }
+    }
+    let destination = directory.join("ds_modules");
+    if destination.is_symlink() || (destination.exists() && !destination.is_dir()) {
+        return Err("ds_modules must be a directory, not a file or symlink".into());
+    }
+    let stage = tempfile::Builder::new()
+        .prefix(".deka-install-")
+        .tempdir_in(directory)
+        .map_err(|e| e.to_string())?;
+    let modules = stage.path().join("modules");
+    fs::create_dir(&modules).map_err(|e| e.to_string())?;
+    for (name, (pin, url, _, _)) in &lock.packages {
+        let version = deka_vm::package::version_pin(name, pin);
+        let bytes = registry.download(url, name, version)?;
+        let package = modules.join(name);
+        fs::create_dir_all(&package).map_err(|e| e.to_string())?;
+        validate_package(&bytes, &package, name, version)?;
+    }
+    let backup = stage.path().join("previous-modules");
+    let had_modules = destination.exists();
+    if had_modules {
+        fs::rename(&destination, &backup).map_err(|e| e.to_string())?;
+    }
+    if let Err(error) = fs::rename(&modules, &destination) {
+        if had_modules && let Err(rollback) = fs::rename(&backup, &destination) {
+            let retained = stage.keep();
+            return Err(format!(
+                "install failed: {error}; rollback failed: {rollback}; recovery files at {}",
+                retained.display()
+            ));
+        }
+        return Err(format!("install failed: {error}"));
+    }
+    Ok(lock.packages.len())
 }
 
 #[cfg(test)]
@@ -569,6 +635,122 @@ mod tests {
         }
         assert!(fixture.requests.lock().unwrap().is_empty());
         assert!(!project.path().join("deka.lock").exists());
+    }
+
+    #[test]
+    fn replay_restores_identical_bytes_prunes_stale_files_and_never_resolves_versions() {
+        let fixture = Fixture::new(responses(
+            "demo",
+            tarball("@deka/demo", "1.2.3", "export const answer = 42;"),
+        ));
+        let project = project();
+        add_from(project.path(), "@deka/demo@1.2.3", &fixture.registry()).unwrap();
+        let modules = project.path().join("ds_modules");
+        let original = ["@deka/demo/deka.json", "@deka/demo/index.ds"]
+            .map(|path| (path, fs::read(modules.join(path)).unwrap()));
+        let manifest = fs::read(project.path().join("deka.json")).unwrap();
+        let lock = fs::read(project.path().join("deka.lock")).unwrap();
+        fs::remove_dir_all(&modules).unwrap();
+        let before = fixture.requests.lock().unwrap().len();
+        assert_eq!(
+            install_from(project.path(), &fixture.registry()).unwrap(),
+            1
+        );
+        for (path, bytes) in &original {
+            assert_eq!(fs::read(modules.join(path)).unwrap(), *bytes);
+        }
+        fs::create_dir(modules.join("stale-package")).unwrap();
+        fs::write(modules.join("stale-package/index.ds"), "wrong").unwrap();
+        fs::write(modules.join("@deka/demo/untracked.txt"), "wrong").unwrap();
+        install_from(project.path(), &fixture.registry()).unwrap();
+        assert!(!modules.join("stale-package").exists());
+        assert!(!modules.join("@deka/demo/untracked.txt").exists());
+        for (path, bytes) in &original {
+            assert_eq!(fs::read(modules.join(path)).unwrap(), *bytes);
+        }
+        assert_eq!(
+            fs::read(project.path().join("deka.json")).unwrap(),
+            manifest
+        );
+        assert_eq!(fs::read(project.path().join("deka.lock")).unwrap(), lock);
+        assert_eq!(
+            fixture.requests.lock().unwrap()[before..],
+            ["/demo/1.2.3/demo-1.2.3.tgz", "/demo/1.2.3/demo-1.2.3.tgz"]
+        );
+    }
+
+    #[test]
+    fn a_later_failed_download_preserves_the_entire_previous_module_tree() {
+        let fixture = Fixture::new(responses(
+            "demo",
+            tarball("@deka/demo", "1.2.3", "export const answer = 42;"),
+        ));
+        let project = project();
+        add_from(project.path(), "@deka/demo@1.2.3", &fixture.registry()).unwrap();
+        let modules = project.path().join("ds_modules");
+        fs::write(modules.join("keep.txt"), "keep").unwrap();
+        let source = fs::read(modules.join("@deka/demo/index.ds")).unwrap();
+        let mut lock: Lock =
+            serde_json::from_slice(&fs::read(project.path().join("deka.lock")).unwrap()).unwrap();
+        lock.packages.insert(
+            "@deka/zzz".into(),
+            (
+                "1.2.3".into(),
+                format!("{}/missing.tgz", fixture.url),
+                json!({}),
+                "unused".into(),
+            ),
+        );
+        fs::write(project.path().join("deka.lock"), encode(&lock).unwrap()).unwrap();
+        let error = install_from(project.path(), &fixture.registry()).unwrap_err();
+        assert!(
+            error.contains("download failed for @deka/zzz@1.2.3"),
+            "{error}"
+        );
+        assert_eq!(fs::read(modules.join("keep.txt")).unwrap(), b"keep");
+        assert_eq!(
+            fs::read(modules.join("@deka/demo/index.ds")).unwrap(),
+            source
+        );
+        assert!(!modules.join("@deka/zzz").exists());
+    }
+
+    #[test]
+    fn invalid_lock_paths_fail_before_network_access_or_module_replacement() {
+        let fixture = Fixture::new(BTreeMap::new());
+        let project = project();
+        fs::create_dir(project.path().join("ds_modules")).unwrap();
+        fs::write(project.path().join("ds_modules/keep.txt"), "keep").unwrap();
+        for (name, version, url, diagnostic) in [
+            (
+                "../escape",
+                "1.2.3",
+                "https://example.invalid/a.tgz",
+                "invalid package name",
+            ),
+            (
+                "@deka/demo",
+                "latest",
+                "https://example.invalid/a.tgz",
+                "expected an exact version",
+            ),
+            (
+                "@deka/demo",
+                "1.2.3",
+                "file:///etc/passwd",
+                "expected HTTP(S)",
+            ),
+        ] {
+            let lock = json!({"lockfileVersion": 1, "packages": {name: [version, url, {}, ""]}});
+            fs::write(project.path().join("deka.lock"), encode(&lock).unwrap()).unwrap();
+            let error = install_from(project.path(), &fixture.registry()).unwrap_err();
+            assert!(error.contains(diagnostic), "{error}");
+            assert_eq!(
+                fs::read(project.path().join("ds_modules/keep.txt")).unwrap(),
+                b"keep"
+            );
+        }
+        assert!(fixture.requests.lock().unwrap().is_empty());
     }
 
     #[cfg(unix)]

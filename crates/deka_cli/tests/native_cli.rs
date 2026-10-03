@@ -24,6 +24,36 @@ fn add_requires_one_exact_pin_without_mutating_the_project() {
     assert!(!project.path().join("deka.lock").exists());
     assert!(!project.path().join("ds_modules").exists());
 }
+
+#[test]
+fn install_replaces_a_stale_tree_for_an_empty_lock_and_requires_a_lockfile() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(project.path().join("deka.json"), b"{\"name\":\"consumer\"}").unwrap();
+    let missing = cli(project.path(), &["install"]);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("deka.lock"));
+    let bytes = b"{\"lockfileVersion\":1,\"packages\":{}}";
+    fs::write(project.path().join("deka.lock"), bytes).unwrap();
+    fs::create_dir(project.path().join("ds_modules")).unwrap();
+    fs::write(project.path().join("ds_modules/stale.ds"), "wrong").unwrap();
+    assert_eq!(
+        ok(cli(project.path(), &["install"])),
+        "Installed 0 packages\n"
+    );
+    assert_eq!(
+        fs::read_dir(project.path().join("ds_modules"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(fs::read(project.path().join("deka.lock")).unwrap(), bytes);
+    assert_eq!(
+        cli(project.path(), &["install", "@deka/demo@1.2.3"])
+            .status
+            .code(),
+        Some(2)
+    );
+}
 fn ok(output: Output) -> String {
     assert!(
         output.status.success(),
