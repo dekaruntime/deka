@@ -368,3 +368,18 @@ mutations. Items appended beyond that original length are not visited. Callback
 faults propagate; reducing an empty array reports
 `cannot reduce an empty array without an initial value`. The current signature
 accepts one callback and no explicit initial value.
+
+## Adding a package
+
+In a project containing `deka.json`, `deka add <name>@<version>` installs an
+exact version from the existing deka.gg index and R2 tarball CDN. It saves the
+dependency in `deka.json`, records the version, tarball URL and SHA-256 in
+`deka.lock`, and writes the package into `ds_modules/`. Existing dependency
+pins and unrelated project settings are retained. Version ranges and `latest`
+are rejected.
+
+The package must declare the requested name/version and provide a `.ds` or
+`.dsx` entry. Imports use its package name as described above. This initial
+native command supports packages without dependencies of their own; packages
+declaring transitive dependencies are rejected explicitly. Lock replay and
+checksum enforcement are separate from recording a downloaded tarball's hash.

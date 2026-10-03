@@ -2480,8 +2480,13 @@ dependencies = [
  "deka_executable",
  "deka_native_ui",
  "deka_vm",
+ "flate2",
+ "reqwest",
+ "semver",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tar",
  "tempfile",
  "tokio",
 ]

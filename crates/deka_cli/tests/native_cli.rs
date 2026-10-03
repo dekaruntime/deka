@@ -10,6 +10,20 @@ fn cli(cwd: &Path, args: &[&str]) -> Output {
         .output()
         .unwrap()
 }
+
+#[test]
+fn add_requires_one_exact_pin_without_mutating_the_project() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(project.path().join("deka.json"), b"{\"name\":\"consumer\"}").unwrap();
+    let missing = cli(project.path(), &["add"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("usage: deka add"));
+    let range = cli(project.path(), &["add", "@deka/demo@^1.2.3"]);
+    assert_eq!(range.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&range.stderr).contains("expected an exact version"));
+    assert!(!project.path().join("deka.lock").exists());
+    assert!(!project.path().join("ds_modules").exists());
+}
 fn ok(output: Output) -> String {
     assert!(
         output.status.success(),

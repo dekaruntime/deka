@@ -7,6 +7,8 @@ pub mod demo;
 mod heap;
 mod host;
 mod machine;
+#[cfg(feature = "compiler")]
+pub mod package;
 mod stack;
 pub use bytecode::*;
 pub use heap::HeapStats;

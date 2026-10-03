@@ -140,18 +140,8 @@ impl Project {
             .unwrap_or_default();
         let lock = std::fs::read_to_string(root.join("deka.lock"))
             .ok()
-            .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
-            .and_then(|lock| lock.get("packages")?.as_object().cloned())
-            .map(|packages| {
-                packages
-                    .iter()
-                    .filter_map(|(name, entry)| {
-                        // Lock entries are [version, tarball, deps, sha256].
-                        let version = entry.as_array()?.first()?.as_str()?;
-                        Some((name.clone(), version.to_owned()))
-                    })
-                    .collect()
-            })
+            .and_then(|bytes| serde_json::from_str::<crate::package::Lock>(&bytes).ok())
+            .map(crate::package::Lock::pins)
             .unwrap_or_default();
         Ok(Project {
             root: Some(root),
