@@ -2,7 +2,13 @@
 //! focus (Tab / Shift-Tab, Enter / Space) and the background turn.
 use super::{Content, input::Input};
 use crate::{Application, Host, Waker, scene::Renderer, scene::Scene};
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 /// How often a live application (`deka dev`) is asked for a reload.
 const LIVE_POLL: Duration = Duration::from_millis(100);
@@ -15,6 +21,8 @@ pub(crate) struct UiContent<A: Application> {
     reduced_motion: bool,
     focused: Option<String>,
     live: bool,
+    waker: Option<Waker>,
+    wake_pending: Arc<AtomicBool>,
 }
 
 impl<A: Application> UiContent<A> {
@@ -28,6 +36,8 @@ impl<A: Application> UiContent<A> {
             reduced_motion,
             focused: None,
             live,
+            waker: None,
+            wake_pending: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -105,10 +115,15 @@ impl<A: Application> Content for UiContent<A> {
     }
 
     fn turn(&mut self) -> bool {
-        // The one place the window gives the application time outside input.
-        // Today that is `deka dev`'s reload poll; the VM's bounded turn
-        // (APS 7, note 07) is called from here too.
-        self.host.refresh()
+        self.wake_pending.store(false, Ordering::Release);
+        let reloaded = self.host.refresh();
+        let changed = self.host.run_turn(4096);
+        if self.host.has_ready_work()
+            && let Some(waker) = &self.waker
+        {
+            waker.wake();
+        }
+        reloaded || changed
     }
 
     fn turn_interval(&self) -> Option<Duration> {
@@ -116,7 +131,14 @@ impl<A: Application> Content for UiContent<A> {
     }
 
     fn set_waker(&mut self, waker: Waker) {
-        self.host.app.set_waker(waker);
+        let pending = self.wake_pending.clone();
+        let waker = Waker::new(move || {
+            if !pending.swap(true, Ordering::AcqRel) {
+                waker.wake();
+            }
+        });
+        self.waker = Some(waker.clone());
+        self.host.set_waker(waker);
     }
 
     #[cfg(test)]
@@ -301,5 +323,83 @@ mod tests {
         assert!(ui.turn(), "a reset reload redraws");
         assert_eq!(reloads.get(), 1);
         assert_eq!(ui.host.state[0], 0., "the reset restored the initial state");
+    }
+    #[test]
+    fn bounded_turns_coalesce_wakes_and_redraw_only_changed_views() {
+        use std::sync::atomic::AtomicUsize;
+        struct Burst {
+            remaining: usize,
+            waker: Option<Waker>,
+        }
+        impl Application for Burst {
+            fn initial_state(&self) -> Vec<f64> {
+                vec![]
+            }
+            fn render(&self, _: &[f64]) -> Node {
+                Node {
+                    id: "root".into(),
+                    style: Style::default(),
+                    text: Some(
+                        if self.remaining == 0 {
+                            "done"
+                        } else {
+                            "waiting"
+                        }
+                        .into(),
+                    ),
+                    on_click: None,
+                    children: vec![],
+                }
+            }
+            fn event(&self, _: usize, _: &mut [f64]) {}
+            fn set_waker(&mut self, waker: Waker) {
+                self.waker = Some(waker);
+            }
+            fn has_ready_work(&self) -> bool {
+                self.remaining > 0
+            }
+            fn run_turn(&mut self, budget: usize) -> bool {
+                assert_eq!(budget, 4096);
+                if self.remaining == 0 {
+                    return false;
+                }
+                self.remaining -= 1;
+                if self.remaining > 0 {
+                    self.waker.as_ref().unwrap().wake();
+                }
+                self.remaining == 0
+            }
+        }
+        let mut ui = UiContent::new(
+            Burst {
+                remaining: 3,
+                waker: None,
+            },
+            true,
+        );
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let count = wakes.clone();
+        ui.set_waker(Waker::new(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert_eq!(ui.turn_interval(), None);
+        assert!(!ui.turn(), "background progress alone does not redraw");
+        assert_eq!(
+            wakes.load(Ordering::SeqCst),
+            1,
+            "VM and window wakes coalesce"
+        );
+        assert!(!ui.turn());
+        assert_eq!(wakes.load(Ordering::SeqCst), 2);
+        assert!(ui.turn(), "completed work changed the visible text");
+        assert_eq!(ui.host.render().text.as_deref(), Some("done"));
+        for _ in 0..64 {
+            assert!(!ui.turn(), "zero idle redraws");
+        }
+        assert_eq!(
+            wakes.load(Ordering::SeqCst),
+            2,
+            "idle work does not wake the window"
+        );
     }
 }

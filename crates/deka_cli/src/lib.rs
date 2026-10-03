@@ -3,6 +3,8 @@
 pub mod cli;
 mod packages;
 
+mod desktop_runtime;
+
 use deka_cli_core::registry::Output;
 use deka_vm::{HostOp, HostReply, HostType, HostValue, Hosts, Program, Result, Vm, compiler};
 use serde::{Deserialize, Serialize};
@@ -135,7 +137,9 @@ pub(crate) fn execute(payload: Payload, exercise: Option<usize>) -> Result<()> {
         return Err("unsupported application format".into());
     }
     if payload.desktop {
-        let app = deka_vm::ui::VmApp::with_hosts(payload.program, hosts()?)?;
+        let app = desktop_runtime::Desktop::new(|| {
+            deka_vm::ui::VmApp::with_hosts(payload.program, hosts()?)
+        })?;
         if let Some(clicks) = exercise {
             println!("{}", deka_native_ui::exercise(app, clicks));
         } else {
@@ -333,12 +337,14 @@ pub(crate) fn dev(source: Source, payload: Payload) -> Result<()> {
                 (path, bytes)
             })
             .collect();
-        deka_native_ui::run(DevApp {
-            source,
-            app: deka_vm::ui::VmApp::with_hosts(payload.program, hosts()?)?,
-            last: std::time::Instant::now(),
-            watched,
-        });
+        deka_native_ui::run(desktop_runtime::Desktop::new(|| {
+            Ok(DevApp {
+                source,
+                app: deka_vm::ui::VmApp::with_hosts(payload.program, hosts()?)?,
+                last: std::time::Instant::now(),
+                watched,
+            })
+        })?);
         Ok(())
     }
     #[cfg(not(feature = "desktop"))]
@@ -356,6 +362,15 @@ struct DevApp {
 }
 #[cfg(feature = "desktop")]
 impl deka_native_ui::Application for DevApp {
+    fn set_waker(&mut self, waker: deka_native_ui::Waker) {
+        self.app.set_waker(waker);
+    }
+    fn has_ready_work(&self) -> bool {
+        self.app.has_ready_work()
+    }
+    fn run_turn(&mut self, budget: usize) -> bool {
+        self.app.run_turn(budget)
+    }
     fn initial_state(&self) -> Vec<f64> {
         self.app.initial_state()
     }
@@ -396,6 +411,7 @@ impl deka_native_ui::Application for DevApp {
             .and_then(|p| deka_vm::ui::VmApp::with_hosts(p.program, hosts()?))
         {
             Ok(app) => {
+                app.set_vm_waker(&self.app.waker());
                 self.app = app;
                 if let Ok(files) = compiler::source_files(&self.source.path) {
                     self.watched = files

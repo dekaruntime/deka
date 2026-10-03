@@ -2386,18 +2386,9 @@ impl<'a> Lower<'a> {
                     }
                     let value = attr.value.as_ref().ok_or("UI attribute requires a value")?;
                     if matches!(attr.name, "onClick" | "onInput" | "onKeyDown")
-                        && !matches!(
-                            value,
-                            Expr::Function {
-                                is_async: false,
-                                ..
-                            }
-                        )
+                        && !matches!(value, Expr::Function { .. })
                     {
-                        return Err(
-                            "VM UI click handlers must currently be synchronous function literals"
-                                .into(),
-                        );
+                        return Err("VM UI event handlers must be function literals".into());
                     }
                     if matches!(attr.name, "className" | "value" | "placeholder")
                         && !matches!(value, Expr::String { .. })

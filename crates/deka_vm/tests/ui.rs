@@ -59,14 +59,25 @@ fn independent_windows_have_independent_state() {
     assert!(texts(second.tree()).contains(&"0".into()));
 }
 #[test]
-fn unknown_ui_attributes_and_async_handlers_fail_compilation() {
-    for (from, to) in [
-        ("className=", "unknown="),
-        ("onClick={fn()", "onClick={async fn()"),
-    ] {
-        let source = include_str!("../examples/counter.dsx").replace(from, to);
-        assert!(compiler::compile_entry(&source, &Hosts::default(), "Counter").is_err());
-    }
+fn unknown_ui_attributes_fail_but_async_handlers_update_the_view() {
+    let source = include_str!("../examples/counter.dsx");
+    assert!(
+        compiler::compile_entry(
+            &source.replace("className=", "unknown="),
+            &Hosts::default(),
+            "Counter"
+        )
+        .is_err()
+    );
+    let program = compiler::compile_entry(
+        &source.replace("onClick={fn()", "onClick={async fn()"),
+        &Hosts::default(),
+        "Counter",
+    )
+    .unwrap();
+    let mut session = ui::UiSession::new(program).unwrap();
+    session.click(0).unwrap();
+    assert!(texts(session.tree()).contains(&"1".into()));
 }
 #[cfg(feature = "v8-control")]
 #[test]
