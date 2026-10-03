@@ -966,7 +966,21 @@ pub fn refresh_module_export_values<'a>(
     imports: &HashMap<&str, &ModuleExports<'a>>,
     exports: &mut ModuleExports<'a>,
 ) {
+    refresh_module_export_values_with_globals(program, imports, &HashMap::new(), exports);
+}
+
+/// Export inference sees the same native globals as module checking, so a
+/// namespace/function alias cannot lose its checked contract when imported.
+pub fn refresh_module_export_values_with_globals<'a>(
+    program: &'a Program<'a>,
+    imports: &HashMap<&str, &ModuleExports<'a>>,
+    globals: &HashMap<&'a str, Type<'a>>,
+    exports: &mut ModuleExports<'a>,
+) {
     let mut checker = Checker::new(program, imports);
+    checker
+        .globals
+        .extend(globals.iter().map(|(name, ty)| (*name, ty.clone())));
     checker.infer_only = true;
     checker.check_program();
     let mut inferred_values = checker.globals.clone();

@@ -67,6 +67,8 @@ pub enum Op {
         operation: String,
         arguments: usize,
     },
+    /// Native promise combinators consume a list of VM promise handles.
+    PromiseJoin(PromiseJoin),
     Await,
     /// Frame-local handler; saves operand depth and receives the thrown payload.
     Handler(usize),
@@ -138,6 +140,32 @@ pub enum Op {
     ToNumber,
     /// `panic(message)`: stop the program with the message as the error.
     Panic,
+}
+/// One catalog supplies native namespace names, signatures and opcodes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PromiseJoin {
+    All,
+    Race,
+}
+impl PromiseJoin {
+    pub const ALL: [Self; 2] = [Self::All, Self::Race];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Race => "race",
+        }
+    }
+    #[cfg(feature = "compiler")]
+    pub(crate) fn declaration(self) -> String {
+        let ret = match self {
+            Self::All => "Array<T>",
+            Self::Race => "T",
+        };
+        format!(
+            "export fn __promise_{}<T>(values: Array<Promise<T>>) Promise<{ret}> {{}}\n",
+            self.name()
+        )
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TypeDescriptor {

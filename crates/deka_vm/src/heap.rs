@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 // PHPX used a u32 index into Vec<Zval>. Add generations and actual tracing:
 // free slots now drop their payload immediately and stale handles cannot alias.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Handle {
     index: usize,
     generation: u64,
