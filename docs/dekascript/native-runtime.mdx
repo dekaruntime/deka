@@ -248,3 +248,81 @@ cases in the diagnostic. Native type patterns for scalar, struct and enum union
 members use their actual runtime type or nominal brand. A failed case predicate
 is false, including when the runtime value has another kind. Bytes and host
 error class patterns require their corresponding host value support.
+
+## Unwrapping with a fallback
+
+An unwrap binding extracts the payload of `Some` or `Ok`. Its `or` alternative
+runs only for `None` or `Err`. The subject is evaluated once.
+
+```tsx
+fn label(value: Option<string>) string {
+    const text = unwrap(value) or { return "unavailable"; }
+    return "got: " + text;
+}
+// label(Some("yes")) is "got: yes"; label(None) is "unavailable".
+```
+
+A trailing expression in `or { ... }` supplies the binding's value. Otherwise,
+the block must leave the enclosing function on every path. A `return` stays in
+that function; the fallback does not create a separate closure. The checker
+rejects empty alternatives and incompatible fallback types. Local names in the
+alternative stay local, and `const`/`let` retain their normal mutation rules.
+
+For a Result, `or match` can use the error payload:
+
+```tsx
+fn label(value: Result<string, string>) string {
+    const text = unwrap(value) or match { Err(e) => "failed: " + e };
+    return text;
+}
+```
+
+The implicit success arm supplies the `Ok` payload. The checker requires the
+remaining failure cases to be covered. For Option, use `or { ... }`; there is no
+error payload for `or match` to inspect. Module-level unwrap bindings execute in
+source order and are available to functions like other bindings. Existing
+`safe { expression }` wrappers preserve the expression, and logical `||` keeps
+its normal short-circuit behavior; neither substitutes for unwrap or match.
+
+
+## Checked exceptions
+
+`Exception<T, E>` describes a function’s success and escaping failure channels.
+It is control flow: `Ok(value)` returns the success payload, and `Throw(error)`
+unwinds to the nearest active handler. It cannot be saved as ordinary data.
+Consume an Exception call where you call it, with `match`, inside `try`, or by
+an exact-channel return to the caller. Use `Result` when failure should be data.
+
+```tsx
+fn read(fail: boolean) Exception<number, string> {
+    if (fail) { return Throw("unavailable"); }
+    return Ok(7);
+}
+fn label(fail: boolean) string {
+    return match read(fail) { Ok(value) => string(value), Throw(error) => error };
+}
+// label(false) is "7"; label(true) is "unavailable".
+```
+
+`try { ... } catch (error) { ... }` handles throws raised in its body or by calls
+inside it. A typed catch for a struct handles only that declaration, including
+when imported under an alias. Other thrown types propagate to the next handler.
+Catch bindings stay local. Throws raised by match arms and catch bodies propagate
+outward; they are not caught again by their own handler. A bodyless `Throw(e)`
+arm forwards the original payload.
+
+`read(true).to_result()` explicitly converts a thrown error into `Err(error)`;
+a success becomes `Ok(value)`. `Exception.from(result)` performs the reverse
+conversion. Neither evaluates its subject more than once. Nested and wildcard
+bodyless arms keep the original payload when forwarding Result or Exception.
+
+The VM retains handler state across suspension. An async function’s language
+Throw reaches the caller at `await` and uses the same match or catch handling.
+VM faults such as `panic` remain runtime errors and do not enter catch blocks.
+An uncaught Throw prints its payload on stderr and exits unsuccessfully. Native
+host error class constructors require the host value support; struct catches do
+not depend on a JavaScript engine.
+
+Imported struct literals can supply fields explicitly. Omitting a field whose
+value needs an imported default currently produces a named compile error;
+its default must run in the declaring module, never in the importer’s scope.

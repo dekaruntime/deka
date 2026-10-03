@@ -131,7 +131,8 @@ fn invalid_cases_payloads_and_unprintable_payloads_are_rejected() {
         "const x = string({ name: \"Some\", index: 0, value: 7 });",
     ] {
         assert!(
-            compiler::compile(source, &Hosts::default()).is_err(),
+            compiler::compile(&format!("{source}\nfn main() void {{}}"), &Hosts::default())
+                .is_err(),
             "{source}"
         );
     }

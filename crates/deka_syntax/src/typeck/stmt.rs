@@ -963,6 +963,9 @@ impl<'a> Checker<'a> {
                 ast::Stmt::Let {
                     name, ty, value, ..
                 } => (*name, ty.as_ref(), Some(value), true),
+                ast::Stmt::UnwrapLet {
+                    name, ty, is_const, ..
+                } => (*name, ty.as_ref(), None, !*is_const),
                 ast::Stmt::Export {
                     decl:
                         ast::ExportDecl::Const {
@@ -1169,6 +1172,20 @@ impl<'a> Checker<'a> {
                                 }
                             }
                         }
+                    }
+                }
+                ast::Stmt::UnwrapLet {
+                    name, ty: None, scrutinee, span, ..
+                } => {
+                    // The initializer still runs in source order. Function
+                    // bodies may inspect the seed's type before it runs.
+                    let was_in_function = self.in_function;
+                    self.in_function = true;
+                    let actual = self.check_expr(scrutinee);
+                    self.in_function = was_in_function;
+                    let payload = self.unwrap_payload_type(&actual, *span);
+                    if !matches!(payload, Type::Infer | Type::Error) {
+                        self.scopes[0].insert(name, payload);
                     }
                 }
                 ast::Stmt::Const {
@@ -1611,6 +1628,26 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn unwrap_payload_type(&mut self, scrutinee_type: &Type<'a>, span: ast::Span) -> Type<'a> {
+        match scrutinee_type {
+            Type::Option { inner } => (**inner).clone(),
+            Type::Generic {
+                base: "Result",
+                args,
+            } if args.len() == 2 => args[0].clone(),
+            Type::Infer | Type::Error => Type::Infer,
+            other => {
+                self.error_span(
+                    span,
+                    format!(
+                        "`unwrap` works on `Option` and `Result`, found type `{other}`; use `match`"
+                    ),
+                );
+                Type::Error
+            }
+        }
+    }
+
     /// `let name = unwrap(scrutinee) or { … }` (deka#445).
     ///
     /// The binding takes the success payload; the block runs when the value is
@@ -1629,23 +1666,7 @@ impl<'a> Checker<'a> {
         // `unwrap` is about a value that might be absent, and DekaScript has
         // exactly two of those. Anything else should use `match`, which says
         // so rather than leaving the reader to guess.
-        let bound = match &scrutinee_type {
-            Type::Option { inner } => (**inner).clone(),
-            Type::Generic {
-                base: "Result",
-                args,
-            } if args.len() == 2 => args[0].clone(),
-            Type::Infer | Type::Error => Type::Infer,
-            other => {
-                self.error_span(
-                    span,
-                    format!(
-                        "`unwrap` works on `Option` and `Result`, found type `{other}`; use `match`"
-                    ),
-                );
-                Type::Error
-            }
-        };
+        let bound = self.unwrap_payload_type(&scrutinee_type, span);
 
         let declared = ty.map(|ty| self.resolve_ast_type(ty));
         if let Some(declared) = &declared {
@@ -1668,8 +1689,24 @@ impl<'a> Checker<'a> {
         self.mutables.push(HashSet::new());
         match alternative {
             ast::UnwrapAlternative::Block(stmts) => {
-                for inner in stmts.iter() {
+                for (i, inner) in stmts.iter().enumerate() {
+                    if let (true, ast::Stmt::Expr { expr, .. }) = (i + 1 == stmts.len(), inner) {
+                        let fallback = self.check_expr(expr);
+                        let expected = declared.as_ref().unwrap_or(&bound);
+                        if !self.is_assignable(expected, &fallback)
+                            && !matches!(fallback, Type::Error | Type::Never)
+                            && !matches!(expected, Type::Error)
+                        {
+                            self.error_span(expr.span(), format!("unwrap alternative has type `{fallback}`, but the binding is `{expected}`"));
+                        }
+                        continue;
+                    }
                     self.check_statement(inner);
+                }
+                if !matches!(stmts.last(), Some(ast::Stmt::Expr { .. }))
+                    && !body_always_returns(stmts)
+                {
+                    self.error_span(span, "unwrap alternative must produce a value or leave the function on every path");
                 }
             }
             ast::UnwrapAlternative::Match(arms) => {
@@ -1684,6 +1721,9 @@ impl<'a> Checker<'a> {
             self.declare_var(name, bound_type);
         } else {
             self.declare_mutable_var(name, bound_type);
+        }
+        if self.scopes.len() == 1 {
+            self.pending_module_bindings.remove(name);
         }
     }
 
