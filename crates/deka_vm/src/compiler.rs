@@ -436,7 +436,11 @@ fn lower_module<'a>(
         .map(|(p, call)| {
             (
                 *p as usize,
-                (call.operation, lower.json_types.shape(&call.shape, path)),
+                json_lower::Call {
+                    operation: call.operation,
+                    shape: lower.json_types.shape(&call.shape, path),
+                    body_operation: call.body_operation.map(str::to_owned),
+                },
             )
         })
         .collect();
@@ -796,6 +800,22 @@ fn compile_modules(
             (identity, arena.alloc_str(property)),
             (*operation, *ret.clone()),
         );
+    }
+    for op in hosts.methods().filter(|op| op.json_body) {
+        let (_, method) = op.receiver_method.as_ref().expect("host method");
+        let (operation, ty) = host_exports
+            .values
+            .get_key_value(op.name.as_str())
+            .expect("host declaration");
+        let deka_syntax::typeck::Type::Function { params, .. } = ty else {
+            return Err("JSON body declaration is not callable".into());
+        };
+        let deka_syntax::typeck::Type::Opaque { identity, .. } = params[0] else {
+            return Err("JSON body needs an opaque receiver".into());
+        };
+        host_exports
+            .native_json_bodies
+            .insert((identity, arena.alloc_str(method)), *operation);
     }
     // Parse every module up front so import checks resolve across a cycle.
     let mut asts = HashMap::new();
@@ -1484,7 +1504,7 @@ struct Lower<'a> {
     enum_patterns: HashMap<usize, String>,
     pattern_types: HashMap<usize, Result<Op>>,
     signature_calls: HashMap<usize, crate::TypeDescriptor>,
-    json_calls: HashMap<usize, (deka_syntax::typeck::JsonOperation, Result<crate::JsonShape>)>,
+    json_calls: HashMap<usize, json_lower::Call>,
     json_types: json_lower::JsonTypes,
     json_factories: BTreeMap<String, (std::path::PathBuf, usize)>,
     newtype_results: HashMap<usize, String>,

@@ -4378,6 +4378,44 @@ impl<'a> Checker<'a> {
 
         let object_type = self.check_expr(object);
         if let Type::Opaque { name, identity } = &object_type {
+            if let Some(operation) = self
+                .native_json_bodies
+                .get(&(*identity, method_name))
+                .copied()
+            {
+                if !args.is_empty() || type_args.len() != 1 {
+                    self.error_span(
+                        span,
+                        format!(
+                            "`{method_name}` expects no arguments and exactly one type argument"
+                        ),
+                    );
+                    return Some(Type::Error);
+                }
+                let target = self.resolve_ast_type(&type_args[0]);
+                let shape = match self.json_descriptor(&target, span) {
+                    Ok(shape) => shape,
+                    Err(message) => {
+                        self.error_span(span, message);
+                        return Some(Type::Error);
+                    }
+                };
+                self.json_calls.insert(
+                    call_expr as *const ast::Expr<'a>,
+                    super::descriptor::JsonCall {
+                        operation: super::descriptor::JsonOperation::ParseJson,
+                        shape,
+                        body_operation: Some(operation),
+                    },
+                );
+                return Some(Type::Generic {
+                    base: "Promise",
+                    args: vec![Type::Generic {
+                        base: "Result",
+                        args: vec![target, Type::Named { name: "string" }],
+                    }],
+                });
+            }
             if let Some(info) = self
                 .native_receiver_methods
                 .get(&(*identity, method_name))
@@ -4992,7 +5030,11 @@ impl<'a> Checker<'a> {
             };
             self.json_calls.insert(
                 call_expr as *const ast::Expr<'a>,
-                super::descriptor::JsonCall { operation, shape },
+                super::descriptor::JsonCall {
+                    operation,
+                    shape,
+                    body_operation: None,
+                },
             );
             return Some(Type::Generic {
                 base: "Result",
@@ -5014,7 +5056,11 @@ impl<'a> Checker<'a> {
         };
         self.json_calls.insert(
             call_expr as *const ast::Expr<'a>,
-            super::descriptor::JsonCall { operation, shape },
+            super::descriptor::JsonCall {
+                operation,
+                shape,
+                body_operation: None,
+            },
         );
         Some(Type::Named { name: "string" })
     }

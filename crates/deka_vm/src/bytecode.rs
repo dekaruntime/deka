@@ -122,6 +122,9 @@ pub enum Op {
     JsonStringify(crate::JsonShape),
     /// Pop a struct method table, then JSON text; push a nominal Result.
     JsonParse(crate::JsonShape),
+    /// Convert Result<string,string> from a consumed host body with the same
+    /// schema and nominal factories as JSON.parse; propagate read errors.
+    JsonParseResult(crate::JsonShape),
     Newtype(String),
     Enum {
         name: String,
