@@ -15,7 +15,10 @@ is involved in the VM application.
 The adapter pins the returned component graph as a GC root, converts its initial
 structure to a lasting Rust node store, and emits renderer snapshots from it.
 Compatible elements/text at the same structural slot keep their identity; removal or
-element-kind replacement creates a fresh identity. A button event queues the
+element-kind replacement creates a fresh identity. Internal aliases retain a
+detached node and its subtree independently of the visible root; weak parent
+and index links prevent ownership cycles. Renderer snapshots do not retain the
+resource. A button event queues the
 corresponding VM closure. Bindings whose observed source addresses changed
 reevaluate and patch only changed authored properties. Component state survives GC between events. Independent
 application instances have independent heaps and state. Idle rendering executes

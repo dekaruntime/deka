@@ -58,7 +58,6 @@ fn nested_records_lists_and_bytes_round_trip_without_losing_values() {
             vec![],
             response_type(),
             false,
-            None,
             |_| HostReply::Ready(Ok(response())),
         ))
         .unwrap();
@@ -68,7 +67,6 @@ fn nested_records_lists_and_bytes_round_trip_without_losing_values() {
             vec![response_type()],
             HostType::Bool,
             false,
-            None,
             |args| HostReply::Ready(Ok(HostValue::Bool(args[0] == response()))),
         ))
         .unwrap();
@@ -88,7 +86,6 @@ fn authored_records_numeric_and_empty_lists_cross_to_rust() {
             vec![ty],
             HostType::Number,
             false,
-            None,
             |args| {
                 let HostValue::Record(fields) = &args[0] else {
                     panic!("not a record")
@@ -121,7 +118,6 @@ fn legacy_strings_and_generic_string_lists_use_the_same_wire_path() {
             vec![HostType::Strings],
             HostType::Strings,
             false,
-            None,
             |args| {
                 assert_eq!(args[0], HostValue::Strings(vec!["hi".into()]));
                 HostReply::Ready(Ok(args[0].clone()))
@@ -134,7 +130,6 @@ fn legacy_strings_and_generic_string_lists_use_the_same_wire_path() {
             vec![HostType::List(Box::new(HostType::String))],
             HostType::Bool,
             false,
-            None,
             |args| {
                 HostReply::Ready(Ok(HostValue::Bool(
                     args[0] == HostValue::List(vec![HostValue::String("hi".into())]),
@@ -161,7 +156,6 @@ fn async_rich_responses_and_failures_use_the_existing_result_constructor() {
                 vec![HostType::Bool],
                 response_type(),
                 true,
-                None,
                 |args| {
                     let fail = args[0] == HostValue::Bool(true);
                     HostReply::Pending(Box::pin(async move {
@@ -196,24 +190,17 @@ fn malformed_host_outputs_are_protocol_errors_including_async_results() {
         let mut hosts = Hosts::default();
         hosts
             .register(
-                HostOp::new(
-                    "wrong",
-                    vec![],
-                    response_type(),
-                    asynchronous,
-                    None,
-                    move |_| {
-                        let value = Ok(record([(
-                            "status",
-                            HostValue::String("not a number".into()),
-                        )]));
-                        if asynchronous {
-                            HostReply::Pending(Box::pin(async move { value }))
-                        } else {
-                            HostReply::Ready(value)
-                        }
-                    },
-                )
+                HostOp::new("wrong", vec![], response_type(), asynchronous, move |_| {
+                    let value = Ok(record([(
+                        "status",
+                        HostValue::String("not a number".into()),
+                    )]));
+                    if asynchronous {
+                        HostReply::Pending(Box::pin(async move { value }))
+                    } else {
+                        HostReply::Ready(value)
+                    }
+                })
                 .with_result_channel(),
             )
             .unwrap();
@@ -237,7 +224,6 @@ fn structural_inputs_and_opaque_brands_are_checked_before_execution() {
             vec![response_type()],
             HostType::Unit,
             false,
-            None,
             |_| panic!("invalid source must not run"),
         ))
         .unwrap();
@@ -260,7 +246,6 @@ fn structural_inputs_and_opaque_brands_are_checked_before_execution() {
             vec![],
             HostType::Handle("Socket".into()),
             false,
-            None,
             |_| HostReply::Ready(Ok(HostValue::Handle(HostHandle::new("Socket", 7u32)))),
         ))
         .unwrap();
@@ -270,7 +255,6 @@ fn structural_inputs_and_opaque_brands_are_checked_before_execution() {
             vec![HostType::Handle("Body".into())],
             HostType::Unit,
             false,
-            None,
             |_| panic!("wrong brand"),
         ))
         .unwrap();
@@ -302,7 +286,6 @@ fn resource_hosts(drops: Rc<Cell<usize>>) -> Hosts {
             vec![],
             HostType::Handle("Socket".into()),
             false,
-            None,
             move |_| {
                 HostReply::Ready(Ok(HostValue::Handle(HostHandle::new(
                     "Socket",
@@ -317,7 +300,6 @@ fn resource_hosts(drops: Rc<Cell<usize>>) -> Hosts {
             vec![HostType::Handle("Socket".into())],
             HostType::Bool,
             false,
-            None,
             |args| {
                 let HostValue::Handle(handle) = &args[0] else {
                     panic!("not a handle")
@@ -354,7 +336,6 @@ fn gc_releases_resources_from_returned_frames_and_cancellation_drops_pending_own
             vec![HostType::Handle("Socket".into())],
             HostType::Unit,
             true,
-            None,
             move |args| {
                 *capture.borrow_mut() = Some(args[0].clone());
                 HostReply::Pending(Box::pin(async move {
@@ -398,7 +379,6 @@ fn a_wrong_handle_brand_from_rust_is_rejected() {
             vec![],
             HostType::Handle("Body".into()),
             false,
-            None,
             |_| HostReply::Ready(Ok(HostValue::Handle(HostHandle::new("Socket", 7u32)))),
         ))
         .unwrap();
@@ -419,7 +399,7 @@ fn host_schema_names_cannot_inject_declarations() {
     ] {
         assert!(
             Hosts::default()
-                .register(HostOp::new("bad", vec![], ty, false, None, |_| {
+                .register(HostOp::new("bad", vec![], ty, false, |_| {
                     HostReply::Ready(Ok(HostValue::Unit))
                 }))
                 .is_err()
@@ -436,7 +416,6 @@ fn byte_indexing_and_union_patterns_use_the_byte_value_kind() {
             vec![],
             HostType::Bytes,
             false,
-            None,
             |_| HostReply::Ready(Ok(HostValue::Bytes(vec![128, 255]))),
         ))
         .unwrap();
@@ -464,7 +443,6 @@ fn bytes_are_immutable_even_when_the_binding_is_mutable() {
             vec![],
             HostType::Bytes,
             false,
-            None,
             |_| HostReply::Ready(Ok(HostValue::Bytes(vec![7]))),
         ))
         .unwrap();
@@ -487,7 +465,6 @@ fn nominal_options_round_trip_and_preserve_absent_empty_and_nested_values() {
             vec![ty.clone()],
             ty.clone(),
             false,
-            None,
             |args| HostReply::Ready(Ok(args[0].clone())),
         ))
         .unwrap();
@@ -498,7 +475,6 @@ fn nominal_options_round_trip_and_preserve_absent_empty_and_nested_values() {
             vec![list.clone()],
             list,
             false,
-            None,
             |args| HostReply::Ready(Ok(args[0].clone())),
         ))
         .unwrap();
@@ -534,7 +510,6 @@ fn host_option_output_is_checked_and_is_not_record_shape_guessing() {
             vec![],
             HostType::Option(Box::new(HostType::String)),
             false,
-            None,
             |_| HostReply::Ready(Ok(HostValue::Option(Some(Box::new(HostValue::Number(7.)))))),
         ))
         .unwrap();
@@ -553,7 +528,6 @@ fn host_option_output_is_checked_and_is_not_record_shape_guessing() {
             vec![HostType::Option(Box::new(HostType::String))],
             HostType::Unit,
             false,
-            None,
             |_| panic!("wrong shape must not reach host"),
         ))
         .unwrap();
@@ -571,7 +545,6 @@ fn host_options_compose_with_results_and_records() {
                 vec![HostType::Bool],
                 option.clone(),
                 false,
-                None,
                 |args| {
                     HostReply::Ready(if args[0] == HostValue::Bool(true) {
                         Ok(HostValue::Option(None))
@@ -589,7 +562,6 @@ fn host_options_compose_with_results_and_records() {
             vec![],
             schema([("value", option)]),
             false,
-            None,
             |_| {
                 HostReply::Ready(Ok(record([(
                     "value",
@@ -611,7 +583,6 @@ fn host_tuple_outputs_are_checked_and_preserve_member_types() {
             vec![pair.clone()],
             pair.clone(),
             false,
-            None,
             |args| HostReply::Ready(Ok(args[0].clone())),
         ))
         .unwrap();
@@ -637,7 +608,6 @@ fn host_tuple_outputs_are_checked_and_preserve_member_types() {
                 vec![],
                 pair.clone(),
                 false,
-                None,
                 move |_| HostReply::Ready(Ok(output.clone())),
             ))
             .unwrap();
@@ -672,7 +642,6 @@ async fn suspended_result_options_preserve_success_absence_and_io_failure() {
                     vec![],
                     HostType::Option(Box::new(HostType::String)),
                     true,
-                    None,
                     move |_| {
                         let reply = reply.clone();
                         let mut first = true;
@@ -720,7 +689,6 @@ fn options_inside_tuple_records_round_trip_without_structural_erasure() {
             vec![ty.clone()],
             ty,
             false,
-            None,
             |args| HostReply::Ready(Ok(args[0].clone())),
         ))
         .unwrap();
@@ -738,7 +706,7 @@ async fn list_of_tuple_literals_default_and_member_types_follow_one_host_schema(
     let mut hosts = Hosts::default();
     hosts
         .register(
-            HostOp::new("pairs", vec![pairs.clone()], pairs, false, None, |args| {
+            HostOp::new("pairs", vec![pairs.clone()], pairs, false, |args| {
                 HostReply::Ready(Ok(args[0].clone()))
             })
             .with_global_binding()

@@ -9,7 +9,6 @@ fn dynamic_component_lists_capture_row_identity_and_release_old_frames() {
             vec![],
             HostType::Strings,
             false,
-            None,
             |_| {
                 HostReply::Ready(Ok(HostValue::Strings(vec![
                     "First".into(),
