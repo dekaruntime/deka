@@ -51,3 +51,85 @@ render errors keep the last working application.
 Browser text editing, asynchronous UI event scheduling, app module loading and
 accessibility semantics are still integration work. Native host-specific input
 and worker callbacks do not imply those features are available in the browser.
+
+## Reusable component tags
+
+A component is a function returning a view. Use an uppercase tag to compose it,
+and pass named attributes through a checked props interface:
+
+```tsx
+interface CardProps { title: string; detail: string }
+
+fn Card(props: CardProps) {
+    return (
+        <div className="p-4 gap-2">
+            <p>{props.title}</p>
+            <p>{props.detail}</p>
+        </div>
+    );
+}
+
+export fn App() {
+    return (
+        <view>
+            <Card title="Deka" detail="A component is a function that returns a view." />
+        </view>
+    );
+}
+```
+
+This displays the title and detail in the reusable card. Attribute order does
+not matter. The checker reports missing, unknown and wrongly typed props before
+execution. Parameterless components also work as tags. Relative file imports
+can provide components in native apps; the browser tour still accepts one source file.
+A prop can carry any value, including struct values, enum cases and interface
+values, and a struct type can serve as the props type in place of an interface.
+
+Nested markup supplies child content. Prefer `<slot />` to project it, including
+when no content is supplied. To read `props.children` explicitly, declare its type
+in the props interface. The existing `ReactNode` type describes renderable values;
+no React runtime is involved. A bare boolean attribute means `true`.
+
+Components in static markup are created once. Local `let` state and event
+closures survive parent updates. Prop expressions are read when the component
+uses them, so a child can display current parent state without being recreated.
+Keep those expressions free of side effects. Values copied from props into a
+local binding during creation are snapshots, not automatic derived bindings.
+Dynamic conditional or mapped child creation still follows the preview's
+existing positional identity behavior; this is not keyed reconciliation.
+
+### Projecting children with a default slot
+
+Place `<slot />` inside a component's view to display its nested markup:
+
+```tsx
+interface CardProps { title: string; detail: string }
+fn Hero() { return <p>Testing</p>; }
+fn Card(props: CardProps) {
+    return (
+        <div className="p-4 gap-3">
+            <p>{props.title}</p>
+            <p>{props.detail}</p>
+            <slot />
+        </div>
+    );
+}
+export fn App() {
+    return (
+        <view>
+            <Card title="Empty" detail="No nested content" />
+            <Card title="Project" detail="Nested content follows">
+                <Hero />
+            </Card>
+        </view>
+    );
+}
+```
+
+The second card shows Testing after its detail. The first slot contributes no
+nodes. A default slot does not require a `children` declaration, a props
+parameter, or pattern matching. It preserves child state and adds no layout
+wrapper. An explicit optional `children?: ReactNode` declaration is also allowed;
+`<slot />` handles its absence. Direct `{props.children}` still obeys the ordinary
+optional-value type rule. Named slots and fallback content are not supported yet.
+`<children />` is not an alias for `<slot />`.

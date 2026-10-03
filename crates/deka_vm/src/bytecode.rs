@@ -48,6 +48,12 @@ pub enum Op {
         captures: Vec<usize>,
     },
     Call(usize),
+    /// Pop a props value, pop a component closure, and call the component
+    /// with the props (or with no argument when it declares no parameter).
+    /// The props' nested `children` become the callee's default-slot content.
+    ComponentCall,
+    /// Push the current frame's default-slot content (unit when none).
+    Slot,
     /// Pop the arguments, pop the receiver record, and call its `$<name>`
     /// member (an attached method, which receives the record as its first
     /// argument) or its `<name>` member (a field holding a function, called
@@ -81,6 +87,9 @@ pub enum Op {
     /// list is under the arguments on the stack.
     ListMut(ListMut),
     Record(Vec<String>),
+    /// Like `Record`, but builds component props: attribute values are
+    /// zero-argument getter closures that `Field` calls on every read.
+    Props(Vec<String>),
     /// Pop a source record, pop a target record, push target with the
     /// source's fields merged over it. Backs `{...obj}` in object literals.
     RecordExtend,

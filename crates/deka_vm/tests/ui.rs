@@ -120,3 +120,197 @@ fn conditionals_select_one_branch_and_dynamic_lists_keep_live_handlers() {
     }
     assert!(session.stats().slots < 1000, "{:?}", session.stats());
 }
+
+#[test]
+fn component_tags_keep_local_state_and_read_live_named_props() {
+    let source = r#"
+interface CardProps { title: string; count: number }
+fn Card(props: CardProps) {
+    let clicks = 0;
+    return (<div><p>{props.title}</p><p>{props.count}</p>
+        <button onClick={fn() { clicks += 1; }}>{clicks}</button></div>);
+}
+interface ShellProps { children: ReactNode }
+fn Shell(props: ShellProps) { return <div>{props.children}</div>; }
+fn Badge() { return <span>Ready</span>; }
+export fn App() {
+    let count = 0;
+    return (<view><Shell><Card count={count + 1} title="Deka" />
+        <Card title="Zega" count={count + 2} /></Shell><Badge />
+        <button onClick={fn() { count += 10; }}>Update</button></view>);
+}"#;
+    let p = compiler::compile_entry(source, &Hosts::default(), "App").unwrap();
+    let encoded = serde_json::to_string(&p).unwrap();
+    let mut session = ui::UiSession::new(serde_json::from_str(&encoded).unwrap()).unwrap();
+    assert_eq!(
+        texts(session.tree()),
+        ["Deka", "1", "0", "Zega", "2", "0", "Ready", "Update"]
+    );
+    session.click(0).unwrap();
+    session.click(2).unwrap();
+    assert_eq!(
+        texts(session.tree()),
+        ["Deka", "11", "1", "Zega", "12", "0", "Ready", "Update"]
+    );
+    for _ in 0..100 {
+        session.click(0).unwrap();
+    }
+    assert!(texts(session.tree()).contains(&"101".into()));
+    assert!(session.stats().slots < 500, "{:?}", session.stats());
+}
+
+#[test]
+fn component_tags_reject_invalid_props_before_execution() {
+    let prefix =
+        "interface Props { title: string } fn Card(props: Props) { return <p>{props.title}</p>; }";
+    for (markup, error) in [
+        ("<Card />", "missing required prop"),
+        ("<Card title={42} />", "expects type"),
+        ("<Card title=\"ok\" typo=\"bad\" />", "has no prop"),
+    ] {
+        let source = format!("{prefix} export fn App() {{ return {markup}; }}");
+        assert!(
+            compiler::compile_entry(&source, &Hosts::default(), "App")
+                .unwrap_err()
+                .contains(error)
+        );
+    }
+}
+
+#[test]
+fn component_tags_load_exported_components_from_relative_modules() {
+    let directory = std::env::temp_dir().join(format!("deka-jsx-modules-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("card.ds"), "interface Props { title: string } export fn Card(props: Props) { return <p>{props.title}</p>; }").unwrap();
+    std::fs::write(directory.join("app.ds"), "import { Card } from \"./card.ds\"; export fn App() { return <view><Card title=\"Imported\" /></view>; }").unwrap();
+    let p =
+        compiler::compile_file(&directory.join("app.ds"), &Hosts::default(), Some("App")).unwrap();
+    let session = ui::UiSession::new(p).unwrap();
+    assert_eq!(texts(session.tree()), ["Imported"]);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn component_boolean_and_callback_props_work_without_react() {
+    let source = r#"
+interface Props { active: boolean; fn onSelect() void }
+fn Choice(props: Props) {
+    return <button onClick={fn() { props.onSelect(); }}>{props.active ? "Selected" : "Idle"}</button>;
+}
+export fn App() {
+    let selected = false;
+    return <view><Choice active={selected} onSelect={fn() { selected = true; }} /><Choice active onSelect={fn() { selected = false; }} /></view>;
+}"#;
+    let mut session =
+        ui::UiSession::new(compiler::compile_entry(source, &Hosts::default(), "App").unwrap())
+            .unwrap();
+    assert_eq!(texts(session.tree()), ["Idle", "Selected"]);
+    session.click(0).unwrap();
+    assert_eq!(texts(session.tree()), ["Selected", "Selected"]);
+    session.click(1).unwrap();
+    assert_eq!(texts(session.tree()), ["Idle", "Selected"]);
+    for replacement in ["onSelect={42}", ""] {
+        let invalid = source.replace("onSelect={fn() { selected = true; }}", replacement);
+        let error = compiler::compile_entry(&invalid, &Hosts::default(), "App").unwrap_err();
+        assert!(
+            error.contains("expects type") || error.contains("missing required prop"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn default_slots_project_optional_children_without_wrapper_nodes() {
+    let source = r#"
+interface CardProps { title: string; children?: ReactNode }
+interface HeroProps { title: string }
+fn Hero(props: HeroProps) { return <p>{props.title}</p>; }
+fn Card(props: CardProps) { return <div><p>{props.title}</p><slot /></div>; }
+export fn App() {
+    return <view><Card title="Empty" /><Card title="Project"><Hero title="Testing" /></Card></view>;
+}"#;
+    let p = compiler::compile_entry(source, &Hosts::default(), "App").unwrap();
+    let session = ui::UiSession::new(p).unwrap();
+    assert_eq!(texts(session.tree()), ["Empty", "Project", "Testing"]);
+    assert_eq!(session.tree().children[1].children.len(), 2);
+}
+
+#[test]
+fn slots_work_without_props_parameters_and_keep_nested_state_alive() {
+    let source = r#"
+fn Counter() { let count = 0; return <button onClick={fn() { count += 1; }}>{count}</button>; }
+fn Frame() {
+    let visible = true;
+    return <div><button onClick={fn() { visible = visible == false; }}>Toggle</button>{visible ? <slot /> : None}</div>;
+}
+export fn App() { return <view><Frame><Counter /></Frame><Frame /></view>; }
+"#;
+    let mut session =
+        ui::UiSession::new(compiler::compile_entry(source, &Hosts::default(), "App").unwrap())
+            .unwrap();
+    assert_eq!(texts(session.tree()), ["Toggle", "0", "Toggle"]);
+    session.click(1).unwrap();
+    session.click(0).unwrap();
+    assert_eq!(texts(session.tree()), ["Toggle", "Toggle"]);
+    session.click(0).unwrap();
+    assert_eq!(texts(session.tree()), ["Toggle", "1", "Toggle"]);
+    for _ in 0..100 {
+        session.click(1).unwrap();
+    }
+    assert_eq!(texts(session.tree()), ["Toggle", "101", "Toggle"]);
+    assert!(session.stats().slots < 500, "{:?}", session.stats());
+}
+
+#[test]
+fn default_slot_does_not_silently_ignore_named_or_fallback_content() {
+    for slot in ["<slot name=\"hero\" />", "<slot><p>fallback</p></slot>"] {
+        let source = format!("export fn App() {{ return <view>{slot}</view>; }}");
+        assert!(
+            compiler::compile_entry(&source, &Hosts::default(), "App")
+                .unwrap_err()
+                .contains("default slot accepts no attributes or nested content")
+        );
+    }
+}
+
+#[test]
+fn component_props_carry_structs_enums_and_interface_values() {
+    let source = r##"
+interface Speaker { fn speak() string; }
+struct Dog {}
+struct Cat {}
+fn (d Dog) speak() string { return "woof"; }
+fn (c Cat) speak() string { return "meow"; }
+fn pick(dog: boolean) Speaker {
+    if (dog) { return Dog {}; }
+    return Cat {};
+}
+struct Person { name: string; }
+fn (p Person) greet() string { return "Hello, " + p.name; }
+enum Status { Ready, Busy }
+interface PetProps { pet: Speaker; owner: Person; status: Status }
+fn Pet(props: PetProps) {
+    return <div><p>{props.pet.speak()}</p><p>{props.owner.greet()}</p><p>{props.status.name}</p></div>;
+}
+struct Tag { title: string; }
+fn (t Tag) label() string { return "#" + t.title; }
+fn Badge(props: Tag) { return <p>{props.label()}</p>; }
+export fn App() {
+    let dog = true;
+    return (<view><Pet pet={pick(dog)} owner={Person { name: "Deka" }} status={dog ? Status.Ready : Status.Busy} />
+        <Badge title={dog ? "dog" : "cat"} />
+        <button onClick={fn() { dog = dog == false; }}>Swap</button></view>);
+}"##;
+    let mut session =
+        ui::UiSession::new(compiler::compile_entry(source, &Hosts::default(), "App").unwrap())
+            .unwrap();
+    assert_eq!(
+        texts(session.tree()),
+        ["woof", "Hello, Deka", "Ready", "#dog", "Swap"]
+    );
+    session.click(0).unwrap();
+    assert_eq!(
+        texts(session.tree()),
+        ["meow", "Hello, Deka", "Busy", "#cat", "Swap"]
+    );
+}

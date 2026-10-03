@@ -13,6 +13,11 @@ struct Frame {
     ip: usize,
     locals: Vec<Handle>,
     stack: Stack,
+    slot_children: Option<Handle>,
+    /// Set on a component-prop getter frame read as a call's callee
+    /// (`props.onSelect()`): on return, the getter's result is called with
+    /// these arguments instead of being handed to the caller.
+    then_call: Option<Vec<Handle>>,
 }
 enum Work {
     Code(Vec<Frame>),
@@ -63,7 +68,7 @@ impl Vm {
             instructions: 0,
             instruction_limit: 10_000_000,
         };
-        let frame = vm.frame(0, vec![], vec![])?;
+        let frame = vm.frame(0, vec![], vec![], None)?;
         vm.root = Some(vm.spawn(Work::Code(vec![frame])));
         Ok(vm)
     }
@@ -97,6 +102,8 @@ impl Vm {
                 for f in frames {
                     roots.extend(&f.locals);
                     roots.extend(f.stack.roots());
+                    roots.extend(f.slot_children);
+                    roots.extend(f.then_call.iter().flatten());
                 }
             }
         }
@@ -114,6 +121,7 @@ impl Vm {
         function: usize,
         captures: Vec<Handle>,
         args: Vec<Handle>,
+        slot_children: Option<Handle>,
     ) -> Result<Frame> {
         let f = self
             .program
@@ -139,6 +147,8 @@ impl Vm {
             ip: 0,
             locals,
             stack: Stack::new(),
+            slot_children,
+            then_call: None,
         })
     }
     pub(crate) fn to_host(&self, h: Handle) -> Result<HostValue> {
@@ -300,13 +310,18 @@ impl Vm {
     pub(crate) fn invoke_args(&mut self, closure: Handle, args: Vec<Handle>) -> Result<Handle> {
         // Each GUI event has its own bounded budget; cumulative instructions remain measurable.
         self.instruction_limit = self.instructions.saturating_add(10_000_000);
-        let Value::Closure { function, captures } = self.heap.get(closure)?.clone() else {
+        let Value::Closure {
+            function,
+            captures,
+            slot_children,
+        } = self.heap.get(closure)?.clone()
+        else {
             return Err("UI handler is not a closure".into());
         };
         if self.program.functions[function].asynchronous {
             return Err("async UI callbacks are not supported yet".into());
         }
-        let frame = self.frame(function, captures, args)?;
+        let frame = self.frame(function, captures, args, slot_children)?;
         self.root = Some(self.spawn(Work::Code(vec![frame])));
         self.finish_sync()
     }
@@ -486,17 +501,59 @@ impl Vm {
             }
             Op::Closure { function, captures } => {
                 let captures = captures.into_iter().map(|i| frame.locals[i]).collect();
-                frame
-                    .stack
-                    .push(self.heap.alloc(Value::Closure { function, captures }));
+                let slot_children = frame.slot_children;
+                frame.stack.push(self.heap.alloc(Value::Closure {
+                    function,
+                    captures,
+                    slot_children,
+                }));
+            }
+            Op::Slot => {
+                let children = frame
+                    .slot_children
+                    .unwrap_or_else(|| self.heap.alloc(Value::Unit));
+                frame.stack.push(children);
+            }
+            Op::ComponentCall => {
+                let props = pop(frame)?;
+                let Value::Closure {
+                    function, captures, ..
+                } = self.heap.get(pop(frame)?)?.clone()
+                else {
+                    return Err("component is not callable".into());
+                };
+                let slot_children = match self.heap.get(props)? {
+                    Value::Props(fields) => fields.get("children").copied(),
+                    _ => return Err("component call requires a props record".into()),
+                };
+                let target = &self.program.functions[function];
+                if target.asynchronous || target.parameters > 1 {
+                    return Err(
+                        "component must be synchronous with zero or one props parameter".into(),
+                    );
+                }
+                let args = if target.parameters == 0 {
+                    vec![]
+                } else {
+                    vec![props]
+                };
+                let next = self.frame(function, captures, args, slot_children)?;
+                if frames.len() >= 1024 {
+                    return Err("call stack limit exceeded".into());
+                }
+                frames.push(next);
             }
             Op::Call(argc) => {
                 let args = arguments(frame, argc)?;
-                let Value::Closure { function, captures } = self.heap.get(pop(frame)?)?.clone()
+                let Value::Closure {
+                    function,
+                    captures,
+                    slot_children,
+                } = self.heap.get(pop(frame)?)?.clone()
                 else {
                     return Err("value is not callable".into());
                 };
-                match self.invoke(function, captures, args)? {
+                match self.invoke(function, captures, args, slot_children)? {
                     Invocation::Task(h) => frame.stack.push(h),
                     Invocation::Frame(next) => {
                         if frames.len() >= 1024 {
@@ -509,6 +566,13 @@ impl Vm {
             Op::MethodCall { name, argc } => {
                 let args = arguments(frame, argc)?;
                 let receiver = pop(frame)?;
+                // Component props carry no attached methods: the member is a
+                // prop getter whose current value is the function to call.
+                if let Value::Props(fields) = self.heap.get(receiver)? {
+                    let value = *fields.get(name.as_str()).ok_or("missing field")?;
+                    self.read_prop(frames, Some(value), Some(args))?;
+                    return Ok(Step::Continue);
+                }
                 let Value::Record(fields) = self.heap.get(receiver)? else {
                     return Err("method call requires a record".into());
                 };
@@ -520,7 +584,12 @@ impl Vm {
                 } else {
                     return Err("missing field".into());
                 };
-                let Value::Closure { function, captures } = self.heap.get(callee)?.clone() else {
+                let Value::Closure {
+                    function,
+                    captures,
+                    slot_children,
+                } = self.heap.get(callee)?.clone()
+                else {
                     return Err("value is not callable".into());
                 };
                 let mut all = Vec::with_capacity(args.len() + 1);
@@ -528,7 +597,7 @@ impl Vm {
                     all.push(receiver);
                 }
                 all.extend(args);
-                match self.invoke(function, captures, all)? {
+                match self.invoke(function, captures, all, slot_children)? {
                     Invocation::Task(h) => frame.stack.push(h),
                     Invocation::Frame(next) => {
                         if frames.len() >= 1024 {
@@ -577,7 +646,11 @@ impl Vm {
             }
             Op::Return => {
                 let result = pop(frame)?;
-                frames.pop();
+                let finished = frames.pop().ok_or("empty call stack")?;
+                if let Some(args) = finished.then_call {
+                    self.call_value(frames, result, args)?;
+                    return Ok(Step::Continue);
+                }
                 if let Some(parent) = frames.last_mut() {
                     parent.stack.push(result);
                 } else {
@@ -612,6 +685,13 @@ impl Vm {
                 items.push(item);
                 frame.stack.push(self.heap.alloc(Value::List(items)));
             }
+            Op::Props(names) => {
+                let items = arguments(frame, names.len())?;
+                frame.stack.push(
+                    self.heap
+                        .alloc(Value::Props(names.into_iter().zip(items).collect())),
+                );
+            }
             Op::ListExtend => {
                 let source = pop(frame)?;
                 let target = pop(frame)?;
@@ -645,6 +725,11 @@ impl Vm {
             }
             Op::Field(name) => {
                 let h = pop(frame)?;
+                if let Value::Props(fields) = self.heap.get(h)? {
+                    let value = fields.get(&name).copied();
+                    self.read_prop(frames, value, None)?;
+                    return Ok(Step::Continue);
+                }
                 let value = match self.heap.get(h)? {
                     Value::List(items) if name == "length" => {
                         self.heap.alloc(Value::Number(items.len() as f64))
@@ -659,7 +744,14 @@ impl Vm {
             }
             Op::FieldOrSelf(name) => {
                 let h = pop(frame)?;
+                if let Value::Props(fields) = self.heap.get(h)?
+                    && let Some(value) = fields.get(&name).copied()
+                {
+                    self.read_prop(frames, Some(value), None)?;
+                    return Ok(Step::Continue);
+                }
                 let value = match self.heap.get(h)? {
+                    Value::Props(_) => h,
                     Value::Record(fields) => fields.get(&name).copied().unwrap_or(h),
                     _ => return Err("unsupported field access".into()),
                 };
@@ -739,12 +831,86 @@ impl Vm {
         function: usize,
         captures: Vec<Handle>,
         args: Vec<Handle>,
+        slot_children: Option<Handle>,
     ) -> Result<Invocation> {
-        let next = self.frame(function, captures, args)?;
+        let next = self.frame(function, captures, args, slot_children)?;
         if self.program.functions[function].asynchronous {
             Ok(Invocation::Task(self.spawn(Work::Code(vec![next]))))
         } else {
             Ok(Invocation::Frame(next))
+        }
+    }
+    /// Call `callee` with `args` on behalf of the frame on top of `frames`:
+    /// enter its frame, or push the spawned task's promise for an async one.
+    fn call_value(
+        &mut self,
+        frames: &mut Vec<Frame>,
+        callee: Handle,
+        args: Vec<Handle>,
+    ) -> Result<()> {
+        let Value::Closure {
+            function,
+            captures,
+            slot_children,
+        } = self.heap.get(callee)?.clone()
+        else {
+            return Err("value is not callable".into());
+        };
+        match self.invoke(function, captures, args, slot_children)? {
+            Invocation::Task(h) => frames.last_mut().ok_or("empty call stack")?.stack.push(h),
+            Invocation::Frame(next) => {
+                if frames.len() >= 1024 {
+                    return Err("call stack limit exceeded".into());
+                }
+                frames.push(next);
+            }
+        }
+        Ok(())
+    }
+    /// Read one component prop for the frame on top of `frames`. An attribute
+    /// is a getter closure, run on every read so the child sees the parent's
+    /// current state; nested children are a retained list; an absent optional
+    /// prop reads as unit. With `then_call`, the prop's value is then called
+    /// with those arguments (a callback prop used as `props.onSelect()`).
+    fn read_prop(
+        &mut self,
+        frames: &mut Vec<Frame>,
+        value: Option<Handle>,
+        then_call: Option<Vec<Handle>>,
+    ) -> Result<()> {
+        let Some(value) = value else {
+            let unit = self.heap.alloc(Value::Unit);
+            frames
+                .last_mut()
+                .ok_or("empty call stack")?
+                .stack
+                .push(unit);
+            return Ok(());
+        };
+        if let Value::Closure {
+            function,
+            captures,
+            slot_children,
+        } = self.heap.get(value)?.clone()
+        {
+            let mut getter = self.frame(function, captures, vec![], slot_children)?;
+            getter.then_call = then_call;
+            if frames.len() >= 1024 {
+                return Err("call stack limit exceeded".into());
+            }
+            frames.push(getter);
+            return Ok(());
+        }
+        match then_call {
+            Some(args) => self.call_value(frames, value, args),
+            None => {
+                frames
+                    .last_mut()
+                    .ok_or("empty call stack")?
+                    .stack
+                    .push(value);
+                Ok(())
+            }
         }
     }
     fn list_mut(&mut self, frame: &mut Frame, kind: &ListMut) -> Result<()> {

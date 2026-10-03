@@ -1062,6 +1062,12 @@ impl Context {
         }
     }
 }
+/// What a lowered closure runs: a statement body (falling off the end
+/// returns unit) or a single returned expression.
+enum ClosureBody<'s, 'a> {
+    Block(&'s [Stmt<'a>]),
+    Value(&'s Expr<'a>),
+}
 /// A struct declaration's fields in declaration order: name, default
 /// expression, and whether the field is optional.
 type StructFields<'a> = Vec<(String, Option<&'a Expr<'a>>, bool)>;
@@ -1145,6 +1151,23 @@ impl<'a> Lower<'a> {
         asynchronous: bool,
         outer: &mut Context,
     ) -> Result<()> {
+        self.closure(name, params, ClosureBody::Block(body), asynchronous, outer)
+    }
+    /// A synchronous zero-parameter closure returning `value`: markup
+    /// bindings, component prop getters and dynamic UI attributes. The
+    /// expression is lowered in place, never copied, because the typechecker
+    /// keys receiver-method call sites by expression address.
+    fn thunk(&mut self, name: &str, value: &Expr<'a>, outer: &mut Context) -> Result<()> {
+        self.closure(name, &[], ClosureBody::Value(value), false, outer)
+    }
+    fn closure(
+        &mut self,
+        name: &str,
+        params: &[Param<'a>],
+        body: ClosureBody<'_, 'a>,
+        asynchronous: bool,
+        outer: &mut Context,
+    ) -> Result<()> {
         let mut c = Context::new(name, asynchronous);
         let mut captures = vec![];
         for (name, slot) in &outer.names {
@@ -1194,10 +1217,15 @@ impl<'a> Lower<'a> {
         }
         let index = self.functions.len();
         self.functions.push(c.function.clone());
-        for s in body {
-            self.statement(s, &mut c)?;
+        match body {
+            ClosureBody::Block(body) => {
+                for s in body {
+                    self.statement(s, &mut c)?;
+                }
+                c.emit(Op::Const(Literal::Unit));
+            }
+            ClosureBody::Value(value) => self.expr(value, &mut c)?,
         }
-        c.emit(Op::Const(Literal::Unit));
         c.emit(Op::Return);
         self.functions[index] = c.function;
         outer.emit(Op::Closure {
@@ -1498,9 +1526,78 @@ impl<'a> Lower<'a> {
         }
         Ok(())
     }
+    fn jsx_children(&mut self, values: &[Expr<'a>], c: &mut Context) -> Result<usize> {
+        let mut children = 0;
+        for child in values {
+            match child {
+                Expr::JsxText { value, .. } => {
+                    let mut text = value.split_whitespace().collect::<Vec<_>>().join(" ");
+                    if text.is_empty() {
+                        continue;
+                    }
+                    // Preserve inline separation around expressions, but not
+                    // indentation from multiline markup.
+                    if !value.contains('\n') {
+                        if value.starts_with(char::is_whitespace) {
+                            text.insert(0, ' ');
+                        }
+                        if value.ends_with(char::is_whitespace) {
+                            text.push(' ');
+                        }
+                    }
+                    c.emit(Op::Const(Literal::String(text)));
+                }
+                Expr::JsxElement { .. } => self.expr(child, c)?,
+                _ => self.thunk("<ui binding>", child, c)?,
+            }
+            children += 1;
+        }
+        Ok(children)
+    }
     fn expr(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
         match e {
             Expr::JsxElement { element, .. } => {
+                if element.tag == "slot" {
+                    if !element.attributes.is_empty() || element.children.iter().any(|child| {
+                        !matches!(child, Expr::JsxText { value, .. } if value.trim().is_empty())
+                    }) {
+                        return Err("default slot accepts no attributes or nested content".into());
+                    }
+                    c.emit(Op::Slot);
+                    return Ok(());
+                }
+                if element.tag.chars().next().is_some_and(char::is_uppercase) {
+                    // A component imported across an import cycle reads
+                    // through the same checked load as any other binding.
+                    c.emit_load(element.tag)?;
+                    let mut names = vec![];
+                    for attr in element.attributes {
+                        match &attr.value {
+                            Some(value) => self.thunk("<component prop>", value, c)?,
+                            // A bare attribute means `true`.
+                            None => self.thunk(
+                                "<component prop>",
+                                &Expr::Boolean {
+                                    value: true,
+                                    span: attr.span,
+                                },
+                                c,
+                            )?,
+                        }
+                        names.push(attr.name.into());
+                    }
+                    if !element.children.is_empty() {
+                        if names.iter().any(|name| name == "children") {
+                            return Err("component children cannot be supplied both as a prop and nested markup".into());
+                        }
+                        let children = self.jsx_children(element.children, c)?;
+                        c.emit(Op::List(children));
+                        names.push("children".into());
+                    }
+                    c.emit(Op::Props(names));
+                    c.emit(Op::ComponentCall);
+                    return Ok(());
+                }
                 if !matches!(
                     element.tag,
                     "view" | "div" | "p" | "span" | "button" | "input"
@@ -1534,47 +1631,13 @@ impl<'a> Lower<'a> {
                     if matches!(attr.name, "className" | "value" | "placeholder")
                         && !matches!(value, Expr::String { .. })
                     {
-                        let body = [Stmt::Return {
-                            value: Some(value.clone()),
-                            span: value.span(),
-                        }];
-                        self.function("<ui attribute>", &[], &body, false, c)?;
+                        self.thunk("<ui attribute>", value, c)?;
                     } else {
                         self.expr(value, c)?;
                     }
                     names.push(attr.name.into());
                 }
-                let mut children = 0;
-                for child in element.children {
-                    match child {
-                        Expr::JsxText { value, .. } => {
-                            let mut text = value.split_whitespace().collect::<Vec<_>>().join(" ");
-                            if text.is_empty() {
-                                continue;
-                            }
-                            // Preserve inline separation around expressions, but not
-                            // indentation from multiline markup.
-                            if !value.contains('\n') {
-                                if value.starts_with(char::is_whitespace) {
-                                    text.insert(0, ' ');
-                                }
-                                if value.ends_with(char::is_whitespace) {
-                                    text.push(' ');
-                                }
-                            }
-                            c.emit(Op::Const(Literal::String(text)));
-                        }
-                        Expr::JsxElement { .. } => self.expr(child, c)?,
-                        _ => {
-                            let body = [Stmt::Return {
-                                value: Some(child.clone()),
-                                span: child.span(),
-                            }];
-                            self.function("<ui binding>", &[], &body, false, c)?;
-                        }
-                    }
-                    children += 1;
-                }
+                let children = self.jsx_children(element.children, c)?;
                 c.emit(Op::List(children));
                 names.push("children".into());
                 c.emit(Op::Record(names));
