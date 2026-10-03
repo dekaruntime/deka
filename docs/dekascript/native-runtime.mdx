@@ -380,8 +380,7 @@ are rejected.
 
 The package must declare the requested name/version and provide a `.ds` or
 `.dsx` entry. Imports use its package name as described above. This initial
-native command supports packages without dependencies of their own; packages
-declaring transitive dependencies are rejected explicitly.
+native command installs packages and their own dependencies using exact pins.
 
 `deka install` restores exactly the packages pinned in `deka.lock`, using their
 recorded tarball URLs without selecting new versions. It replaces stale files
@@ -397,3 +396,9 @@ for a first download.
 
 Package commands accept `--directory <project>` to select a project explicitly;
 otherwise they use the current directory.
+
+Package archives are checked before promotion: JavaScript, WASM, Rust source/artifacts, native executables, shared libraries and native object/archive files are refused with the offending path. WASM and native binary signatures are checked even when the file is renamed. DekaScript source, metadata and ordinary assets remain supported.
+
+A package’s own exact-pin dependencies are downloaded into the same flat `ds_modules` tree and recorded with their edges, URLs and hashes in `deka.lock`. Shared dependencies and cycles are resolved once; conflicting pins fail explicitly. Add stages the complete reachable dependency graph before replacing it. Install replays the locked graph without registry version selection and checks that each archive’s dependency declarations agree with the lock. Imports inside a package use that package’s declarations; root imports still require a root `deka.json` declaration.
+
+Package commands return a nonzero status for unknown packages or versions, download failures, checksum mismatches and non-DekaScript archives. Archive errors include the package/version and offending file where available, so a failed transitive package is identifiable. These errors preserve the previous installation and project/lock bytes.
