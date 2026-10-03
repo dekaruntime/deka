@@ -310,7 +310,10 @@ flow-control-match-unclosed-fail
 flow-control-nested-for-of-break
 flow-control-return-early-from-loop
 flow-control-return-type-mismatch-in-if-fail
+flow-control-unwrap-at-module-top-level
 flow-control-unwrap-non-option-fail
+flow-control-unwrap-or-block
+flow-control-unwrap-or-match
 flow-control-unwrap-or-match-non-exhaustive-fail
 flow-control-unwrap-or-match-on-option-fail
 flow-control-unwrap-without-or-fail
@@ -670,6 +673,7 @@ types-struct-returned-as-number
 types-struct-unknown-field-access
 types-type-alias-rejected
 types-typed-function-params
+types-unconstrained-type-var
 types-unconstrained-var-still-checks-fail
 types-union-fail-function-member
 types-union-fail-member-access

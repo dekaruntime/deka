@@ -248,3 +248,38 @@ cases in the diagnostic. Native type patterns for scalar, struct and enum union
 members use their actual runtime type or nominal brand. A failed case predicate
 is false, including when the runtime value has another kind. Bytes and host
 error class patterns require their corresponding host value support.
+
+## Unwrapping with a fallback
+
+An unwrap binding extracts the payload of `Some` or `Ok`. Its `or` alternative
+runs only for `None` or `Err`. The subject is evaluated once.
+
+```tsx
+fn label(value: Option<string>) string {
+    const text = unwrap(value) or { return "unavailable"; }
+    return "got: " + text;
+}
+// label(Some("yes")) is "got: yes"; label(None) is "unavailable".
+```
+
+A trailing expression in `or { ... }` supplies the binding's value. Otherwise,
+the block must leave the enclosing function on every path. A `return` stays in
+that function; the fallback does not create a separate closure. The checker
+rejects empty alternatives and incompatible fallback types. Local names in the
+alternative stay local, and `const`/`let` retain their normal mutation rules.
+
+For a Result, `or match` can use the error payload:
+
+```tsx
+fn label(value: Result<string, string>) string {
+    const text = unwrap(value) or match { Err(e) => "failed: " + e };
+    return text;
+}
+```
+
+The implicit success arm supplies the `Ok` payload. The checker requires the
+remaining failure cases to be covered. For Option, use `or { ... }`; there is no
+error payload for `or match` to inspect. Module-level unwrap bindings execute in
+source order and are available to functions like other bindings. Existing
+`safe { expression }` wrappers preserve the expression, and logical `||` keeps
+its normal short-circuit behavior; neither substitutes for unwrap or match.

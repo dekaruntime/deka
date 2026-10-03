@@ -454,9 +454,10 @@ fn lower_module<'a>(
             );
         }
         let declared = match stmt {
-            Stmt::Const { name, .. } | Stmt::Let { name, .. } | Stmt::Function { name, .. } => {
-                Some(*name)
-            }
+            Stmt::Const { name, .. }
+            | Stmt::Let { name, .. }
+            | Stmt::UnwrapLet { name, .. }
+            | Stmt::Function { name, .. } => Some(*name),
             Stmt::Export {
                 decl: ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. },
                 ..
@@ -1553,6 +1554,14 @@ impl<'a> Lower<'a> {
         self.expr(scrutinee, c)?;
         let value = c.bind(&format!("<match value {}>", c.function.locals));
         c.emit(Op::Store(value));
+        self.match_arms(value, arms, c)?;
+        c.names = outer;
+        c.checked = outer_checked;
+        Ok(())
+    }
+    fn match_arms(&mut self, value: usize, arms: &[MatchArm<'a>], c: &mut Context) -> Result<()> {
+        let outer = c.names.clone();
+        let outer_checked = c.checked.clone();
         let mut done = vec![];
         for arm in arms {
             c.names = outer.clone();
@@ -1584,6 +1593,63 @@ impl<'a> Lower<'a> {
         }
         c.names = outer;
         c.checked = outer_checked;
+        Ok(())
+    }
+    fn unwrap_binding(
+        &mut self,
+        name: &str,
+        scrutinee: &Expr<'a>,
+        alternative: &UnwrapAlternative<'a>,
+        c: &mut Context,
+    ) -> Result<()> {
+        let outer = c.names.clone();
+        let outer_checked = c.checked.clone();
+        self.expr(scrutinee, c)?;
+        let value = c.bind(&format!("<unwrap value {}>", c.function.locals));
+        c.emit(Op::Store(value));
+        c.emit(Op::Load(value));
+        c.emit(Op::MatchEnum {
+            name: Some("Option".into()),
+            case: "Some".into(),
+        });
+        let result = c.emit(Op::JumpIfFalse(0));
+        let some = c.emit(Op::Jump(0));
+        c.patch(result);
+        c.emit(Op::Load(value));
+        c.emit(Op::MatchEnum {
+            name: Some("Result".into()),
+            case: "Ok".into(),
+        });
+        let absent = c.emit(Op::JumpIfFalse(0));
+        c.patch(some);
+        c.emit(Op::Load(value));
+        c.emit(Op::Field("value".into()));
+        let done = c.emit(Op::Jump(0));
+        c.patch(absent);
+        match alternative {
+            UnwrapAlternative::Block(body) => {
+                for (i, statement) in body.iter().enumerate() {
+                    if i + 1 == body.len()
+                        && let Stmt::Expr { expr, .. } = statement
+                    {
+                        self.expr(expr, c)?;
+                    } else {
+                        self.statement(statement, c)?;
+                    }
+                }
+                // Non-value alternatives must exit on every path, verified
+                // by the checker. Returns are emitted in this same frame.
+            }
+            UnwrapAlternative::Match(arms) => self.match_arms(value, arms, c)?,
+        }
+        c.patch(done);
+        c.names = outer;
+        c.checked = outer_checked;
+        let slot = c.bind(name);
+        if !c.loops.is_empty() {
+            c.emit(Op::Rebind(slot));
+        }
+        c.emit(Op::Store(slot));
         Ok(())
     }
     fn statement(&mut self, s: &Stmt<'a>, c: &mut Context) -> Result<()> {
@@ -1622,6 +1688,12 @@ impl<'a> Lower<'a> {
                 }
                 c.emit(Op::Store(slot));
             }
+            Stmt::UnwrapLet {
+                name,
+                scrutinee,
+                alternative,
+                ..
+            } => self.unwrap_binding(name, scrutinee, alternative, c)?,
             Stmt::Function {
                 name,
                 params,
@@ -1979,7 +2051,7 @@ impl<'a> Lower<'a> {
             Expr::Identifier { name, .. } => {
                 c.emit_load(name)?;
             }
-            Expr::Paren { expr, .. } => self.expr(expr, c)?,
+            Expr::Paren { expr, .. } | Expr::Safe { expr, .. } => self.expr(expr, c)?,
             Expr::Binary {
                 left, op, right, ..
             } => {
