@@ -32,7 +32,6 @@ fn setup() -> (
             vec![HostType::Callback],
             HostType::Unit,
             false,
-            None,
             move |args| {
                 let HostValue::Callback(callback) = &args[0] else {
                     unreachable!()
@@ -50,7 +49,6 @@ fn setup() -> (
             vec![],
             HostType::Unit,
             true,
-            None,
             move |_| {
                 let receive = receive.borrow_mut().take().unwrap();
                 HostReply::Pending(Box::pin(async move {
@@ -169,7 +167,6 @@ fn host_values_cannot_return_a_callback_owned_by_another_vm() {
             vec![],
             HostType::Callback,
             false,
-            None,
             move |_| {
                 HostReply::Ready(Ok(HostValue::Callback(
                     held.borrow().as_ref().unwrap().clone(),

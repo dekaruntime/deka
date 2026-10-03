@@ -19,7 +19,6 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
         vec![HostType::Number],
         HostType::Unit,
         true,
-        None,
         |args| {
             let HostValue::Number(ms) = args[0] else {
                 unreachable!()

@@ -45,7 +45,6 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
                 vec![HostType::Callback, HostType::Number],
                 HostType::Number,
                 false,
-                None,
                 move |context, args| {
                     let [HostValue::Callback(callback), HostValue::Number(ms)] = args.as_slice()
                     else {
@@ -80,7 +79,6 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
                 vec![HostType::Number],
                 HostType::Unit,
                 false,
-                None,
                 |context, args| {
                     let HostValue::Number(id) = args[0] else {
                         unreachable!()

@@ -92,7 +92,6 @@ pub(crate) fn hosts() -> Result<Hosts> {
             vec![HostType::String],
             HostType::Unit,
             false,
-            None,
             move |args| {
                 let HostValue::String(value) = &args[0] else {
                     unreachable!()
@@ -111,7 +110,6 @@ pub(crate) fn hosts() -> Result<Hosts> {
         vec![HostType::Bool],
         HostType::Unit,
         false,
-        None,
         |args| {
             if args[0] == HostValue::Bool(true) {
                 HostReply::Ready(Ok(HostValue::Unit))

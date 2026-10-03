@@ -82,7 +82,6 @@ async fn console_and_echo_use_the_same_nominal_printer() {
             vec![HostType::String],
             HostType::Unit,
             false,
-            None,
             move |args| {
                 let HostValue::String(text) = &args[0] else {
                     panic!("text output required")

@@ -4,14 +4,9 @@ fn hosts() -> Hosts {
     let mut hosts = Hosts::default();
     text_codec::register(&mut hosts).unwrap();
     hosts
-        .register(HostOp::new(
-            "raw",
-            vec![],
-            HostType::Bytes,
-            false,
-            None,
-            |_| HostReply::Ready(Ok(HostValue::Bytes(vec![0xe2, 0x82, 0xac, 0xff]))),
-        ))
+        .register(HostOp::new("raw", vec![], HostType::Bytes, false, |_| {
+            HostReply::Ready(Ok(HostValue::Bytes(vec![0xe2, 0x82, 0xac, 0xff])))
+        }))
         .unwrap();
     hosts
 }
@@ -68,7 +63,6 @@ async fn streaming_aliases_retain_decoder_state_and_final_decode_resets_it() {
                 vec![],
                 HostType::Bytes,
                 false,
-                None,
                 move |_| HostReply::Ready(Ok(HostValue::Bytes(bytes.clone()))),
             ))
             .unwrap();
@@ -168,7 +162,6 @@ async fn host_methods_retain_aliases_then_release_the_rust_resource() {
                 vec![],
                 HostType::Handle("Resource".into()),
                 false,
-                None,
                 move |_| {
                     HostReply::Ready(Ok(HostValue::Handle(HostHandle::new(
                         "Resource",
@@ -186,7 +179,6 @@ async fn host_methods_retain_aliases_then_release_the_rust_resource() {
                 vec![HostType::Handle("Resource".into())],
                 HostType::Bool,
                 false,
-                None,
                 |args| {
                     let HostValue::Handle(handle) = &args[0] else {
                         unreachable!()

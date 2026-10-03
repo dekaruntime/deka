@@ -9,17 +9,11 @@ async fn main() {
 async fn run() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
     if args.len() < 2 {
-        return Err(
-            "usage: dvm program.dvm.json [--grant-timer] (with compiler feature: source.ds)".into(),
-        );
+        return Err("usage: dvm program.dvm.json (with compiler feature: source.ds)".into());
     }
-    let (mut hosts, output) = demo::hosts()?;
-    for arg in &args[2..] {
-        if arg == "--grant-timer" {
-            hosts.grant("timer");
-        } else {
-            return Err(format!("unknown argument: {arg}"));
-        }
+    let (hosts, output) = demo::hosts()?;
+    if let Some(arg) = args.get(2) {
+        return Err(format!("unknown argument: {arg}"));
     }
     let source = std::fs::read_to_string(&args[1]).map_err(|e| e.to_string())?;
     let program: Program = if args[1].ends_with(".ds") {

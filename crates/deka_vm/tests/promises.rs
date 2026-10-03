@@ -63,7 +63,6 @@ fn gated(source: &str) -> (Vm, Vec<tokio::sync::oneshot::Sender<String>>) {
             vec![HostType::Number],
             HostType::String,
             true,
-            None,
             move |args| {
                 let HostValue::Number(index) = args[0] else {
                     unreachable!()

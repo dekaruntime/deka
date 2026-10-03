@@ -14,8 +14,7 @@ fn vm(source: &str, hosts: Hosts) -> Vm {
 }
 #[tokio::test]
 async fn source_calls_rust_and_closure_survives_return_and_await() {
-    let (mut hosts, output) = demo::hosts().unwrap();
-    hosts.grant("timer");
+    let (hosts, output) = demo::hosts().unwrap();
     let mut vm = vm(include_str!("../examples/host.ds"), hosts);
     let wake = waker();
     let mut cx = Context::from_waker(&wake);
@@ -42,7 +41,6 @@ async fn awaiting_one_task_does_not_block_another() {
             vec![],
             HostType::String,
             true,
-            None,
             move |_| {
                 let receive = receiver.borrow_mut().take().unwrap();
                 HostReply::Pending(Box::pin(async move {
@@ -123,22 +121,6 @@ fn invalid_or_unsupported_source_is_rejected() {
         );
     }
 }
-#[tokio::test]
-async fn denied_capability_never_invokes_host() {
-    let (hosts, _) = demo::hosts().unwrap();
-    let mut vm = vm(
-        "import {delay} from \"vm:host\"; async fn main() Promise<string> {return await delay(1,\"bad\");}",
-        hosts,
-    );
-    assert!(
-        vm.run()
-            .await
-            .unwrap_err()
-            .contains("permission denied: timer")
-    );
-    assert_eq!(vm.stats().live, 0);
-    assert_eq!(vm.pending_tasks(), 0);
-}
 struct Pending {
     dropped: Rc<Cell<usize>>,
 }
@@ -164,7 +146,6 @@ fn cancellation_drops_pending_future_and_all_vm_roots() {
             vec![HostType::String],
             HostType::String,
             true,
-            None,
             move |_| {
                 HostReply::Pending(Box::pin(Pending {
                     dropped: capture.clone(),
@@ -192,19 +173,12 @@ fn cancellation_drops_pending_future_and_all_vm_roots() {
 async fn asynchronous_failure_is_reported_and_scope_is_cleaned() {
     let mut hosts = Hosts::default();
     hosts
-        .register(HostOp::new(
-            "fail",
-            vec![],
-            HostType::String,
-            true,
-            None,
-            |_| {
-                HostReply::Pending(Box::pin(async {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                    Err("host failure".into())
-                }))
-            },
-        ))
+        .register(HostOp::new("fail", vec![], HostType::String, true, |_| {
+            HostReply::Pending(Box::pin(async {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                Err("host failure".into())
+            }))
+        }))
         .unwrap();
     let mut vm = vm(
         "import {fail} from \"vm:host\";async fn main() Promise<string> {return await fail();}",
@@ -218,14 +192,9 @@ async fn asynchronous_failure_is_reported_and_scope_is_cleaned() {
 async fn host_result_is_validated_at_runtime() {
     let mut hosts = Hosts::default();
     hosts
-        .register(HostOp::new(
-            "bad",
-            vec![],
-            HostType::Number,
-            false,
-            None,
-            |_| HostReply::Ready(Ok(HostValue::String("bad".into()))),
-        ))
+        .register(HostOp::new("bad", vec![], HostType::Number, false, |_| {
+            HostReply::Ready(Ok(HostValue::String("bad".into())))
+        }))
         .unwrap();
     let mut vm = vm(
         "import {bad} from \"vm:host\";fn main() number {return bad();}",

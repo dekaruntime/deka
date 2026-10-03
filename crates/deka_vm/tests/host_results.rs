@@ -10,7 +10,7 @@ fn host(reply: impl Fn(Vec<HostValue>) -> HostReply + 'static, asynchronous: boo
     let mut hosts = Hosts::default();
     hosts
         .register(
-            HostOp::new("read", vec![], HostType::String, asynchronous, None, reply)
+            HostOp::new("read", vec![], HostType::String, asynchronous, reply)
                 .with_result_channel(),
         )
         .unwrap();
@@ -132,7 +132,7 @@ async fn synchronous_result_outputs_are_data_too() {
 }
 
 #[tokio::test]
-async fn wrong_wire_types_and_missing_capabilities_remain_vm_faults() {
+async fn wrong_wire_types_remain_vm_faults() {
     let source = r#"
         import { read } from "vm:host"
         async fn main() Promise<string> {
@@ -149,24 +149,6 @@ async fn wrong_wire_types_and_missing_capabilities_remain_vm_faults() {
         .unwrap_err(),
         "host returned the wrong result type"
     );
-    let mut hosts = Hosts::default();
-    hosts
-        .register(
-            HostOp::new(
-                "read",
-                vec![],
-                HostType::String,
-                true,
-                Some("network"),
-                |_| panic!("denied handler must never be called"),
-            )
-            .with_result_channel(),
-        )
-        .unwrap();
-    assert_eq!(
-        execute(source, hosts).await.unwrap_err(),
-        "permission denied: network"
-    );
 }
 
 #[tokio::test]
@@ -174,7 +156,7 @@ async fn unit_payloads_remain_distinct_from_host_failures() {
     let mut hosts = Hosts::default();
     hosts
         .register(
-            HostOp::new("complete", vec![], HostType::Unit, true, None, |_| {
+            HostOp::new("complete", vec![], HostType::Unit, true, |_| {
                 HostReply::Ready(Ok(HostValue::Unit))
             })
             .with_result_channel(),
@@ -207,7 +189,6 @@ fn registry_declarations_are_valid_and_the_checker_guards_result_payloads() {
                         vec![],
                         ty.clone(),
                         asynchronous,
-                        None,
                         |_| unreachable!(),
                     )
                     .with_result_channel(),

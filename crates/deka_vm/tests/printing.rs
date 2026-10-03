@@ -12,7 +12,6 @@ async fn output(source: &str) -> Vec<String> {
             vec![HostType::String],
             HostType::Unit,
             false,
-            None,
             move |args| {
                 let HostValue::String(text) = &args[0] else {
                     panic!("output must be text")

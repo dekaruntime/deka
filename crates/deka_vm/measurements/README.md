@@ -56,5 +56,5 @@ cargo build --locked --release --manifest-path crates/deka_vm/Cargo.toml --no-de
 ```
 
 Restore `--features compiler,host` to run `.ds` files directly again. To sample idle RSS,
-compile `examples/idle.ds` similarly, run its bytecode with `--grant-timer`, and
+compile `examples/idle.ds` similarly, run its bytecode directly, and
 sample that specific process while it waits. No shared processes need stopping.

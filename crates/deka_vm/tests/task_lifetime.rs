@@ -57,14 +57,9 @@ fn hosts(gates: &[(&str, Rc<Gate>)]) -> (Hosts, Rc<RefCell<Vec<String>>>) {
     for (name, gate) in gates {
         let gate = gate.clone();
         hosts
-            .register(HostOp::new(
-                name,
-                vec![],
-                HostType::Unit,
-                true,
-                None,
-                move |_| HostReply::Pending(Box::pin(Wait(gate.clone()))),
-            ))
+            .register(HostOp::new(name, vec![], HostType::Unit, true, move |_| {
+                HostReply::Pending(Box::pin(Wait(gate.clone())))
+            }))
             .unwrap();
     }
     let output = Rc::new(RefCell::new(vec![]));
@@ -75,7 +70,6 @@ fn hosts(gates: &[(&str, Rc<Gate>)]) -> (Hosts, Rc<RefCell<Vec<String>>>) {
             vec![HostType::String],
             HostType::Unit,
             false,
-            None,
             move |args| {
                 let HostValue::String(value) = &args[0] else {
                     unreachable!()
