@@ -52,18 +52,9 @@ that identity; showing a new node at the old position gives it a fresh identity.
 Desktop and browser presentation snapshots use the same retained store. These
 internal identities are separate from author-supplied attributes.
 
-Static siblings keep their identities when an earlier conditional contributes no
-child. Dynamic list positions remain positional; keyed list reconciliation and
-public node access are not implemented.
+[Binding patches and structural slots](native/binding-patches.mdx) explains
+selective reevaluation, retained identity, and last-authored property ownership.
 
-Bindings observe the cells, record fields, list indices and lengths they read.
-An unrelated update does not execute that binding again. Branch changes refresh
-its dependencies. A binding patches only its own changed property. Rust stores
-the last authored value separately from the effective value: a direct edit stays
-until that binding computes a different authored value. Public source-level
-imperative editing follows in later work. Getters must remain synchronous;
-getters that call host operations or mutate existing state conservatively
-reevaluate rather than cache external effects.
 Successful source edits restart state. Compilation or initial
 render errors keep the last working application.
 
