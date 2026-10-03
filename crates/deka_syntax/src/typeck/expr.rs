@@ -5297,6 +5297,15 @@ impl<'a> Checker<'a> {
                             Type::Named {
                                 name: "number" | "boolean",
                             } => (Some(super::types::UnwrapKind::WidenToString), ret),
+                            Type::Struct { .. } if self.is_printable(&arg_type, span) => {
+                                (Some(super::types::UnwrapKind::WidenToString), ret)
+                            }
+                            Type::Generic { base, .. }
+                                if self.structs.contains_key(base)
+                                    && self.is_printable(&arg_type, span) =>
+                            {
+                                (Some(super::types::UnwrapKind::WidenToString), ret)
+                            }
                             // Rejected, not widened: `String(undefined)` is
                             // "undefined", `String({})` is "[object Object]" —
                             // total but silently wrong. Ask for an annotation

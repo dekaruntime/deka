@@ -12,11 +12,12 @@ pub(crate) struct Handle {
 pub(crate) enum Value {
     Unit,
     Uninitialized,
+    Descriptor(crate::TypeDescriptor),
     Number(f64),
     Bool(bool),
     String(String),
     List(Vec<Handle>),
-    Record(BTreeMap<String, Handle>),
+    Record(Record),
     // Component attributes are getters; nested children are retained values.
     Props(BTreeMap<String, Handle>),
     Cell(Handle),
@@ -26,6 +27,39 @@ pub(crate) enum Value {
         slot_children: Option<Handle>,
     },
     Promise(Option<Result<Handle>>),
+}
+/// Ordinary records and nominal structs share field storage. Struct identity
+/// and embed names come from bytecode, never from the shape of user data.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Record {
+    pub fields: BTreeMap<String, Handle>,
+    pub struct_name: Option<String>,
+    pub enum_name: Option<String>,
+    pub order: Vec<String>,
+    pub embeds: Vec<String>,
+}
+impl std::ops::Deref for Record {
+    type Target = BTreeMap<String, Handle>;
+    fn deref(&self) -> &Self::Target {
+        &self.fields
+    }
+}
+impl std::ops::DerefMut for Record {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.fields
+    }
+}
+impl FromIterator<(String, Handle)> for Record {
+    fn from_iter<T: IntoIterator<Item = (String, Handle)>>(iter: T) -> Self {
+        let mut record = Self::default();
+        for (name, value) in iter {
+            if !record.fields.contains_key(&name) {
+                record.order.push(name.clone());
+            }
+            record.fields.insert(name, value);
+        }
+        record
+    }
 }
 impl From<Literal> for Value {
     fn from(v: Literal) -> Self {
@@ -42,6 +76,7 @@ struct Slot {
     value: Option<Value>,
     generation: u64,
     marked: bool,
+    newtype: Option<String>,
 }
 #[derive(Default)]
 pub(crate) struct Heap {
@@ -62,12 +97,14 @@ impl Heap {
         self.allocations += 1;
         let index = if let Some(i) = self.free.pop() {
             self.slots[i].value = Some(value);
+            self.slots[i].newtype = None;
             i
         } else {
             self.slots.push(Slot {
                 value: Some(value),
                 generation: 0,
                 marked: false,
+                newtype: None,
             });
             self.slots.len() - 1
         };
@@ -75,6 +112,15 @@ impl Heap {
             index,
             generation: self.slots[index].generation,
         }
+    }
+    pub fn alloc_newtype(&mut self, value: Value, name: String) -> Handle {
+        let h = self.alloc(value);
+        self.slots[h.index].newtype = Some(name);
+        h
+    }
+    pub fn newtype_name(&self, h: Handle) -> Result<Option<&str>> {
+        self.get(h)?;
+        Ok(self.slots[h.index].newtype.as_deref())
     }
     pub fn get(&self, h: Handle) -> Result<&Value> {
         self.slots
@@ -123,13 +169,15 @@ impl Heap {
                     todo.extend(captures);
                     todo.extend(slot_children);
                 }
-                Value::Record(fields) | Value::Props(fields) => todo.extend(fields.values()),
+                Value::Record(fields) => todo.extend(fields.values()),
+                Value::Props(fields) => todo.extend(fields.values()),
                 _ => {}
             }
         }
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if slot.value.is_some() && !slot.marked {
                 slot.value = None;
+                slot.newtype = None;
                 slot.generation = slot
                     .generation
                     .checked_add(1)

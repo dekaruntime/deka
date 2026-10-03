@@ -368,6 +368,25 @@ fn lower_module<'a>(
     lower.enums.clear();
     lower.method_decls.clear();
     lower.struct_embeds.clear();
+    lower.type_of_calls = checked.type_of_calls.iter().map(|p| *p as usize).collect();
+    lower.signature_calls = checked
+        .signature_calls
+        .iter()
+        .map(|(p, tree)| (*p as usize, descriptor_summary(tree)))
+        .collect();
+    lower.newtype_results = checked
+        .operator_rewrites
+        .iter()
+        .filter_map(|(p, op)| {
+            use deka_syntax::typeck::OperatorRewrite::*;
+            match op {
+                NewtypeBinary { name } | NewtypeScalar { name, .. } | NewtypeUnary { name } => {
+                    Some((*p as usize, (*name).to_string()))
+                }
+                _ => None,
+            }
+        })
+        .collect();
     // Static method dispatch: the typechecker recorded each receiver-method
     // call site with the free function it rewrites to (and the embed path to
     // the declaring receiver). Keyed by expression address, like the
@@ -819,6 +838,14 @@ fn compile_modules(
         enums: BTreeMap::new(),
         method_decls: BTreeMap::new(),
         struct_embeds: BTreeMap::new(),
+        type_of_calls: Default::default(),
+        signature_calls: HashMap::new(),
+        newtype_results: HashMap::new(),
+        console_output: hosts.operation("echo").is_ok_and(|op| {
+            op.args == [crate::HostType::String]
+                && op.result == crate::HostType::Unit
+                && !op.asynchronous
+        }),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -1079,8 +1106,8 @@ struct Lower<'a> {
     /// other unbound name is an unknown built-in.
     declared: std::collections::BTreeSet<String>,
     /// Newtype names declared in the current module. A call to one is a
-    /// constructor; at run time the newtype is its payload, so the call is
-    /// the identity.
+    /// constructor; the primitive payload keeps nominal heap metadata for
+    /// reflection, while arithmetic follows the checker's result type.
     newtypes: std::collections::BTreeSet<String>,
     /// Struct declarations in the current module. A struct value is a record;
     /// the declaration only matters when a literal omits fields.
@@ -1102,6 +1129,11 @@ struct Lower<'a> {
     /// Embedded struct names per struct declaration, for promoted-method
     /// attachment.
     struct_embeds: BTreeMap<String, Vec<String>>,
+    /// The host registry supplies the output sink and its wire signature.
+    console_output: bool,
+    type_of_calls: std::collections::BTreeSet<usize>,
+    signature_calls: HashMap<usize, crate::TypeDescriptor>,
+    newtype_results: HashMap<usize, String>,
 }
 impl<'a> Lower<'a> {
     /// Every method visible on a value of `type_name`: its own plus those
@@ -1132,6 +1164,46 @@ impl<'a> Lower<'a> {
             c.emit(Op::RecordExtend);
         }
         Ok(())
+    }
+    fn struct_value(
+        &mut self,
+        name: &str,
+        supplied: &[(String, usize)],
+        c: &mut Context,
+    ) -> Result<()> {
+        let declared = self.structs.get(name).cloned().unwrap_or_default();
+        let embeds = self.struct_embeds.get(name).cloned().unwrap_or_default();
+        let mut names = vec![];
+        // Preserve written order for the fields owned by this struct.
+        for (field, slot) in supplied {
+            if declared.iter().any(|(n, _, _)| n == field) {
+                c.emit(Op::Load(*slot));
+                names.push(field.clone());
+            }
+        }
+        for (field, default, optional) in declared {
+            if optional || names.contains(&field) {
+                continue;
+            }
+            if let Some(default) = default {
+                self.expr(default, c)?;
+                names.push(field);
+            }
+        }
+        for embed in &embeds {
+            if let Some((_, slot)) = supplied.iter().find(|(n, _)| n == embed) {
+                c.emit(Op::Load(*slot));
+            } else {
+                self.struct_value(embed, supplied, c)?;
+            }
+            names.push(embed.clone());
+        }
+        c.emit(Op::Struct {
+            name: name.into(),
+            fields: names,
+            embeds,
+        });
+        self.attach_methods(name, c)
     }
     fn scoped(&mut self, body: &[Stmt<'a>], c: &mut Context) -> Result<()> {
         let outer = c.names.clone();
@@ -1506,9 +1578,12 @@ impl<'a> Lower<'a> {
                     if case.payload.is_some() {
                         continue;
                     }
-                    c.emit(Op::Const(Literal::String(case.name.into())));
-                    c.emit(Op::Const(Literal::Number(index as f64)));
-                    c.emit(Op::Record(vec!["name".into(), "index".into()]));
+                    c.emit(Op::Enum {
+                        name: (*name).into(),
+                        case: case.name.into(),
+                        index,
+                        payload: false,
+                    });
                     let slot = c.bind(&format!("{}${}", name, case.name));
                     if !c.loops.is_empty() {
                         c.emit(Op::Rebind(slot));
@@ -1776,6 +1851,59 @@ impl<'a> Lower<'a> {
                 }
             }
             Expr::Call { callee, args, .. } => {
+                if let Expr::FieldAccess { object, .. } = callee {
+                    let site = e as *const Expr as usize;
+                    if self.type_of_calls.contains(&site) {
+                        self.expr(object, c)?;
+                        c.emit(Op::GetType);
+                        return Ok(());
+                    }
+                    if let Some(descriptor) = self.signature_calls.get(&site).cloned() {
+                        self.expr(object, c)?;
+                        c.emit(Op::Pop);
+                        c.emit(Op::Descriptor(descriptor));
+                        return Ok(());
+                    }
+                }
+                // console.log is the first output primitive used by the
+                // corpus. The checker already guards its printable arguments;
+                // all formatting happens in the shared VM ToString operation.
+                if let Expr::FieldAccess {
+                    object,
+                    field: "log",
+                    ..
+                } = callee
+                    && matches!(
+                        object,
+                        Expr::Identifier {
+                            name: "console",
+                            ..
+                        }
+                    )
+                    && !c.names.contains_key("console")
+                {
+                    if !self.console_output {
+                        return Err(
+                            "console.log requires a registered echo(string) output operation"
+                                .into(),
+                        );
+                    }
+                    c.emit(Op::Const(Literal::String(String::new())));
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            c.emit(Op::Const(Literal::String(" ".into())));
+                            c.emit(Op::Add);
+                        }
+                        self.expr(arg, c)?;
+                        c.emit(Op::ToString);
+                        c.emit(Op::Add);
+                    }
+                    c.emit(Op::Host {
+                        operation: "echo".into(),
+                        arguments: 1,
+                    });
+                    return Ok(());
+                }
                 // Explicit type arguments erase; the typechecker has already
                 // verified them.
                 // A recorded receiver-method call rewrites to its free
@@ -1908,6 +2036,7 @@ impl<'a> Lower<'a> {
                             return Err(format!("{name} takes exactly one argument"));
                         };
                         self.expr(arg, c)?;
+                        c.emit(Op::Newtype(name.into()));
                         return Ok(());
                     }
                     if self.structs.contains_key(name) {
@@ -1924,9 +2053,8 @@ impl<'a> Lower<'a> {
                         let [arg] = *args else {
                             return Err("unboxNumber takes exactly one argument".into());
                         };
-                        // The newtype is its payload at run time, so the
-                        // unbox is the identity.
                         self.expr(arg, c)?;
+                        c.emit(Op::ToNumber);
                         return Ok(());
                     }
                     let conversion = match name {
@@ -2038,26 +2166,16 @@ impl<'a> Lower<'a> {
                 }
             }
             Expr::StructLiteral { name, fields, .. } => {
-                // A struct value is a record. Fields the literal gives come in
-                // written order; declared fields it omits are filled from
-                // their defaults (optional fields stay absent).
-                let declared = self.structs.get(*name).cloned().unwrap_or_default();
-                let mut names = vec![];
+                // Evaluate supplied fields once in source order, then build
+                // canonical embedded values from the promoted field slots.
+                let mut supplied = vec![];
                 for f in *fields {
                     self.expr(&f.value, c)?;
-                    names.push(f.name.to_string());
+                    let slot = c.bind(&format!("<struct field {}>", c.function.locals));
+                    c.emit(Op::Store(slot));
+                    supplied.push((f.name.to_string(), slot));
                 }
-                for (field, default, optional) in declared {
-                    if optional || names.contains(&field) {
-                        continue;
-                    }
-                    if let Some(default) = default {
-                        self.expr(default, c)?;
-                        names.push(field);
-                    }
-                }
-                c.emit(Op::Record(names));
-                self.attach_methods(name, c)?;
+                self.struct_value(name, &supplied, c)?;
             }
             Expr::FieldAccess { object, field, .. } => {
                 // Enum namespace access: `Color.Red` where `Color` names an
@@ -2110,14 +2228,13 @@ impl<'a> Lower<'a> {
                         c.emit_load(&format!("{}${}", enum_name, case_name))?;
                     }
                     (Some(value), true) => {
-                        c.emit(Op::Const(Literal::String((*case_name).into())));
-                        c.emit(Op::Const(Literal::Number(index as f64)));
                         self.expr(value, c)?;
-                        c.emit(Op::Record(vec![
-                            "name".into(),
-                            "index".into(),
-                            "value".into(),
-                        ]));
+                        c.emit(Op::Enum {
+                            name: (*enum_name).into(),
+                            case: (*case_name).into(),
+                            index,
+                            payload: true,
+                        });
                     }
                     (None, true) => {
                         return Err(format!(
@@ -2181,6 +2298,46 @@ impl<'a> Lower<'a> {
                 ));
             }
         }
+        if let Some(name) = self.newtype_results.get(&(e as *const Expr as usize)) {
+            c.emit(Op::Newtype(name.clone()));
+        }
         Ok(())
     }
+}
+
+fn descriptor_summary(tree: &deka_syntax::typeck::DescriptorTree<'_>) -> crate::TypeDescriptor {
+    use deka_syntax::typeck::DescriptorTree::*;
+    let (kind, name) = match tree {
+        Leaf { kind, name } => (*kind, name.clone()),
+        Recurse { name } => ("struct", (*name).into()),
+        Struct { name, .. } => ("struct", (*name).into()),
+        Interface { name } => ("interface", (*name).into()),
+        Newtype { name, .. } => ("newtype", (*name).into()),
+        Enum { name, .. } => ("enum", (*name).into()),
+        Array { elem } => ("array", format!("Array<{}>", descriptor_summary(elem).name)),
+        Option { inner } => (
+            "option",
+            format!("Option<{}>", descriptor_summary(inner).name),
+        ),
+        Tuple { elements } => (
+            "tuple",
+            format!(
+                "[{}]",
+                elements
+                    .iter()
+                    .map(|e| descriptor_summary(e).name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ),
+        Union { members } => (
+            "union",
+            members
+                .iter()
+                .map(|e| descriptor_summary(e).name)
+                .collect::<Vec<_>>()
+                .join(" | "),
+        ),
+    };
+    crate::TypeDescriptor::new(kind, &name)
 }
