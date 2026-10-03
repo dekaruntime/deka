@@ -409,7 +409,6 @@ mod typed_node_tests {
                     vec![HostType::Handle("TestNode".into())],
                     HostType::String,
                     false,
-                    None,
                     |args| {
                         let HostValue::Handle(handle) = &args[0] else {
                             return HostReply::Ready(Err("expected node handle".into()));
@@ -434,7 +433,6 @@ mod typed_node_tests {
                 vec![],
                 HostType::Handle("OtherNode".into()),
                 false,
-                None,
                 |_| HostReply::Ready(Ok(HostValue::Handle(HostHandle::new("OtherNode", 0u8)))),
             ))
             .unwrap();

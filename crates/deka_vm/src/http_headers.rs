@@ -146,7 +146,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             vec![pairs()],
             HostType::Handle("Headers".into()),
             false,
-            None,
             |args| {
                 let [HostValue::List(entries)] = args.as_slice() else {
                     unreachable!("checked Headers initializer")
@@ -207,7 +206,6 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             args,
             result,
             false,
-            None,
             move |args| {
                 let HostValue::Handle(resource) = &args[0] else {
                     unreachable!("checked Headers receiver")
