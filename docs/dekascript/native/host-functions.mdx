@@ -1,0 +1,28 @@
+# Available native host functions
+
+Native Deka's registered Rust host functions are available directly. They do not
+require a capability grant, a permission prompt or a `security` section in
+`deka.json`. Remove the old security configuration when migrating a project.
+Named standard-library modules follow this same model as their native
+implementations become available.
+
+Registration declares an operation's name, argument and result types, async
+behavior and Rust handler in one schema. The compiler uses that schema to check
+DekaScript, and the VM uses it to validate the values crossing the boundary.
+Removing the permission gate does not remove those type checks. Operational
+failures still travel through a declared `Result` channel; invalid arguments or
+incorrect Rust result types remain VM faults.
+
+## Runtime experiment
+
+The repository's `dvm` experiment accepts a program path without grant flags:
+
+```sh
+.target/release/dvm crates/deka_vm/examples/host.ds
+```
+
+The example executes its Rust timer and returns `Number(83.0)`. A compiled
+`.dvm.json` program uses the same available operations. The obsolete
+`--grant-timer` and other `--grant-*` arguments are rejected as unknown options.
+App developers use the public [native commands](../native-cli.mdx), including
+`npx deka run` when installed through npm.

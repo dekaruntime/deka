@@ -249,10 +249,9 @@ pub struct HostOp {
     pub args: Vec<HostType>,
     pub result: HostType,
     pub asynchronous: bool,
-    /// Operational failures are Result data. Protocol/capability faults remain
+    /// Operational failures are Result data. Protocol faults remain
     /// VM errors. The declaration and dispatch share this output contract.
     pub result_channel: bool,
-    pub capability: Option<String>,
     pub global: bool,
     /// A declared method on an opaque Rust-owned receiver. Its first argument
     /// is the receiver; the same schema declares and dispatches the method.
@@ -319,17 +318,11 @@ impl HostOp {
         args: Vec<HostType>,
         result: HostType,
         asynchronous: bool,
-        capability: Option<&str>,
         handler: impl Fn(Vec<HostValue>) -> HostReply + 'static,
     ) -> Self {
-        Self::with_context(
-            name,
-            args,
-            result,
-            asynchronous,
-            capability,
-            move |_, args| handler(args),
-        )
+        Self::with_context(name, args, result, asynchronous, move |_, args| {
+            handler(args)
+        })
     }
     pub fn with_global_binding(mut self) -> Self {
         self.global = true;
@@ -340,7 +333,6 @@ impl HostOp {
         args: Vec<HostType>,
         result: HostType,
         asynchronous: bool,
-        capability: Option<&str>,
         handler: impl Fn(&HostContext, Vec<HostValue>) -> HostReply + 'static,
     ) -> Self {
         Self {
@@ -353,7 +345,6 @@ impl HostOp {
             receiver_method: None,
             receiver_property: false,
             defaults: Vec::new(),
-            capability: capability.map(str::to_owned),
             handler: Rc::new(handler),
         }
     }
@@ -361,7 +352,6 @@ impl HostOp {
 #[derive(Default, Clone)]
 pub struct Hosts {
     operations: BTreeMap<String, HostOp>,
-    grants: BTreeSet<String>,
 }
 impl Hosts {
     pub fn register(&mut self, op: HostOp) -> Result<()> {
@@ -409,9 +399,6 @@ impl Hosts {
         self.operations.insert(op.name.clone(), op);
         Ok(())
     }
-    pub fn grant(&mut self, capability: &str) {
-        self.grants.insert(capability.into());
-    }
     pub fn operation(&self, name: &str) -> Result<&HostOp> {
         self.operations
             .get(name)
@@ -424,11 +411,6 @@ impl Hosts {
         context: &HostContext,
     ) -> Result<(HostReply, HostType, bool, bool)> {
         let op = self.operation(name)?;
-        if let Some(cap) = &op.capability
-            && !self.grants.contains(cap)
-        {
-            return Err(format!("permission denied: {cap}"));
-        }
         // Closure invocation fills omitted parameter cells with unit. Defaults
         // cannot be unit, so only the optional trailing cells are removed here.
         while args.len() > op.args.len() - op.defaults.len()

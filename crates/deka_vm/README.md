@@ -12,20 +12,20 @@ From the repository root:
 ```sh
 export CARGO_TARGET_DIR="$PWD/.target" TMPDIR="$PWD/.tmp"
 cargo build --locked --release -p deka_vm --features compiler,host
-.target/release/dvm crates/deka_vm/examples/host.ds --grant-timer
+.target/release/dvm crates/deka_vm/examples/host.ds
 ```
 
 The real `main` creates a captured counter, starts a Rust/Tokio timer, calls a
 synchronous Rust operation while the timer is pending, awaits its completion,
 and passes two closure results back into Rust. Expected result: `Number(83.0)`.
-Omitting `--grant-timer` exits unsuccessfully with `permission denied: timer`.
+The registered timer is available without a permission grant.
 
 The optional compiler feature also enables a precompiled path:
 
 ```sh
 .target/release/dvmc crates/deka_vm/examples/host.ds .tmp/host.dvm.json
 cargo build --locked --release -p deka_vm --no-default-features --features host --bin dvm
-.target/release/dvm .tmp/host.dvm.json --grant-timer
+.target/release/dvm .tmp/host.dvm.json
 ```
 
 `dvm-core` is a bytecode runner with no host adapter/Tokio dependency. `dvm` with
@@ -91,11 +91,11 @@ ensure external work/resources are cancelled appropriately.
 ## Host boundary
 
 `Hosts::register(HostOp::new(...))` defines argument/result types, async behaviour,
-optional capability and the Rust handler. Capabilities are denied until explicitly
-granted by the embedding host; the demo grants `timer` only via its command flag.
+and the Rust handler. Registered operations are available directly, without
+capability grants or a permission policy.
 This is an isolated host registry, **not** an alternate route into the production
 host catalog. `crates/permissions/src/host_bridge.rs` was inspected; its richer
-resource, byte and package-grant contracts are not ported here.
+historical resource contracts are separate from this native registry.
 
 Only unit, number, bool and owned UTF-8 strings cross this boundary. Pending Rust
 futures own their arguments and cannot retain raw VM heap handles. Opaque
@@ -141,7 +141,7 @@ cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
 Tests exercise source-to-Rust execution, surviving closures, recursion, concurrent
 async tasks, bounded allocation, cycles, stale handles, cancellation/future drops,
-host failures, capability denial, checker rejection, fuel limits and serialized
+host failures, available host operations, checker rejection, fuel limits and serialized
 bytecode execution. The dedicated CI workflow exercises source and compiler-free
 runtime paths. The public native CLI and browser runtime depend on this crate.
 

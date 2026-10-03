@@ -11,7 +11,6 @@ pub fn hosts() -> Result<(Hosts, Output)> {
         vec![HostType::String],
         HostType::Unit,
         false,
-        None,
         move |args| {
             let HostValue::String(s) = &args[0] else {
                 unreachable!()
@@ -25,7 +24,6 @@ pub fn hosts() -> Result<(Hosts, Output)> {
         vec![HostType::Number, HostType::Number],
         HostType::Number,
         false,
-        None,
         |args| {
             let [HostValue::Number(a), HostValue::Number(b)] = args.as_slice() else {
                 unreachable!()
@@ -38,7 +36,6 @@ pub fn hosts() -> Result<(Hosts, Output)> {
         vec![HostType::Number, HostType::String],
         HostType::String,
         true,
-        Some("timer"),
         |args| {
             let [HostValue::Number(ms), HostValue::String(value)] = args.as_slice() else {
                 unreachable!()
