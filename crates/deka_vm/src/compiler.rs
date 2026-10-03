@@ -1,5 +1,5 @@
 //! DSC is linked as a library; no JS emission or compiler subprocess.
-use crate::{Function, Hosts, ListMut, Literal, Op, Program, Result};
+use crate::{Function, Hosts, ListMut, Literal, Op, Program, PromiseJoin, Result};
 pub use deka_syntax::console::STDERR_OPERATION as CONSOLE_ERROR_OPERATION;
 use deka_syntax::{Diagnostic, Severity, ast::*, typeck::ExceptionEmit};
 use std::collections::{BTreeMap, HashMap};
@@ -325,11 +325,11 @@ fn load_modules(
     )?;
     Ok(loaded)
 }
-fn host_globals<'a>(
+fn native_globals<'a>(
     hosts: &Hosts,
     host_exports: &deka_syntax::ModuleExports<'a>,
 ) -> HashMap<&'a str, deka_syntax::typeck::Type<'a>> {
-    hosts
+    let mut globals: HashMap<_, _> = hosts
         .globals()
         .filter_map(|op| {
             host_exports
@@ -337,7 +337,30 @@ fn host_globals<'a>(
                 .get_key_value(op.name.as_str())
                 .map(|(name, ty)| (*name, ty.clone()))
         })
-        .collect()
+        .collect();
+    let fields = PromiseJoin::ALL
+        .into_iter()
+        .map(|kind| {
+            let name = format!("__promise_{}", kind.name());
+            let mut ty = host_exports
+                .values
+                .get(name.as_str())
+                .expect("native promise declaration")
+                .clone();
+            // Each intrinsic carries its own polymorphic binder through aliases.
+            ty = deka_syntax::typeck::Type::Generic {
+                base: if kind == PromiseJoin::All {
+                    "$PromiseAll"
+                } else {
+                    "$PromiseRace"
+                },
+                args: vec![ty],
+            };
+            (kind.name(), ty)
+        })
+        .collect();
+    globals.insert("Promise", deka_syntax::typeck::Type::Object { fields });
+    globals
 }
 
 /// One module lowered into the shared entry function. Returns the module's
@@ -393,7 +416,7 @@ fn lower_module<'a>(
             imports.insert(source, exports);
         }
     }
-    let globals = host_globals(hosts, host_exports);
+    let globals = native_globals(hosts, host_exports);
     let checked = deka_syntax::typeck::check_program_with_native_declarations(
         ast,
         source,
@@ -733,7 +756,11 @@ fn compile_modules(
     project: &Project,
 ) -> Result<Program> {
     let arena = bumpalo::Bump::new();
-    let declarations = hosts.declarations();
+    let declarations = hosts.declarations()
+        + &PromiseJoin::ALL
+            .into_iter()
+            .map(PromiseJoin::declaration)
+            .collect::<String>();
     let host_parse = deka_syntax::parse(&declarations, &arena);
     diagnostics(&host_parse.errors)?;
     let host_ast = host_parse.program.ok_or("missing host declarations")?;
@@ -893,7 +920,7 @@ fn compile_modules(
         augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new());
     }
 
-    let globals = host_globals(hosts, &host_exports);
+    let globals = native_globals(hosts, &host_exports);
     for _ in 0..=modules.len() {
         let before: Vec<_> = modules
             .iter()
@@ -926,8 +953,8 @@ fn compile_modules(
         }
         if modules
             .iter()
-            .enumerate()
-            .all(|(index, (path, _))| module_exports[path].values == before[index])
+            .zip(before)
+            .all(|((path, _), values)| module_exports[path].values == values)
         {
             break;
         }
@@ -2518,6 +2545,31 @@ impl<'a> Lower<'a> {
                 c.patch(otherwise);
                 self.expr(else_branch, c)?;
                 c.patch(end);
+            }
+            Expr::Identifier {
+                name: "Promise", ..
+            } if !c.names.contains_key("Promise") => {
+                for kind in PromiseJoin::ALL {
+                    let function = self.functions.len();
+                    self.functions.push(Function {
+                        name: format!("Promise.{}", kind.name()),
+                        parameters: 1,
+                        captures: 0,
+                        locals: 1,
+                        asynchronous: false,
+                        code: vec![Op::Load(0), Op::PromiseJoin(kind), Op::Return],
+                    });
+                    c.emit(Op::Closure {
+                        function,
+                        captures: vec![],
+                    });
+                }
+                c.emit(Op::Record(
+                    PromiseJoin::ALL
+                        .into_iter()
+                        .map(|kind| kind.name().to_owned())
+                        .collect(),
+                ));
             }
             Expr::Identifier { name, .. } => {
                 if !c.names.contains_key(*name)
