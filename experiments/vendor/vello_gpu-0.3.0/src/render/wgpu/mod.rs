@@ -10,6 +10,7 @@ only break in edge cases, and some of them are also only related to conversions 
 )]
 
 use crate::draw::{EXTERNAL_TEXTURE_SLOT_COUNT, ExternalTextureBindings, ExternalTextureRun};
+use crate::parallel::Par;
 use crate::render::common::IMAGE_PADDING;
 use crate::util::RangedSlice;
 use crate::{
@@ -154,7 +155,30 @@ pub struct Renderer {
     layers_config: LayersConfig,
     #[cfg(feature = "text")]
     atlas_clear_scratch: Vec<u8>,
+    /// Fork (deka spike): cumulative `render_scene` timing in ns:
+    /// (schedule, resource uploads, execute incl. strip uploads, total).
+    timing: [u64; 4],
 }
+
+/// Fork (deka spike): a timestamp for the timing counters (none without `std`).
+#[cfg(feature = "multithreading")]
+fn now() -> Option<std::time::Instant> {
+    Some(std::time::Instant::now())
+}
+#[cfg(not(feature = "multithreading"))]
+fn now() -> Option<()> {
+    None
+}
+#[cfg(feature = "multithreading")]
+fn since(t: Option<std::time::Instant>) -> u64 {
+    t.map_or(0, |t| t.elapsed().as_nanos() as u64)
+}
+#[cfg(not(feature = "multithreading"))]
+fn since(_: Option<()>) -> u64 {
+    0
+}
+#[cfg(feature = "multithreading")]
+extern crate std;
 
 impl Renderer {
     /// Creates a new renderer and its persistent resources.
@@ -203,9 +227,24 @@ impl Renderer {
             layers_config: layer_config,
             #[cfg(feature = "text")]
             atlas_clear_scratch: Vec::new(),
+            timing: [0; 4],
         };
 
         (renderer, resources)
+    }
+
+    /// Fork (deka spike): cumulative `render` timing in ns since the last call:
+    /// (schedule, resource uploads, execute incl. strip uploads, total).
+    /// Zero without the `multithreading` feature.
+    pub fn take_render_timing(&mut self) -> [u64; 4] {
+        core::mem::take(&mut self.timing)
+    }
+
+    /// Fork (deka spike): upload alphas and strips through a reused staging
+    /// belt (default) or, with `false`, through the stock per-call
+    /// `Queue::write_*` staging. Output is identical either way.
+    pub fn set_staging_belt(&mut self, enabled: bool) {
+        self.programs.use_belt = enabled;
     }
 
     /// Creates a depth texture view compatible with [`render`](Self::render).
@@ -422,6 +461,7 @@ impl Renderer {
         root_output_target: RootTarget,
         texture_bindings: &TextureBindings,
     ) -> Result<(), RenderError> {
+        let t_total = now();
         self.programs.depth_cleared_this_frame = false;
         self.prepare_gpu_encoded_paints(
             encoded_paints,
@@ -443,6 +483,7 @@ impl Renderer {
         let current_allocations = self.current_allocations();
         let paint_resolver =
             PaintResolver::new(encoded_paints, &self.paint_idxs).with_image_cache(image_cache);
+        let t_schedule = now();
         let schedule = Schedule::try_new(
             &mut self.schedule_storage,
             scene,
@@ -453,6 +494,9 @@ impl Renderer {
             current_allocations,
             self.layers_config.max_textures,
         )?;
+        self.timing[0] += since(t_schedule);
+        let t_upload = now();
+        let par = scene.par();
         self.programs
             .prepare_intermediate_textures(device, &schedule);
         // TODO: For the time being, we upload the entire alpha buffer as one big chunk. As a future
@@ -461,6 +505,8 @@ impl Renderer {
         self.programs.prepare(
             device,
             queue,
+            encoder,
+            par,
             &mut self.gradient_cache,
             &self.encoded_paints,
             &mut scene.strip_storage.borrow_mut().alphas,
@@ -481,10 +527,13 @@ impl Renderer {
             .strips_arena
             .begin_frame(device, (strip_count * size_of::<GpuStrip>()) as u64);
 
+        self.timing[1] += since(t_upload);
+        let t_execute = now();
         let mut ctx = RendererContext {
             programs: &mut self.programs,
             device,
             queue,
+            par,
             encoder,
             view,
             depth_view,
@@ -505,8 +554,13 @@ impl Renderer {
         .unwrap_or_else(|error| match error {});
 
         ctx.finish_root_clear();
+        // Fork (deka spike): close this encoder's staging chunks; they are
+        // mapped again (reused, already resident) once its work completes.
+        self.programs.upload_belt.finish_and_recall_on_submit(encoder);
+        self.timing[2] += since(t_execute);
 
         self.gradient_cache.maintain();
+        self.timing[3] += since(t_total);
 
         Ok(())
     }
@@ -947,6 +1001,14 @@ struct Programs {
     resources: GpuResources,
     /// Arena holding all [`GpuStrip`] data.
     strips_arena: StripBufferArena,
+    /// Fork (deka spike): reused staging memory for the alpha texture and
+    /// strip uploads. `Queue::write_*` allocate fresh staging memory per call,
+    /// which the CPU then page-faults in while copying (most of `render()` on
+    /// an Intel Mac with a discrete GPU).
+    upload_belt: wgpu::util::StagingBelt,
+    /// Fork (deka spike): `false` restores the stock `Queue::write_*` uploads
+    /// (for A/B measurements and pixel comparisons on any machine).
+    use_belt: bool,
     /// Dimensions of the rendering target
     render_size: RenderSize,
     /// Scratch buffer for staging encoded paints texture data.
@@ -954,6 +1016,9 @@ struct Programs {
     /// Scratch buffer for staging filter data texture data.
     filter_data: Vec<u8>,
 }
+
+/// Fork (deka spike): staging chunk size; larger uploads get a chunk of their own.
+const UPLOAD_CHUNK_SIZE: u64 = 1 << 20;
 
 #[derive(Debug)]
 struct StripBufferArena {
@@ -1757,6 +1822,8 @@ impl Programs {
             copy_pipeline,
             resources,
             strips_arena: StripBufferArena::new(device),
+            upload_belt: wgpu::util::StagingBelt::new(device.clone(), UPLOAD_CHUNK_SIZE),
+            use_belt: true,
             encoded_paints_data,
             filter_data,
             render_size: RenderSize {
@@ -2143,6 +2210,8 @@ impl Programs {
         &mut self,
         device: &Device,
         queue: &Queue,
+        encoder: &mut CommandEncoder,
+        par: Par<'_>,
         gradient_cache: &mut GradientRampCache,
         encoded_paints: &[GpuEncodedPaint],
         alphas: &mut Vec<u8>,
@@ -2156,7 +2225,7 @@ impl Programs {
         self.maybe_resize_filter_tex(device, resource_texture_dimension_2d, filter_context);
         self.maybe_update_config_buffer(queue, resource_texture_dimension_2d, new_render_size);
 
-        self.upload_alpha_texture(queue, alphas);
+        self.upload_alpha_texture(queue, encoder, par, alphas);
         self.upload_encoded_paints_texture(queue, encoded_paints, paint_idxs);
         self.upload_filter_texture(queue, filter_context);
 
@@ -2376,7 +2445,13 @@ impl Programs {
     }
 
     /// Upload alpha data to the texture.
-    fn upload_alpha_texture(&mut self, queue: &Queue, alphas: &mut Vec<u8>) {
+    fn upload_alpha_texture(
+        &mut self,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        par: Par<'_>,
+        alphas: &mut Vec<u8>,
+    ) {
         if alphas.is_empty() {
             return;
         }
@@ -2394,6 +2469,58 @@ impl Programs {
         // Temporarily pad the last row with zeros before uploading.
         alphas.resize(rows * row_bytes, 0);
 
+        // Fork (deka spike): stage through reused memory, copying in parallel
+        // when large, and record the copy on the encoder.
+        if self.use_belt
+            && (texture_width << 4).is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            && let Some(size) = NonZeroU64::new((rows * row_bytes) as u64)
+            && let Some(align) = NonZeroU64::new(256)
+        {
+            let slice = self.upload_belt.allocate(size, align);
+            let (buffer, offset) = (slice.buffer().clone(), slice.offset());
+            match slice.get_mapped_range_mut() {
+                Ok(mut view) => par.write(view.slice(..), &[&alphas[..]]),
+                Err(e) => {
+                    // The belt hands out mapped chunks; fall back if not.
+                    log::warn!("vello_gpu: staging chunk not mapped ({e:?}); using queue.write_texture");
+                    self.write_alpha_texture(queue, alphas, texture_width, rows);
+                    alphas.truncate(original_len);
+                    return;
+                }
+            }
+            encoder.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset,
+                        bytes_per_row: Some(texture_width << 4),
+                        rows_per_image: Some(rows as u32),
+                    },
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.resources.alphas_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                Extent3d {
+                    width: texture_width,
+                    height: rows as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+            alphas.truncate(original_len);
+            return;
+        }
+
+        self.write_alpha_texture(queue, alphas, texture_width, rows);
+
+        // Truncate back to the original size.
+        alphas.truncate(original_len);
+    }
+
+    /// Upload padded alpha rows through `Queue::write_texture` (the stock path).
+    fn write_alpha_texture(&self, queue: &Queue, alphas: &[u8], texture_width: u32, rows: usize) {
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.resources.alphas_texture,
@@ -2415,9 +2542,6 @@ impl Programs {
                 depth_or_array_layers: 1,
             },
         );
-
-        // Truncate back to the original size.
-        alphas.truncate(original_len);
     }
 
     /// Upload encoded paints to the texture.
@@ -2547,6 +2671,8 @@ impl Programs {
     fn upload_strip_pair(
         &mut self,
         queue: &Queue,
+        encoder: &mut CommandEncoder,
+        par: Par<'_>,
         opaque_strips: &[GpuStrip],
         alpha_strips: RangedSlice<'_, GpuStrip>,
     ) -> Range<u64> {
@@ -2560,19 +2686,23 @@ impl Programs {
         let arena = &mut self.strips_arena;
         let offset = arena.alloc(total_len);
         let size = NonZeroU64::new(total_len).expect("total length is non-zero");
-        // TODO: Consider using a staging belt to avoid an extra staging buffer allocation.
-        let mut view = queue
-            .write_buffer_with(&arena.buffer, offset, size)
-            .expect("Capacity handled in creation");
+        let mut segments: Vec<&[u8]> = Vec::with_capacity(1 + alpha_strips.slices().count());
         if opaque_len > 0 {
-            view.slice(..opaque_len as usize)
-                .copy_from_slice(bytemuck::cast_slice(opaque_strips));
+            segments.push(bytemuck::cast_slice(opaque_strips));
         }
-        let mut pos = opaque_len as usize;
-        for strips in alpha_strips.slices() {
-            let bytes = bytemuck::cast_slice(strips);
-            view.slice(pos..pos + bytes.len()).copy_from_slice(bytes);
-            pos += bytes.len();
+        segments.extend(alpha_strips.slices().map(bytemuck::cast_slice::<GpuStrip, u8>));
+        if self.use_belt {
+            // Fork (deka spike): a staging belt (reused, resident memory)
+            // instead of a fresh staging buffer per upload, filled in parallel
+            // when large.
+            let mut view = self
+                .upload_belt
+                .write_buffer(encoder, &arena.buffer, offset, size);
+            par.write(view.slice(..), &segments);
+        } else if let Some(mut view) = queue.write_buffer_with(&arena.buffer, offset, size) {
+            Par::serial().write(view.slice(..), &segments);
+        } else {
+            log::warn!("vello_gpu: strip upload of {total_len} bytes failed");
         }
 
         offset..offset + total_len
@@ -2585,6 +2715,8 @@ struct RendererContext<'a> {
     programs: &'a mut Programs,
     device: &'a Device,
     queue: &'a Queue,
+    /// Fork (deka spike): the scene's worker pool, for parallel uploads.
+    par: Par<'a>,
     encoder: &'a mut CommandEncoder,
     view: &'a TextureView,
     depth_view: Option<&'a TextureView>,
@@ -2691,7 +2823,7 @@ impl RendererContext<'_> {
 
         let strips_range = self
             .programs
-            .upload_strip_pair(self.queue, opaque_strips, alpha_strips);
+            .upload_strip_pair(self.queue, self.encoder, self.par, opaque_strips, alpha_strips);
         let opaque_count = opaque_count as u32;
         let alpha_count = alpha_count as u32;
 

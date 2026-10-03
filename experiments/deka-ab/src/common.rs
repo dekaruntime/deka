@@ -172,6 +172,14 @@ impl Series {
     pub fn mean(&self) -> f64 {
         self.0.iter().sum::<f64>() / self.0.len().max(1) as f64
     }
+    pub fn p95(&self) -> f64 {
+        if self.0.is_empty() {
+            return 0.;
+        }
+        let mut v = self.0.clone();
+        v.sort_by(|a, b| a.total_cmp(b));
+        v[((v.len() - 1) as f64 * 0.95).round() as usize]
+    }
     pub fn summary(&self) -> String {
         if self.0.is_empty() {
             return "n/a".into();
@@ -486,7 +494,22 @@ pub fn write_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) {
 }
 
 pub fn shots_dir() -> std::path::PathBuf {
+    // `--out DIR` (e.g. on another machine, where the build path does not exist).
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(dir) = args.iter().position(|a| a == "--out").and_then(|i| args.get(i + 1)) {
+        return std::path::PathBuf::from(dir);
+    }
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("shots").join("raw")
+}
+
+/// `--NAME a,b,c` as a list of numbers (empty if absent).
+pub fn list_arg(name: &str) -> Vec<usize> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .map(|v| v.split(',').filter_map(|n| n.parse().ok()).collect())
+        .unwrap_or_default()
 }
 
 /// The deka Scene for the text sheet: one text node per size, through

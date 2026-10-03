@@ -13,9 +13,12 @@ fn main() {
         }
         App::Scaling => {
             let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
-            let mut counts = vec![1, 2, 4, 8];
-            if n / 2 > 8 { counts.push(n / 2); }
-            if n > 8 { counts.push(n); }
+            let mut counts = common::list_arg("--threads");
+            if counts.is_empty() {
+                counts = vec![1, 2, 4, 8];
+                if n / 2 > 8 { counts.push(n / 2); }
+                if n > 8 { counts.push(n); }
+            }
             deka_ab::sparse::hybrid::scaling(args.frames, &counts);
         }
         _ => deka_ab::sparse::run_windowed::<deka_ab::sparse::hybrid::HybridPresenter>(args),

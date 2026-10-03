@@ -7336,6 +7336,7 @@ dependencies = [
  "glifo",
  "hashbrown 0.17.1",
  "log",
+ "rayon",
  "thiserror 2.0.20",
  "vello_common",
  "vello_gpu_shaders",

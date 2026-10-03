@@ -54,8 +54,12 @@ std = [
     "vello_common/std",
     "glifo?/std",
 ]
-# Fork (deka spike): parallel strip generation (std threads).
-multithreading = ["std"]
+# Fork (deka spike): parallel strip generation and uploads on a persistent
+# rayon pool (as in vello_cpu's `multithreading`).
+multithreading = [
+    "std",
+    "dep:rayon",
+]
 text = [
     "dep:glifo",
     "glifo/std",
@@ -107,6 +111,10 @@ optional = true
 
 [dependencies.log]
 version = "0.4.29"
+
+[dependencies.rayon]
+version = "1.12.0"
+optional = true
 
 [dependencies.thiserror]
 version = "2.0.18"

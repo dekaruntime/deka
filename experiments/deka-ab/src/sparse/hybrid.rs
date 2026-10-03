@@ -109,11 +109,13 @@ impl Presenter for HybridPresenter {
             settings.memory_settings.image_atlas_config.atlas_size = (1024, 1024);
             println!("[vello_gpu] image atlas 1024x1024 (auto-grow)");
         }
-        let (renderer, resources) = vello_gpu::Renderer::new_with(
+        let (mut renderer, resources) = vello_gpu::Renderer::new_with(
             &device,
             &vello_gpu::RenderTargetConfig { format: FORMAT, width: size.width as u16, height: size.height as u16 },
             settings,
         );
+        // Fork: `--no-belt` restores the stock per-call staging uploads.
+        renderer.set_staging_belt(!std::env::args().any(|a| a == "--no-belt"));
         let no_depth = std::env::args().any(|a| a == "--no-depth");
         // Without depth testing, keep only a 1x1 placeholder (the real one is ~25 MB at 3200x2000).
         let depth_size = if no_depth { vello_gpu::RenderSize { width: 1, height: 1 } } else { vello_gpu::RenderSize { width: size.width as u16, height: size.height as u16 } };
@@ -515,7 +517,8 @@ impl Offscreen {
         let instance = instance();
         let (_, device, queue) = new_device(&instance, None, wgpu::Limits::default()).ok()?;
         let rs = vello_gpu::RenderSize { width: w as u16, height: h as u16 };
-        let (renderer, resources) = vello_gpu::Renderer::new(&device, &vello_gpu::RenderTargetConfig { format: wgpu::TextureFormat::Rgba8Unorm, width: w as u16, height: h as u16 });
+        let (mut renderer, resources) = vello_gpu::Renderer::new(&device, &vello_gpu::RenderTargetConfig { format: wgpu::TextureFormat::Rgba8Unorm, width: w as u16, height: h as u16 });
+        renderer.set_staging_belt(!std::env::args().any(|a| a == "--no-belt"));
         let depth = vello_gpu::Renderer::create_depth_texture_view(&device, &rs);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -613,13 +616,41 @@ fn encode_named(off: &mut Offscreen, scene: &mut vello_gpu::Scene, name: &str, t
 
 /// Pixel-compare the fork's parallel and cached strips against the stock
 /// (eager, single-threaded) path for every scene. Exits non-zero on mismatch.
+///
+/// `--reference DIR` also compares every configuration (the first included)
+/// against `DIR/verify-<scene>.png` written by an earlier build, e.g. phase 4's
+/// eager path, whose renderer is upstream's.
 pub fn verify() -> bool {
     let Some(mut off) = Offscreen::new(3200, 2000) else { return false };
-    let configs: [(&str, usize, bool); 8] = [("eager (stock path)", 1, false), ("eager again (control)", 1, false), ("2 threads", 2, false), ("4 threads", 4, false), ("8 threads", 8, false), ("20 threads", 20, false), ("cache, 1 thread", 1, true), ("cache, 8 threads", 8, true)];
+    // (label, threads, strip cache, shape API, staging belt). The reference
+    // is the stock path end to end: eager strips, BezPath API, and the stock
+    // `Queue::write_*` uploads.
+    let configs: [(&str, usize, bool, bool, bool); 10] = [
+        ("stock (eager, uploads)", 1, false, false, false),
+        ("stock again (control)", 1, false, false, false),
+        ("eager, staging belt", 1, false, false, true),
+        ("eager, shape API", 1, false, true, true),
+        ("2 threads", 2, false, true, true),
+        ("4 threads", 4, false, true, true),
+        ("8 threads", 8, false, true, true),
+        ("20 threads", 20, false, true, true),
+        ("cache, 1 thread", 1, true, true, true),
+        ("cache, 8 threads", 8, true, true, true),
+    ];
+    let args: Vec<String> = std::env::args().collect();
+    let reference_dir = args.iter().position(|a| a == "--reference").and_then(|i| args.get(i + 1)).map(std::path::PathBuf::from);
     let mut all_ok = true;
+    let mut compared = 0;
     for name in VERIFY_SCENES {
         let mut reference: Option<Vec<u8>> = None;
-        for (label, threads, cache) in configs {
+        let earlier = reference_dir.as_ref().map(|d| common::read_png(&d.join(format!("verify-{name}.png"))));
+        if let Some(None) = earlier {
+            println!("[verify] {name:10} earlier reference missing");
+            all_ok = false;
+        }
+        for (label, threads, cache, shapes, belt) in configs {
+            crate::sparse::SHAPE_API.store(shapes, std::sync::atomic::Ordering::Relaxed);
+            off.renderer.set_staging_belt(belt);
             let mut scene = vello_gpu::Scene::new(off.w as u16, off.h as u16);
             scene.set_parallelism(threads);
             scene.set_strip_cache(cache);
@@ -633,6 +664,13 @@ pub fn verify() -> bool {
             off.render(&mut scene);
             let stats = scene.take_strip_cache_stats();
             let px = off.pixels();
+            if let Some(Some((w, h, earlier))) = &earlier {
+                let differing = earlier.chunks_exact(4).zip(px.chunks_exact(4)).filter(|(a, b)| a != b).count();
+                let ok = differing == 0 && earlier.len() == px.len() && (*w, *h) == (off.w, off.h);
+                all_ok &= ok;
+                compared += 1;
+                println!("[verify] {name:10} {label:20} vs earlier build: {}", if ok { "IDENTICAL".to_owned() } else { format!("DIFFERS in {differing} pixels") });
+            }
             match &reference {
                 None => {
                     common::write_png(&common::shots_dir().join(format!("verify-{name}.png")), off.w, off.h, &px);
@@ -643,13 +681,16 @@ pub fn verify() -> bool {
                     let differing = r.chunks_exact(4).zip(px.chunks_exact(4)).filter(|(a, b)| a != b).count();
                     let ok = differing == 0 && r.len() == px.len();
                     all_ok &= ok;
+                    compared += 1;
                     let cache_note = if cache { format!(" (cache hits {}, misses {})", stats.0, stats.1) } else { String::new() };
                     println!("[verify] {name:10} {label:20} {}{cache_note}", if ok { "IDENTICAL".to_owned() } else { format!("DIFFERS in {differing} pixels") });
                 }
             }
         }
     }
-    println!("[verify] {}", if all_ok { "all scenes byte-identical" } else { "MISMATCH" });
+    crate::sparse::SHAPE_API.store(true, std::sync::atomic::Ordering::Relaxed);
+    off.renderer.set_staging_belt(true);
+    println!("[verify] {compared} comparisons: {}", if all_ok { "all byte-identical" } else { "MISMATCH" });
     // Former panics (fork turns them into skipped draws / warnings).
     let survived = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut scene = vello_gpu::Scene::new(off.w as u16, off.h as u16);
@@ -671,9 +712,14 @@ pub fn verify() -> bool {
 /// strip cache on deka's world (animating) and UI (static).
 pub fn scaling(frames: usize, counts: &[usize]) {
     let Some(mut off) = Offscreen::new(3200, 2000) else { return };
-    println!("[scaling] cores: {} physical, {} logical", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0) / 2, std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0));
-    for name in ["canvas-1k", "canvas-10k"] {
-        let shapes = if name == "canvas-1k" { 1_000 } else { 10_000 };
+    let physical = std::process::Command::new("sysctl").args(["-n", "hw.physicalcpu"]).output().ok().and_then(|o| String::from_utf8(o.stdout).ok()).and_then(|s| s.trim().parse::<usize>().ok()).unwrap_or(0);
+    println!("[scaling] cores: {physical} physical, {} logical", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0));
+    let mut sizes = common::list_arg("--shapes");
+    if sizes.is_empty() {
+        sizes = vec![1_000, 10_000];
+    }
+    for shapes in sizes.into_iter().filter(|&n| n > 0) {
+        let name = if shapes % 1000 == 0 { format!("canvas-{}k", shapes / 1000) } else { format!("canvas-{shapes}") };
         let layout = if shapes <= 1_000 { graph::Layout::Force } else { graph::Layout::Laid };
         for &threads in counts {
             let mut g = graph::Graph::new(shapes, 1600., 1000., layout);
@@ -700,19 +746,28 @@ pub fn scaling(frames: usize, counts: &[usize]) {
             let u1 = crate::common::usage();
             let wall = t_start.elapsed().as_secs_f64();
             let [gen_ns, merge_ns, record_ns] = scene.take_flush_timing();
+            let [sched_ns, upload_ns, exec_ns, _] = off.renderer.take_render_timing();
             let per = |ns: u64| ns as f64 / 1e6 / (frames + 10) as f64;
             println!(
-                "[scaling] {name:10} threads {threads:2}: strips {:6.2} ms (parallel gen {:5.2}, merge {:4.2}, record {:4.2}) | render() {:5.2} | GPU {:5.2} | frame {:6.2} ms -> {:5.1} fps offscreen | CPU {:5.1}% of a core",
-                enc.mean(), per(gen_ns), per(merge_ns), per(record_ns), cpu.mean(), gpu.mean(), total.mean(), 1000. / total.mean(),
+                "[scaling] {name:10} threads {threads:2}: strips {:6.2} ms (parallel gen {:5.2}, merge {:4.2}, record {:4.2}) | render() {:5.2} (schedule {:4.2}, alpha upload {:4.2}, execute+strip upload {:4.2}) | GPU {:5.2} | frame {:6.2} ms -> {:5.1} fps offscreen | CPU {:5.1}% of a core",
+                enc.mean(), per(gen_ns), per(merge_ns), per(record_ns), cpu.mean(), per(sched_ns), per(upload_ns), per(exec_ns), gpu.mean(), total.mean(), 1000. / total.mean(),
                 (u1.cpu_ns - u0.cpu_ns) as f64 / 1e9 / wall * 100.
             );
         }
     }
+    if std::env::args().any(|a| a == "--canvas-only") {
+        return;
+    }
+    // Small frames must not get slower with threads: deka's world and UI at
+    // 1 thread and at the largest count, strip cache off and on.
+    let most = counts.iter().copied().max().unwrap_or(1);
     for name in ["world", "ui"] {
-        for cache in [false, true] {
+        for (threads, cache) in [(1, false), (most, false), (1, true), (most, true)] {
             let mut scene = vello_gpu::Scene::new(3200, 2000);
+            scene.set_parallelism(threads);
             scene.set_strip_cache(cache);
             let mut enc = crate::common::Series::default();
+            let mut ren = crate::common::Series::default();
             let mut world = World::new();
             world.start();
             let ui_renderer = deka_native_ui::scene::Renderer::new();
@@ -725,13 +780,14 @@ pub fn scaling(frames: usize, counts: &[usize]) {
                 encode_deka(&mut scene, &deka, 2.0, &off.images);
                 scene.flush();
                 let t1 = Instant::now();
-                off.render(&mut scene);
+                let (c, _) = off.render(&mut scene);
                 if f >= 10 {
                     enc.push(t1 - t0);
+                    ren.push(c);
                 }
             }
             let (hits, misses, entries) = scene.take_strip_cache_stats();
-            println!("[scaling] {name:5} strip cache {:3}: scene encode+strips {} (hits {hits}, misses {misses}, entries {entries})", if cache { "on" } else { "off" }, enc.summary());
+            println!("[scaling] {name:5} threads {threads:2} strip cache {:3}: scene encode+strips mean {:5.2} p95 {:5.2} ms | render() mean {:5.2} p95 {:5.2} ms (hits {hits}, misses {misses}, entries {entries})", if cache { "on" } else { "off" }, enc.mean(), enc.p95(), ren.mean(), ren.p95());
         }
     }
 }

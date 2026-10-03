@@ -18,7 +18,7 @@ use vello_common::fearless_simd::Level;
 use vello_common::filter::FilterData;
 use vello_common::filter_effects::Filter;
 use vello_common::geometry::{RectU16, SizeU16};
-use vello_common::kurbo::{Affine, BezPath, Rect, Shape, Stroke};
+use vello_common::kurbo::{Affine, BezPath, PathEl, Rect, Shape, Stroke};
 use vello_common::mask::Mask;
 use vello_common::multi_atlas::AtlasConfig;
 use vello_common::paint::{Paint, PaintType, PremulColor, Tint};
@@ -34,7 +34,7 @@ use vello_common::transforms::{RootTransforms, Transforms};
 use vello_common::util::{RectExt, into_fast_path_rect, strip_bbox};
 use vello_common::viewport::ViewportState;
 
-use crate::parallel::{Geom, ParallelStrips, PendingPath};
+use crate::parallel::{Par, ParallelStrips, Pending, Style};
 
 /// Default tolerance for curve flattening
 pub(crate) const DEFAULT_TOLERANCE: f64 = 0.1;
@@ -228,7 +228,7 @@ pub struct Scene {
     /// The command recorder.
     pub(crate) recorder: CommandRecorder<RecordedDraw>,
     /// Fork (deka spike): path draws queued for (parallel) strip generation.
-    pending: Vec<PendingPath>,
+    pending: Pending,
     /// Fork (deka spike): worker and strip-cache state.
     parallel: ParallelStrips,
 }
@@ -256,7 +256,7 @@ impl Scene {
             strip_storage: RefCell::new(StripStorage::new(GenerationMode::Append)),
             filter: None,
             recorder: CommandRecorder::new(width, height),
-            pending: Vec::new(),
+            pending: Pending::default(),
             parallel: ParallelStrips::new(width, height, level),
         }
     }
@@ -266,7 +266,13 @@ impl Scene {
     /// more than one thread. Output is identical for any value.
     pub fn set_parallelism(&mut self, threads: usize) {
         self.flush();
-        self.parallel.threads = threads.max(1);
+        self.parallel.set_threads(threads);
+    }
+
+    /// Fork (deka spike): the worker pool, lent to the renderer for its
+    /// parallel uploads.
+    pub(crate) fn par(&self) -> Par<'_> {
+        self.parallel.par()
     }
 
     /// Fork (deka spike): reuse the previous frame's strips for paths whose
@@ -284,7 +290,7 @@ impl Scene {
 
     /// Whether path draws are queued instead of generated immediately.
     fn defers(&self) -> bool {
-        (self.parallel.threads > 1 || self.parallel.cache_enabled) && self.viewport_state.clip().is_none()
+        (self.parallel.threads() > 1 || self.parallel.cache_enabled) && self.viewport_state.clip().is_none()
     }
 
     /// Whether queued path draws are waiting for [`Scene::flush`].
@@ -300,10 +306,9 @@ impl Scene {
         if self.pending.is_empty() {
             return;
         }
-        let jobs = core::mem::take(&mut self.pending);
         let ranges = {
             let mut strip_storage = self.strip_storage.borrow_mut();
-            self.parallel.generate(&jobs, &mut strip_storage)
+            self.parallel.generate(&self.pending, &mut strip_storage)
         };
         #[cfg(feature = "multithreading")]
         let t = {
@@ -311,16 +316,17 @@ impl Scene {
             std::time::Instant::now()
         };
         let strip_storage = self.strip_storage.borrow();
-        for (job, strips) in jobs.into_iter().zip(ranges) {
+        for (job, strips) in self.pending.jobs.drain(..).zip(ranges) {
             if strips.is_empty() {
                 continue;
             }
             let draw = RecordedDraw::new_path(strips.clone(), job.paint);
             self.recorder.push_draw(draw, &strip_storage.strips[strips]);
         }
+        self.pending.clear();
         #[cfg(feature = "multithreading")]
         {
-            self.parallel.timing[2] += t.elapsed().as_nanos() as u64;
+            self.parallel.timing[2] += u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX);
         }
     }
 
@@ -420,22 +426,40 @@ impl Scene {
         });
     }
 
+    /// Fork (deka spike): fill a shape with the current paint and fill rule,
+    /// without building a `BezPath` (same output as
+    /// `fill_path(&shape.to_path(0.1))`).
+    pub fn fill_shape(&mut self, shape: &impl Shape) {
+        if !self.paint_has_area() {
+            return;
+        }
+
+        self.with_optional_filter_or_blend_layer(|ctx| {
+            let Some(paint) = ctx.encode_current_paint() else {
+                return;
+            };
+            ctx.fill_path_with(
+                shape.path_elements(DEFAULT_TOLERANCE),
+                ctx.effective_path_transform(),
+                ctx.render_state.fill_rule,
+                paint,
+                ctx.aliasing_threshold,
+            );
+        });
+    }
+
     /// Build strips for a filled path with the given properties and record the draw.
     fn fill_path_with(
         &mut self,
-        path: &BezPath,
+        path: impl IntoIterator<Item = PathEl>,
         transform: Affine,
         fill_rule: Fill,
         paint: Paint,
         aliasing_threshold: Option<u8>,
     ) {
         if self.defers() {
-            self.pending.push(PendingPath {
-                geom: Geom::Fill(path.clone(), fill_rule),
-                transform,
-                aliasing_threshold,
-                paint,
-            });
+            self.pending
+                .push(path, Style::Fill(fill_rule), transform, aliasing_threshold, paint);
             return;
         }
         self.flush();
@@ -506,25 +530,47 @@ impl Scene {
         });
     }
 
+    /// Fork (deka spike): stroke a shape with the current paint and stroke
+    /// settings, without building a `BezPath` (same output as
+    /// `stroke_path(&shape.to_path(0.1))`).
+    pub fn stroke_shape(&mut self, shape: &impl Shape) {
+        if !self.paint_has_area() {
+            return;
+        }
+
+        self.with_optional_filter_or_blend_layer(|ctx| {
+            let Some(paint) = ctx.encode_current_paint() else {
+                return;
+            };
+            ctx.stroke_path_with(
+                shape.path_elements(DEFAULT_TOLERANCE),
+                ctx.effective_path_transform(),
+                paint,
+                ctx.aliasing_threshold,
+            );
+        });
+    }
+
     /// Build strips for a stroked path with the given properties and record the draw.
     fn stroke_path_with(
         &mut self,
-        path: &BezPath,
+        path: impl IntoIterator<Item = PathEl>,
         transform: Affine,
         paint: Paint,
         aliasing_threshold: Option<u8>,
     ) {
-        let stroke = self.render_state.stroke.clone();
         if self.defers() {
-            self.pending.push(PendingPath {
-                geom: Geom::Stroke(path.clone(), stroke),
+            self.pending.push(
+                path,
+                Style::Stroke(&self.render_state.stroke),
                 transform,
                 aliasing_threshold,
                 paint,
-            });
+            );
             return;
         }
         self.flush();
+        let stroke = self.render_state.stroke.clone();
         self.record_generated_path(paint, |strip_generator, strip_storage, clip_path| {
             strip_generator.generate_stroked_path(
                 path,
@@ -585,7 +631,7 @@ impl Scene {
             } else {
                 // TODO: Use a temporary storage for rect paths, like in `vello_cpu`.
                 ctx.fill_path_with(
-                    &rect.to_path(DEFAULT_TOLERANCE),
+                    rect.path_elements(DEFAULT_TOLERANCE),
                     transform,
                     ctx.render_state.fill_rule,
                     paint,
@@ -708,7 +754,7 @@ impl Scene {
                 });
             } else {
                 ctx.fill_path_with(
-                    &inflated_rect.to_path(DEFAULT_TOLERANCE),
+                    inflated_rect.path_elements(DEFAULT_TOLERANCE),
                     path_transform,
                     Fill::NonZero,
                     paint,

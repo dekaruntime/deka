@@ -71,6 +71,14 @@ pub trait Sparse {
     fn set_stroke(&mut self, s: Stroke);
     fn fill_path(&mut self, p: &BezPath);
     fn stroke_path(&mut self, p: &BezPath);
+    /// Fill a kurbo shape (backends without a shape API build a `BezPath`).
+    fn fill_shape(&mut self, shape: &impl Shape) {
+        self.fill_path(&shape.to_path(TOLERANCE));
+    }
+    /// Stroke a kurbo shape (backends without a shape API build a `BezPath`).
+    fn stroke_shape(&mut self, shape: &impl Shape) {
+        self.stroke_path(&shape.to_path(TOLERANCE));
+    }
     fn fill_rect(&mut self, r: &Rect);
     fn push_layer(&mut self, clip: Option<&BezPath>, blend: Option<BlendMode>, opacity: Option<f32>);
     fn pop_layer(&mut self);
@@ -80,9 +88,10 @@ pub trait Sparse {
 }
 
 macro_rules! impl_sparse {
-    ($ty:ty, $res:ty) => {
+    ($ty:ty, $res:ty $(, $extra:item)*) => {
         impl Sparse for $ty {
             type Res = $res;
+            $($extra)*
             fn set_transform(&mut self, t: Affine) {
                 <$ty>::set_transform(self, t)
             }
@@ -128,7 +137,30 @@ macro_rules! impl_sparse {
 #[cfg(feature = "cpu-backend")]
 impl_sparse!(vello_cpu::RenderContext, vello_cpu::Resources);
 #[cfg(feature = "hybrid-backend")]
-impl_sparse!(vello_gpu::Scene, vello_gpu::Resources);
+impl_sparse!(
+    vello_gpu::Scene,
+    vello_gpu::Resources,
+    // The fork's shape API: no intermediate BezPath (unless the verify
+    // control asks for the stock `fill_path(&to_path())` route).
+    fn fill_shape(&mut self, shape: &impl Shape) {
+        if SHAPE_API.load(std::sync::atomic::Ordering::Relaxed) {
+            vello_gpu::Scene::fill_shape(self, shape)
+        } else {
+            vello_gpu::Scene::fill_path(self, &shape.to_path(TOLERANCE))
+        }
+    },
+    fn stroke_shape(&mut self, shape: &impl Shape) {
+        if SHAPE_API.load(std::sync::atomic::Ordering::Relaxed) {
+            vello_gpu::Scene::stroke_shape(self, shape)
+        } else {
+            vello_gpu::Scene::stroke_path(self, &shape.to_path(TOLERANCE))
+        }
+    }
+);
+
+/// Whether the graph painter uses the backend's shape API (the fork's
+/// `fill_shape`) or the stock `fill_path(&shape.to_path())`.
+pub static SHAPE_API: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// Straight RGBA glyph/sprite bitmap -> sparse ImageSource (pixmap form).
 pub fn pixmap_source(g: &GlyphImage) -> ImageSource {
@@ -187,7 +219,7 @@ pub fn encode_deka<S: Sparse>(ctx: &mut S, deka: &DekaScene, scale: f64, images:
             ctx.set_transform(s);
             ctx.set_paint(rgb(p.color, p.opacity).into());
             if p.radius > 0. {
-                ctx.fill_path(&RoundedRect::from_rect(r, p.radius as f64).to_path(TOLERANCE));
+                ctx.fill_shape(&RoundedRect::from_rect(r, p.radius as f64));
             } else {
                 ctx.fill_rect(&r);
             }
@@ -205,12 +237,12 @@ pub struct SparsePainter<'a, S: Sparse> {
 impl<S: Sparse> graph::Painter for SparsePainter<'_, S> {
     fn fill(&mut self, shape: &impl Shape, color: Color) {
         self.ctx.set_paint(color.into());
-        self.ctx.fill_path(&shape.to_path(TOLERANCE));
+        self.ctx.fill_shape(shape);
     }
     fn stroke(&mut self, shape: &impl Shape, style: &Stroke, color: Color) {
         self.ctx.set_paint(color.into());
         self.ctx.set_stroke(style.clone());
-        self.ctx.stroke_path(&shape.to_path(TOLERANCE));
+        self.ctx.stroke_shape(shape);
     }
 }
 
