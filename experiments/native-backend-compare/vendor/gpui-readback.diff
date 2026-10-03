@@ -1,0 +1,83 @@
+--- src/platform/mac/metal_renderer.rs
++++ src/platform/mac/metal_renderer.rs
+@@ -144,6 +144,10 @@
+         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+         layer.set_opaque(false);
+         layer.set_maximum_drawable_count(3);
++        // deka comparison harness: a readable drawable only when readback is enabled.
++        if crate::readback::ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
++            layer.set_framebuffer_only(false);
++        }
+         unsafe {
+             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
+             let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
+@@ -375,6 +379,32 @@
+ 
+             match command_buffer {
+                 Ok(command_buffer) => {
++                    // deka comparison harness: copy this frame's drawable to a buffer.
++                    let readback = crate::readback::REQUEST
++                        .swap(false, std::sync::atomic::Ordering::Relaxed)
++                        .then(|| {
++                            let texture = drawable.texture();
++                            let (w, h) = (texture.width(), texture.height());
++                            let buffer = self.device.new_buffer(
++                                w * h * 4,
++                                MTLResourceOptions::StorageModeShared,
++                            );
++                            let blit = command_buffer.new_blit_command_encoder();
++                            blit.copy_from_texture_to_buffer(
++                                texture,
++                                0,
++                                0,
++                                metal::MTLOrigin { x: 0, y: 0, z: 0 },
++                                metal::MTLSize { width: w, height: h, depth: 1 },
++                                &buffer,
++                                0,
++                                w * 4,
++                                w * h * 4,
++                                metal::MTLBlitOption::empty(),
++                            );
++                            blit.end_encoding();
++                            (w, h, buffer)
++                        });
+                     let instance_buffer_pool = self.instance_buffer_pool.clone();
+                     let instance_buffer = Cell::new(Some(instance_buffer));
+                     let block = ConcreteBlock::new(move |_| {
+@@ -392,6 +422,17 @@
+                     } else {
+                         command_buffer.present_drawable(drawable);
+                         command_buffer.commit();
++                    }
++                    if let Some((w, h, buffer)) = readback {
++                        command_buffer.wait_until_completed();
++                        let bytes = unsafe {
++                            std::slice::from_raw_parts(buffer.contents() as *const u8, (w * h * 4) as usize)
++                        };
++                        let mut rgba = bytes.to_vec();
++                        for pixel in rgba.chunks_exact_mut(4) {
++                            pixel.swap(0, 2);
++                        }
++                        *crate::readback::RESULT.lock() = Some((w as u32, h as u32, rgba));
+                     }
+                     return;
+                 }
+--- src/gpui.rs
++++ src/gpui.rs
+@@ -308,4 +308,16 @@
+     pub driver_name: String,
+     /// Further information about the driver, as reported by Vulkan.
+     pub driver_info: String,
++}
++
++/// deka comparison harness: read back the next presented frame (macOS only).
++pub mod readback {
++    use std::sync::atomic::AtomicBool;
++    /// Set before the window opens: the Metal layer's drawables become readable.
++    pub static ENABLED: AtomicBool = AtomicBool::new(false);
++    /// Set to copy the next drawn frame into [`RESULT`].
++    pub static REQUEST: AtomicBool = AtomicBool::new(false);
++    /// (width, height, RGBA rows) of the last requested frame.
++    pub static RESULT: parking_lot::Mutex<Option<(u32, u32, Vec<u8>)>> =
++        parking_lot::Mutex::new(None);
+ }

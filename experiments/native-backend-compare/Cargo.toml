@@ -1,0 +1,56 @@
+[package]
+name = "native-backend-compare"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+description = "Measures deka's GPUI window (main's glue, copied) against the winit + wgpu + vello_gpu window. Not product code."
+
+# Standalone workspace: not a deka workspace member.
+[workspace]
+
+[features]
+# Exactly one backend per binary, so each binary links only its own stack.
+gpui = ["dep:gpui", "dep:image"]
+new = ["deka_native_ui/world-audio"]
+
+[dependencies]
+deka_native_ui = { path = "../../crates/deka_native_ui" }
+deka_native_ir = { path = "../../crates/deka_native_ir" }
+deka_vm = { path = "../../crates/deka_vm", features = ["compiler", "ui"] }
+libc = "0.2"
+png = "0.18"
+gpui = { version = "=0.2.2", features = ["runtime_shaders"], optional = true }
+image = { version = "0.25", default-features = false, optional = true }
+rodio = { version = "=0.21.1", default-features = false, features = ["playback"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-metal = { version = "0.3.2", features = ["MTLDevice"] }
+
+[[bin]]
+name = "cmp-gpui"
+path = "src/bin/gpui.rs"
+required-features = ["gpui"]
+
+[[bin]]
+name = "cmp-new"
+path = "src/bin/new.rs"
+required-features = ["new"]
+
+[profile.release]
+debug = false
+
+# deka's shipped `native` profile.
+[profile.native]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
+[patch.crates-io]
+vello_gpu = { path = "../../vendor/vello_gpu" }
+vello_gpu_shaders = { path = "../../vendor/vello_gpu_shaders" }
+# GPUI 0.2.2 plus a readback hook used only by `snap` (vendor/gpui-readback.diff,
+# applied by setup.sh). With the hook unused it behaves exactly like the release.
+gpui = { path = "vendor/gpui-0.2.2" }
