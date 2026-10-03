@@ -222,9 +222,10 @@ impl Vm {
     pub async fn run(&mut self) -> Result<HostValue> {
         std::future::poll_fn(|cx| self.poll(cx)).await
     }
-    /// Poll all runnable tasks in bounded instruction slices. Host futures use the caller's waker.
+    /// Poll runnable tasks in bounded slices, draining them after main returns.
+    /// Host futures use the caller's waker; an idle poll does not mean completion.
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<HostValue>> {
-        match self.poll_inner(cx) {
+        match self.poll_inner(cx, true) {
             Poll::Ready(result) => {
                 let result = result.and_then(|h| self.to_host(h));
                 let _ = self.cancel();
@@ -233,7 +234,7 @@ impl Vm {
             Poll::Pending => Poll::Pending,
         }
     }
-    fn poll_inner(&mut self, cx: &mut Context<'_>) -> Poll<Result<Handle>> {
+    fn poll_inner(&mut self, cx: &mut Context<'_>, drain_tasks: bool) -> Poll<Result<Handle>> {
         let Some(root) = self.root else {
             return Poll::Ready(Err("VM cancelled".into()));
         };
@@ -277,6 +278,12 @@ impl Vm {
                 }
             };
             if let Some(result) = result {
+                // VM faults are fatal even when their task was not awaited.
+                // Language Throw is an Outcome, so it still travels through await.
+                let result = match result {
+                    Ok(value) => Ok(value),
+                    Err(error) => return Poll::Ready(Err(error)),
+                };
                 progressed = true;
                 if let Err(e) = self
                     .heap
@@ -293,6 +300,14 @@ impl Vm {
             return Poll::Ready(Err(e));
         }
         match self.heap.get(root) {
+            Ok(Value::Promise(Some(Ok(Outcome::Value(_)))))
+                if drain_tasks && !self.tasks.is_empty() =>
+            {
+                if progressed {
+                    cx.waker().wake_by_ref();
+                }
+                Poll::Pending
+            }
             Ok(Value::Promise(Some(Ok(Outcome::Value(h))))) => Poll::Ready(Ok(*h)),
             Ok(Value::Promise(Some(Ok(Outcome::Thrown(h))))) => {
                 Poll::Ready(Err(format!("uncaught Throw: {}", self.value_text(*h)?)))
@@ -311,7 +326,9 @@ impl Vm {
     pub(crate) fn finish_sync(&mut self) -> Result<Handle> {
         let mut cx = Context::from_waker(std::task::Waker::noop());
         loop {
-            match self.poll_inner(&mut cx) {
+            // A synchronous UI invocation reads its own result. Desktop task
+            // lifetime is managed separately from CLI program draining.
+            match self.poll_inner(&mut cx, false) {
                 Poll::Ready(result) => {
                     self.tasks.clear();
                     // Leave the result promise rooted until the caller pins or reads it.
