@@ -4,7 +4,6 @@ use crate::{
     Node,
     geometry::{Clip, Transform},
 };
-use fontdue::{Font, FontSettings};
 use serde::Serialize;
 use std::collections::HashMap;
 use taffy::prelude::*;
@@ -130,7 +129,7 @@ impl Scene {
     }
 }
 pub struct Renderer {
-    font: Font,
+    text: std::cell::RefCell<crate::text::Text>,
     layout_motion: std::cell::RefCell<crate::layout_motion::LayoutMotion>,
     animator: std::cell::RefCell<crate::animation::Animator>,
 }
@@ -144,11 +143,7 @@ impl Renderer {
         Self {
             animator: Default::default(),
             layout_motion: Default::default(),
-            font: Font::from_bytes(
-                include_bytes!("../assets/AtkinsonHyperlegible-Regular.ttf") as &[u8],
-                FontSettings::default(),
-            )
-            .expect("bundled font"),
+            text: std::cell::RefCell::new(crate::text::Text::new()),
         }
     }
     pub fn reset_animations(&self) {
@@ -191,6 +186,8 @@ impl Renderer {
             style.size.width = Dimension::length(width);
             tree.set_style(item.layout, style).expect("viewport width");
         }
+        let mut text = self.text.borrow_mut();
+        let text = &mut *text;
         tree.compute_layout_with_measure(
             item.layout,
             Size {
@@ -198,7 +195,7 @@ impl Renderer {
                 height: AvailableSpace::Definite(height),
             },
             |known, available, _, context, _| {
-                crate::layout::measure(&self.font, known, available, context)
+                crate::layout::measure(text, known, available, context)
             },
         )
         .expect("scene layout");
@@ -210,6 +207,7 @@ impl Renderer {
         };
         let mut images = HashMap::new();
         self.paint(
+            text,
             &item,
             &tree,
             Rect {
@@ -227,6 +225,7 @@ impl Renderer {
             &mut scene,
             &mut images,
         );
+        text.end_render();
         scene.images = images.into_values().collect();
         scene.images.sort_by(|a, b| a.id.cmp(&b.id));
         scene
@@ -234,6 +233,7 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)] // Recursive traversal carries one scene, glyph table and ancestor clip.
     fn paint(
         &self,
+        text: &mut crate::text::Text,
         item: &crate::layout::Item<'_>,
         tree: &TaffyTree<crate::layout::TextMeasure>,
         clip: Rect,
@@ -311,48 +311,20 @@ impl Renderer {
         if item.node.style.clip {
             content_clips.push(Clip { rect, transform });
         }
-        if let Some(text) = &item.node.text {
+        if let Some(content) = &item.node.text {
             let padding = layout.padding;
             let width = (rect.width - padding.left - padding.right).max(0.);
-            let text_layout = crate::text::layout(
-                &self.font,
-                text,
+            for (glyph, id) in text.glyphs(
+                content,
                 item.font_size,
                 (!item.nowrap).then_some(width),
-            );
-            for g in text_layout.glyphs() {
-                let size = item.font_size * scale;
-                let (metrics, alpha) = self.font.rasterize(g.parent, size);
-                let logical = self.font.metrics(g.parent, item.font_size);
-                if metrics.width == 0 || metrics.height == 0 {
-                    continue;
-                }
-                let id = format!("{}-{}-{}", g.parent as u32, size, item.color);
-                images.entry(id.clone()).or_insert_with(|| GlyphImage {
-                    id: id.clone(),
-                    width: metrics.width,
-                    height: metrics.height,
-                    rgba: alpha
-                        .iter()
-                        .flat_map(|a| {
-                            [
-                                (item.color >> 16) as u8,
-                                (item.color >> 8) as u8,
-                                item.color as u8,
-                                *a,
-                            ]
-                        })
-                        .collect(),
-                });
+                (rect.x + padding.left, rect.y + padding.top),
+                scale,
+                item.color,
+                images,
+            ) {
                 let paint = Paint {
-                    rect: Rect {
-                        x: rect.x + padding.left + g.x - logical.xmin as f32
-                            + metrics.xmin as f32 / scale,
-                        y: rect.y + padding.top + g.y + logical.height as f32 + logical.ymin as f32
-                            - (metrics.height as f32 + metrics.ymin as f32) / scale,
-                        width: metrics.width as f32 / scale,
-                        height: metrics.height as f32 / scale,
-                    },
+                    rect: glyph,
                     clip,
                     color: item.color,
                     radius: 0.,
@@ -368,6 +340,7 @@ impl Renderer {
         }
         for child in &item.children {
             self.paint(
+                text,
                 child,
                 tree,
                 clip,

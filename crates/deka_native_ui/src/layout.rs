@@ -1,5 +1,4 @@
-use crate::{Align, Edges, Justify, Length, Node, Style, text};
-use fontdue::Font;
+use crate::{Align, Edges, Justify, Length, Node, Style, text::Text};
 use taffy::Overflow;
 use taffy::prelude::*;
 
@@ -144,7 +143,7 @@ pub(crate) fn tree<'a>(
     }
 }
 pub(crate) fn measure(
-    font: &Font,
+    text: &mut Text,
     known: Size<Option<f32>>,
     available: Size<AvailableSpace>,
     context: Option<&mut TextMeasure>,
@@ -157,16 +156,14 @@ pub(crate) fn measure(
     } else {
         known.width.or(match available.width {
             AvailableSpace::Definite(w) => Some(w),
-            AvailableSpace::MinContent => Some(text::min_width(font, &c.text, c.size)),
+            AvailableSpace::MinContent => Some(text.min_width(&c.text, c.size)),
             AvailableSpace::MaxContent => None,
         })
     };
-    let layout = text::layout(font, &c.text, c.size, width);
+    let (measured_width, measured_height) = text.measure(&c.text, c.size, width);
     Size {
-        width: known
-            .width
-            .unwrap_or_else(|| text::width(font, &layout, c.size)),
-        height: known.height.unwrap_or_else(|| layout.height()),
+        width: known.width.unwrap_or(measured_width),
+        height: known.height.unwrap_or(measured_height),
     }
 }
 
