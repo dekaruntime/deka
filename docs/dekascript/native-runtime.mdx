@@ -581,3 +581,29 @@ releases pending work; a VM fault cannot be hidden by a successful entry return.
 Fallible host operations still deliver operational errors as Result values.
 This CLI lifetime rule does not add async window handlers: desktop event-loop
 integration is a separate feature.
+
+## Console output
+
+`console.log`, `console.info` and `console.debug` write one line to stdout.
+`console.error` and `console.warn` write one line to stderr; they return normally
+and do not make the program fail. Arguments are evaluated once in source order,
+separated by spaces. Calling a method without arguments writes an empty line.
+
+```ds
+struct Point { x: number; y: number; }
+console.info("Position", Point { x: 3, y: 4 })
+console.warn(Some(7), None, Err("offline"))
+```
+
+The stdout line is `Position Point { x: 3, y: 4 }`.
+The stderr line is `Some(7) None Err("offline")`.
+All five methods share the native formatter: structs preserve their names and
+field order, enum values print as `Case(payload)`, and nested strings are quoted.
+Functions, promises and opaque host handles have no printable form and are
+rejected by the checker. A local binding named `console` follows ordinary
+record and function rules.
+
+Embedded hosts provide a synchronous `echo(string)` operation for stdout and a
+synchronous `console_stderr(string)` operation for diagnostic output, both
+returning `void`. The CLI supplies both. Browser-hosted console forwarding is a
+separate platform integration.
