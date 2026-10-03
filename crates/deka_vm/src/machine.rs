@@ -30,6 +30,7 @@ enum Work {
         future: HostFuture,
         result: HostType,
         result_channel: bool,
+        job: Option<HostJob>,
     },
 }
 struct Task {
@@ -49,6 +50,7 @@ enum Invocation {
 pub struct Vm {
     program: Rc<Program>,
     hosts: Hosts,
+    context: HostContext,
     pub(crate) heap: Heap,
     pins: Vec<Handle>,
     tasks: BTreeMap<u64, Task>,
@@ -67,6 +69,7 @@ impl Vm {
         let mut vm = Self {
             program: Rc::new(program),
             hosts,
+            context: HostContext::default(),
             heap: Heap::default(),
             pins: vec![],
             tasks: BTreeMap::new(),
@@ -93,6 +96,7 @@ impl Vm {
         self.tasks.len()
     }
     pub fn cancel(&mut self) -> Result<()> {
+        self.context.close();
         self.tasks.clear();
         self.pins.clear();
         self.descriptors.clear();
@@ -106,6 +110,7 @@ impl Vm {
             .chain(self.pins.iter().copied())
             .collect();
         roots.extend(self.descriptors.values().copied());
+        roots.extend(self.context.roots());
         for task in self.tasks.values() {
             roots.push(task.promise);
             if let Work::Code(frames) = &task.work {
@@ -177,6 +182,7 @@ impl Vm {
                     })
                     .collect::<Result<_>>()?,
             ),
+            Value::Closure { .. } => HostValue::Callback(self.context.callback(h)),
             _ => return Err("unsupported host wire value".into()),
         })
     }
@@ -197,15 +203,22 @@ impl Vm {
         if !expected.accepts(&value) {
             return Err("host returned the wrong result type".into());
         }
-        let payload = self.alloc_host_value(value);
+        let payload = self.alloc_host_value(value)?;
         Ok(if result_channel {
             self.enum_value("Result".into(), "Ok".into(), 0, Some(payload))
         } else {
             payload
         })
     }
-    pub(crate) fn alloc_host_value(&mut self, value: HostValue) -> Handle {
+    pub(crate) fn alloc_host_value(&mut self, value: HostValue) -> Result<Handle> {
         let value = match value {
+            HostValue::Callback(callback) => {
+                if !self.context.owns(&callback) {
+                    return Err("callback belongs to another VM".into());
+                }
+                self.heap.get(callback.handle())?;
+                return Ok(callback.handle());
+            }
             HostValue::Unit => Value::Unit,
             HostValue::Number(n) => Value::Number(n),
             HostValue::Bool(b) => Value::Bool(b),
@@ -217,7 +230,59 @@ impl Vm {
                     .collect(),
             ),
         };
-        self.heap.alloc(value)
+        Ok(self.heap.alloc(value))
+    }
+    fn host_commands(&mut self) -> Result<bool> {
+        let commands = self.context.take();
+        let progressed = !commands.is_empty();
+        for command in commands {
+            match command {
+                crate::callback::Command::Spawn { job, future } => {
+                    if !job.is_cancelled() {
+                        self.spawn(Work::Host {
+                            future,
+                            result: HostType::Unit,
+                            result_channel: false,
+                            job: Some(job),
+                        });
+                    }
+                }
+                crate::callback::Command::Cancel(id) => {
+                    self.tasks.retain(|_, task| {
+                        !matches!(
+                            &task.work, Work::Host { job: Some(job), .. } if job.id() == id
+                        )
+                    });
+                }
+                crate::callback::Command::Call {
+                    callback,
+                    args,
+                    job,
+                } => {
+                    if job.is_some_and(|job| job.is_cancelled()) {
+                        continue;
+                    }
+                    if !self.context.owns(&callback) {
+                        return Err("callback belongs to another VM".into());
+                    }
+                    let Value::Closure {
+                        function,
+                        captures,
+                        slot_children,
+                    } = self.heap.get(callback.handle())?.clone()
+                    else {
+                        return Err("host callback is not callable".into());
+                    };
+                    let args = args
+                        .into_iter()
+                        .map(|value| self.alloc_host_value(value))
+                        .collect::<Result<Vec<_>>>()?;
+                    let frame = self.frame(function, captures, args, slot_children)?;
+                    self.spawn(Work::Code(vec![frame]));
+                }
+            }
+        }
+        Ok(progressed)
     }
     pub async fn run(&mut self) -> Result<HostValue> {
         std::future::poll_fn(|cx| self.poll(cx)).await
@@ -238,7 +303,8 @@ impl Vm {
         let Some(root) = self.root else {
             return Poll::Ready(Err("VM cancelled".into()));
         };
-        let mut progressed = false;
+        self.context.set_waker(cx.waker());
+        let mut progressed = self.host_commands()?;
         let ids: Vec<_> = self.tasks.keys().copied().collect();
         for id in ids {
             let mut task = self.tasks.remove(&id).unwrap();
@@ -247,6 +313,7 @@ impl Vm {
                     future,
                     result,
                     result_channel,
+                    ..
                 } => match future.as_mut().poll(cx) {
                     Poll::Ready(v) => Some(
                         self.host_result(v, *result, *result_channel)
@@ -295,6 +362,7 @@ impl Vm {
                 self.tasks.insert(id, task);
             }
         }
+        progressed |= self.host_commands()?;
         // Collection only occurs at a safepoint, with every suspended frame registered.
         if let Err(e) = self.collect() {
             return Poll::Ready(Err(e));
@@ -754,10 +822,11 @@ impl Vm {
                     .map(|h| self.to_host(h))
                     .collect::<Result<Vec<_>>>()?;
                 let (reply, expected, asynchronous, result_channel) =
-                    self.hosts.call(&operation, args)?;
+                    self.hosts.call(&operation, args, &self.context)?;
                 let h = match reply {
                     HostReply::Pending(future) => self.spawn(Work::Host {
                         future,
+                        job: None,
                         result: expected,
                         result_channel,
                     }),
@@ -1411,4 +1480,10 @@ fn arguments(frame: &mut Frame, count: usize) -> Result<Vec<Handle>> {
     }
     args.reverse();
     Ok(args)
+}
+
+impl Drop for Vm {
+    fn drop(&mut self) {
+        self.context.close();
+    }
 }

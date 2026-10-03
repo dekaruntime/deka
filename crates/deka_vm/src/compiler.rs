@@ -377,11 +377,25 @@ fn lower_module<'a>(
             imports.insert(source, exports);
         }
     }
-    let checked = deka_syntax::check_program_with_imports(ast, source, &imports);
+    let globals = hosts
+        .globals()
+        .filter_map(|op| {
+            host_exports
+                .values
+                .get_key_value(op.name.as_str())
+                .map(|(name, ty)| (*name, ty.clone()))
+        })
+        .collect();
+    let checked = deka_syntax::typeck::check_program_with_imports_and_globals(
+        ast, source, &imports, &globals,
+    );
     diagnostics(&checked.errors).map_err(|e| format!("{}: {e}", path.display()))?;
     entry.names.clear();
     entry.checked.clear();
     lower.hosts.clear();
+    for op in hosts.globals() {
+        lower.hosts.insert(op.name.clone(), op.name.clone());
+    }
     lower.declared.clear();
     lower.newtypes.clear();
     lower.structs.clear();
@@ -972,6 +986,7 @@ fn compile_modules(
     let mut lower = Lower {
         functions: vec![],
         hosts: BTreeMap::new(),
+        host_arities: hosts.declarations_names_and_arities(),
         declared: std::collections::BTreeSet::new(),
         newtypes: std::collections::BTreeSet::new(),
         structs: BTreeMap::new(),
@@ -1255,6 +1270,7 @@ type StructFields<'a> = Vec<(String, Option<&'a Expr<'a>>, bool)>;
 struct Lower<'a> {
     functions: Vec<Function>,
     hosts: BTreeMap<String, String>,
+    host_arities: BTreeMap<String, usize>,
     /// Top-level names declared anywhere in the current module. A call to one
     /// of these before its declaration is a forward reference; a call to any
     /// other unbound name is an unknown built-in.
@@ -2424,7 +2440,35 @@ impl<'a> Lower<'a> {
                 c.patch(end);
             }
             Expr::Identifier { name, .. } => {
-                c.emit_load(name)?;
+                if !c.names.contains_key(*name)
+                    && let Some(operation) = self.hosts.get(*name)
+                {
+                    let argc = *self
+                        .host_arities
+                        .get(operation)
+                        .ok_or("unknown host signature")?;
+                    let mut code = (0..argc).map(Op::Load).collect::<Vec<_>>();
+                    code.push(Op::Host {
+                        operation: operation.clone(),
+                        arguments: argc,
+                    });
+                    code.push(Op::Return);
+                    let function = self.functions.len();
+                    self.functions.push(Function {
+                        name: operation.clone(),
+                        parameters: argc,
+                        captures: 0,
+                        locals: argc,
+                        asynchronous: false,
+                        code,
+                    });
+                    c.emit(Op::Closure {
+                        function,
+                        captures: vec![],
+                    });
+                } else {
+                    c.emit_load(name)?;
+                }
             }
             Expr::Paren { expr, .. } | Expr::Safe { expr, .. } => self.expr(expr, c)?,
             Expr::Binary {
