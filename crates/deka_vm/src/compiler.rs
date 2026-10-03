@@ -338,7 +338,17 @@ fn native_globals<'a>(
             host_exports
                 .values
                 .get_key_value(op.name.as_str())
-                .map(|(name, ty)| (*name, ty.clone()))
+                .map(|(_, ty)| {
+                    let ty = if op.global_value.is_some() {
+                        let deka_syntax::typeck::Type::Function { ret, .. } = ty else {
+                            unreachable!("host getter declaration")
+                        };
+                        *ret.clone()
+                    } else {
+                        ty.clone()
+                    };
+                    (&*arena.alloc_str(op.global_name()), ty)
+                })
         })
         .collect();
     for op in hosts.namespaces() {
@@ -469,6 +479,7 @@ fn lower_module<'a>(
         .map(|expr| *expr as usize)
         .collect();
     lower.hosts.clear();
+    lower.host_values.clear();
     lower.host_namespaces.clear();
     for op in hosts.namespaces() {
         let (namespace, field) = op.namespace.as_ref().expect("host namespace");
@@ -479,7 +490,11 @@ fn lower_module<'a>(
             .push((field.clone(), op.name.clone()));
     }
     for op in hosts.globals() {
-        lower.hosts.insert(op.name.clone(), op.name.clone());
+        if let Some(name) = &op.global_value {
+            lower.host_values.insert(name.clone(), op.name.clone());
+        } else {
+            lower.hosts.insert(op.name.clone(), op.name.clone());
+        }
     }
     for op in hosts.methods() {
         let (owner, method) = op.receiver_method.as_ref().expect("host method");
@@ -1204,6 +1219,7 @@ fn compile_modules(
         functions: vec![],
         hosts: BTreeMap::new(),
         host_namespaces: BTreeMap::new(),
+        host_values: BTreeMap::new(),
         optional_field_reads: Default::default(),
         host_arities: hosts.declarations_names_and_arities(),
         declared: std::collections::BTreeSet::new(),
@@ -1501,6 +1517,7 @@ struct Lower<'a> {
     functions: Vec<Function>,
     hosts: BTreeMap<String, String>,
     host_namespaces: BTreeMap<String, Vec<(String, String)>>,
+    host_values: BTreeMap<String, String>,
     optional_field_reads: std::collections::HashSet<usize>,
     host_arities: BTreeMap<String, usize>,
     /// Top-level names declared anywhere in the current module. A call to one
@@ -2716,6 +2733,14 @@ impl<'a> Lower<'a> {
                         .map(|kind| kind.name().to_owned())
                         .collect(),
                 ));
+            }
+            Expr::Identifier { name, .. }
+                if !c.names.contains_key(*name) && self.host_values.contains_key(*name) =>
+            {
+                c.emit(Op::Host {
+                    operation: self.host_values[*name].clone(),
+                    arguments: 0,
+                });
             }
             Expr::Identifier { name, .. }
                 if !c.names.contains_key(*name) && self.host_namespaces.contains_key(*name) =>

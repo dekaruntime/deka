@@ -1,0 +1,50 @@
+# Native crypto globals
+
+`crypto` is one Rust-owned `Crypto` value. Its readonly `.subtle` is a
+`SubtleCrypto` handle. Aliases and module exports keep those handles; neither
+object is a constructor. Methods have compile-time checked arguments and
+return `Result` when they can fail. Failures do not throw.
+
+```ds
+async fn fingerprint(text: string) Promise<string> {
+    const input = TextEncoder().encode(text)
+    const hash = unwrap(await crypto.subtle.digest("SHA-256", input)) or {
+        return "Digest failed";
+    }
+    return string(hash.length) + ":" + string(hash[0])
+}
+```
+
+`await fingerprint("abc")` returns `32:186`. Digest returns owned `bytes` in
+`Promise<Result<bytes, string>>`, using the same Rust engines as the native
+crypto implementation. The initial algorithms are SHA-256, SHA-384, SHA-512,
+SHA3-256 and BLAKE3. Names are case insensitive; SHA256, SHA384, SHA512 and SHA3
+are accepted aliases. Unsupported algorithms and inputs over 16 MiB return
+`Err`. Hashing runs on Tokio's blocking worker pool, so an async desktop handler
+can await it while the window continues handling turns and redraws.
+
+```ds
+fn randomSummary() string {
+    const id = unwrap(crypto.randomUUID()) or { return "Entropy failed"; }
+    const input = TextEncoder().encode("abc")
+    const random = unwrap(crypto.getRandomValues(input)) or {
+        return "Entropy failed";
+    }
+    const decoder = unwrap(TextDecoder()) or { return "Decoder failed"; }
+    const unchanged = unwrap(decoder.decode(input)) or { return "Decode failed"; }
+    return string(id.length) + ":" + string(random.length) + ":" + unchanged
+}
+```
+
+`randomSummary()` returns `36:3:abc`. `randomUUID()` returns a lowercase version
+4 UUID through `Result<string, string>`. `getRandomValues(bytes)` returns
+`Result<bytes, string>` with fresh OS randomness and the input's length, up to
+65,536 bytes. DekaScript bytes are immutable: this method returns a randomized
+copy and leaves its input unchanged. Consume the returned bytes. Both methods
+report unavailable OS entropy through `Err`; they never substitute predictable
+bytes or an empty successful result.
+
+These operations run in `deka run`, source-free executables and desktop apps
+through the same native catalog. Algorithm objects, key operations and browser
+backend delegation are separate surfaces. AES and bcrypt belong to the crypto
+module rather than these globals.

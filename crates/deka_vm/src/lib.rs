@@ -3,6 +3,8 @@
 pub mod abort;
 mod bytecode;
 mod callback;
+#[cfg(feature = "host")]
+pub mod crypto;
 pub mod text_codec;
 pub use callback::{HostCallback, HostContext, HostJob};
 #[cfg(feature = "compiler")]
