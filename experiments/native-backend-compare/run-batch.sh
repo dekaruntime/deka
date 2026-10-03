@@ -6,6 +6,10 @@
 # Needs an unlocked session: a locked screen occludes every window, virtual
 # displays included.
 # Usage: run-batch.sh OUT_DIR [ROUNDS] [cmp-batch options, e.g. --plan start]
+# Plans: content (counter: read the window back until its frame shows),
+# start, idle, animate, pixels. `--backends a,b` runs ./cmp-a and ./cmp-b
+# from the build directory, so two builds of one backend can be compared
+# (copy them there as cmp-before / cmp-after).
 set -u
 out=${1:?output directory}
 rounds=${2:-5}

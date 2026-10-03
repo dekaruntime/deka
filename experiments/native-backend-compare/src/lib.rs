@@ -141,12 +141,52 @@ pub fn start_visibility_probe() {
                         *b = Some(w.bounds);
                     }
                     ON_SCREEN.store(true, Ordering::Relaxed);
+                    if flag("--content") {
+                        watch_content(w.number as u32);
+                    }
                     return;
                 }
                 std::thread::sleep(Duration::from_micros(500));
             }
         });
 }
+
+static CONTENT_DONE: AtomicBool = AtomicBool::new(false);
+/// `--content` (counter only): read this process's own window back from the
+/// window server until it shows the counter's frame (its background colour
+/// and its dark text), and mark when. A process may capture its own windows
+/// without the screen-recording permission. Each read costs a few
+/// milliseconds, so these runs are separate from the timing runs.
+fn watch_content(number: u32) {
+    let t0 = Instant::now();
+    let mut last = None;
+    while t0.elapsed() < Duration::from_secs(3) {
+        if let Some((background, text, image)) =
+            display::window_pixels_and_image(number, (0xf3, 0xef, 0xe3), (0x1a, 0x16, 0x11))
+        {
+            last = Some((background, text));
+            if background > 0.5 && text >= 500 {
+                mark("content on screen");
+                if let Some(dir) = arg("--content-dump") {
+                    let at = timeline_ms("content on screen").unwrap_or(0.);
+                    write_png(
+                        &std::path::Path::new(&dir).join(format!("content-{}-{at:.0}.png", std::process::id())),
+                        image.0,
+                        image.1,
+                        &image.2,
+                    );
+                }
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    if let Ok(mut c) = LAST_CONTENT.lock() {
+        *c = last;
+    }
+    CONTENT_DONE.store(true, Ordering::Relaxed);
+}
+static LAST_CONTENT: Mutex<Option<(f64, usize)>> = Mutex::new(None);
 
 /// `window=[x y w h] placement=virtual|OFF:<why>` for the RESULT lines: where
 /// the window server first showed this process's window.
@@ -238,6 +278,14 @@ pub mod display {
         fn CGDisplayModeGetPixelHeight(mode: *const c_void) -> usize;
         fn CGDisplayModeGetRefreshRate(mode: *const c_void) -> f64;
         fn CGDisplayModeRelease(mode: *const c_void);
+        fn CGWindowListCreateImage(bounds: Rect, list: u32, window: u32, image: u32) -> *const c_void;
+        fn CGImageGetWidth(image: *const c_void) -> usize;
+        fn CGImageGetHeight(image: *const c_void) -> usize;
+        fn CGImageGetBytesPerRow(image: *const c_void) -> usize;
+        fn CGImageGetBitsPerPixel(image: *const c_void) -> usize;
+        fn CGImageGetDataProvider(image: *const c_void) -> *const c_void;
+        fn CGDataProviderCopyData(provider: *const c_void) -> *const c_void;
+        fn CGImageRelease(image: *const c_void);
         static kCGWindowOwnerPID: *const c_void;
         static kCGWindowNumber: *const c_void;
         static kCGWindowLayer: *const c_void;
@@ -252,6 +300,8 @@ pub mod display {
         fn CFNumberGetValue(number: *const c_void, kind: isize, out: *mut c_void) -> bool;
         fn CFStringGetCString(s: *const c_void, buf: *mut u8, len: isize, encoding: u32) -> bool;
         fn CFRelease(object: *const c_void);
+        fn CFDataGetBytePtr(data: *const c_void) -> *const u8;
+        fn CFDataGetLength(data: *const c_void) -> isize;
     }
     unsafe extern "C" {
         fn cmp_vd_create(
@@ -379,6 +429,72 @@ pub mod display {
         out
     }
 
+    /// Read window `number` back (its own process may, without the
+    /// screen-recording permission) and return, below its title bar, the
+    /// fraction of pixels near `background` and the count near `text`, inside
+    /// the window's frame.
+    pub fn window_pixels(number: u32, background: (u8, u8, u8), text: (u8, u8, u8)) -> Option<(f64, usize)> {
+        window_pixels_and_image(number, background, text).map(|(f, n, _)| (f, n))
+    }
+
+    /// [`window_pixels`] plus the image as (width, height, RGBA).
+    pub fn window_pixels_and_image(
+        number: u32,
+        background: (u8, u8, u8),
+        text: (u8, u8, u8),
+    ) -> Option<(f64, usize, (u32, u32, Vec<u8>))> {
+        const INCLUDING_WINDOW: u32 = 1 << 3;
+        const IGNORE_FRAMING: u32 = 1;
+        const NOMINAL_RESOLUTION: u32 = 1 << 4;
+        let null = Rect { x: f64::INFINITY, y: f64::INFINITY, w: 0., h: 0. };
+        // SAFETY: the image and its copied bytes are released below; reads
+        // stay inside the copied buffer (rows * bytes per row).
+        unsafe {
+            let image = CGWindowListCreateImage(null, INCLUDING_WINDOW, number, IGNORE_FRAMING | NOMINAL_RESOLUTION);
+            if image.is_null() {
+                return None;
+            }
+            let (w, h, row) = (CGImageGetWidth(image), CGImageGetHeight(image), CGImageGetBytesPerRow(image));
+            let data = if CGImageGetBitsPerPixel(image) == 32 {
+                CGDataProviderCopyData(CGImageGetDataProvider(image))
+            } else {
+                std::ptr::null()
+            };
+            CGImageRelease(image);
+            if data.is_null() {
+                return None;
+            }
+            let bytes = std::slice::from_raw_parts(CFDataGetBytePtr(data), CFDataGetLength(data) as usize);
+            let near = |p: &[u8], c: (u8, u8, u8), tol: u8| {
+                // BGRA in memory (32-bit little-endian, alpha first).
+                p[2].abs_diff(c.0) <= tol && p[1].abs_diff(c.1) <= tol && p[0].abs_diff(c.2) <= tol
+            };
+            let mut rgba = Vec::with_capacity(w * h * 4);
+            for y in 0..h {
+                if let Some(line) = bytes.get(y * row..y * row + w * 4) {
+                    for p in line.chunks_exact(4) {
+                        rgba.extend_from_slice(&[p[2], p[1], p[0], 255]);
+                    }
+                }
+            }
+            let (mut total, mut bg, mut fg) = (0usize, 0usize, 0usize);
+            // Inside the frame: no title bar, no rounded corners or border
+            // (dark in dark mode, like the text).
+            for y in h * 15 / 100..h * 92 / 100 {
+                let Some(line) = bytes.get(y * row + w * 5 / 100 * 4..y * row + w * 95 / 100 * 4) else {
+                    break;
+                };
+                for p in line.chunks_exact(4) {
+                    total += 1;
+                    bg += usize::from(near(p, background, 10));
+                    fg += usize::from(near(p, text, 30));
+                }
+            }
+            CFRelease(data);
+            Some((bg as f64 / total.max(1) as f64, fg, (w as u32, h as u32, rgba)))
+        }
+    }
+
     /// A window passes when it lies wholly on display `virt` and touches no
     /// display a person can see.
     pub fn check_window(w: &Rect, virt: u32) -> Result<(), String> {
@@ -446,6 +562,9 @@ impl Protocol {
         mark("main");
         require_virtual_display();
         start_visibility_probe();
+        // cmp-batch names each binary's runs (`--label`), e.g. two builds of
+        // the same backend.
+        let backend: &'static str = arg("--label").map_or(backend, |l| Box::leak(l.into_boxed_str()));
         let p = Box::leak(Box::new(Self {
             backend,
             app: app_name(),
@@ -475,6 +594,9 @@ impl Protocol {
                     while !ON_SCREEN.load(Ordering::Relaxed) && t0.elapsed() < Duration::from_secs(3) {
                         std::thread::sleep(Duration::from_millis(1));
                     }
+                    while flag("--content") && !CONTENT_DONE.load(Ordering::Relaxed) && t0.elapsed() < Duration::from_secs(5) {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
                     self.report_start();
                     std::process::exit(0);
                 });
@@ -502,6 +624,21 @@ impl Protocol {
         let screen = timeline_ms("window on screen").unwrap_or(f64::NAN);
         let main = timeline_ms("main").unwrap_or(f64::NAN);
         let u = usage();
+        if flag("--content") {
+            let content = timeline_ms("content on screen").unwrap_or(f64::NAN);
+            let last = LAST_CONTENT.lock().ok().and_then(|c| *c).unwrap_or((f64::NAN, 0));
+            println!(
+                "RESULT content backend={} app={} window_on_screen_ms={screen:.1} content_on_screen_ms={content:.1} first_frame_ms={first:.1} background_fraction={:.2} text_pixels={} load=[{}] {}",
+                self.backend,
+                self.app,
+                last.0,
+                last.1,
+                load_avg(),
+                placement()
+            );
+            println!("{}", trace_line());
+            return;
+        }
         println!(
             "RESULT start backend={} app={} main_ms={main:.1} first_frame_ms={first:.1} window_on_screen_ms={screen:.1} visible_with_frame_ms={:.1} footprint_mb={:.1} gpu_mb={:.1} load=[{}] {}",
             self.backend,
@@ -534,6 +671,7 @@ impl Protocol {
             load_avg(),
             placement()
         );
+        println!("{}", trace_line());
         std::process::exit(0);
     }
 

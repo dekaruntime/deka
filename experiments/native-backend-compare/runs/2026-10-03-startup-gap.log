@@ -1,0 +1,769 @@
+main display 69945052: 2560x1440 pt, 5120x2880 px (scale 2), 60 Hz, bounds [0 0 2560 1440]
+virtual display 4128836 online in 1454 ms: bounds [-2560 0 2560 1440], mode Some(Mode { width: 2560, height: 1440, pixel_width: 5120, pixel_height: 2880, refresh: 60.0 }), main display still 69945052
+main display mode with the virtual display: Some(Mode { width: 2560, height: 1440, pixel_width: 5120, pixel_height: 2880, refresh: 0.0 })
+physical displays before [(69945052, Rect { x: 0.0, y: 0.0, w: 2560.0, h: 1440.0 })], with the virtual display [(69945052, Rect { x: 0.0, y: 0.0, w: 2560.0, h: 1440.0 })]
+other apps' windows moved by adding the display: 0
+## ./cmp-gpui --app counter --first-frame --content --display 4128836 --label gpui
+RESULT content backend=gpui app=counter window_on_screen_ms=225.6 content_on_screen_ms=258.2 first_frame_ms=171.3 background_fraction=0.92 text_pixels=2592 load=[8.84 8.46 11.97] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.7 | first frame=171.3 | window on screen=225.6 | content on screen=258.2
+exit Some(0)
+PLACEMENT window #224184 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app counter --first-frame --content --display 4128836 --label before
+RESULT content backend=before app=counter window_on_screen_ms=225.1 content_on_screen_ms=308.4 first_frame_ms=388.8 background_fraction=0.92 text_pixels=2609 load=[8.84 8.46 11.97] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.6 | gpu: thread=26.8 | show=26.8 | gpu: instance=26.8 | gpu: adapter=35.5 | gpu: device=40.6 | gpu: renderer=60.6 | event loop built=73.9 | resumed=101.0 | window created=168.3 | window shown=188.8 | gpu joined=188.9 | surface created=190.4 | surface adopted=190.4 | surface configured=190.5 | frame: start=190.5 | frame: scene built=191.8 | frame: refused while not visible=191.8 | window on screen=225.1 | visible=271.9 | frame: start=289.0 | frame: scene built=289.3 | frame: texture acquired=290.6 | frame: drawn=296.3 | frame: presented=298.7 | content on screen=308.4 | menu installed=388.8 | first frame=388.8
+exit Some(0)
+PLACEMENT window #224187 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224187 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224187 [-1559 571 558 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224187 [-1559 570 558 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224187 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224187 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224187 [-1561 569 562 334] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app counter --first-frame --content --display 4128836 --label after
+RESULT content backend=after app=counter window_on_screen_ms=407.2 content_on_screen_ms=440.6 first_frame_ms=357.9 background_fraction=0.92 text_pixels=2575 load=[8.84 8.46 11.97] window=[-1555 573 550 326] placement=virtual
+TRACE main=198.7 | gpu: thread=215.1 | show=215.1 | gpu: instance=215.1 | gpu: adapter=223.0 | gpu: device=227.8 | gpu: renderer=246.3 | event loop built=260.2 | resumed=277.7 | window created=333.0 | gpu joined=333.6 | surface created=334.5 | surface adopted=334.5 | surface configured=334.5 | frame: start=334.6 | frame: scene built=335.5 | frame: presented=342.8 | window shown=357.9 | first frame=357.9 | window on screen=407.2 | content on screen=440.6
+exit Some(0)
+PLACEMENT window #224199 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224199 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app counter --first-frame --content --display 4128836 --label gpui
+RESULT content backend=gpui app=counter window_on_screen_ms=238.2 content_on_screen_ms=272.1 first_frame_ms=188.1 background_fraction=0.91 text_pixels=2539 load=[8.45 8.39 11.92] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.4 | first frame=188.1 | window on screen=238.2 | content on screen=272.1
+exit Some(0)
+PLACEMENT window #224202 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224202 [-1557 572 554 328] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app counter --first-frame --content --display 4128836 --label before
+RESULT content backend=before app=counter window_on_screen_ms=216.9 content_on_screen_ms=345.3 first_frame_ms=356.8 background_fraction=0.92 text_pixels=2579 load=[8.45 8.39 11.92] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.1 | show=24.2 | gpu: thread=24.2 | gpu: instance=24.2 | gpu: adapter=31.8 | gpu: device=37.4 | gpu: renderer=55.6 | event loop built=66.8 | resumed=83.4 | window created=150.7 | window shown=185.3 | gpu joined=185.3 | surface created=186.6 | surface adopted=186.6 | surface configured=186.7 | frame: start=186.7 | frame: scene built=187.8 | frame: refused while not visible=187.8 | window on screen=216.9 | visible=270.0 | frame: start=303.7 | frame: scene built=304.0 | frame: texture acquired=304.8 | frame: drawn=310.7 | frame: presented=312.6 | content on screen=345.3 | menu installed=356.8 | first frame=356.8
+exit Some(0)
+PLACEMENT window #224205 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224205 [-1558 571 556 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224205 [-1559 571 558 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224205 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224205 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app counter --first-frame --content --display 4128836 --label after
+RESULT content backend=after app=counter window_on_screen_ms=232.0 content_on_screen_ms=269.5 first_frame_ms=192.8 background_fraction=0.92 text_pixels=2485 load=[8.45 8.39 11.92] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.3 | gpu: thread=28.0 | show=28.0 | gpu: instance=28.0 | gpu: adapter=36.9 | gpu: device=41.2 | gpu: renderer=60.5 | event loop built=76.6 | resumed=96.1 | window created=158.0 | gpu joined=158.9 | surface created=159.9 | surface adopted=159.9 | surface configured=160.0 | frame: start=160.0 | frame: scene built=161.0 | frame: presented=167.9 | window shown=192.8 | first frame=192.8 | window on screen=232.0 | content on screen=269.5
+exit Some(0)
+PLACEMENT window #224217 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app counter --first-frame --content --display 4128836 --label gpui
+RESULT content backend=gpui app=counter window_on_screen_ms=221.3 content_on_screen_ms=261.1 first_frame_ms=177.8 background_fraction=0.92 text_pixels=2592 load=[8.45 8.39 11.92] window=[-1555 573 550 326] placement=virtual
+TRACE main=7.6 | first frame=177.8 | window on screen=221.3 | content on screen=261.1
+exit Some(0)
+PLACEMENT window #224219 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app counter --first-frame --content --display 4128836 --label before
+RESULT content backend=before app=counter window_on_screen_ms=234.2 content_on_screen_ms=298.6 first_frame_ms=393.7 background_fraction=0.92 text_pixels=2527 load=[7.86 8.27 11.85] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.0 | gpu: thread=24.7 | gpu: instance=24.7 | show=24.8 | gpu: adapter=34.7 | gpu: device=40.1 | gpu: renderer=62.0 | event loop built=70.7 | resumed=90.1 | window created=151.4 | window shown=199.1 | gpu joined=199.2 | surface created=200.3 | surface adopted=200.3 | surface configured=200.3 | frame: start=200.4 | frame: scene built=201.4 | frame: refused while not visible=201.4 | window on screen=234.2 | visible=269.2 | frame: start=274.9 | frame: scene built=275.1 | frame: texture acquired=275.7 | frame: drawn=281.1 | frame: presented=283.1 | content on screen=298.6 | menu installed=393.7 | first frame=393.7
+exit Some(0)
+PLACEMENT window #224221 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224221 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224221 [-1558 571 556 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224221 [-1559 570 558 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224221 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224221 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224221 [-1561 569 562 334] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app counter --first-frame --content --display 4128836 --label after
+RESULT content backend=after app=counter window_on_screen_ms=222.2 content_on_screen_ms=267.8 first_frame_ms=187.3 background_fraction=0.92 text_pixels=2575 load=[7.86 8.27 11.85] window=[-1555 573 550 326] placement=virtual
+TRACE main=9.9 | gpu: thread=31.4 | gpu: instance=31.4 | show=31.4 | gpu: adapter=40.9 | gpu: device=48.2 | gpu: renderer=69.8 | event loop built=83.6 | resumed=100.7 | window created=156.5 | gpu joined=161.1 | surface created=162.0 | surface adopted=162.0 | surface configured=162.1 | frame: start=162.1 | frame: scene built=163.0 | frame: presented=170.9 | window shown=187.3 | first frame=187.3 | window on screen=222.2 | content on screen=267.8
+exit Some(0)
+PLACEMENT window #224233 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224233 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app counter --first-frame --content --display 4128836 --label gpui
+RESULT content backend=gpui app=counter window_on_screen_ms=265.1 content_on_screen_ms=310.3 first_frame_ms=204.9 background_fraction=0.92 text_pixels=2468 load=[7.86 8.27 11.85] window=[-1555 573 550 326] placement=virtual
+TRACE main=10.2 | first frame=204.9 | window on screen=265.1 | content on screen=310.3
+exit Some(0)
+PLACEMENT window #224236 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app counter --first-frame --content --display 4128836 --label before
+RESULT content backend=before app=counter window_on_screen_ms=224.0 content_on_screen_ms=313.9 first_frame_ms=393.9 background_fraction=0.92 text_pixels=2542 load=[7.86 8.27 11.85] window=[-1555 573 550 326] placement=virtual
+TRACE main=7.7 | gpu: thread=30.4 | show=30.4 | gpu: instance=30.4 | gpu: adapter=37.7 | gpu: device=42.2 | gpu: renderer=62.5 | event loop built=75.9 | resumed=95.1 | window created=157.5 | window shown=176.8 | gpu joined=176.9 | surface created=178.2 | surface adopted=178.3 | surface configured=178.3 | frame: start=178.3 | frame: scene built=179.5 | frame: refused while not visible=179.5 | window on screen=224.0 | visible=259.1 | frame: start=286.9 | frame: scene built=287.2 | frame: texture acquired=297.5 | frame: drawn=302.7 | frame: presented=305.0 | content on screen=313.9 | menu installed=393.9 | first frame=393.9
+exit Some(0)
+PLACEMENT window #224238 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224238 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224238 [-1559 570 558 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224238 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224238 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224238 [-1561 569 562 334] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app counter --first-frame --content --display 4128836 --label after
+RESULT content backend=after app=counter window_on_screen_ms=233.2 content_on_screen_ms=274.2 first_frame_ms=184.0 background_fraction=0.92 text_pixels=2588 load=[7.95 8.28 11.84] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.3 | gpu: thread=31.0 | show=31.0 | gpu: instance=31.0 | gpu: adapter=39.2 | gpu: device=43.9 | gpu: renderer=62.6 | event loop built=72.6 | resumed=99.8 | window created=154.5 | gpu joined=155.2 | surface created=156.2 | surface adopted=156.2 | surface configured=156.3 | frame: start=156.3 | frame: scene built=157.3 | frame: presented=164.8 | window shown=184.0 | first frame=184.0 | window on screen=233.2 | content on screen=274.2
+exit Some(0)
+PLACEMENT window #224250 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224250 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app counter --first-frame --content --display 4128836 --label gpui
+RESULT content backend=gpui app=counter window_on_screen_ms=259.1 content_on_screen_ms=302.3 first_frame_ms=201.0 background_fraction=0.92 text_pixels=2535 load=[7.95 8.28 11.84] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.5 | first frame=201.0 | window on screen=259.1 | content on screen=302.3
+exit Some(0)
+PLACEMENT window #224252 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app counter --first-frame --content --display 4128836 --label before
+RESULT content backend=before app=counter window_on_screen_ms=213.9 content_on_screen_ms=284.7 first_frame_ms=361.0 background_fraction=0.92 text_pixels=2668 load=[7.95 8.28 11.84] window=[-1555 573 550 326] placement=virtual
+TRACE main=7.7 | gpu: thread=28.0 | gpu: instance=28.0 | show=28.0 | gpu: adapter=35.4 | gpu: device=39.6 | gpu: renderer=59.8 | event loop built=75.9 | resumed=92.6 | window created=160.4 | window shown=176.6 | gpu joined=176.6 | surface created=177.7 | surface adopted=177.8 | surface configured=177.8 | frame: start=177.8 | frame: scene built=178.9 | frame: refused while not visible=178.9 | window on screen=213.9 | visible=251.6 | frame: start=269.8 | frame: scene built=270.1 | frame: texture acquired=270.7 | frame: drawn=276.0 | frame: presented=277.9 | content on screen=284.7 | menu installed=360.9 | first frame=361.0
+exit Some(0)
+PLACEMENT window #224254 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224254 [-1557 572 554 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224254 [-1558 571 556 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224254 [-1559 571 558 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224254 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224254 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224254 [-1561 569 562 334] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app counter --first-frame --content --display 4128836 --label after
+RESULT content backend=after app=counter window_on_screen_ms=248.1 content_on_screen_ms=292.7 first_frame_ms=202.2 background_fraction=0.92 text_pixels=2588 load=[7.71 8.22 11.80] window=[-1555 573 550 326] placement=virtual
+TRACE main=10.5 | gpu: thread=30.6 | show=30.6 | gpu: instance=30.6 | gpu: adapter=39.0 | gpu: device=43.5 | gpu: renderer=67.8 | event loop built=87.5 | resumed=115.0 | window created=178.5 | gpu joined=179.1 | surface created=180.3 | surface adopted=180.3 | surface configured=180.4 | frame: start=180.4 | frame: scene built=181.5 | frame: presented=188.5 | window shown=202.2 | first frame=202.2 | window on screen=248.1 | content on screen=292.7
+exit Some(0)
+PLACEMENT window #224266 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224266 [-1557 572 554 328] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app counter --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=counter main_ms=8.5 first_frame_ms=200.8 window_on_screen_ms=254.3 visible_with_frame_ms=254.3 footprint_mb=18.5 gpu_mb=24.7 load=[7.71 8.22 11.80] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.5 | first frame=200.8 | window on screen=254.3
+exit Some(0)
+PLACEMENT window #224268 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app settings --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=settings main_ms=9.3 first_frame_ms=207.9 window_on_screen_ms=266.4 visible_with_frame_ms=266.4 footprint_mb=19.5 gpu_mb=65.6 load=[7.71 8.22 11.80] window=[-1751 406 942 660] placement=virtual
+TRACE main=9.3 | first frame=207.9 | window on screen=266.4
+exit Some(0)
+PLACEMENT window #224270 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app world --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=world main_ms=10.7 first_frame_ms=471.9 window_on_screen_ms=524.9 visible_with_frame_ms=524.9 footprint_mb=22.5 gpu_mb=65.6 load=[7.71 8.22 11.80] window=[-1751 406 942 660] placement=virtual
+TRACE main=10.7 | first frame=471.9 | window on screen=524.9
+exit Some(0)
+## ./cmp-before --app counter --first-frame --display 4128836 --label before
+RESULT start backend=before app=counter main_ms=10.0 first_frame_ms=354.4 window_on_screen_ms=216.6 visible_with_frame_ms=354.4 footprint_mb=17.1 gpu_mb=10.9 load=[10.62 8.82 11.99] window=[-1555 573 550 326] placement=virtual
+TRACE main=10.0 | gpu: thread=30.4 | show=30.4 | gpu: instance=30.4 | gpu: adapter=38.6 | gpu: device=44.6 | gpu: renderer=63.4 | event loop built=78.9 | resumed=99.4 | window created=160.8 | window shown=180.5 | gpu joined=180.6 | surface created=182.1 | surface adopted=182.1 | surface configured=182.2 | frame: start=182.2 | frame: scene built=183.4 | frame: refused while not visible=183.4 | window on screen=216.6 | visible=250.4 | frame: start=266.8 | frame: scene built=267.1 | frame: texture acquired=272.6 | frame: drawn=278.2 | frame: presented=279.8 | menu installed=354.4 | first frame=354.4
+exit Some(0)
+PLACEMENT window #224274 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224274 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224274 [-1557 572 554 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224274 [-1558 571 556 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224274 [-1559 570 558 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224274 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224274 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app settings --first-frame --display 4128836 --label before
+RESULT start backend=before app=settings main_ms=8.1 first_frame_ms=337.9 window_on_screen_ms=203.9 visible_with_frame_ms=337.9 footprint_mb=17.8 gpu_mb=17.6 load=[10.62 8.82 11.99] window=[-1751 406 942 660] placement=virtual
+TRACE main=8.1 | gpu: thread=25.4 | gpu: instance=25.4 | show=25.4 | gpu: adapter=33.0 | gpu: device=37.9 | gpu: renderer=56.2 | event loop built=66.9 | resumed=92.0 | window created=151.1 | window shown=163.2 | gpu joined=163.2 | surface created=164.4 | surface adopted=164.4 | surface configured=164.5 | frame: start=164.5 | frame: scene built=166.9 | frame: refused while not visible=167.0 | window on screen=203.9 | visible=230.2 | frame: start=248.2 | frame: scene built=249.5 | frame: texture acquired=252.3 | frame: drawn=259.2 | frame: presented=261.2 | menu installed=337.8 | first frame=337.9
+exit Some(0)
+PLACEMENT window #224286 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224286 [-1752 405 944 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224286 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224286 [-1758 402 956 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224286 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224286 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224286 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app world --first-frame --display 4128836 --label before
+RESULT start backend=before app=world main_ms=9.4 first_frame_ms=468.3 window_on_screen_ms=333.9 visible_with_frame_ms=468.3 footprint_mb=19.4 gpu_mb=17.5 load=[10.62 8.82 11.99] window=[-1751 406 942 660] placement=virtual
+TRACE main=9.4 | gpu: thread=30.2 | gpu: instance=30.2 | gpu: adapter=37.8 | gpu: device=42.4 | gpu: renderer=60.0 | show=160.3 | event loop built=194.2 | resumed=212.5 | window created=277.5 | window shown=301.2 | gpu joined=301.2 | surface created=302.4 | surface adopted=302.4 | surface configured=302.5 | frame: start=302.5 | frame: scene built=303.3 | frame: refused while not visible=303.4 | window on screen=333.9 | visible=359.5 | frame: start=375.2 | frame: scene built=375.5 | frame: texture acquired=376.1 | frame: drawn=382.0 | frame: presented=383.8 | menu installed=468.3 | first frame=468.3
+exit Some(0)
+PLACEMENT window #224298 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224298 [-1753 405 946 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224298 [-1755 404 950 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224298 [-1756 402 952 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224298 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224298 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224298 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224298 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app counter --first-frame --display 4128836 --label after
+RESULT start backend=after app=counter main_ms=9.6 first_frame_ms=177.2 window_on_screen_ms=219.6 visible_with_frame_ms=219.6 footprint_mb=15.3 gpu_mb=10.8 load=[10.62 8.82 11.99] window=[-1555 573 550 326] placement=virtual
+TRACE main=9.6 | show=26.0 | gpu: thread=26.0 | gpu: instance=26.0 | gpu: adapter=34.0 | gpu: device=39.0 | gpu: renderer=57.5 | event loop built=71.6 | resumed=90.4 | window created=145.4 | gpu joined=149.7 | surface created=150.7 | surface adopted=150.7 | surface configured=150.7 | frame: start=150.7 | frame: scene built=151.7 | frame: presented=158.8 | window shown=177.2 | first frame=177.2 | window on screen=219.6
+exit Some(0)
+PLACEMENT window #224310 [-1556 573 552 326] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app settings --first-frame --display 4128836 --label after
+RESULT start backend=after app=settings main_ms=9.3 first_frame_ms=189.6 window_on_screen_ms=239.7 visible_with_frame_ms=239.7 footprint_mb=16.8 gpu_mb=17.6 load=[9.93 8.70 11.93] window=[-1751 406 942 660] placement=virtual
+TRACE main=9.3 | gpu: thread=28.9 | gpu: instance=28.9 | show=28.9 | gpu: adapter=36.0 | gpu: device=40.4 | gpu: renderer=60.8 | event loop built=76.4 | resumed=93.8 | window created=155.4 | gpu joined=157.4 | surface created=159.1 | surface adopted=159.1 | surface configured=159.2 | frame: start=159.2 | frame: scene built=163.0 | frame: presented=173.4 | window shown=189.6 | first frame=189.6 | window on screen=239.7
+exit Some(0)
+PLACEMENT window #224312 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app world --first-frame --display 4128836 --label after
+RESULT start backend=after app=world main_ms=8.6 first_frame_ms=298.7 window_on_screen_ms=332.4 visible_with_frame_ms=332.4 footprint_mb=18.1 gpu_mb=17.5 load=[9.93 8.70 11.93] window=[-1751 406 942 660] placement=virtual
+TRACE main=8.6 | gpu: thread=29.4 | gpu: instance=29.4 | gpu: adapter=36.6 | gpu: device=42.0 | gpu: renderer=61.0 | show=159.8 | event loop built=191.7 | resumed=210.5 | window created=271.1 | gpu joined=271.8 | surface created=272.7 | surface adopted=272.7 | surface configured=272.8 | frame: start=272.8 | frame: scene built=273.6 | frame: presented=281.0 | window shown=298.6 | first frame=298.7 | window on screen=332.4
+exit Some(0)
+PLACEMENT window #224314 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app counter --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=counter main_ms=8.3 first_frame_ms=203.5 window_on_screen_ms=261.4 visible_with_frame_ms=261.4 footprint_mb=18.9 gpu_mb=24.7 load=[9.93 8.70 11.93] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.3 | first frame=203.5 | window on screen=261.4
+exit Some(0)
+PLACEMENT window #224316 [-1556 573 552 326] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app settings --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=settings main_ms=9.4 first_frame_ms=186.8 window_on_screen_ms=239.4 visible_with_frame_ms=239.4 footprint_mb=19.3 gpu_mb=65.6 load=[9.93 8.70 11.93] window=[-1751 406 942 660] placement=virtual
+TRACE main=9.4 | first frame=186.8 | window on screen=239.4
+exit Some(0)
+PLACEMENT window #224318 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app world --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=world main_ms=9.0 first_frame_ms=308.7 window_on_screen_ms=354.8 visible_with_frame_ms=354.8 footprint_mb=21.7 gpu_mb=65.6 load=[9.45 8.62 11.88] window=[-1751 406 942 660] placement=virtual
+TRACE main=9.0 | first frame=308.7 | window on screen=354.8
+exit Some(0)
+PLACEMENT window #224320 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app counter --first-frame --display 4128836 --label before
+RESULT start backend=before app=counter main_ms=8.2 first_frame_ms=362.9 window_on_screen_ms=208.6 visible_with_frame_ms=362.9 footprint_mb=17.3 gpu_mb=10.9 load=[9.45 8.62 11.88] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.2 | gpu: thread=22.9 | gpu: instance=22.9 | show=22.9 | gpu: adapter=29.8 | gpu: device=34.1 | gpu: renderer=53.3 | event loop built=65.6 | resumed=84.8 | window created=147.8 | window shown=163.0 | gpu joined=163.0 | surface created=164.6 | surface adopted=164.6 | surface configured=164.7 | frame: start=164.7 | frame: scene built=166.1 | frame: refused while not visible=166.1 | window on screen=208.6 | visible=254.8 | frame: start=271.4 | frame: scene built=271.7 | frame: texture acquired=281.8 | frame: drawn=288.6 | frame: presented=290.9 | menu installed=362.9 | first frame=362.9
+exit Some(0)
+PLACEMENT window #224322 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224322 [-1557 571 554 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224322 [-1559 571 558 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224322 [-1559 570 558 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224322 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224322 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224322 [-1561 569 562 334] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app settings --first-frame --display 4128836 --label before
+RESULT start backend=before app=settings main_ms=10.7 first_frame_ms=360.9 window_on_screen_ms=214.6 visible_with_frame_ms=360.9 footprint_mb=17.5 gpu_mb=17.6 load=[9.45 8.62 11.88] window=[-1751 406 942 660] placement=virtual
+TRACE main=10.7 | gpu: thread=27.9 | gpu: instance=27.9 | show=27.9 | gpu: adapter=35.7 | gpu: device=40.6 | gpu: renderer=59.9 | event loop built=73.7 | resumed=92.1 | window created=147.9 | window shown=178.2 | gpu joined=178.2 | surface created=179.5 | surface adopted=179.5 | surface configured=179.6 | frame: start=179.6 | frame: scene built=182.7 | frame: refused while not visible=182.7 | window on screen=214.6 | visible=247.2 | frame: start=277.4 | frame: scene built=278.7 | frame: texture acquired=297.7 | frame: drawn=305.4 | frame: presented=307.9 | menu installed=360.9 | first frame=360.9
+exit Some(0)
+PLACEMENT window #224334 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224334 [-1752 405 944 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224334 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224334 [-1758 402 956 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224334 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224334 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224334 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app world --first-frame --display 4128836 --label before
+RESULT start backend=before app=world main_ms=9.6 first_frame_ms=467.6 window_on_screen_ms=338.9 visible_with_frame_ms=467.6 footprint_mb=20.0 gpu_mb=17.5 load=[9.18 8.58 11.85] window=[-1751 406 942 660] placement=virtual
+TRACE main=9.6 | gpu: thread=31.0 | gpu: instance=31.0 | gpu: adapter=38.9 | gpu: device=43.8 | gpu: renderer=61.5 | show=168.4 | event loop built=196.8 | resumed=216.7 | window created=282.7 | window shown=299.0 | gpu joined=299.0 | surface created=300.1 | surface adopted=300.1 | surface configured=300.2 | frame: start=300.2 | frame: scene built=301.2 | frame: refused while not visible=301.2 | window on screen=338.9 | visible=373.2 | frame: start=392.7 | frame: scene built=392.9 | frame: texture acquired=397.7 | frame: drawn=402.9 | frame: presented=404.5 | menu installed=467.6 | first frame=467.6
+exit Some(0)
+PLACEMENT window #224346 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224346 [-1754 404 948 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224346 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224346 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224346 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224346 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224346 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app counter --first-frame --display 4128836 --label after
+RESULT start backend=after app=counter main_ms=7.8 first_frame_ms=195.3 window_on_screen_ms=244.7 visible_with_frame_ms=244.7 footprint_mb=15.6 gpu_mb=10.8 load=[9.18 8.58 11.85] window=[-1555 573 550 326] placement=virtual
+TRACE main=7.8 | show=27.6 | gpu: thread=27.6 | gpu: instance=27.7 | gpu: adapter=36.0 | gpu: device=40.7 | gpu: renderer=59.8 | event loop built=80.7 | resumed=101.2 | window created=163.7 | gpu joined=164.4 | surface created=165.4 | surface adopted=165.4 | surface configured=165.5 | frame: start=165.5 | frame: scene built=166.5 | frame: presented=174.0 | window shown=195.3 | first frame=195.3 | window on screen=244.7
+exit Some(0)
+PLACEMENT window #224358 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app settings --first-frame --display 4128836 --label after
+RESULT start backend=after app=settings main_ms=8.7 first_frame_ms=197.5 window_on_screen_ms=232.6 visible_with_frame_ms=232.6 footprint_mb=17.1 gpu_mb=17.6 load=[9.18 8.58 11.85] window=[-1751 406 942 660] placement=virtual
+TRACE main=8.7 | gpu: thread=28.2 | show=28.2 | gpu: instance=28.3 | gpu: adapter=37.4 | gpu: device=42.2 | gpu: renderer=62.3 | event loop built=79.8 | resumed=108.6 | window created=162.6 | gpu joined=163.7 | surface created=164.8 | surface adopted=164.8 | surface configured=164.8 | frame: start=164.8 | frame: scene built=167.3 | frame: presented=177.1 | window shown=197.5 | first frame=197.5 | window on screen=232.6
+exit Some(0)
+PLACEMENT window #224360 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app world --first-frame --display 4128836 --label after
+RESULT start backend=after app=world main_ms=8.2 first_frame_ms=298.4 window_on_screen_ms=338.0 visible_with_frame_ms=338.0 footprint_mb=18.5 gpu_mb=17.5 load=[9.18 8.58 11.85] window=[-1751 406 942 660] placement=virtual
+TRACE main=8.2 | gpu: thread=30.6 | gpu: instance=30.7 | gpu: adapter=39.7 | gpu: device=45.2 | gpu: renderer=64.4 | show=168.4 | event loop built=196.0 | resumed=215.0 | window created=270.7 | gpu joined=271.3 | surface created=272.2 | surface adopted=272.2 | surface configured=272.3 | frame: start=272.3 | frame: scene built=273.1 | frame: presented=281.6 | window shown=298.4 | first frame=298.4 | window on screen=338.0
+exit Some(0)
+## ./cmp-gpui --app counter --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=counter main_ms=9.3 first_frame_ms=157.5 window_on_screen_ms=197.9 visible_with_frame_ms=197.9 footprint_mb=18.4 gpu_mb=24.7 load=[8.68 8.49 11.79] window=[-1555 573 550 326] placement=virtual
+TRACE main=9.3 | first frame=157.5 | window on screen=197.9
+exit Some(0)
+## ./cmp-gpui --app settings --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=settings main_ms=9.9 first_frame_ms=163.9 window_on_screen_ms=197.6 visible_with_frame_ms=197.6 footprint_mb=18.9 gpu_mb=65.6 load=[8.68 8.49 11.79] window=[-1751 406 942 660] placement=virtual
+TRACE main=9.9 | first frame=163.9 | window on screen=197.6
+exit Some(0)
+## ./cmp-gpui --app world --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=world main_ms=10.6 first_frame_ms=278.8 window_on_screen_ms=313.9 visible_with_frame_ms=313.9 footprint_mb=22.1 gpu_mb=65.6 load=[8.68 8.49 11.79] window=[-1751 406 942 660] placement=virtual
+TRACE main=10.6 | first frame=278.8 | window on screen=313.9
+exit Some(0)
+## ./cmp-before --app counter --first-frame --display 4128836 --label before
+RESULT start backend=before app=counter main_ms=8.6 first_frame_ms=325.2 window_on_screen_ms=194.8 visible_with_frame_ms=325.2 footprint_mb=16.9 gpu_mb=10.9 load=[8.68 8.49 11.79] window=[-1555 573 550 326] placement=virtual
+TRACE main=8.6 | gpu: thread=24.3 | show=24.4 | gpu: instance=24.4 | gpu: adapter=31.3 | gpu: device=35.6 | gpu: renderer=54.4 | event loop built=65.5 | resumed=83.9 | window created=142.8 | window shown=160.1 | gpu joined=160.2 | surface created=161.4 | surface adopted=161.4 | surface configured=161.4 | frame: start=161.4 | frame: scene built=162.7 | frame: refused while not visible=162.7 | window on screen=194.8 | visible=227.2 | frame: start=241.9 | frame: scene built=242.2 | frame: texture acquired=247.5 | frame: drawn=253.4 | frame: presented=256.1 | menu installed=325.2 | first frame=325.2
+exit Some(0)
+PLACEMENT window #224367 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224367 [-1557 572 554 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224367 [-1558 571 556 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224367 [-1559 571 558 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224367 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224367 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app settings --first-frame --display 4128836 --label before
+RESULT start backend=before app=settings main_ms=8.1 first_frame_ms=355.9 window_on_screen_ms=219.5 visible_with_frame_ms=355.9 footprint_mb=17.6 gpu_mb=17.6 load=[8.39 8.43 11.75] window=[-1752 406 944 660] placement=virtual
+TRACE main=8.1 | gpu: thread=26.8 | show=26.8 | gpu: instance=26.8 | gpu: adapter=34.7 | gpu: device=40.3 | gpu: renderer=62.6 | event loop built=74.5 | resumed=98.9 | window created=160.0 | window shown=171.2 | gpu joined=171.2 | surface created=172.3 | surface adopted=172.3 | surface configured=172.4 | frame: start=172.4 | frame: scene built=175.1 | frame: refused while not visible=175.1 | window on screen=219.5 | visible=242.3 | frame: start=266.0 | frame: scene built=267.1 | frame: texture acquired=269.1 | frame: drawn=275.5 | frame: presented=277.7 | menu installed=355.8 | first frame=355.9
+exit Some(0)
+PLACEMENT window #224378 [-1752 406 944 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224378 [-1754 404 948 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224378 [-1755 403 950 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224378 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224378 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224378 [-1759 400 958 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224378 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224378 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app world --first-frame --display 4128836 --label before
+RESULT start backend=before app=world main_ms=10.6 first_frame_ms=494.1 window_on_screen_ms=332.9 visible_with_frame_ms=494.1 footprint_mb=19.6 gpu_mb=17.5 load=[8.39 8.43 11.75] window=[-1751 406 942 660] placement=virtual
+TRACE main=10.6 | gpu: thread=27.9 | gpu: instance=27.9 | gpu: adapter=35.5 | gpu: device=39.9 | gpu: renderer=59.3 | show=162.2 | event loop built=188.8 | resumed=207.4 | window created=270.5 | window shown=297.0 | gpu joined=297.0 | surface created=298.6 | surface adopted=298.6 | surface configured=298.7 | frame: start=298.7 | frame: scene built=299.8 | frame: refused while not visible=299.8 | window on screen=332.9 | visible=367.0 | frame: start=384.8 | frame: scene built=385.0 | frame: texture acquired=389.3 | frame: drawn=395.0 | frame: presented=396.9 | menu installed=494.1 | first frame=494.1
+exit Some(0)
+PLACEMENT window #224389 [-1752 406 944 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224389 [-1754 404 948 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224389 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224389 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224389 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224389 [-1759 400 958 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224389 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224389 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app counter --first-frame --display 4128836 --label after
+RESULT start backend=after app=counter main_ms=27.6 first_frame_ms=195.0 window_on_screen_ms=231.4 visible_with_frame_ms=231.4 footprint_mb=15.5 gpu_mb=10.8 load=[8.39 8.43 11.75] window=[-1555 573 550 326] placement=virtual
+TRACE main=27.6 | gpu: thread=45.0 | show=45.0 | gpu: instance=45.0 | gpu: adapter=52.6 | gpu: device=57.2 | gpu: renderer=74.8 | event loop built=91.2 | resumed=107.7 | window created=163.2 | gpu joined=164.2 | surface created=165.2 | surface adopted=165.2 | surface configured=165.3 | frame: start=165.3 | frame: scene built=166.3 | frame: presented=173.5 | window shown=195.0 | first frame=195.0 | window on screen=231.4
+exit Some(0)
+## ./cmp-after --app settings --first-frame --display 4128836 --label after
+RESULT start backend=after app=settings main_ms=7.3 first_frame_ms=159.9 window_on_screen_ms=196.0 visible_with_frame_ms=196.0 footprint_mb=16.5 gpu_mb=17.6 load=[8.39 8.43 11.75] window=[-1751 406 942 660] placement=virtual
+TRACE main=7.3 | gpu: thread=23.2 | show=23.3 | gpu: instance=23.3 | gpu: adapter=30.3 | gpu: device=34.6 | gpu: renderer=52.7 | event loop built=62.5 | resumed=82.1 | window created=133.1 | gpu joined=133.7 | surface created=134.6 | surface adopted=134.6 | surface configured=134.7 | frame: start=134.7 | frame: scene built=137.0 | frame: presented=144.8 | window shown=159.9 | first frame=159.9 | window on screen=196.0
+exit Some(0)
+PLACEMENT window #224401 [-1752 406 944 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app world --first-frame --display 4128836 --label after
+RESULT start backend=after app=world main_ms=9.8 first_frame_ms=298.6 window_on_screen_ms=334.8 visible_with_frame_ms=334.8 footprint_mb=18.8 gpu_mb=17.5 load=[8.11 8.37 11.71] window=[-1752 406 944 660] placement=virtual
+TRACE main=9.8 | gpu: thread=28.6 | gpu: instance=28.6 | gpu: adapter=35.8 | gpu: device=40.2 | gpu: renderer=60.6 | show=163.0 | event loop built=191.8 | resumed=210.2 | window created=271.0 | gpu joined=271.7 | surface created=272.8 | surface adopted=272.9 | surface configured=272.9 | frame: start=272.9 | frame: scene built=273.8 | frame: presented=281.8 | window shown=298.6 | first frame=298.6 | window on screen=334.8
+exit Some(0)
+PLACEMENT window #224402 [-1752 406 944 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app counter --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=counter main_ms=10.6 first_frame_ms=200.2 window_on_screen_ms=238.2 visible_with_frame_ms=238.2 footprint_mb=18.7 gpu_mb=24.7 load=[8.11 8.37 11.71] window=[-1555 573 550 326] placement=virtual
+TRACE main=10.6 | first frame=200.2 | window on screen=238.2
+exit Some(0)
+PLACEMENT window #224403 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app settings --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=settings main_ms=20.6 first_frame_ms=214.6 window_on_screen_ms=260.2 visible_with_frame_ms=260.2 footprint_mb=19.8 gpu_mb=65.6 load=[8.11 8.37 11.71] window=[-1751 406 942 660] placement=virtual
+TRACE main=20.6 | first frame=214.6 | window on screen=260.2
+exit Some(0)
+PLACEMENT window #224404 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app world --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=world main_ms=7.7 first_frame_ms=292.0 window_on_screen_ms=337.5 visible_with_frame_ms=337.5 footprint_mb=21.5 gpu_mb=65.6 load=[8.27 8.40 11.70] window=[-1751 406 942 660] placement=virtual
+TRACE main=7.7 | first frame=292.0 | window on screen=337.5
+exit Some(0)
+## ./cmp-before --app counter --first-frame --display 4128836 --label before
+RESULT start backend=before app=counter main_ms=9.5 first_frame_ms=323.1 window_on_screen_ms=193.4 visible_with_frame_ms=323.1 footprint_mb=16.7 gpu_mb=10.9 load=[8.27 8.40 11.70] window=[-1555 573 550 326] placement=virtual
+TRACE main=9.5 | gpu: thread=26.8 | show=26.9 | gpu: instance=26.9 | gpu: adapter=35.0 | gpu: device=39.4 | gpu: renderer=56.9 | event loop built=68.3 | resumed=85.2 | window created=140.8 | window shown=156.7 | gpu joined=156.8 | surface created=157.9 | surface adopted=157.9 | surface configured=157.9 | frame: start=157.9 | frame: scene built=159.1 | frame: refused while not visible=159.1 | window on screen=193.4 | visible=223.4 | frame: start=245.6 | frame: scene built=245.9 | frame: texture acquired=258.4 | frame: drawn=263.9 | frame: presented=265.8 | menu installed=323.0 | first frame=323.1
+exit Some(0)
+PLACEMENT window #224406 [-1556 573 552 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224406 [-1557 572 554 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224406 [-1558 571 556 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224406 [-1559 571 558 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224406 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224406 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app settings --first-frame --display 4128836 --label before
+RESULT start backend=before app=settings main_ms=8.1 first_frame_ms=310.9 window_on_screen_ms=183.6 visible_with_frame_ms=310.9 footprint_mb=17.5 gpu_mb=17.6 load=[8.27 8.40 11.70] window=[-1751 406 942 660] placement=virtual
+TRACE main=8.1 | gpu: thread=22.7 | show=22.7 | gpu: instance=22.8 | gpu: adapter=31.1 | gpu: device=35.9 | gpu: renderer=53.9 | event loop built=64.7 | resumed=84.5 | window created=134.6 | window shown=147.4 | gpu joined=147.5 | surface created=148.8 | surface adopted=148.8 | surface configured=148.8 | frame: start=148.8 | frame: scene built=151.5 | frame: refused while not visible=151.5 | window on screen=183.6 | visible=221.1 | frame: start=249.0 | frame: scene built=250.6 | frame: texture acquired=257.4 | frame: drawn=264.0 | frame: presented=266.2 | menu installed=310.9 | first frame=310.9
+exit Some(0)
+PLACEMENT window #224417 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224417 [-1753 405 946 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224417 [-1755 403 950 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224417 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224417 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224417 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224417 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app world --first-frame --display 4128836 --label before
+RESULT start backend=before app=world main_ms=8.2 first_frame_ms=436.0 window_on_screen_ms=315.4 visible_with_frame_ms=436.0 footprint_mb=19.5 gpu_mb=17.5 load=[8.27 8.40 11.70] window=[-1751 406 942 660] placement=virtual
+TRACE main=8.2 | gpu: thread=25.4 | gpu: instance=25.4 | gpu: adapter=34.2 | gpu: device=39.3 | gpu: renderer=58.8 | show=156.4 | event loop built=182.7 | resumed=201.3 | window created=261.3 | window shown=279.7 | gpu joined=279.7 | surface created=280.8 | surface adopted=280.8 | surface configured=280.8 | frame: start=280.9 | frame: scene built=281.8 | frame: refused while not visible=281.8 | window on screen=315.4 | visible=348.7 | frame: start=364.1 | frame: scene built=364.4 | frame: texture acquired=379.2 | frame: drawn=385.1 | frame: presented=386.9 | menu installed=436.0 | first frame=436.0
+exit Some(0)
+PLACEMENT window #224428 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224428 [-1755 404 950 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224428 [-1756 402 952 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224428 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224428 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224428 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app counter --first-frame --display 4128836 --label after
+RESULT start backend=after app=counter main_ms=7.3 first_frame_ms=195.1 window_on_screen_ms=236.8 visible_with_frame_ms=236.8 footprint_mb=16.5 gpu_mb=10.8 load=[8.24 8.39 11.68] window=[-1555 573 550 326] placement=virtual
+TRACE main=7.3 | gpu: thread=25.2 | show=25.2 | gpu: instance=25.2 | gpu: adapter=35.0 | gpu: device=39.5 | gpu: renderer=58.5 | event loop built=73.2 | resumed=100.2 | window created=165.4 | gpu joined=166.0 | surface created=167.5 | surface adopted=167.5 | surface configured=167.5 | frame: start=167.5 | frame: scene built=168.7 | frame: presented=176.1 | window shown=195.1 | first frame=195.1 | window on screen=236.8
+exit Some(0)
+## ./cmp-after --app settings --first-frame --display 4128836 --label after
+RESULT start backend=after app=settings main_ms=11.4 first_frame_ms=176.2 window_on_screen_ms=204.8 visible_with_frame_ms=204.8 footprint_mb=16.5 gpu_mb=17.6 load=[8.24 8.39 11.68] window=[-1751 406 942 660] placement=virtual
+TRACE main=11.4 | gpu: thread=34.2 | gpu: instance=34.2 | show=34.2 | gpu: adapter=43.4 | gpu: device=47.7 | gpu: renderer=65.3 | event loop built=77.0 | resumed=93.5 | window created=147.8 | gpu joined=148.5 | surface created=149.5 | surface adopted=149.5 | surface configured=149.5 | frame: start=149.6 | frame: scene built=152.1 | frame: presented=160.7 | window shown=176.2 | first frame=176.2 | window on screen=204.8
+exit Some(0)
+## ./cmp-after --app world --first-frame --display 4128836 --label after
+RESULT start backend=after app=world main_ms=7.6 first_frame_ms=294.2 window_on_screen_ms=320.6 visible_with_frame_ms=320.6 footprint_mb=18.8 gpu_mb=17.5 load=[8.24 8.39 11.68] window=[-1751 406 942 660] placement=virtual
+TRACE main=7.6 | gpu: thread=29.6 | gpu: instance=29.6 | gpu: adapter=38.1 | gpu: device=43.2 | gpu: renderer=61.2 | show=167.3 | event loop built=193.5 | resumed=212.4 | window created=268.7 | gpu joined=269.3 | surface created=270.3 | surface adopted=270.3 | surface configured=270.3 | frame: start=270.3 | frame: scene built=271.2 | frame: presented=278.7 | window shown=294.1 | first frame=294.2 | window on screen=320.6
+exit Some(0)
+## ./cmp-gpui --app counter --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=counter main_ms=7.4 first_frame_ms=168.0 window_on_screen_ms=207.6 visible_with_frame_ms=207.6 footprint_mb=18.6 gpu_mb=24.7 load=[8.24 8.39 11.68] window=[-1555 573 550 326] placement=virtual
+TRACE main=7.4 | first frame=168.0 | window on screen=207.6
+exit Some(0)
+PLACEMENT window #224442 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app settings --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=settings main_ms=8.3 first_frame_ms=171.1 window_on_screen_ms=215.8 visible_with_frame_ms=215.8 footprint_mb=19.2 gpu_mb=65.6 load=[7.82 8.30 11.63] window=[-1751 406 942 660] placement=virtual
+TRACE main=8.3 | first frame=171.1 | window on screen=215.8
+exit Some(0)
+PLACEMENT window #224443 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app world --first-frame --display 4128836 --label gpui
+RESULT start backend=gpui app=world main_ms=8.0 first_frame_ms=292.8 window_on_screen_ms=337.0 visible_with_frame_ms=337.0 footprint_mb=21.5 gpu_mb=65.6 load=[7.82 8.30 11.63] window=[-1751 406 942 660] placement=virtual
+TRACE main=8.0 | first frame=292.8 | window on screen=337.0
+exit Some(0)
+PLACEMENT window #224444 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app counter --first-frame --display 4128836 --label before
+RESULT start backend=before app=counter main_ms=10.0 first_frame_ms=353.1 window_on_screen_ms=215.4 visible_with_frame_ms=353.1 footprint_mb=17.4 gpu_mb=10.9 load=[7.82 8.30 11.63] window=[-1555 573 550 326] placement=virtual
+TRACE main=10.0 | gpu: thread=31.3 | gpu: instance=31.3 | show=31.3 | gpu: adapter=40.3 | gpu: device=45.6 | gpu: renderer=68.0 | event loop built=80.0 | resumed=100.0 | window created=156.0 | window shown=175.9 | gpu joined=175.9 | surface created=177.0 | surface adopted=177.0 | surface configured=177.1 | frame: start=177.1 | frame: scene built=178.3 | frame: refused while not visible=178.4 | window on screen=215.4 | visible=244.7 | frame: start=260.4 | frame: scene built=260.6 | frame: texture acquired=263.7 | frame: drawn=268.8 | frame: presented=270.8 | menu installed=353.0 | first frame=353.1
+exit Some(0)
+PLACEMENT window #224445 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224445 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224445 [-1559 571 558 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224445 [-1559 570 558 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224445 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224445 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app settings --first-frame --display 4128836 --label before
+RESULT start backend=before app=settings main_ms=7.8 first_frame_ms=328.7 window_on_screen_ms=203.2 visible_with_frame_ms=328.7 footprint_mb=17.6 gpu_mb=17.6 load=[7.82 8.30 11.63] window=[-1751 406 942 660] placement=virtual
+TRACE main=7.8 | gpu: thread=23.1 | show=23.2 | gpu: instance=23.2 | gpu: adapter=30.8 | gpu: device=35.2 | gpu: renderer=54.4 | event loop built=66.1 | resumed=84.2 | window created=141.5 | window shown=169.5 | gpu joined=169.6 | surface created=170.9 | surface adopted=170.9 | surface configured=171.0 | frame: start=171.0 | frame: scene built=173.7 | frame: refused while not visible=173.7 | window on screen=203.2 | visible=229.2 | frame: start=245.4 | frame: scene built=246.7 | frame: texture acquired=249.3 | frame: drawn=256.5 | frame: presented=258.9 | menu installed=328.6 | first frame=328.7
+exit Some(0)
+PLACEMENT window #224456 [-1752 405 944 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224456 [-1754 404 948 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224456 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224456 [-1758 402 956 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224456 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224456 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app world --first-frame --display 4128836 --label before
+RESULT start backend=before app=world main_ms=8.2 first_frame_ms=451.8 window_on_screen_ms=323.1 visible_with_frame_ms=451.8 footprint_mb=19.1 gpu_mb=17.5 load=[7.52 8.23 11.58] window=[-1752 406 944 660] placement=virtual
+TRACE main=8.2 | gpu: thread=30.2 | gpu: instance=30.2 | gpu: adapter=39.6 | gpu: device=45.5 | gpu: renderer=64.2 | show=162.1 | event loop built=189.0 | resumed=208.2 | window created=268.8 | window shown=289.4 | gpu joined=289.4 | surface created=290.4 | surface adopted=290.4 | surface configured=290.5 | frame: start=290.5 | frame: scene built=291.4 | frame: refused while not visible=291.4 | window on screen=323.1 | visible=343.7 | frame: start=358.8 | frame: scene built=359.1 | frame: texture acquired=362.7 | frame: drawn=368.6 | frame: presented=370.5 | menu installed=451.8 | first frame=451.8
+exit Some(0)
+PLACEMENT window #224467 [-1752 406 944 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224467 [-1754 404 948 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224467 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224467 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224467 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224467 [-1759 400 958 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224467 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app counter --first-frame --display 4128836 --label after
+RESULT start backend=after app=counter main_ms=9.0 first_frame_ms=187.3 window_on_screen_ms=229.6 visible_with_frame_ms=229.6 footprint_mb=15.2 gpu_mb=10.8 load=[7.52 8.23 11.58] window=[-1555 573 550 326] placement=virtual
+TRACE main=9.0 | gpu: thread=27.9 | gpu: instance=28.0 | show=28.0 | gpu: adapter=36.8 | gpu: device=42.1 | gpu: renderer=60.1 | event loop built=71.9 | resumed=88.5 | window created=143.1 | gpu joined=143.8 | surface created=145.0 | surface adopted=145.0 | surface configured=145.0 | frame: start=145.0 | frame: scene built=146.2 | frame: presented=154.1 | window shown=187.2 | first frame=187.3 | window on screen=229.6
+exit Some(0)
+## ./cmp-after --app settings --first-frame --display 4128836 --label after
+RESULT start backend=after app=settings main_ms=7.9 first_frame_ms=164.5 window_on_screen_ms=201.7 visible_with_frame_ms=201.7 footprint_mb=16.5 gpu_mb=17.6 load=[7.52 8.23 11.58] window=[-1752 405 944 662] placement=virtual
+TRACE main=7.9 | gpu: thread=23.2 | show=23.3 | gpu: instance=23.3 | gpu: adapter=31.9 | gpu: device=37.1 | gpu: renderer=56.0 | event loop built=64.2 | resumed=80.8 | window created=136.6 | gpu joined=137.2 | surface created=138.1 | surface adopted=138.1 | surface configured=138.2 | frame: start=138.2 | frame: scene built=140.4 | frame: presented=149.8 | window shown=164.4 | first frame=164.5 | window on screen=201.7
+exit Some(0)
+## ./cmp-after --app world --first-frame --display 4128836 --label after
+RESULT start backend=after app=world main_ms=8.5 first_frame_ms=306.5 window_on_screen_ms=348.4 visible_with_frame_ms=348.4 footprint_mb=17.4 gpu_mb=17.5 load=[7.16 8.14 11.53] window=[-1752 406 944 660] placement=virtual
+TRACE main=8.5 | gpu: thread=29.4 | gpu: instance=29.4 | gpu: adapter=37.1 | gpu: device=41.8 | gpu: renderer=59.5 | show=162.7 | event loop built=197.7 | resumed=218.1 | window created=279.8 | gpu joined=280.4 | surface created=281.5 | surface adopted=281.5 | surface configured=281.5 | frame: start=281.5 | frame: scene built=282.4 | frame: presented=290.0 | window shown=306.5 | first frame=306.5 | window on screen=348.4
+exit Some(0)
+## ./cmp-gpui --app settings --idle 10 --display 4128836 --label gpui
+RESULT idle backend=gpui app=settings secs=10.0 redraws=0 cpu_pct=0.660 footprint_mb=28.1 resident_mb=43.8 gpu_mb=75.0 load=[6.36 7.94 11.42] window=[-1751 406 942 660] placement=virtual
+exit Some(0)
+PLACEMENT window #224481 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224481 [-1755 403 950 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224481 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224481 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224481 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224481 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224481 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224481 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app world --warmup 60 --frames 600 --display 4128836 --label gpui
+RESULT animate backend=gpui app=world frames=600 fps=60.0 cpu_pct=6.9 kernel_pct=1.7 footprint_mb=31.8 resident_mb=47.9 gpu_mb=84.4 load=[7.52 8.13 11.45] window=[-1752 406 944 660] placement=virtual
+exit Some(0)
+PLACEMENT window #224485 [-1752 406 944 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224485 [-1754 404 948 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224485 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224485 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224485 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224485 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224485 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224485 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app settings --idle 10 --display 4128836 --label before
+RESULT idle backend=before app=settings secs=10.0 redraws=0 cpu_pct=0.008 footprint_mb=18.0 resident_mb=55.0 gpu_mb=17.6 load=[6.39 7.84 11.29] window=[-1751 406 942 660] placement=virtual
+exit Some(0)
+PLACEMENT window #224489 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224489 [-1753 404 946 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224489 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224489 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224489 [-1759 400 958 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224489 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224489 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224489 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app world --warmup 60 --frames 600 --display 4128836 --label before
+RESULT animate backend=before app=world frames=600 fps=60.0 cpu_pct=12.3 kernel_pct=5.1 footprint_mb=23.5 resident_mb=60.9 gpu_mb=37.0 load=[5.77 7.67 11.18] window=[-1751 406 942 660] placement=virtual
+exit Some(0)
+PLACEMENT window #224501 [-1753 405 946 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224501 [-1755 403 950 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224501 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224501 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224501 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224501 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224501 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224501 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app settings --idle 10 --display 4128836 --label after
+RESULT idle backend=after app=settings secs=10.0 redraws=0 cpu_pct=0.042 footprint_mb=18.1 resident_mb=55.0 gpu_mb=17.6 load=[5.47 7.50 11.06] window=[-1751 406 942 660] placement=virtual
+TRACE main=7.8 | gpu: thread=21.3 | gpu: instance=21.3 | show=21.3 | gpu: adapter=27.9 | gpu: device=32.1 | gpu: renderer=48.7 | event loop built=56.3 | resumed=74.7 | window created=125.0 | gpu joined=125.9 | surface created=126.8 | surface adopted=126.8 | surface configured=126.9 | frame: start=126.9 | frame: scene built=129.0 | frame: presented=136.6 | window shown=149.5 | first frame=149.5 | window on screen=180.1 | visible=198.5 | menu installed=257.9
+exit Some(0)
+PLACEMENT window #224513 [-1752 406 944 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224513 [-1754 404 948 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224513 [-1755 403 950 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224513 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224513 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224513 [-1759 400 958 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224513 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224513 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224513 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app world --warmup 60 --frames 600 --display 4128836 --label after
+RESULT animate backend=after app=world frames=600 fps=60.0 cpu_pct=12.5 kernel_pct=5.3 footprint_mb=24.4 resident_mb=61.7 gpu_mb=37.1 load=[5.01 7.34 10.96] window=[-1751 406 942 660] placement=virtual
+exit Some(0)
+PLACEMENT window #224525 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224525 [-1753 405 946 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224525 [-1755 403 950 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224525 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224525 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224525 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224525 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224525 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app settings --idle 10 --display 4128836 --label after
+RESULT idle backend=after app=settings secs=10.0 redraws=0 cpu_pct=0.017 footprint_mb=18.6 resident_mb=55.4 gpu_mb=17.6 load=[4.46 7.14 10.85] window=[-1751 406 942 660] placement=virtual
+TRACE main=7.7 | gpu: thread=23.5 | show=23.5 | gpu: instance=23.5 | gpu: adapter=30.9 | gpu: device=35.1 | gpu: renderer=52.5 | event loop built=63.1 | resumed=80.0 | window created=132.4 | gpu joined=132.9 | surface created=133.8 | surface adopted=133.8 | surface configured=133.8 | frame: start=133.8 | frame: scene built=136.0 | frame: presented=143.5 | window shown=159.0 | first frame=159.0 | window on screen=188.9 | visible=214.2 | menu installed=289.4
+exit Some(0)
+PLACEMENT window #224537 [-1752 406 944 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224537 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224537 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224537 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224537 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224537 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224537 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-after --app world --warmup 60 --frames 600 --display 4128836 --label after
+RESULT animate backend=after app=world frames=600 fps=60.0 cpu_pct=11.6 kernel_pct=4.8 footprint_mb=24.2 resident_mb=61.6 gpu_mb=37.1 load=[5.00 7.12 10.78] window=[-1751 406 942 660] placement=virtual
+exit Some(0)
+PLACEMENT window #224549 [-1752 405 944 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224549 [-1754 404 948 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224549 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224549 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224549 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224549 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224549 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app settings --idle 10 --display 4128836 --label before
+RESULT idle backend=before app=settings secs=10.0 redraws=0 cpu_pct=0.055 footprint_mb=19.2 resident_mb=56.2 gpu_mb=17.6 load=[5.08 7.07 10.72] window=[-1751 406 942 660] placement=virtual
+exit Some(0)
+PLACEMENT window #224561 [-1752 406 944 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224561 [-1754 404 948 664] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224561 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224561 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224561 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224561 [-1759 400 958 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224561 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224561 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-before --app world --warmup 60 --frames 600 --display 4128836 --label before
+RESULT animate backend=before app=world frames=600 fps=60.0 cpu_pct=12.6 kernel_pct=5.4 footprint_mb=25.4 resident_mb=63.1 gpu_mb=37.1 load=[5.74 7.13 10.67] window=[-1751 406 942 660] placement=virtual
+exit Some(0)
+PLACEMENT window #224573 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224573 [-1753 405 946 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224573 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224573 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224573 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224573 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224573 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224573 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app settings --idle 10 --display 4128836 --label gpui
+RESULT idle backend=gpui app=settings secs=10.0 redraws=0 cpu_pct=0.696 footprint_mb=29.1 resident_mb=44.7 gpu_mb=75.0 load=[5.95 7.12 10.63] window=[-1751 406 942 660] placement=virtual
+exit Some(0)
+PLACEMENT window #224585 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224585 [-1752 405 944 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224585 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224585 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224585 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224585 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224585 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224585 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui --app world --warmup 60 --frames 600 --display 4128836 --label gpui
+RESULT animate backend=gpui app=world frames=600 fps=60.0 cpu_pct=7.2 kernel_pct=1.8 footprint_mb=32.4 resident_mb=48.8 gpu_mb=84.4 load=[6.71 7.24 10.61] window=[-1752 405 944 662] placement=virtual
+exit Some(0)
+PLACEMENT window #224589 [-1752 405 944 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224589 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224589 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224589 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224589 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224589 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224589 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene counter --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/counter-gpui.png: 1120x600
+exit Some(0)
+PLACEMENT window #224593 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224593 [-1556 572 552 328] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224593 [-1559 571 558 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224593 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224593 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224593 [-1561 569 562 334] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene counter-focused --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/counter-focused-gpui.png: 1120x600
+exit Some(0)
+PLACEMENT window #224597 [-1555 573 550 326] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224597 [-1557 571 554 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224597 [-1558 571 556 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224597 [-1559 570 558 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224597 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224597 [-1561 569 562 334] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224597 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene init-app --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/init-app-gpui.png: 1120x600
+exit Some(0)
+PLACEMENT window #224601 [-1557 571 554 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224601 [-1558 571 556 330] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224601 [-1559 570 558 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224601 [-1560 570 560 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224601 [-1561 570 562 332] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224601 [-1561 569 562 334] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene settings --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/settings-gpui.png: 1920x1280
+exit Some(0)
+PLACEMENT window #224606 [-1753 405 946 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224606 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224606 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224606 [-1759 401 958 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224606 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224606 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224606 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene world-title --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/world-title-gpui.png: 1920x1280
+exit Some(0)
+PLACEMENT window #224611 [-1753 405 946 662] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224611 [-1755 403 950 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224611 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224611 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224611 [-1759 400 958 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224611 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224611 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene world-town --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/world-town-gpui.png: 1920x1280
+exit Some(0)
+PLACEMENT window #224616 [-1752 406 944 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224616 [-1756 403 952 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224616 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224616 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224616 [-1759 400 958 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224616 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224616 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224616 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene world-room --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/world-room-gpui.png: 1920x1280
+exit Some(0)
+PLACEMENT window #224621 [-1751 406 942 660] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224621 [-1755 403 950 666] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224621 [-1757 402 954 668] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224621 [-1758 401 956 670] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224621 [-1759 400 958 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224621 [-1760 400 960 672] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224621 [-1761 399 962 674] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224621 [-1761 400 962 672] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene text-fallback --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/text-fallback-gpui.png: 960x400
+exit Some(0)
+PLACEMENT window #224626 [-1517 622 474 228] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224626 [-1519 621 478 230] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224626 [-1519 620 478 232] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224626 [-1520 620 480 232] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224626 [-1521 620 482 232] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene text-sizes --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/text-sizes-gpui.png: 1120x520
+exit Some(0)
+PLACEMENT window #224631 [-1555 593 550 286] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224631 [-1557 591 554 290] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224631 [-1558 591 556 290] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224631 [-1559 590 558 292] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224631 [-1560 590 560 292] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224631 [-1561 590 562 292] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene transforms --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/transforms-gpui.png: 1120x440
+exit Some(0)
+PLACEMENT window #224636 [-1556 612 552 248] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224636 [-1557 611 554 250] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224636 [-1559 610 558 252] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224636 [-1560 610 560 252] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224636 [-1561 610 562 252] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-gpui snap --scene paints --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label gpui
+/Volumes/Projects/claude/.tmp-startup/final2/paints-gpui.png: 800x440
+exit Some(0)
+PLACEMENT window #224641 [-1477 612 394 248] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224641 [-1478 611 396 250] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224641 [-1479 610 398 252] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224641 [-1480 610 400 252] on virtual display 4128836 [-2560 0 2560 1440]
+PLACEMENT window #224641 [-1481 610 402 252] on virtual display 4128836 [-2560 0 2560 1440]
+## ./cmp-new snap --out /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label new
+counter: 1120x600
+counter-focused: 1120x600
+init-app: 1120x600
+settings: 1920x1280
+world-title: 1920x1280
+world-town: 1920x1280
+world-room: 1920x1280
+text-fallback: 960x400
+text-sizes: 1120x520
+transforms: 1120x440
+paints: 800x440
+exit Some(0)
+## ./cmp-new compare --dir /Volumes/Projects/claude/.tmp-startup/final2 --display 4128836 --label new
+| scene | size | identical | differ > 8 | max channel delta | mean delta | PSNR dB |
+|---|---|---|---|---|---|---|
+| counter | 1120x600 | 98.97% | 0.025% | 39 | 0.010 | 59.4 |
+| counter-focused | 1120x600 | 98.99% | 0.013% | 39 | 0.008 | 62.1 |
+| init-app | 1120x600 | 99.68% | 0.013% | 42 | 0.004 | 61.7 |
+| settings | 1920x1280 | 98.75% | 0.023% | 37 | 0.015 | 56.2 |
+| world-title | 1920x1280 | 92.04% | 5.632% | 123 | 1.308 | 32.6 |
+| world-town | 1920x1280 | 91.97% | 5.531% | 123 | 1.289 | 32.7 |
+| world-room | 1920x1280 | 97.71% | 0.741% | 147 | 0.186 | 40.4 |
+| text-fallback | 960x400 | 98.97% | 0.000% | 1 | 0.007 | 69.9 |
+| text-sizes | 1120x520 | 96.81% | 0.000% | 1 | 0.017 | 65.8 |
+| transforms | 1120x440 | 88.05% | 0.785% | 202 | 0.337 | 35.1 |
+| paints | 800x440 | 99.36% | 0.153% | 51 | 0.044 | 46.9 |
+exit Some(0)
+main display mode after: Some(Mode { width: 2560, height: 1440, pixel_width: 5120, pixel_height: 2880, refresh: 0.0 })
+virtual display removed (10 ms until offline; -1 = still online after 5 s); physical displays after [(69945052, Rect { x: 0.0, y: 0.0, w: 2560.0, h: 1440.0 })]
+other apps' windows moved between before and after the batch: 0
+RESULT content backend=gpui app=counter window_on_screen_ms=225.6 content_on_screen_ms=258.2 first_frame_ms=171.3 background_fraction=0.92 text_pixels=2592 load=[8.84 8.46 11.97] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=before app=counter window_on_screen_ms=225.1 content_on_screen_ms=308.4 first_frame_ms=388.8 background_fraction=0.92 text_pixels=2609 load=[8.84 8.46 11.97] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=after app=counter window_on_screen_ms=407.2 content_on_screen_ms=440.6 first_frame_ms=357.9 background_fraction=0.92 text_pixels=2575 load=[8.84 8.46 11.97] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=gpui app=counter window_on_screen_ms=238.2 content_on_screen_ms=272.1 first_frame_ms=188.1 background_fraction=0.91 text_pixels=2539 load=[8.45 8.39 11.92] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=before app=counter window_on_screen_ms=216.9 content_on_screen_ms=345.3 first_frame_ms=356.8 background_fraction=0.92 text_pixels=2579 load=[8.45 8.39 11.92] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=after app=counter window_on_screen_ms=232.0 content_on_screen_ms=269.5 first_frame_ms=192.8 background_fraction=0.92 text_pixels=2485 load=[8.45 8.39 11.92] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=gpui app=counter window_on_screen_ms=221.3 content_on_screen_ms=261.1 first_frame_ms=177.8 background_fraction=0.92 text_pixels=2592 load=[8.45 8.39 11.92] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=before app=counter window_on_screen_ms=234.2 content_on_screen_ms=298.6 first_frame_ms=393.7 background_fraction=0.92 text_pixels=2527 load=[7.86 8.27 11.85] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=after app=counter window_on_screen_ms=222.2 content_on_screen_ms=267.8 first_frame_ms=187.3 background_fraction=0.92 text_pixels=2575 load=[7.86 8.27 11.85] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=gpui app=counter window_on_screen_ms=265.1 content_on_screen_ms=310.3 first_frame_ms=204.9 background_fraction=0.92 text_pixels=2468 load=[7.86 8.27 11.85] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=before app=counter window_on_screen_ms=224.0 content_on_screen_ms=313.9 first_frame_ms=393.9 background_fraction=0.92 text_pixels=2542 load=[7.86 8.27 11.85] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=after app=counter window_on_screen_ms=233.2 content_on_screen_ms=274.2 first_frame_ms=184.0 background_fraction=0.92 text_pixels=2588 load=[7.95 8.28 11.84] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=gpui app=counter window_on_screen_ms=259.1 content_on_screen_ms=302.3 first_frame_ms=201.0 background_fraction=0.92 text_pixels=2535 load=[7.95 8.28 11.84] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=before app=counter window_on_screen_ms=213.9 content_on_screen_ms=284.7 first_frame_ms=361.0 background_fraction=0.92 text_pixels=2668 load=[7.95 8.28 11.84] window=[-1555 573 550 326] placement=virtual
+RESULT content backend=after app=counter window_on_screen_ms=248.1 content_on_screen_ms=292.7 first_frame_ms=202.2 background_fraction=0.92 text_pixels=2588 load=[7.71 8.22 11.80] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=gpui app=counter main_ms=8.5 first_frame_ms=200.8 window_on_screen_ms=254.3 visible_with_frame_ms=254.3 footprint_mb=18.5 gpu_mb=24.7 load=[7.71 8.22 11.80] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=gpui app=settings main_ms=9.3 first_frame_ms=207.9 window_on_screen_ms=266.4 visible_with_frame_ms=266.4 footprint_mb=19.5 gpu_mb=65.6 load=[7.71 8.22 11.80] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=gpui app=world main_ms=10.7 first_frame_ms=471.9 window_on_screen_ms=524.9 visible_with_frame_ms=524.9 footprint_mb=22.5 gpu_mb=65.6 load=[7.71 8.22 11.80] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=before app=counter main_ms=10.0 first_frame_ms=354.4 window_on_screen_ms=216.6 visible_with_frame_ms=354.4 footprint_mb=17.1 gpu_mb=10.9 load=[10.62 8.82 11.99] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=before app=settings main_ms=8.1 first_frame_ms=337.9 window_on_screen_ms=203.9 visible_with_frame_ms=337.9 footprint_mb=17.8 gpu_mb=17.6 load=[10.62 8.82 11.99] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=before app=world main_ms=9.4 first_frame_ms=468.3 window_on_screen_ms=333.9 visible_with_frame_ms=468.3 footprint_mb=19.4 gpu_mb=17.5 load=[10.62 8.82 11.99] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=after app=counter main_ms=9.6 first_frame_ms=177.2 window_on_screen_ms=219.6 visible_with_frame_ms=219.6 footprint_mb=15.3 gpu_mb=10.8 load=[10.62 8.82 11.99] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=after app=settings main_ms=9.3 first_frame_ms=189.6 window_on_screen_ms=239.7 visible_with_frame_ms=239.7 footprint_mb=16.8 gpu_mb=17.6 load=[9.93 8.70 11.93] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=after app=world main_ms=8.6 first_frame_ms=298.7 window_on_screen_ms=332.4 visible_with_frame_ms=332.4 footprint_mb=18.1 gpu_mb=17.5 load=[9.93 8.70 11.93] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=gpui app=counter main_ms=8.3 first_frame_ms=203.5 window_on_screen_ms=261.4 visible_with_frame_ms=261.4 footprint_mb=18.9 gpu_mb=24.7 load=[9.93 8.70 11.93] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=gpui app=settings main_ms=9.4 first_frame_ms=186.8 window_on_screen_ms=239.4 visible_with_frame_ms=239.4 footprint_mb=19.3 gpu_mb=65.6 load=[9.93 8.70 11.93] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=gpui app=world main_ms=9.0 first_frame_ms=308.7 window_on_screen_ms=354.8 visible_with_frame_ms=354.8 footprint_mb=21.7 gpu_mb=65.6 load=[9.45 8.62 11.88] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=before app=counter main_ms=8.2 first_frame_ms=362.9 window_on_screen_ms=208.6 visible_with_frame_ms=362.9 footprint_mb=17.3 gpu_mb=10.9 load=[9.45 8.62 11.88] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=before app=settings main_ms=10.7 first_frame_ms=360.9 window_on_screen_ms=214.6 visible_with_frame_ms=360.9 footprint_mb=17.5 gpu_mb=17.6 load=[9.45 8.62 11.88] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=before app=world main_ms=9.6 first_frame_ms=467.6 window_on_screen_ms=338.9 visible_with_frame_ms=467.6 footprint_mb=20.0 gpu_mb=17.5 load=[9.18 8.58 11.85] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=after app=counter main_ms=7.8 first_frame_ms=195.3 window_on_screen_ms=244.7 visible_with_frame_ms=244.7 footprint_mb=15.6 gpu_mb=10.8 load=[9.18 8.58 11.85] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=after app=settings main_ms=8.7 first_frame_ms=197.5 window_on_screen_ms=232.6 visible_with_frame_ms=232.6 footprint_mb=17.1 gpu_mb=17.6 load=[9.18 8.58 11.85] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=after app=world main_ms=8.2 first_frame_ms=298.4 window_on_screen_ms=338.0 visible_with_frame_ms=338.0 footprint_mb=18.5 gpu_mb=17.5 load=[9.18 8.58 11.85] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=gpui app=counter main_ms=9.3 first_frame_ms=157.5 window_on_screen_ms=197.9 visible_with_frame_ms=197.9 footprint_mb=18.4 gpu_mb=24.7 load=[8.68 8.49 11.79] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=gpui app=settings main_ms=9.9 first_frame_ms=163.9 window_on_screen_ms=197.6 visible_with_frame_ms=197.6 footprint_mb=18.9 gpu_mb=65.6 load=[8.68 8.49 11.79] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=gpui app=world main_ms=10.6 first_frame_ms=278.8 window_on_screen_ms=313.9 visible_with_frame_ms=313.9 footprint_mb=22.1 gpu_mb=65.6 load=[8.68 8.49 11.79] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=before app=counter main_ms=8.6 first_frame_ms=325.2 window_on_screen_ms=194.8 visible_with_frame_ms=325.2 footprint_mb=16.9 gpu_mb=10.9 load=[8.68 8.49 11.79] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=before app=settings main_ms=8.1 first_frame_ms=355.9 window_on_screen_ms=219.5 visible_with_frame_ms=355.9 footprint_mb=17.6 gpu_mb=17.6 load=[8.39 8.43 11.75] window=[-1752 406 944 660] placement=virtual
+RESULT start backend=before app=world main_ms=10.6 first_frame_ms=494.1 window_on_screen_ms=332.9 visible_with_frame_ms=494.1 footprint_mb=19.6 gpu_mb=17.5 load=[8.39 8.43 11.75] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=after app=counter main_ms=27.6 first_frame_ms=195.0 window_on_screen_ms=231.4 visible_with_frame_ms=231.4 footprint_mb=15.5 gpu_mb=10.8 load=[8.39 8.43 11.75] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=after app=settings main_ms=7.3 first_frame_ms=159.9 window_on_screen_ms=196.0 visible_with_frame_ms=196.0 footprint_mb=16.5 gpu_mb=17.6 load=[8.39 8.43 11.75] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=after app=world main_ms=9.8 first_frame_ms=298.6 window_on_screen_ms=334.8 visible_with_frame_ms=334.8 footprint_mb=18.8 gpu_mb=17.5 load=[8.11 8.37 11.71] window=[-1752 406 944 660] placement=virtual
+RESULT start backend=gpui app=counter main_ms=10.6 first_frame_ms=200.2 window_on_screen_ms=238.2 visible_with_frame_ms=238.2 footprint_mb=18.7 gpu_mb=24.7 load=[8.11 8.37 11.71] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=gpui app=settings main_ms=20.6 first_frame_ms=214.6 window_on_screen_ms=260.2 visible_with_frame_ms=260.2 footprint_mb=19.8 gpu_mb=65.6 load=[8.11 8.37 11.71] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=gpui app=world main_ms=7.7 first_frame_ms=292.0 window_on_screen_ms=337.5 visible_with_frame_ms=337.5 footprint_mb=21.5 gpu_mb=65.6 load=[8.27 8.40 11.70] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=before app=counter main_ms=9.5 first_frame_ms=323.1 window_on_screen_ms=193.4 visible_with_frame_ms=323.1 footprint_mb=16.7 gpu_mb=10.9 load=[8.27 8.40 11.70] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=before app=settings main_ms=8.1 first_frame_ms=310.9 window_on_screen_ms=183.6 visible_with_frame_ms=310.9 footprint_mb=17.5 gpu_mb=17.6 load=[8.27 8.40 11.70] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=before app=world main_ms=8.2 first_frame_ms=436.0 window_on_screen_ms=315.4 visible_with_frame_ms=436.0 footprint_mb=19.5 gpu_mb=17.5 load=[8.27 8.40 11.70] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=after app=counter main_ms=7.3 first_frame_ms=195.1 window_on_screen_ms=236.8 visible_with_frame_ms=236.8 footprint_mb=16.5 gpu_mb=10.8 load=[8.24 8.39 11.68] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=after app=settings main_ms=11.4 first_frame_ms=176.2 window_on_screen_ms=204.8 visible_with_frame_ms=204.8 footprint_mb=16.5 gpu_mb=17.6 load=[8.24 8.39 11.68] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=after app=world main_ms=7.6 first_frame_ms=294.2 window_on_screen_ms=320.6 visible_with_frame_ms=320.6 footprint_mb=18.8 gpu_mb=17.5 load=[8.24 8.39 11.68] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=gpui app=counter main_ms=7.4 first_frame_ms=168.0 window_on_screen_ms=207.6 visible_with_frame_ms=207.6 footprint_mb=18.6 gpu_mb=24.7 load=[8.24 8.39 11.68] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=gpui app=settings main_ms=8.3 first_frame_ms=171.1 window_on_screen_ms=215.8 visible_with_frame_ms=215.8 footprint_mb=19.2 gpu_mb=65.6 load=[7.82 8.30 11.63] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=gpui app=world main_ms=8.0 first_frame_ms=292.8 window_on_screen_ms=337.0 visible_with_frame_ms=337.0 footprint_mb=21.5 gpu_mb=65.6 load=[7.82 8.30 11.63] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=before app=counter main_ms=10.0 first_frame_ms=353.1 window_on_screen_ms=215.4 visible_with_frame_ms=353.1 footprint_mb=17.4 gpu_mb=10.9 load=[7.82 8.30 11.63] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=before app=settings main_ms=7.8 first_frame_ms=328.7 window_on_screen_ms=203.2 visible_with_frame_ms=328.7 footprint_mb=17.6 gpu_mb=17.6 load=[7.82 8.30 11.63] window=[-1751 406 942 660] placement=virtual
+RESULT start backend=before app=world main_ms=8.2 first_frame_ms=451.8 window_on_screen_ms=323.1 visible_with_frame_ms=451.8 footprint_mb=19.1 gpu_mb=17.5 load=[7.52 8.23 11.58] window=[-1752 406 944 660] placement=virtual
+RESULT start backend=after app=counter main_ms=9.0 first_frame_ms=187.3 window_on_screen_ms=229.6 visible_with_frame_ms=229.6 footprint_mb=15.2 gpu_mb=10.8 load=[7.52 8.23 11.58] window=[-1555 573 550 326] placement=virtual
+RESULT start backend=after app=settings main_ms=7.9 first_frame_ms=164.5 window_on_screen_ms=201.7 visible_with_frame_ms=201.7 footprint_mb=16.5 gpu_mb=17.6 load=[7.52 8.23 11.58] window=[-1752 405 944 662] placement=virtual
+RESULT start backend=after app=world main_ms=8.5 first_frame_ms=306.5 window_on_screen_ms=348.4 visible_with_frame_ms=348.4 footprint_mb=17.4 gpu_mb=17.5 load=[7.16 8.14 11.53] window=[-1752 406 944 660] placement=virtual
+RESULT idle backend=gpui app=settings secs=10.0 redraws=0 cpu_pct=0.660 footprint_mb=28.1 resident_mb=43.8 gpu_mb=75.0 load=[6.36 7.94 11.42] window=[-1751 406 942 660] placement=virtual
+RESULT animate backend=gpui app=world frames=600 fps=60.0 cpu_pct=6.9 kernel_pct=1.7 footprint_mb=31.8 resident_mb=47.9 gpu_mb=84.4 load=[7.52 8.13 11.45] window=[-1752 406 944 660] placement=virtual
+RESULT idle backend=before app=settings secs=10.0 redraws=0 cpu_pct=0.008 footprint_mb=18.0 resident_mb=55.0 gpu_mb=17.6 load=[6.39 7.84 11.29] window=[-1751 406 942 660] placement=virtual
+RESULT animate backend=before app=world frames=600 fps=60.0 cpu_pct=12.3 kernel_pct=5.1 footprint_mb=23.5 resident_mb=60.9 gpu_mb=37.0 load=[5.77 7.67 11.18] window=[-1751 406 942 660] placement=virtual
+RESULT idle backend=after app=settings secs=10.0 redraws=0 cpu_pct=0.042 footprint_mb=18.1 resident_mb=55.0 gpu_mb=17.6 load=[5.47 7.50 11.06] window=[-1751 406 942 660] placement=virtual
+RESULT animate backend=after app=world frames=600 fps=60.0 cpu_pct=12.5 kernel_pct=5.3 footprint_mb=24.4 resident_mb=61.7 gpu_mb=37.1 load=[5.01 7.34 10.96] window=[-1751 406 942 660] placement=virtual
+RESULT idle backend=after app=settings secs=10.0 redraws=0 cpu_pct=0.017 footprint_mb=18.6 resident_mb=55.4 gpu_mb=17.6 load=[4.46 7.14 10.85] window=[-1751 406 942 660] placement=virtual
+RESULT animate backend=after app=world frames=600 fps=60.0 cpu_pct=11.6 kernel_pct=4.8 footprint_mb=24.2 resident_mb=61.6 gpu_mb=37.1 load=[5.00 7.12 10.78] window=[-1751 406 942 660] placement=virtual
+RESULT idle backend=before app=settings secs=10.0 redraws=0 cpu_pct=0.055 footprint_mb=19.2 resident_mb=56.2 gpu_mb=17.6 load=[5.08 7.07 10.72] window=[-1751 406 942 660] placement=virtual
+RESULT animate backend=before app=world frames=600 fps=60.0 cpu_pct=12.6 kernel_pct=5.4 footprint_mb=25.4 resident_mb=63.1 gpu_mb=37.1 load=[5.74 7.13 10.67] window=[-1751 406 942 660] placement=virtual
+RESULT idle backend=gpui app=settings secs=10.0 redraws=0 cpu_pct=0.696 footprint_mb=29.1 resident_mb=44.7 gpu_mb=75.0 load=[5.95 7.12 10.63] window=[-1751 406 942 660] placement=virtual
+RESULT animate backend=gpui app=world frames=600 fps=60.0 cpu_pct=7.2 kernel_pct=1.8 footprint_mb=32.4 resident_mb=48.8 gpu_mb=84.4 load=[6.71 7.24 10.61] window=[-1752 405 944 662] placement=virtual
+MEDIAN content backend=gpui app=counter n=5 window_on_screen_ms=238.20 content_on_screen_ms=272.10 first_frame_ms=188.10
+MEDIAN content backend=before app=counter n=5 window_on_screen_ms=224.00 content_on_screen_ms=308.40 first_frame_ms=388.80
+MEDIAN content backend=after app=counter n=5 window_on_screen_ms=233.20 content_on_screen_ms=274.20 first_frame_ms=192.80
+MEDIAN start backend=gpui app=counter n=5 visible_with_frame_ms=238.20 first_frame_ms=200.20 window_on_screen_ms=238.20 footprint_mb=18.60 gpu_mb=24.70
+MEDIAN start backend=gpui app=settings n=5 visible_with_frame_ms=239.40 first_frame_ms=186.80 window_on_screen_ms=239.40 footprint_mb=19.30 gpu_mb=65.60
+MEDIAN start backend=gpui app=world n=5 visible_with_frame_ms=337.50 first_frame_ms=292.80 window_on_screen_ms=337.50 footprint_mb=21.70 gpu_mb=65.60
+MEDIAN start backend=before app=counter n=5 visible_with_frame_ms=353.10 first_frame_ms=353.10 window_on_screen_ms=208.60 footprint_mb=17.10 gpu_mb=10.90
+MEDIAN start backend=before app=settings n=5 visible_with_frame_ms=337.90 first_frame_ms=337.90 window_on_screen_ms=203.90 footprint_mb=17.60 gpu_mb=17.60
+MEDIAN start backend=before app=world n=5 visible_with_frame_ms=467.60 first_frame_ms=467.60 window_on_screen_ms=332.90 footprint_mb=19.50 gpu_mb=17.50
+MEDIAN start backend=after app=counter n=5 visible_with_frame_ms=231.40 first_frame_ms=195.00 window_on_screen_ms=231.40 footprint_mb=15.50 gpu_mb=10.80
+MEDIAN start backend=after app=settings n=5 visible_with_frame_ms=204.80 first_frame_ms=176.20 window_on_screen_ms=204.80 footprint_mb=16.50 gpu_mb=17.60
+MEDIAN start backend=after app=world n=5 visible_with_frame_ms=334.80 first_frame_ms=298.60 window_on_screen_ms=334.80 footprint_mb=18.50 gpu_mb=17.50
+MEDIAN idle backend=gpui app=settings n=2 redraws=0.00 cpu_pct=0.68 footprint_mb=28.60 gpu_mb=75.00
+MEDIAN idle backend=before app=settings n=2 redraws=0.00 cpu_pct=0.03 footprint_mb=18.60 gpu_mb=17.60
+MEDIAN idle backend=after app=settings n=2 redraws=0.00 cpu_pct=0.03 footprint_mb=18.35 gpu_mb=17.60
+MEDIAN animate backend=gpui app=world n=2 fps=60.00 cpu_pct=7.05 kernel_pct=1.75 footprint_mb=32.10 gpu_mb=84.40
+MEDIAN animate backend=before app=world n=2 fps=60.00 cpu_pct=12.45 kernel_pct=5.25 footprint_mb=24.45 gpu_mb=37.05
+MEDIAN animate backend=after app=world n=2 fps=60.00 cpu_pct=12.05 kernel_pct=5.05 footprint_mb=24.30 gpu_mb=37.10
+OK 72 results; every window stayed on virtual display 4128836

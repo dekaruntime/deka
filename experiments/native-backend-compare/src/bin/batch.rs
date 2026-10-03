@@ -228,7 +228,7 @@ fn main() {
             return false;
         }
         let mut full: Vec<&str> = args.to_vec();
-        full.extend(["--display", &id]);
+        full.extend(["--display", &id, "--label", backend]);
         let path = bin.join(format!("cmp-{backend}"));
         let r = run(&path, &full, virt.id);
         let _ = writeln!(log, "## {} {}\n{}exit {:?}", path.display(), full.join(" "), r.output, r.status);
@@ -270,7 +270,25 @@ fn main() {
     };
 
     let out_s = out.display().to_string();
+    // `--content-dump DIR`: content runs save the readback that passed.
+    let dump = arg("--content-dump");
     'batch: {
+        // Content checks: when the counter's frame is in the window server's
+        // copy of the window (slower runs: the child reads its window back).
+        if plan.contains("content") {
+            for _ in 0..rounds {
+                for backend in &backends {
+                    let mut args = vec!["--app", "counter", "--first-frame", "--content"];
+                    if let Some(dir) = &dump {
+                        args.extend(["--content-dump", dir.as_str()]);
+                    }
+                    if !exec(backend, &args) {
+                        failed = true;
+                        break 'batch;
+                    }
+                }
+            }
+        }
         if plan.contains("start") {
             for _ in 0..rounds {
                 for backend in &backends {
@@ -356,7 +374,8 @@ fn summary(results: &[String]) -> Vec<String> {
             .map(|(k, v)| (k.to_owned(), v.to_owned()))
             .collect()
     };
-    let metrics: [(&str, &[&str]); 3] = [
+    let metrics: [(&str, &[&str]); 4] = [
+        ("content", &["window_on_screen_ms", "content_on_screen_ms", "first_frame_ms"]),
         ("start", &["visible_with_frame_ms", "first_frame_ms", "window_on_screen_ms", "footprint_mb", "gpu_mb"]),
         ("idle", &["redraws", "cpu_pct", "footprint_mb", "gpu_mb"]),
         ("animate", &["fps", "cpu_pct", "kernel_pct", "footprint_mb", "gpu_mb"]),
