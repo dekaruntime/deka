@@ -107,15 +107,21 @@ fn timeline_ms(label: &str) -> Option<f64> {
 }
 
 static ON_SCREEN: AtomicBool = AtomicBool::new(false);
+/// Bounds of this process's window when the window server first listed it.
+static FIRST_BOUNDS: Mutex<Option<display::Rect>> = Mutex::new(None);
 /// Poll the window server for this process's first on-screen window.
 pub fn start_visibility_probe() {
     let _ = std::thread::Builder::new()
         .name("probe".into())
         .spawn(|| {
             let t0 = Instant::now();
+            let pid = std::process::id() as i32;
             while t0.elapsed() < Duration::from_secs(5) {
-                if cg::own_window_on_screen() {
+                if let Some(w) = display::on_screen_windows().into_iter().find(|w| w.pid == pid) {
                     mark("window on screen");
+                    if let Ok(mut b) = FIRST_BOUNDS.lock() {
+                        *b = Some(w.bounds);
+                    }
                     ON_SCREEN.store(true, Ordering::Relaxed);
                     return;
                 }
@@ -124,12 +130,101 @@ pub fn start_visibility_probe() {
         });
 }
 
-mod cg {
+/// `window=[x y w h] placement=virtual|OFF:<why>` for the RESULT lines: where
+/// the window server first showed this process's window.
+fn placement() -> String {
+    let Some(b) = FIRST_BOUNDS.lock().ok().and_then(|b| *b) else {
+        return "window=none placement=none".into();
+    };
+    let verdict = match target_display() {
+        Some(id) => match display::check_window(&b, id) {
+            Ok(()) => "virtual".to_owned(),
+            Err(e) => format!("OFF:{}", e.replace(' ', "_")),
+        },
+        None => "OFF:no_display".into(),
+    };
+    format!("window=[{:.0} {:.0} {:.0} {:.0}] placement={verdict}", b.x, b.y, b.w, b.h)
+}
+
+/// The virtual display this run must put its window on (`--display ID`).
+pub fn target_display() -> Option<u32> {
+    arg("--display").and_then(|v| v.parse().ok())
+}
+
+/// Refuse to open a window anywhere but on the harness's virtual display, so
+/// a measurement never shows a window on a physical screen.
+pub fn require_virtual_display() -> u32 {
+    let Some(id) = target_display() else {
+        eprintln!("refusing to open a window: no --display (run through cmp-batch, which creates a virtual display)");
+        std::process::exit(2);
+    };
+    if !display::is_harness_display(id) {
+        eprintln!("refusing to open a window: display {id} is not the harness's virtual display");
+        std::process::exit(2);
+    }
+    id
+}
+
+/// Logical top-left for a `w` x `h` window centred on display `id`, in global
+/// coordinates (origin at the top left of the main display).
+pub fn window_origin(id: u32, w: f64, h: f64) -> (f64, f64) {
+    let b = display::bounds(id);
+    (b.x + ((b.w - w) / 2.).round(), b.y + ((b.h - h) / 2.).round())
+}
+
+/// CoreGraphics: displays, the window list and the virtual display shim
+/// (src/vdisplay.m).
+pub mod display {
     use std::ffi::c_void;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
+    pub struct Rect {
+        pub x: f64,
+        pub y: f64,
+        pub w: f64,
+        pub h: f64,
+    }
+    impl Rect {
+        pub fn contains(&self, o: &Rect) -> bool {
+            o.x >= self.x && o.y >= self.y && o.x + o.w <= self.x + self.w && o.y + o.h <= self.y + self.h
+        }
+        pub fn intersects(&self, o: &Rect) -> bool {
+            o.x < self.x + self.w && self.x < o.x + o.w && o.y < self.y + self.h && self.y < o.y + o.h
+        }
+    }
+    impl std::fmt::Display for Rect {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "[{:.0} {:.0} {:.0} {:.0}]", self.x, self.y, self.w, self.h)
+        }
+    }
+
+    /// Identifies the harness's display (CGDisplayVendorNumber/ModelNumber).
+    pub const VENDOR: u32 = 0xdec4;
+    pub const PRODUCT: u32 = 0x0b01;
+
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
         fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *const c_void;
+        fn CGRectMakeWithDictionaryRepresentation(dict: *const c_void, rect: *mut Rect) -> bool;
+        fn CGDisplayBounds(id: u32) -> Rect;
+        fn CGMainDisplayID() -> u32;
+        fn CGGetActiveDisplayList(max: u32, ids: *mut u32, count: *mut u32) -> i32;
+        fn CGDisplayVendorNumber(id: u32) -> u32;
+        fn CGDisplayModelNumber(id: u32) -> u32;
+        fn CGDisplayIsBuiltin(id: u32) -> u32;
+        fn CGDisplayCopyDisplayMode(id: u32) -> *const c_void;
+        fn CGDisplayModeGetWidth(mode: *const c_void) -> usize;
+        fn CGDisplayModeGetHeight(mode: *const c_void) -> usize;
+        fn CGDisplayModeGetPixelWidth(mode: *const c_void) -> usize;
+        fn CGDisplayModeGetPixelHeight(mode: *const c_void) -> usize;
+        fn CGDisplayModeGetRefreshRate(mode: *const c_void) -> f64;
+        fn CGDisplayModeRelease(mode: *const c_void);
         static kCGWindowOwnerPID: *const c_void;
+        static kCGWindowNumber: *const c_void;
+        static kCGWindowLayer: *const c_void;
+        static kCGWindowBounds: *const c_void;
+        static kCGWindowOwnerName: *const c_void;
     }
     #[link(name = "CoreFoundation", kind = "framework")]
     unsafe extern "C" {
@@ -137,34 +232,179 @@ mod cg {
         fn CFArrayGetValueAtIndex(array: *const c_void, index: isize) -> *const c_void;
         fn CFDictionaryGetValue(dict: *const c_void, key: *const c_void) -> *const c_void;
         fn CFNumberGetValue(number: *const c_void, kind: isize, out: *mut c_void) -> bool;
+        fn CFStringGetCString(s: *const c_void, buf: *mut u8, len: isize, encoding: u32) -> bool;
         fn CFRelease(object: *const c_void);
     }
-    const ON_SCREEN_ONLY: u32 = 1;
-    const SINT32: isize = 3;
-    pub fn own_window_on_screen() -> bool {
+    unsafe extern "C" {
+        fn cmp_vd_create(
+            width_pt: u32,
+            height_pt: u32,
+            scale: u32,
+            refresh: f64,
+            ppi: f64,
+            vendor: u32,
+            product: u32,
+            serial: u32,
+            name: *const std::ffi::c_char,
+        ) -> u32;
+        fn cmp_vd_destroy() -> i32;
+    }
+
+    pub fn bounds(id: u32) -> Rect {
+        // SAFETY: plain CoreGraphics query; an unknown id yields a zero rect.
+        unsafe { CGDisplayBounds(id) }
+    }
+    pub fn main_id() -> u32 {
+        // SAFETY: plain CoreGraphics query.
+        unsafe { CGMainDisplayID() }
+    }
+    pub fn active() -> Vec<u32> {
+        let mut ids = [0u32; 32];
+        let mut n = 0u32;
+        // SAFETY: CoreGraphics writes at most 32 ids and the count.
+        let rc = unsafe { CGGetActiveDisplayList(32, ids.as_mut_ptr(), &mut n) };
+        if rc != 0 {
+            return vec![];
+        }
+        ids[..n as usize].to_vec()
+    }
+    pub fn is_harness_display(id: u32) -> bool {
+        // SAFETY: plain CoreGraphics queries.
+        unsafe { CGDisplayVendorNumber(id) == VENDOR && CGDisplayModelNumber(id) == PRODUCT && CGDisplayIsBuiltin(id) == 0 }
+    }
+    /// Every active display except the harness's: the ones a person can see.
+    pub fn physical() -> Vec<u32> {
+        active().into_iter().filter(|&id| !is_harness_display(id)).collect()
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct Mode {
+        pub width: usize,
+        pub height: usize,
+        pub pixel_width: usize,
+        pub pixel_height: usize,
+        pub refresh: f64,
+    }
+    pub fn mode(id: u32) -> Option<Mode> {
+        // SAFETY: the copied mode is released after reading it.
+        unsafe {
+            let m = CGDisplayCopyDisplayMode(id);
+            if m.is_null() {
+                return None;
+            }
+            let mode = Mode {
+                width: CGDisplayModeGetWidth(m),
+                height: CGDisplayModeGetHeight(m),
+                pixel_width: CGDisplayModeGetPixelWidth(m),
+                pixel_height: CGDisplayModeGetPixelHeight(m),
+                refresh: CGDisplayModeGetRefreshRate(m),
+            };
+            CGDisplayModeRelease(m);
+            Some(mode)
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct WindowInfo {
+        pub pid: i32,
+        pub number: i32,
+        pub layer: i32,
+        pub bounds: Rect,
+        pub owner: String,
+    }
+    /// What the window server lists as on screen (any display), front to back.
+    pub fn on_screen_windows() -> Vec<WindowInfo> {
+        const ON_SCREEN_ONLY: u32 = 1;
+        const SINT32: isize = 3;
+        let mut out = vec![];
         // SAFETY: CoreFoundation calls on the copied array (released below)
         // and values borrowed from it; null-checked.
         unsafe {
             let list = CGWindowListCopyWindowInfo(ON_SCREEN_ONLY, 0);
             if list.is_null() {
-                return false;
+                return out;
             }
-            let pid = libc::getpid();
-            let mut found = false;
+            let int = |dict: *const c_void, key: *const c_void| {
+                let n = CFDictionaryGetValue(dict, key);
+                let mut v: i32 = -1;
+                if !n.is_null() {
+                    CFNumberGetValue(n, SINT32, (&raw mut v).cast());
+                }
+                v
+            };
             for i in 0..CFArrayGetCount(list) {
                 let dict = CFArrayGetValueAtIndex(list, i);
-                let n = CFDictionaryGetValue(dict, kCGWindowOwnerPID);
-                let mut owner: i32 = 0;
-                if !n.is_null()
-                    && CFNumberGetValue(n, SINT32, (&raw mut owner).cast())
-                    && owner == pid
-                {
-                    found = true;
-                    break;
+                let mut bounds = Rect::default();
+                let b = CFDictionaryGetValue(dict, kCGWindowBounds);
+                if !b.is_null() {
+                    CGRectMakeWithDictionaryRepresentation(b, &mut bounds);
                 }
+                let mut name = [0u8; 256];
+                let s = CFDictionaryGetValue(dict, kCGWindowOwnerName);
+                let owner = if !s.is_null() && CFStringGetCString(s, name.as_mut_ptr(), 256, 0x0800_0100) {
+                    std::ffi::CStr::from_bytes_until_nul(&name)
+                        .map(|c| c.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                out.push(WindowInfo {
+                    pid: int(dict, kCGWindowOwnerPID),
+                    number: int(dict, kCGWindowNumber),
+                    layer: int(dict, kCGWindowLayer),
+                    bounds,
+                    owner,
+                });
             }
             CFRelease(list);
-            found
+        }
+        out
+    }
+
+    /// A window passes when it lies wholly on display `virt` and touches no
+    /// display a person can see.
+    pub fn check_window(w: &Rect, virt: u32) -> Result<(), String> {
+        for id in physical() {
+            let p = bounds(id);
+            if p.intersects(w) {
+                return Err(format!("window {w} overlaps physical display {id} {p}"));
+            }
+        }
+        let v = bounds(virt);
+        if !v.contains(w) {
+            return Err(format!("window {w} is not inside virtual display {virt} {v}"));
+        }
+        Ok(())
+    }
+
+    /// A virtual display for the life of this value; dropping it removes the
+    /// display (and so does the process exiting, however it exits).
+    pub struct Virtual {
+        pub id: u32,
+    }
+    impl Virtual {
+        /// `width` x `height` points at `scale` pixels per point.
+        pub fn create(width: u32, height: u32, scale: u32, refresh: f64) -> Result<Self, String> {
+            let name = c"deka measurement display";
+            // SAFETY: the shim copies the name; it keeps the display object.
+            let id = unsafe {
+                cmp_vd_create(width, height, scale, refresh, 218., VENDOR, PRODUCT, std::process::id(), name.as_ptr())
+            };
+            if id == 0 {
+                return Err("CGVirtualDisplay could not be created (see stderr)".into());
+            }
+            Ok(Self { id })
+        }
+    }
+    /// Remove the display now. Returns milliseconds until it went offline
+    /// (-1: still online after 5 s). Safe to call more than once.
+    pub fn destroy() -> i32 {
+        // SAFETY: the shim releases its display object, if any, and polls.
+        unsafe { cmp_vd_destroy() }
+    }
+    impl Drop for Virtual {
+        fn drop(&mut self) {
+            destroy();
         }
     }
 }
@@ -186,6 +426,7 @@ pub static PRESENTED: AtomicU64 = AtomicU64::new(0);
 impl Protocol {
     pub fn new(backend: &'static str) -> &'static Self {
         mark("main");
+        require_virtual_display();
         start_visibility_probe();
         let p = Box::leak(Box::new(Self {
             backend,
@@ -244,13 +485,14 @@ impl Protocol {
         let main = timeline_ms("main").unwrap_or(f64::NAN);
         let u = usage();
         println!(
-            "RESULT start backend={} app={} main_ms={main:.1} first_frame_ms={first:.1} window_on_screen_ms={screen:.1} visible_with_frame_ms={:.1} footprint_mb={:.1} gpu_mb={:.1} load=[{}]",
+            "RESULT start backend={} app={} main_ms={main:.1} first_frame_ms={first:.1} window_on_screen_ms={screen:.1} visible_with_frame_ms={:.1} footprint_mb={:.1} gpu_mb={:.1} load=[{}] {}",
             self.backend,
             self.app,
             first.max(screen),
             mb(u.footprint),
             gpu_mb(),
-            load_avg()
+            load_avg(),
+            placement()
         );
     }
 
@@ -262,7 +504,7 @@ impl Protocol {
         let u1 = usage();
         let wall = t0.elapsed().as_secs_f64();
         println!(
-            "RESULT idle backend={} app={} secs={wall:.1} redraws={} cpu_pct={:.3} footprint_mb={:.1} resident_mb={:.1} gpu_mb={:.1} load=[{}]",
+            "RESULT idle backend={} app={} secs={wall:.1} redraws={} cpu_pct={:.3} footprint_mb={:.1} resident_mb={:.1} gpu_mb={:.1} load=[{}] {}",
             self.backend,
             self.app,
             PRESENTED.load(Ordering::Relaxed) - n0,
@@ -270,7 +512,8 @@ impl Protocol {
             mb(u1.footprint),
             mb(u1.resident),
             gpu_mb(),
-            load_avg()
+            load_avg(),
+            placement()
         );
         std::process::exit(0);
     }
@@ -282,7 +525,7 @@ impl Protocol {
         let wall = t0.elapsed().as_secs_f64();
         let u1 = usage();
         println!(
-            "RESULT animate backend={} app={} frames={} fps={:.1} cpu_pct={:.1} kernel_pct={:.1} footprint_mb={:.1} resident_mb={:.1} gpu_mb={:.1} load=[{}]",
+            "RESULT animate backend={} app={} frames={} fps={:.1} cpu_pct={:.1} kernel_pct={:.1} footprint_mb={:.1} resident_mb={:.1} gpu_mb={:.1} load=[{}] {}",
             self.backend,
             self.app,
             self.frames,
@@ -292,7 +535,8 @@ impl Protocol {
             mb(u1.footprint),
             mb(u1.resident),
             gpu_mb(),
-            load_avg()
+            load_avg(),
+            placement()
         );
     }
 }

@@ -27,7 +27,7 @@ use schedule::{Schedule, Wait};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
+use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
@@ -71,6 +71,10 @@ pub struct Options {
     /// Inner size in logical pixels.
     pub width: f64,
     pub height: f64,
+    /// Top-left of the window's frame in logical global screen coordinates
+    /// (origin at the top left of the main display), on any display. `None`
+    /// centres it on the main display.
+    pub position: Option<(f64, f64)>,
     /// The window's colour before frame one is drawn.
     pub background: u32,
     /// Close the window after this many presented frames.
@@ -85,6 +89,7 @@ impl Options {
             title: title.into(),
             width,
             height,
+            position: None,
             background: 0xffffff,
             frames: None,
             on_frame: None,
@@ -213,11 +218,14 @@ enum Drawn {
 
 impl<C: Content> Shell<C> {
     fn open(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-        let attributes = Window::default_attributes()
+        let mut attributes = Window::default_attributes()
             .with_title(self.options.title.clone())
             .with_inner_size(LogicalSize::new(self.options.width, self.options.height))
             // Shown once its background is the application's colour.
             .with_visible(!cfg!(target_os = "macos"));
+        if let Some((x, y)) = self.options.position {
+            attributes = attributes.with_position(LogicalPosition::new(x, y));
+        }
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -225,6 +233,12 @@ impl<C: Content> Shell<C> {
         );
         #[cfg(target_os = "macos")]
         {
+            // AppKit clamps a new window's content rect to the main screen, so a
+            // position on another display only holds once the window exists;
+            // it is still hidden here.
+            if let Some((x, y)) = self.options.position {
+                window.set_outer_position(LogicalPosition::new(x, y));
+            }
             mac::set_background(&window, self.options.background);
             window.set_visible(true);
         }

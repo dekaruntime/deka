@@ -24,8 +24,15 @@ gpui = { version = "=0.2.2", features = ["runtime_shaders"], optional = true }
 image = { version = "0.25", default-features = false, optional = true }
 rodio = { version = "=0.21.1", default-features = false, features = ["playback"] }
 
+[build-dependencies]
+cc = "1"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-metal = { version = "0.3.2", features = ["MTLDevice"] }
+
+[[bin]]
+name = "cmp-batch"
+path = "src/bin/batch.rs"
 
 [[bin]]
 name = "cmp-gpui"

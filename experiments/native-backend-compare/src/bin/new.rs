@@ -25,21 +25,25 @@ fn main() {
         return;
     }
     let protocol = Protocol::new("new");
+    let display = require_virtual_display();
     let on_frame = move |_: deka_native_ui::window::Frame| protocol.frame();
     match app_name().as_str() {
         "world" => {
             let mut options = deka_native_ui::world::world_options();
+            options.position = Some(window_origin(display, options.width, options.height));
             options.on_frame = Some(Box::new(on_frame));
             deka_native_ui::world::run_with(options, false, true);
         }
         "settings" => {
             let mut options = deka_native_ui::window::Options::new("Settings", 960., 640.);
+            options.position = Some(window_origin(display, 960., 640.));
             options.on_frame = Some(Box::new(on_frame));
             deka_native_ui::window::run_with(Settings, options, false);
         }
         _ => {
             let mut options = deka_native_ui::window::Options::new("Deka native experiment", 560., 300.);
             options.background = 0xf3efe3;
+            options.position = Some(window_origin(display, 560., 300.));
             options.on_frame = Some(Box::new(on_frame));
             deka_native_ui::window::run_with(vm_app(COUNTER, "Counter"), options, false);
         }

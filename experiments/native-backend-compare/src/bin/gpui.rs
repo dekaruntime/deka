@@ -6,6 +6,18 @@ use native_backend_compare::*;
 fn native_backend_compare_hook() {
     HOOK.with(|h| (h.borrow_mut())());
 }
+/// Bounds centred on the harness's virtual display, and that display, so the
+/// window never opens on a physical screen (the only change to main's glue).
+fn on_virtual_display(w: f32, h: f32, cx: &gpui::App) -> (gpui::Bounds<gpui::Pixels>, Option<gpui::DisplayId>) {
+    let target = require_virtual_display();
+    let Some(display) = cx.displays().into_iter().find(|d| u32::from(d.id()) == target) else {
+        eprintln!("GPUI does not list display {target}");
+        std::process::exit(2);
+    };
+    let id = display.id();
+    (gpui::Bounds::centered(Some(id), gpui::size(gpui::px(w), gpui::px(h)), cx), Some(id))
+}
+
 thread_local! {
     static HOOK: std::cell::RefCell<Box<dyn FnMut()>> = std::cell::RefCell::new(Box::new(|| {}));
 }
@@ -137,7 +149,7 @@ mod glue {
         let live = app.live();
         let reduced_motion = args.iter().any(|arg| arg == "--reduced-motion");
         gpui::Application::new().run(move |cx: &mut App| {
-            let bounds = Bounds::centered(None, size(px(w), px(h)), cx);
+            let (bounds, display_id) = super::on_virtual_display(w, h, cx);
             cx.open_window(
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
@@ -145,6 +157,7 @@ mod glue {
                         ..Default::default()
                     }),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    display_id,
                     ..Default::default()
                 },
                 |_, cx| {
@@ -379,7 +392,7 @@ mod world_glue {
         let reduced = std::env::args().any(|a| a == "--reduced-motion");
         let muted = true;
         gpui::Application::new().run(move |cx: &mut App| {
-            let bounds = Bounds::centered(None, size(px(960.), px(640.)), cx);
+            let (bounds, display_id) = super::on_virtual_display(960., 640., cx);
             cx.open_window(
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
@@ -387,6 +400,7 @@ mod world_glue {
                         ..Default::default()
                     }),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    display_id,
                     ..Default::default()
                 },
                 |window, cx| {
@@ -480,10 +494,11 @@ mod snap {
         let (w, h) = (scene.width, scene.height);
         let scene = Rc::new(scene);
         gpui::Application::new().run(move |cx: &mut App| {
-            let bounds = Bounds::centered(None, size(px(w), px(h)), cx);
+            let (bounds, display_id) = super::on_virtual_display(w, h, cx);
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    display_id,
                     ..Default::default()
                 },
                 |_, cx| {
@@ -504,6 +519,7 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some("snap") {
         let out = std::path::PathBuf::from(arg("--out").unwrap_or_else(|| "shots".into()));
         let name = arg("--scene").expect("--scene NAME");
+        require_virtual_display();
         // A window that cannot be shown (locked screen) never paints; give up.
         std::thread::spawn(|| {
             std::thread::sleep(std::time::Duration::from_secs(20));
