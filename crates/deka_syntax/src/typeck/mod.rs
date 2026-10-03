@@ -830,7 +830,20 @@ pub fn check_program_with_imports<'a>(
     _source: &str,
     imports: &HashMap<&str, &ModuleExports<'a>>,
 ) -> TypeckResult<'a> {
+    check_program_with_imports_and_globals(program, _source, imports, &HashMap::new())
+}
+
+/// Native hosts supply global signatures from the same registry as dispatch.
+pub fn check_program_with_imports_and_globals<'a>(
+    program: &'a Program<'a>,
+    _source: &str,
+    imports: &HashMap<&str, &ModuleExports<'a>>,
+    globals: &HashMap<&'a str, Type<'a>>,
+) -> TypeckResult<'a> {
     let mut checker = Checker::new(program, imports);
+    checker
+        .globals
+        .extend(globals.iter().map(|(name, ty)| (*name, ty.clone())));
     checker.check_program();
 
     TypeckResult {

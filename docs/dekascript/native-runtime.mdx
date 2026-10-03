@@ -328,6 +328,46 @@ value needs an imported default currently produces a named compile error;
 its default must run in the declaring module, never in the importer’s scope.
 
 
+## Timer globals and native callbacks
+
+`setTimeout(callback, ms)` queues one callback after a delay;
+`setInterval(callback, ms)` repeats until cleared. Both return a numeric timer
+identifier. `clearTimeout(id)` and `clearInterval(id)` cancel the pending timer;
+unknown or completed identifiers do nothing. Supply a zero-argument callback
+and an explicit duration in milliseconds. A callback can be synchronous or
+return `Promise<void>`.
+
+```tsx
+import { echo } from "io";
+
+let timer = 0;
+let count = 0;
+fn main() {
+    timer = setInterval(fn() {
+        count += 1;
+        if (count == 2) { clearInterval(timer); echo("interval done"); }
+    }, 10);
+    echo("main returned");
+}
+```
+
+Running this entry prints `main returned`, then `interval done`. Pending timers
+keep the CLI alive after main returns. Their captures remain rooted, and an
+async callback's work survives the one-shot timer finishing. Clearing a timer
+releases its pending Rust future and prevents queued callbacks that have not
+started; it does not cancel a callback already executing. A zero interval queues
+at most one callback per VM turn. Delays must be finite, nonnegative and
+representable by Rust's duration type.
+
+Native embedders use `HostOp::with_context` to receive a per-VM `HostContext`.
+A callback argument with `HostType::Callback` is a `HostValue::Callback` token.
+Retaining the token retains its captured values; `call(args)` enqueues language
+work and wakes the VM without re-entering it from Rust. Drop the token to
+release its root. Host jobs scheduled through that context are VM-owned,
+cancellable work. Completion, cancellation or VM disposal releases resources,
+and calls on a disposed VM fail. This is a VM scheduling API shared by window
+backends; asynchronous window handlers and browser timers remain integration work.
+
 ## Native sleep
 
 Import `sleep` from `time` to suspend a task for a duration in milliseconds.
