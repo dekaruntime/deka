@@ -273,7 +273,7 @@ fn validate_package(
     name: &str,
     version: &str,
 ) -> Result<BTreeMap<String, String>> {
-    extract(bytes, package)?;
+    extract(bytes, package).map_err(|error| format!("package {name}@{version}: {error}"))?;
     let package_manifest = read_json(&package.join("deka.json"))?;
     if package_manifest.get("name").and_then(Value::as_str) != Some(name)
         || package_manifest.get("version").and_then(Value::as_str) != Some(version)
@@ -920,6 +920,112 @@ mod tests {
             .unwrap()
             .block_on(vm.run())
             .unwrap()
+    }
+
+    #[test]
+    fn public_package_errors_name_the_failure_and_preserve_live_files() {
+        let original = tarball("@deka/demo", "1.2.3", "export const answer = 42;");
+        let fixture = Fixture::new(responses("demo", original));
+        let project = project();
+        assert_eq!(
+            fixture
+                .command(project.path(), &["add", "@deka/demo@1.2.3"])
+                .0,
+            std::process::ExitCode::SUCCESS
+        );
+        let manifest = fs::read(project.path().join("deka.json")).unwrap();
+        let lock = fs::read(project.path().join("deka.lock")).unwrap();
+        let files = module_files(&project.path().join("ds_modules"));
+        let script = archive_files([
+            (
+                "deka.json",
+                encode(&json!({"name":"@deka/demo","version":"2.0.0","entry":"index.ds"})).unwrap(),
+            ),
+            ("index.ds", b"export const answer = 99;".to_vec()),
+            ("legacy.js", b"export const answer = 0;".to_vec()),
+        ]);
+        for (spec, versions, archive, needle) in [
+            (
+                "@deka/missing@1.2.3",
+                br#"{"versions":["1.2.3"]}"#.as_slice(),
+                None,
+                "unknown package @deka/missing",
+            ),
+            (
+                "@deka/demo@2.0.0",
+                br#"{"versions":["1.2.3"]}"#.as_slice(),
+                None,
+                "unknown version 2.0.0 for package @deka/demo",
+            ),
+            (
+                "@deka/demo@2.0.0",
+                br#"{"versions":["1.2.3","2.0.0"]}"#.as_slice(),
+                None,
+                "download failed for @deka/demo@2.0.0",
+            ),
+            (
+                "@deka/demo@1.2.3",
+                br#"{"versions":["1.2.3"]}"#.as_slice(),
+                Some(tarball("@deka/demo", "1.2.3", "export const answer = 666;")),
+                "checksum mismatch for package @deka/demo",
+            ),
+            (
+                "@deka/demo@2.0.0",
+                br#"{"versions":["1.2.3","2.0.0"]}"#.as_slice(),
+                Some(script),
+                "package @deka/demo@2.0.0: package is not DekaScript only: legacy.js",
+            ),
+            (
+                "@deka/demo@2.0.0",
+                br#"{"versions":["1.2.3","2.0.0"]}"#.as_slice(),
+                Some(b"not an archive".to_vec()),
+                "package @deka/demo@2.0.0: invalid package archive",
+            ),
+        ] {
+            let (_, version) = parse_spec(spec).unwrap();
+            let path = format!("/demo/{version}/demo-{version}.tgz");
+            let mut responses = fixture.responses.lock().unwrap();
+            responses.insert("/api/registry/demo.json".into(), versions.to_vec());
+            responses.remove(&path);
+            if let Some(bytes) = &archive {
+                responses.insert(path.clone(), bytes.clone());
+            }
+            drop(responses);
+            let (code, _, error) = fixture.command(project.path(), &["add", spec]);
+            assert_eq!(code, std::process::ExitCode::from(1), "{spec}: {error}");
+            assert!(error.contains(needle), "{spec}: {error}");
+            assert_eq!(module_files(&project.path().join("ds_modules")), files);
+            assert_eq!(
+                fs::read(project.path().join("deka.json")).unwrap(),
+                manifest
+            );
+            assert_eq!(fs::read(project.path().join("deka.lock")).unwrap(), lock);
+            // Replay failures use recorded URLs, so lookup/version errors are add-only.
+            if needle.starts_with("download failed") || archive.is_some() {
+                let mut replay: Lock = serde_json::from_slice(&lock).unwrap();
+                let pin = replay.packages.get_mut("@deka/demo").unwrap();
+                pin.0 = version.into();
+                pin.1 = format!("{}{path}", fixture.url);
+                if !needle.starts_with("checksum mismatch") {
+                    pin.3 = archive
+                        .as_ref()
+                        .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+                        .unwrap_or_else(|| "0".repeat(64));
+                }
+                let replay = encode(&replay).unwrap();
+                fs::write(project.path().join("deka.lock"), &replay).unwrap();
+                let (code, _, error) = fixture.command(project.path(), &["install"]);
+                assert_eq!(code, std::process::ExitCode::from(1));
+                assert!(error.contains(needle), "{error}");
+                assert_eq!(module_files(&project.path().join("ds_modules")), files);
+                assert_eq!(
+                    fs::read(project.path().join("deka.json")).unwrap(),
+                    manifest
+                );
+                assert_eq!(fs::read(project.path().join("deka.lock")).unwrap(), replay);
+                fs::write(project.path().join("deka.lock"), &lock).unwrap();
+            }
+        }
     }
 
     #[test]
