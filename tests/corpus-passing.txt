@@ -136,7 +136,11 @@ data-types-embedding-method-ambiguity-fail
 data-types-enum-duplicate-case-fail
 data-types-enum-duplicate-payload-type-fail
 data-types-gettype-arity-fail
+data-types-gettype-basic
+data-types-gettype-descriptors-interned
 data-types-gettype-shadow-extension
+data-types-gettype-struct-enum-newtype
+data-types-gettype-union
 data-types-index-non-collection-fail
 data-types-index-non-numeric-fail
 data-types-json-unrepresentable-field-fail
@@ -156,6 +160,7 @@ data-types-object-spread
 data-types-primitive-extension-builtin-property-fail
 data-types-primitive-extension-shadow-builtin
 data-types-primitive-extension-wrong-receiver-fail
+data-types-signature-union
 data-types-string-concat-plus
 data-types-string-find-missing-fail
 data-types-string-index-access

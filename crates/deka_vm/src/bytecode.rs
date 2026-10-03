@@ -106,11 +106,35 @@ pub enum Op {
     FieldOrSelf(String),
     /// `string(x)`: number and bool widen to text, string passes through.
     ToString,
+    /// Runtime identity is distinct from the declared signature.
+    GetType,
+    Descriptor(TypeDescriptor),
+    Newtype(String),
+    Enum {
+        name: String,
+        case: String,
+        index: usize,
+        payload: bool,
+    },
     /// `toNumber(x)`: bool widens to 1/0, number passes through.
     ToNumber,
     /// `panic(message)`: stop the program with the message as the error.
     Panic,
 }
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TypeDescriptor {
+    pub kind: String,
+    pub name: String,
+}
+impl TypeDescriptor {
+    pub fn new(kind: &str, name: &str) -> Self {
+        Self {
+            kind: kind.into(),
+            name: name.into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Literal {
     Unit,
