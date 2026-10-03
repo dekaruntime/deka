@@ -4264,6 +4264,41 @@ impl<'a> Checker<'a> {
             _ => return None,
         };
 
+        // JSON's familiar namespace shares the checked receiver specialization.
+        // A lexical value named JSON keeps ordinary field-call behavior.
+        if matches!(object, ast::Expr::Identifier { name: "JSON", .. })
+            && self.lookup_var("JSON").is_none()
+        {
+            let Some(operation) = super::descriptor::JsonOperation::namespace_method(method_name)
+            else {
+                self.error_span(span, format!("unknown JSON method `{method_name}`"));
+                return Some(Type::Error);
+            };
+            let [argument] = args else {
+                self.error_span(
+                    span,
+                    format!("JSON.{method_name} expects exactly one argument"),
+                );
+                return Some(Type::Error);
+            };
+            let argument_type = self.check_expr(argument);
+            if method_name == "parse"
+                && !matches!(argument_type, Type::Named { name: "string" } | Type::Error)
+            {
+                self.error_span(argument.span(), "JSON.parse expects a string");
+                return Some(Type::Error);
+            }
+            return self.check_builtin_json(
+                call_expr,
+                &argument_type,
+                operation.receiver_method(),
+                type_args,
+                &[],
+                span,
+                false,
+            );
+        }
+
         // Builtin `Name.type()` on `super` declarations (rfd#41, deka#561
         // PR B): the receiver is a type name, not a value, so this must be
         // intercepted BEFORE `check_expr(object)` — a bare struct/enum name
@@ -4326,7 +4361,7 @@ impl<'a> Checker<'a> {
 
         if matches!(method_name, "toJSON" | "parseJSON") {
             if let Some(ret) =
-                self.check_builtin_json(call_expr, &object_type, method_name, type_args, args, span)
+                self.check_builtin_json(call_expr, &object_type, method_name, type_args, args, span, true)
             {
                 return Some(ret);
             }
@@ -4796,6 +4831,7 @@ impl<'a> Checker<'a> {
         Some(Type::Named { name: "Type" })
     }
 
+    #[allow(clippy::too_many_arguments)] // Global and receiver calls share shape specialization.
     fn check_builtin_json(
         &mut self,
         call_expr: &ast::Expr<'a>,
@@ -4804,34 +4840,37 @@ impl<'a> Checker<'a> {
         type_args: &'a [ast::Type<'a>],
         args: &'a [ast::Expr<'a>],
         span: ast::Span,
+        respect_receiver_methods: bool,
     ) -> Option<Type<'a>> {
         // User-defined receiver methods take precedence over the builtin.
-        match object_type {
-            Type::Struct { name } | Type::Newtype { name, .. } => {
-                if self
-                    .find_receiver_method(name, method_name, &mut Vec::new())
-                    .is_some()
-                {
-                    return None;
+        if respect_receiver_methods {
+            match object_type {
+                Type::Struct { name } | Type::Newtype { name, .. } => {
+                    if self
+                        .find_receiver_method(name, method_name, &mut Vec::new())
+                        .is_some()
+                    {
+                        return None;
+                    }
                 }
-            }
-            Type::Named { name } => {
-                if self.receiver_methods.contains_key(&(*name, method_name)) {
-                    return None;
+                Type::Named { name } => {
+                    if self.receiver_methods.contains_key(&(*name, method_name)) {
+                        return None;
+                    }
                 }
-            }
-            Type::Interface { name, identity } => {
-                let Some(info) = self.interface_info(name, *identity) else {
-                    return None;
-                };
-                if info.members.iter().any(|member| {
-                    matches!(member,
+                Type::Interface { name, identity } => {
+                    let Some(info) = self.interface_info(name, *identity) else {
+                        return None;
+                    };
+                    if info.members.iter().any(|member| {
+                        matches!(member,
                     ast::InterfaceMember::Method { name, .. } if *name == method_name)
-                }) {
-                    return None;
+                    }) {
+                        return None;
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
         let operation = if method_name == "toJSON" {
             super::descriptor::JsonOperation::ToJson
@@ -4855,7 +4894,7 @@ impl<'a> Checker<'a> {
                 return Some(Type::Error);
             }
             let target = self.resolve_ast_type(&type_args[0]);
-            let shape = match self.descriptor_tree(&target, span) {
+            let shape = match self.json_descriptor(&target, span) {
                 Ok(shape) => shape,
                 Err(message) => {
                     self.error_span(
@@ -4866,10 +4905,6 @@ impl<'a> Checker<'a> {
                     return Some(Type::Error);
                 }
             };
-            if let Err(message) = json_shape_error(&shape, None) {
-                self.error_span(span, message);
-                return Some(Type::Error);
-            }
             self.json_calls.insert(
                 call_expr as *const ast::Expr<'a>,
                 super::descriptor::JsonCall { operation, shape },
@@ -4882,7 +4917,7 @@ impl<'a> Checker<'a> {
         if matches!(object_type, Type::Error | Type::None | Type::Never) {
             return None;
         }
-        let shape = match self.descriptor_tree(object_type, span) {
+        let shape = match self.json_descriptor(object_type, span) {
             Ok(shape) => shape,
             Err(message) => {
                 self.error_span(
@@ -4892,15 +4927,39 @@ impl<'a> Checker<'a> {
                 return Some(Type::Error);
             }
         };
-        if let Err(message) = json_shape_error(&shape, None) {
-            self.error_span(span, message);
-            return Some(Type::Error);
-        }
         self.json_calls.insert(
             call_expr as *const ast::Expr<'a>,
             super::descriptor::JsonCall { operation, shape },
         );
         Some(Type::Named { name: "string" })
+    }
+
+    fn json_descriptor(
+        &mut self,
+        ty: &Type<'a>,
+        span: ast::Span,
+    ) -> Result<super::descriptor::JsonDescriptor<'a>, String> {
+        use super::descriptor::JsonDescriptor as J;
+        Ok(match ty {
+            Type::Object { fields } => J::Record(
+                fields
+                    .iter()
+                    .map(|(name, ty)| Ok((*name, self.json_descriptor(ty, span)?)))
+                    .collect::<Result<Vec<_>, String>>()?,
+            ),
+            Type::Array { elem } => J::Array(Box::new(self.json_descriptor(elem, span)?)),
+            Type::Tuple { elements } => J::Tuple(
+                elements
+                    .iter()
+                    .map(|ty| self.json_descriptor(ty, span))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            _ => {
+                let shape = self.descriptor_tree(ty, span)?;
+                json_shape_error(&shape, None)?;
+                J::Type(shape)
+            }
+        })
     }
 
     /// Resolve a method call on a primitive receiver (deka#527). A declared

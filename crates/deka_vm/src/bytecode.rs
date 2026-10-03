@@ -116,6 +116,10 @@ pub enum Op {
     /// Runtime identity is distinct from the declared signature.
     GetType,
     Descriptor(TypeDescriptor),
+    /// Convert a checked value using its concrete schema.
+    JsonStringify(crate::JsonShape),
+    /// Pop a struct method table, then JSON text; push a nominal Result.
+    JsonParse(crate::JsonShape),
     Newtype(String),
     Enum {
         name: String,

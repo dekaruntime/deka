@@ -122,6 +122,26 @@ impl Heap {
             generation: self.slots[index].generation,
         }
     }
+    /// All enum producers, including typed JSON hydration, use nominal metadata.
+    pub fn alloc_enum(
+        &mut self,
+        name: String,
+        case: String,
+        index: usize,
+        value: Option<Handle>,
+    ) -> Handle {
+        let label = self.alloc(Value::String(case));
+        let index = self.alloc(Value::Number(index as f64));
+        let mut record: Record = [("name".into(), label), ("index".into(), index)]
+            .into_iter()
+            .collect();
+        if let Some(value) = value {
+            record.order.push("value".into());
+            record.insert("value".into(), value);
+        }
+        record.enum_name = Some(name);
+        self.alloc(Value::Record(record))
+    }
     pub fn alloc_newtype(&mut self, value: Value, name: String) -> Handle {
         let h = self.alloc(value);
         self.slots[h.index].newtype = Some(name);

@@ -276,8 +276,45 @@ fn parse_native_diagnostics(stderr: &str) -> Vec<String> {
     diagnostics
 }
 
+fn native_json_source(source: &str) -> bool {
+    use deka_syntax::ast::{ExportDecl, Stmt};
+    let arena = bumpalo::Bump::new();
+    let parsed = deka_syntax::parse(source, &arena);
+    if !parsed.errors.is_empty() {
+        return false;
+    }
+    let Some(program) = parsed.program else {
+        return false;
+    };
+    program.statements.iter().all(|statement| {
+        let dependency = match statement {
+            Stmt::Import { source, .. }
+            | Stmt::Export {
+                decl:
+                    ExportDecl::NamedGroup {
+                        source: Some(source),
+                        ..
+                    },
+                ..
+            } => Some(*source),
+            _ => None,
+        };
+        dependency.is_none_or(|source| {
+            source == "io" || source.starts_with("./") || source.starts_with("../")
+        })
+    })
+}
+
 pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, String> {
-    if !case.packages.is_empty() {
+    // The pinned JSON corpus predates native typed JSON and still names its
+    // old package. These fixtures now run against the built-in language path;
+    // source compilation/execution remains mandatory. Other packages fail closed.
+    let native_json = case.slug.starts_with("json-")
+        && case.packages.iter().all(|package| package == "json")
+        && std::iter::once(case.source.as_str())
+            .chain(case.files.iter().map(|(_, source)| source.as_str()))
+            .all(native_json_source);
+    if !case.packages.is_empty() && !native_json {
         return Err(format!(
             "{} declares packages {:?}; the gate is offline and cannot install them",
             case.slug, case.packages
@@ -289,7 +326,7 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     std::fs::write(directory.join("deka.lock"), DEFAULT_DEKA_LOCK).unwrap();
     let deka_json = match &case.deka_json {
         Some(value) => format!("{}\n", serde_json::to_string_pretty(value).unwrap()),
-        None if !case.packages.is_empty() => PACKAGE_DEKA_JSON.to_string(),
+        None if !case.packages.is_empty() && !native_json => PACKAGE_DEKA_JSON.to_string(),
         None => DEFAULT_DEKA_JSON.to_string(),
     };
     std::fs::write(directory.join("deka.json"), deka_json).unwrap();

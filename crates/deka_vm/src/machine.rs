@@ -797,6 +797,26 @@ impl Vm {
                 let h = self.intern_descriptor(descriptor);
                 frame.stack.push(h);
             }
+            Op::JsonStringify(shape) => {
+                let value = pop(frame)?;
+                let text = crate::json::stringify(&self.heap, value, &shape)?;
+                frame.stack.push(self.heap.alloc(Value::String(text)));
+            }
+            Op::JsonParse(shape) => {
+                let factories = pop(frame)?;
+                let text = pop(frame)?;
+                let Value::String(text) = self.heap.get(text)? else {
+                    return Err("JSON.parse requires string input".into());
+                };
+                let text = text.clone();
+                let (case, index, value) =
+                    match crate::json::parse(&mut self.heap, &text, &shape, factories) {
+                        Ok(value) => ("Ok", 0, value),
+                        Err(error) => ("Err", 1, self.heap.alloc(Value::String(error))),
+                    };
+                let result = self.enum_value("Result".into(), case.into(), index, Some(value));
+                frame.stack.push(result);
+            }
             Op::Descriptor(descriptor) => {
                 let h = self.intern_descriptor(descriptor);
                 frame.stack.push(h);
@@ -1322,17 +1342,7 @@ impl Vm {
         index: usize,
         value: Option<Handle>,
     ) -> Handle {
-        let label = self.heap.alloc(Value::String(case));
-        let index = self.heap.alloc(Value::Number(index as f64));
-        let mut record: crate::heap::Record = [("name".into(), label), ("index".into(), index)]
-            .into_iter()
-            .collect();
-        if let Some(value) = value {
-            record.order.push("value".into());
-            record.insert("value".into(), value);
-        }
-        record.enum_name = Some(name);
-        self.heap.alloc(Value::Record(record))
+        self.heap.alloc_enum(name, case, index, value)
     }
     /// All textual output shares one formatter. Strings are raw at the
     /// top level and quoted within structured data, matching existing output.

@@ -163,3 +163,56 @@ fn unlisted_cases_do_not_run() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn native_json_metadata_still_runs_the_source_and_checks_its_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let deka = mock_cli(dir.path());
+    for (name, source) in [("native", "const mockpass = 1"), ("broken", "broken")] {
+        write(
+            dir.path(),
+            &format!("corpus/json/{name}/{name}.pass.ds"),
+            source,
+            None,
+        );
+        write(
+            dir.path(),
+            &format!("corpus/json/{name}/{name}.json"),
+            r#"{"packages":["json"]}"#,
+            None,
+        );
+        write(
+            dir.path(),
+            &format!("corpus/json/{name}/{name}.stdout"),
+            "mock-ok\n",
+            None,
+        );
+    }
+    let binary = std::path::PathBuf::from(env!("CARGO_BIN_EXE_corpus-gate"));
+    let corpus = dir.path().join("corpus");
+    let list = dir.path().join("list.txt");
+    write(dir.path(), "list.txt", "json-native\n", None);
+    assert!(gate(&binary, &corpus, &list, &deka).status.success());
+    write(dir.path(), "list.txt", "json-broken\n", None);
+    assert!(!gate(&binary, &corpus, &list, &deka).status.success());
+    write(
+        dir.path(),
+        "corpus/json/native/native.pass.ds",
+        "import { x } from \"json\"; const mockpass = 1;",
+        None,
+    );
+    write(dir.path(), "list.txt", "json-native\n", None);
+    let output = gate(&binary, &corpus, &list, &deka);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("offline and cannot install"));
+    write(
+        dir.path(),
+        "corpus/json/native/native.json",
+        r#"{"packages":["json","fs"]}"#,
+        None,
+    );
+    write(dir.path(), "list.txt", "json-native\n", None);
+    let output = gate(&binary, &corpus, &list, &deka);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("offline and cannot install"));
+}
