@@ -1,0 +1,56 @@
+# Immutable Blob and File values
+
+`Blob(parts)` stores an immutable Rust-owned snapshot assembled from
+`Array<bytes>`. Omit the parts for an empty Blob. `File(parts, name)` stores the
+same byte data with a name and the current modification timestamp in
+milliseconds. It represents named in-memory data; creating one does not read a
+filesystem path. Both constructors return typed Results.
+
+```ds
+async fn excerpt(text: string) Promise<string> {
+    const blob = unwrap(Blob([TextEncoder().encode(text)])) or {
+        return "Blob failed";
+    }
+    const part = unwrap(blob.slice(1, 4, "TEXT/PLAIN")) or {
+        return "Slice failed";
+    }
+    const output = unwrap(await part.text()) or { return "Read failed"; }
+    return output + ":" + part.type + ":" + string(part.size)
+}
+```
+
+`await excerpt("abcdef")` returns `bcd:text/plain:3`. `slice(start, end,
+contentType)` uses byte offsets, excludes the end, clips to the snapshot range
+and counts negative offsets from the end. Omitted start/end select the whole
+snapshot. It returns `Result<Blob, string>` and shares immutable storage without
+copying the whole backing data. A File slice returns a Blob. Index values must
+be finite whole safe integers. The slice's type is lowercase ASCII; nonprintable
+or non-ASCII content types become empty.
+
+```ds
+async fn namedContents(text: string, name: string) Promise<string> {
+    const file = unwrap(File([TextEncoder().encode(text)], name)) or {
+        return "File failed";
+    }
+    const first = unwrap(await file.text()) or { return "Read failed"; }
+    const bytes = unwrap(await file.bytes()) or { return "Bytes failed"; }
+    const second = unwrap(await file.text()) or { return "Read failed"; }
+    return file.name + ":" + first + ":" + second + ":" + string(bytes.length)
+}
+```
+
+`await namedContents("notes", "notes.txt")` returns
+`notes.txt:notes:notes:5`. Readonly `.size` and `.type` exist on both handles;
+`.name` and `.lastModified` exist on File. `text()`, `bytes()` and
+`arrayBuffer()` are repeatable async Result readers. The latter two both return
+DekaScript `bytes`. Text uses the shared UTF-8 decoder, removing an initial BOM
+and replacing malformed sequences. Reading never consumes or changes a Blob.
+Aliases retain the same immutable data, and slices remain valid after the
+original handle is released. Reads copy/decode on Tokio's worker pool rather
+than the window thread.
+
+This initial surface accepts byte parts only, with a 16 MiB total snapshot
+bound. Use TextEncoder for strings; constructors initially have an empty type.
+Mixed string/Blob/File parts, constructor option bags, implicit File-to-Blob
+subtyping and streams remain separate surfaces. Both nominal handles expose the
+same checked read/slice methods; a File can produce a Blob using `slice()`.

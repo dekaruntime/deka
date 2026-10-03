@@ -1469,17 +1469,22 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 ),
                 None => Type::Error,
             })
+            .map(|ty| substitute_opaques(ty, &declared_opaques))
             .collect();
-        info.resolved_return = info.return_type.as_ref().map(|t| {
-            ast_type_to_export_type(
-                t,
-                &declared_structs,
-                &declared_enums,
-                &declared_aliases,
-                &declared_newtypes,
-                &mut HashSet::new(),
-            )
-        });
+        info.resolved_return = info
+            .return_type
+            .as_ref()
+            .map(|t| {
+                ast_type_to_export_type(
+                    t,
+                    &declared_structs,
+                    &declared_enums,
+                    &declared_aliases,
+                    &declared_newtypes,
+                    &mut HashSet::new(),
+                )
+            })
+            .map(|ty| substitute_opaques(ty, &declared_opaques));
     }
 
     // Helper: convert an AST type annotation into a typechecker type using the
