@@ -1,0 +1,59 @@
+# Binding patches and structural slots
+
+Native components keep their nodes in a Rust-owned store. Changing state updates
+the bindings that observed that state; it does not recreate the component or
+rerun every getter. Desktop and browser previews use the same component adapter.
+
+```tsx
+export fn App() {
+    let count = 0;
+    let noise = 0;
+    return (
+        <view className="p-4 gap-3">
+            <p>{count}</p>
+            <button onClick={fn() { count += 1; }}>Add one</button>
+            <button onClick={fn() { noise += 1; }}>Change unrelated state</button>
+        </view>
+    );
+}
+```
+
+Add one changes the paragraph's text binding. Changing `noise` leaves that
+binding cached because it never read `noise`. Static labels and classes also
+reuse their values. Source edits still restart component state.
+
+Bindings observe the cells, record fields, list indices and lengths they read.
+Whole-container operations observe that container; structured printing observes
+nested mutable containers too. When a branch changes, the binding records its
+new dependencies and drops the old set. An operation such as `list.has(0)` also
+reads list length, so a binding containing that guard may reevaluate when length
+changes even if its selected item has not changed.
+
+Getter results, captures and read addresses are GC roots. Removed conditional
+bindings release their caches. Temporary locals created during getter execution
+do not become lasting dependencies. Getters remain synchronous. A getter that
+calls a host operation or changes existing state conservatively reevaluates;
+external host effects are not assumed to be pure.
+
+## Last authored and effective values
+
+A binding patches only its own changed property. Rust stores the last authored
+text/classes separately from their effective values. If an internal direct edit
+changes text from `Ready` to `Edited`, recomputing the binding as `Ready` again
+makes no patch. A later authored value `Done` updates that text. Changing text
+does not erase a direct class edit, or vice versa.
+
+This ownership seam is implemented and tested in the actual component store.
+Public source-level node handles and imperative `view` editing are subsequent
+work; this page does not expose an editing API prematurely.
+
+## Structural slots
+
+Static siblings keep their identities when an earlier conditional contributes
+no child. The store matches original child slots before flattening conditional
+output, so a hidden optional button cannot take a later button's identity or
+handler. A newly inserted or replaced node receives a fresh identity.
+
+Dynamic list positions remain positional. This does not promise keyed identity
+when a list is reordered, or introduce a new author-facing key syntax. Renderer
+snapshots use the retained identities and existing layout/animation behavior.
