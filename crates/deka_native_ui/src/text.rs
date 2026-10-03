@@ -103,6 +103,19 @@ fn bundled_covers(text: &str) -> bool {
     text.chars().all(|c| c.is_control() || charmap.map(c) != 0)
 }
 
+/// Register the bundled face and load its character map on a thread, so the
+/// window's first layout finds them ready (`context` blocks on the same cell
+/// if it gets there first). The system font scan stays lazy.
+#[cfg(feature = "gpu")]
+pub(crate) fn warm_on_thread() {
+    let _ = std::thread::Builder::new()
+        .name("deka-fonts".into())
+        .spawn(|| {
+            let _ = context(false);
+            bundled_covers("");
+        });
+}
+
 pub(crate) struct Text {
     fonts: FontContext,
     /// Created on the first string the bundled face cannot draw (Japanese, emoji, ...).

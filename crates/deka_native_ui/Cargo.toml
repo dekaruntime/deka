@@ -7,14 +7,26 @@ publish = false
 
 [features]
 default = []
-gpu = ["dep:gpui", "dep:image"]
+# The desktop window: winit (window, input, event loop), wgpu, and deka's vello_gpu
+# fork drawing the scene. Shaders are WGSL compiled by wgpu at run time on every
+# platform, so building needs no Metal, Vulkan or DirectX toolchain.
+gpu = [
+    "dep:winit",
+    "dep:wgpu",
+    "dep:vello_gpu",
+    "dep:pollster",
+    "dep:num_cpus",
+    "dep:objc2",
+    "dep:libc",
+]
 world-audio = ["gpu", "dep:rodio"]
 program = ["deka_native_ir/program"]
-runtime-shaders = ["gpu", "gpui/runtime_shaders"]
+# Named by deka_vm's and deka_cli's `gpu`/`desktop` features. It selected GPUI's
+# run-time Metal shader compilation; every shader is compiled at run time now.
+runtime-shaders = ["gpu"]
 
 [dependencies]
 deka_native_ir = { path = "../deka_native_ir" }
-gpui = { version = "=0.2.2", optional = true }
 
 # Text: parley shapes, breaks lines and falls back to system fonts (fontique); swash rasterises.
 parley = "=0.11.1"
@@ -23,10 +35,22 @@ swash = "=0.2.10"
 fontique = { version = "=0.11.1", features = ["fontconfig-dlopen"] }
 serde = { version = "1", features = ["derive"] }
 taffy = { version = "=0.9.0", default-features = false, features = ["std", "taffy_tree", "flexbox"] }
-image = { version = "0.25", default-features = false, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rodio = { version = "=0.21.1", default-features = false, features = ["playback"], optional = true }
+winit = { version = "=0.30.13", optional = true }
+# Metal on macOS, Vulkan on Linux, DX12 on Windows (the others compile out by cfg).
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "vulkan", "dx12"], optional = true }
+# Patched to vendor/vello_gpu in the workspace manifest.
+vello_gpu = { version = "=0.3.0", default-features = false, features = ["wgpu", "multithreading"], optional = true }
+pollster = { version = "0.4", optional = true }
+num_cpus = { version = "1.16", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# AppKit calls winit does not expose: the window's colour before frame one, the menu bar.
+objc2 = { version = "0.6", optional = true }
+# Performance-core count (sysctl hw.perflevel0.physicalcpu).
+libc = { version = "0.2", optional = true }
 
 [[example]]
 name = "portfolio-world"

@@ -2,14 +2,28 @@
 pub use deka_native_ir::{Align, Edges, Justify, Keyframe, Length, Motion, Node, Style};
 pub mod animation;
 pub mod geometry;
-#[cfg(feature = "gpu")]
-mod gpu;
 mod layout;
 mod layout_motion;
 mod motion;
 mod text;
 #[cfg(feature = "gpu")]
-pub use gpu::run;
+pub mod window;
+#[cfg(feature = "gpu")]
+pub use window::{Snapshot, run, snapshot};
+
+/// Wakes whatever drives an [`Application`] (the desktop window's event loop)
+/// from any thread, so it runs the application's background turn. The window
+/// hands one to [`Application::set_waker`]; the VM registers it as its wake.
+#[derive(Clone)]
+pub struct Waker(std::sync::Arc<dyn Fn() + Send + Sync>);
+impl Waker {
+    pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(wake))
+    }
+    pub fn wake(&self) {
+        (self.0)()
+    }
+}
 
 pub enum Reload {
     Unchanged,
@@ -26,6 +40,8 @@ pub trait Application: 'static {
     fn live(&self) -> bool {
         false
     }
+    /// Called once by the window with a [`Waker`] for asynchronous work.
+    fn set_waker(&mut self, _waker: Waker) {}
 }
 pub struct Host<A: Application> {
     pub app: A,
