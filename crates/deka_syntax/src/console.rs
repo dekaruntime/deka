@@ -35,3 +35,17 @@ pub const METHODS: &[&str] = &[
     "table",
     "trace",
 ];
+
+/// Native diagnostic output uses a separate host sink from ordinary output.
+pub const STDERR_OPERATION: &str = "console_stderr";
+
+/// Shared declaration for the basic variadic Printable console methods.
+/// The checker and native compiler consume this catalog; formatting stays in
+/// the VM printer rather than being reimplemented by each sink.
+pub fn output_operation(method: &str) -> Option<&'static str> {
+    match method {
+        "log" | "info" | "debug" => Some("echo"),
+        "warn" | "error" => Some(STDERR_OPERATION),
+        _ => None,
+    }
+}

@@ -234,3 +234,61 @@ fn undecided_wire_types_have_explicit_native_compilation_diagnostics() {
         );
     }
 }
+
+#[tokio::test]
+async fn barrel_exports_keep_promise_contracts_and_private_json_factories_together() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("joins.ds"),
+        "export const all = Promise.all;",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("models.ds"),r#"
+struct Inner { x: number; }
+interface Reader { fn read() number; }
+fn (i Inner) read() number { return i.x; }
+struct Outer { inner: Inner; }
+export { Outer };
+fn read(i: Reader) number { return i.read(); }
+export fn describe(o: Outer) string { return o.inner.getType().toString() + ":" + string(read(o.inner)); }
+"#).unwrap();
+    std::fs::write(
+        dir.path().join("barrel.ds"),
+        r#"export { all } from "./joins.ds"; export { Outer, describe } from "./models.ds";"#,
+    )
+    .unwrap();
+    let entry = dir.path().join("main.ds");
+    let source = r#"
+import { all, Outer, describe } from "./barrel.ds";
+async fn ready(value: Outer) Promise<Exception<Outer,string>> { return Ok(value); }
+async fn main() Promise<string> {
+    const text="{\"Outer\":{\"inner\":{\"Inner\":{\"x\":7}}}}";
+    return match JSON.parse<Outer>(text) {
+        Ok(value) => match await all([ready(value)]) {
+            Ok(values) => values.has(0) ? describe(values[0]) : "empty",
+            Throw(error) => "failed:" + error,
+        },
+        Err(error) => "parse:" + error,
+    };
+}
+"#;
+    std::fs::write(&entry, source).unwrap();
+    let program = compiler::compile_file(&entry, &Hosts::default(), Some("main")).unwrap();
+    assert_eq!(execute(program).await, HostValue::String("Inner:7".into()));
+    // Imported aliases must retain the checked Exception contract, not erase
+    // it into Array<Outer> merely because JSON metadata was populated too.
+    std::fs::write(
+        &entry,
+        format!(
+            r#"{source}
+async fn unchecked(value: Outer) Promise<string> {{
+    const values = await all([ready(value)]);
+    return values.has(0) ? describe(values[0]) : "empty";
+}}
+"#
+        ),
+    )
+    .unwrap();
+    let error = compiler::compile_file(&entry, &Hosts::default(), Some("main")).unwrap_err();
+    assert!(error.contains("Exception"), "{error}");
+}

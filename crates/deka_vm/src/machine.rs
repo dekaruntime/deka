@@ -1,5 +1,5 @@
 use crate::{
-    heap::{Handle, Heap, Outcome, Value},
+    heap::{Handle, Heap, Outcome, Read, Value},
     stack::Stack,
     *,
 };
@@ -27,6 +27,7 @@ struct Handler {
 }
 enum Work {
     Code(Vec<Frame>),
+    Join(Join),
     Host {
         future: HostFuture,
         result: HostType,
@@ -34,6 +35,19 @@ enum Work {
         job: Option<HostJob>,
         ready: Arc<crate::turn::ReadyWake>,
     },
+}
+/// A join owns a snapshot of the input handles, never the caller's list.
+/// Scans are bounded and park until a promise settles; idle joins do not spin.
+struct Join {
+    kind: PromiseJoin,
+    inputs: Vec<Handle>,
+    values: Vec<Option<Handle>>,
+    remaining: usize,
+    cursor: usize,
+    created_epoch: u64,
+    scan_epoch: u64,
+    checked_epoch: Option<u64>,
+    first: Option<(u64, usize, Outcome)>,
 }
 struct Task {
     promise: Handle,
@@ -60,10 +74,12 @@ pub struct Vm {
     next_task: u64,
     root: Option<Handle>,
     instructions: u64,
-    instruction_limit: u64,
+    instruction_limit: Option<u64>,
     descriptors: BTreeMap<TypeDescriptor, Handle>,
     wake: Arc<crate::turn::ReadyWake>,
     turn_cursor: u64,
+    completion_epoch: u64,
+    completion_order: BTreeMap<Handle, u64>,
     #[cfg(feature = "ui")]
     events: std::collections::BTreeSet<u64>,
 }
@@ -83,10 +99,12 @@ impl Vm {
             next_task: 0,
             root: None,
             instructions: 0,
-            instruction_limit: 10_000_000,
+            instruction_limit: None,
             descriptors: BTreeMap::new(),
             wake: Arc::new(crate::turn::ReadyWake::default()),
             turn_cursor: 0,
+            completion_epoch: 0,
+            completion_order: BTreeMap::new(),
             #[cfg(feature = "ui")]
             events: std::collections::BTreeSet::new(),
         };
@@ -101,8 +119,9 @@ impl Vm {
     pub fn instructions(&self) -> u64 {
         self.instructions
     }
+    /// Optional embedding guard; normal execution has no lifetime quota.
     pub fn set_instruction_limit(&mut self, limit: u64) {
-        self.instruction_limit = limit;
+        self.instruction_limit = Some(limit);
     }
     pub fn pending_tasks(&self) -> usize {
         self.tasks.len()
@@ -110,6 +129,7 @@ impl Vm {
     pub fn cancel(&mut self) -> Result<()> {
         self.context.close();
         self.tasks.clear();
+        self.completion_order.clear();
         #[cfg(feature = "ui")]
         self.events.clear();
         self.pins.clear();
@@ -127,6 +147,10 @@ impl Vm {
         roots.extend(self.context.roots());
         for task in self.tasks.values() {
             roots.push(task.promise);
+            if let Work::Join(join) = &task.work {
+                roots.extend(&join.inputs);
+                roots.extend(join.values.iter().flatten());
+            }
             if let Work::Code(frames) = &task.work {
                 for f in frames {
                     roots.extend(&f.locals);
@@ -136,7 +160,101 @@ impl Vm {
                 }
             }
         }
-        self.heap.collect(roots)
+        self.heap.collect(roots)?;
+        self.completion_order
+            .retain(|handle, _| matches!(self.heap.get(*handle), Ok(Value::Promise(Some(_)))));
+        Ok(())
+    }
+    fn settle_promise(&mut self, promise: Handle, outcome: Result<Outcome>) -> Result<()> {
+        self.heap.replace(promise, Value::Promise(Some(outcome)))?;
+        self.completion_epoch += 1;
+        self.completion_order.insert(promise, self.completion_epoch);
+        Ok(())
+    }
+    fn join(&mut self, kind: PromiseJoin, list: Handle) -> Result<Handle> {
+        let Value::List(inputs) = self.heap.get(list)? else {
+            return Err("promise combinator requires a list".into());
+        };
+        let inputs = inputs.clone();
+        let len = inputs.len();
+        Ok(self.spawn(Work::Join(Join {
+            kind,
+            inputs,
+            values: vec![None; len],
+            remaining: len,
+            cursor: 0,
+            created_epoch: self.completion_epoch,
+            scan_epoch: self.completion_epoch,
+            checked_epoch: None,
+            first: None,
+        })))
+    }
+    fn poll_join(&mut self, join: &mut Join, remaining: &mut usize) -> Result<Option<Outcome>> {
+        if join.cursor == 0 {
+            join.scan_epoch = self.completion_epoch;
+        }
+        for _ in 0..256.min(*remaining) {
+            *remaining -= 1;
+            if join.cursor == join.inputs.len() {
+                break;
+            }
+            let promise = join.inputs[join.cursor];
+            match self.heap.get(promise)? {
+                Value::Promise(Some(result)) => {
+                    let outcome = result.clone()?;
+                    if join.values[join.cursor].is_none()
+                        && let Outcome::Value(value) = outcome
+                    {
+                        join.values[join.cursor] = Some(value);
+                        join.remaining -= 1;
+                    }
+                    if join.kind == PromiseJoin::Race || matches!(outcome, Outcome::Thrown(_)) {
+                        let order = *self
+                            .completion_order
+                            .get(&promise)
+                            .ok_or("missing promise settlement order")?;
+                        let order = if order <= join.created_epoch {
+                            0
+                        } else {
+                            order
+                        };
+                        if join
+                            .first
+                            .as_ref()
+                            .is_none_or(|(first, index, _)| (order, join.cursor) < (*first, *index))
+                        {
+                            join.first = Some((order, join.cursor, outcome));
+                        }
+                    }
+                }
+                Value::Promise(None) => {}
+                _ => return Err("promise combinator requires promises".into()),
+            }
+            join.cursor += 1;
+        }
+        if join.cursor < join.inputs.len() {
+            return Ok(None);
+        }
+        if let Some((order, _, _)) = &join.first {
+            // A candidate newer than the start of this scan could have an
+            // earlier rival that settled behind our cursor. Scan once more;
+            // later unrelated completions cannot delay an established winner.
+            if *order > join.scan_epoch {
+                join.cursor = 0;
+                join.checked_epoch = None;
+                return Ok(None);
+            }
+        }
+        if let Some((_, _, outcome)) = join.first.take() {
+            return Ok(Some(outcome));
+        }
+        if join.kind == PromiseJoin::All && join.remaining == 0 {
+            let values = join.values.iter().flatten().copied().collect();
+            return Ok(Some(Outcome::Value(self.heap.alloc(Value::List(values)))));
+        }
+        join.cursor = 0;
+        join.checked_epoch = Some(join.scan_epoch);
+        Ok(None)
     }
     fn spawn(&mut self, work: Work) -> Handle {
         let promise = self.heap.alloc(Value::Promise(None));
@@ -379,7 +497,7 @@ impl Vm {
         self.root.is_some() && (self.wake.is_ready() || self.context.has_commands())
     }
     /// Drive persistent work, even after initialization/handlers have returned.
-    /// The lifetime quota belongs to CLI execution; this budget bounds one turn.
+    /// This budget bounds one turn, independent of the lifetime of an app.
     pub fn run_turn(&mut self, cx: &mut Context<'_>, budget: usize) -> Result<Turn> {
         if budget == 0 {
             return Err("turn budget must be positive".into());
@@ -392,7 +510,7 @@ impl Vm {
         let waker = Waker::from(self.wake.clone());
         self.context.set_waker(&waker);
         let before = self.instructions;
-        let result = self.drive(&mut Context::from_waker(&waker), budget, None, false);
+        let result = self.drive(&mut Context::from_waker(&waker), budget, None, None);
         match result {
             Ok((progressed, deferred)) => {
                 if ((progressed || deferred) && !self.tasks.is_empty())
@@ -416,7 +534,7 @@ impl Vm {
         cx: &mut Context<'_>,
         budget: usize,
         only: Option<Handle>,
-        enforce_limit: bool,
+        instruction_limit: Option<u64>,
     ) -> Result<(bool, bool)> {
         let mut remaining = budget;
         let mut deferred = false;
@@ -444,6 +562,7 @@ impl Vm {
                     && match &task.work {
                         Work::Host { ready, .. } => ready.is_ready(),
                         Work::Code(_) => true,
+                        Work::Join(join) => join.checked_epoch != Some(self.completion_epoch),
                     }
             })
             .map(|(id, _)| *id)
@@ -456,6 +575,12 @@ impl Vm {
             let mut task = self.tasks.remove(&id).ok_or("missing scheduled task")?;
             task.waiting = None;
             let result = match &mut task.work {
+                Work::Join(join) => {
+                    let before = remaining;
+                    let result = self.poll_join(join, &mut remaining)?;
+                    progressed |= before != remaining;
+                    result.map(Ok)
+                }
                 Work::Host {
                     future,
                     result,
@@ -479,7 +604,7 @@ impl Vm {
                     for _ in 0..256.min(remaining) {
                         remaining -= 1;
                         self.instructions += 1;
-                        if enforce_limit && self.instructions > self.instruction_limit {
+                        if instruction_limit.is_some_and(|limit| self.instructions > limit) {
                             return Err("instruction limit exceeded".into());
                         }
                         match self.step(frames) {
@@ -513,8 +638,7 @@ impl Vm {
                     return Err(format!("uncaught Throw: {}", self.value_text(*value)?));
                 }
                 progressed = true;
-                self.heap
-                    .replace(task.promise, Value::Promise(Some(Ok(result))))?;
+                self.settle_promise(task.promise, Ok(result))?;
             } else {
                 self.tasks.insert(id, task);
             }
@@ -543,16 +667,24 @@ impl Vm {
         if self.root.is_none() {
             return Poll::Ready(Err("VM cancelled".into()));
         }
-        self.context.set_waker(cx.waker());
-        let (progressed, _) = self.drive(cx, usize::MAX, None, true)?;
+        self.wake.set_parent(cx.waker());
+        self.wake.clear();
+        let waker = Waker::from(self.wake.clone());
+        self.context.set_waker(&waker);
+        let (progressed, deferred) = self.drive(
+            &mut Context::from_waker(&waker),
+            4096,
+            None,
+            self.instruction_limit,
+        )?;
         let root = self.root_result();
         if root.is_pending()
             || (drain_tasks
                 && matches!(root, Poll::Ready(Ok(_)))
                 && (!self.tasks.is_empty() || self.context.has_commands()))
         {
-            if progressed {
-                cx.waker().wake_by_ref();
+            if progressed || deferred || self.context.has_commands() {
+                self.wake.wake_by_ref();
             }
             Poll::Pending
         } else {
@@ -564,10 +696,11 @@ impl Vm {
         let root = self.root.ok_or("VM cancelled")?;
         let mut cx = Context::from_waker(Waker::noop());
         let child_start = self.next_task;
+        let limit = self.instructions.saturating_add(10_000_000);
         loop {
             // Bindings evaluate only their own frame. Other tasks and host
             // commands remain owned by the persistent scheduler.
-            let (progressed, _) = self.drive(&mut cx, usize::MAX, Some(root), true)?;
+            let (progressed, _) = self.drive(&mut cx, usize::MAX, Some(root), Some(limit))?;
             if let Poll::Ready(result) = self.root_result() {
                 if self.next_task > child_start || self.context.has_commands() {
                     self.wake.wake_by_ref();
@@ -593,9 +726,6 @@ impl Vm {
     }
     #[cfg(feature = "ui")]
     pub(crate) fn invoke_args(&mut self, closure: Handle, args: Vec<Handle>) -> Result<Handle> {
-        // Synchronous render queries have a finite quota, independently of
-        // the persistent event scheduler's per-turn budget.
-        self.instruction_limit = self.instructions.saturating_add(10_000_000);
         let Value::Closure {
             function,
             captures,
@@ -660,12 +790,14 @@ impl Vm {
                 frame.stack.push(h);
             }
             Op::Load(i) => {
+                self.heap.observe(frame.locals[i], Read::Cell)?;
                 let Value::Cell(h) = self.heap.get(frame.locals[i])? else {
                     return Err("invalid local cell".into());
                 };
                 frame.stack.push(*h);
             }
             Op::LoadChecked { slot, message } => {
+                self.heap.observe(frame.locals[slot], Read::Cell)?;
                 let Value::Cell(h) = self.heap.get(frame.locals[slot])? else {
                     return Err("invalid local cell".into());
                 };
@@ -833,6 +965,7 @@ impl Vm {
             }
             Op::MatchEnum { name, case } => {
                 let h = pop(frame)?;
+                self.heap.observe(h, Read::Field("name".into()))?;
                 let matched = match self.heap.get(h)? {
                     Value::Record(record) if record.enum_name.is_some()
                         && name.as_ref().is_none_or(|n| record.enum_name.as_ref() == Some(n)) => {
@@ -865,7 +998,10 @@ impl Vm {
                 frame.stack.push(self.heap.alloc(Value::Bool(matched)));
             }
             Op::MatchTuple(length) => {
-                let matched = matches!(self.heap.get(pop(frame)?)?, Value::List(items) if items.len() == length);
+                let h = pop(frame)?;
+                self.heap.observe(h, Read::Length)?;
+                let matched =
+                    matches!(self.heap.get(h)?, Value::List(items) if items.len() == length);
                 frame.stack.push(self.heap.alloc(Value::Bool(matched)));
             }
             Op::ToString => {
@@ -970,6 +1106,9 @@ impl Vm {
             Op::MethodCall { name, argc } => {
                 let args = arguments(frame, argc)?;
                 let receiver = pop(frame)?;
+                self.heap.observe(receiver, Read::Field(name.clone()))?;
+                self.heap
+                    .observe(receiver, Read::Field(format!("${name}")))?;
                 // Component props carry no attached methods: the member is a
                 // prop getter whose current value is the function to call.
                 if let Value::Props(fields) = self.heap.get(receiver)? {
@@ -1023,6 +1162,7 @@ impl Vm {
                 operation,
                 arguments: argc,
             } => {
+                self.heap.volatile();
                 let args = arguments(frame, argc)?
                     .into_iter()
                     .map(|h| self.to_host(h))
@@ -1040,14 +1180,19 @@ impl Vm {
                     HostReply::Ready(value) => {
                         let result = self.host_result(value, expected, result_channel);
                         if asynchronous {
-                            self.heap
-                                .alloc(Value::Promise(Some(result.map(Outcome::Value))))
+                            let promise = self.heap.alloc(Value::Promise(None));
+                            self.settle_promise(promise, result.map(Outcome::Value))?;
+                            promise
                         } else {
                             result?
                         }
                     }
                 };
                 frame.stack.push(h);
+            }
+            Op::PromiseJoin(kind) => {
+                let list = pop(frame)?;
+                frame.stack.push(self.join(kind, list)?);
             }
             Op::Await => {
                 let promise = pop(frame)?;
@@ -1095,6 +1240,7 @@ impl Vm {
             Op::ListHas => {
                 let index = pop(frame)?;
                 let list = pop(frame)?;
+                self.heap.observe(list, Read::Length)?;
                 let Value::Number(index) = self.heap.get(index)? else {
                     return Err("index must be number".into());
                 };
@@ -1110,6 +1256,7 @@ impl Vm {
             Op::ListAppend => {
                 let item = pop(frame)?;
                 let list = pop(frame)?;
+                self.heap.observe(list, Read::Entity)?;
                 let Value::List(mut items) = self.heap.get(list)?.clone() else {
                     return Err("append requires list".into());
                 };
@@ -1126,6 +1273,8 @@ impl Vm {
             Op::ListExtend => {
                 let source = pop(frame)?;
                 let target = pop(frame)?;
+                self.heap.observe(source, Read::Entity)?;
+                self.heap.observe(target, Read::Entity)?;
                 let Value::List(extra) = self.heap.get(source)?.clone() else {
                     return Err("spread requires a list".into());
                 };
@@ -1163,6 +1312,8 @@ impl Vm {
             Op::RecordExtend => {
                 let source = pop(frame)?;
                 let target = pop(frame)?;
+                self.heap.observe(source, Read::Entity)?;
+                self.heap.observe(target, Read::Entity)?;
                 let Value::Record(extra) = self.heap.get(source)?.clone() else {
                     return Err("object spread requires a record".into());
                 };
@@ -1179,6 +1330,14 @@ impl Vm {
             }
             Op::Field(name) => {
                 let h = pop(frame)?;
+                self.heap.observe(
+                    h,
+                    if name == "length" && matches!(self.heap.get(h)?, Value::List(_)) {
+                        Read::Length
+                    } else {
+                        Read::Field(name.clone())
+                    },
+                )?;
                 if let Value::Props(fields) = self.heap.get(h)? {
                     let value = fields.get(&name).copied();
                     self.read_prop(frames, value, None)?;
@@ -1207,6 +1366,7 @@ impl Vm {
             }
             Op::FieldOrSelf(name) => {
                 let h = pop(frame)?;
+                self.heap.observe(h, Read::Field(name.clone()))?;
                 if let Value::Props(fields) = self.heap.get(h)?
                     && let Some(value) = fields.get(&name).copied()
                 {
@@ -1230,6 +1390,7 @@ impl Vm {
                     return Err("invalid index".into());
                 }
                 let index = *index as usize;
+                self.heap.observe(object, Read::Index(index))?;
                 match self.heap.get(object)? {
                     Value::List(items) => {
                         frame
@@ -1350,6 +1511,7 @@ impl Vm {
         self.inspect(value, false, &mut vec![])
     }
     fn inspect(&self, value: Handle, nested: bool, ancestors: &mut Vec<Handle>) -> Result<String> {
+        self.heap.observe(value, Read::Entity)?;
         match self.heap.get(value)? {
             Value::Unit => Ok("None".into()),
             Value::Number(n) => Ok(number_text(*n)),
@@ -1416,6 +1578,7 @@ impl Vm {
     /// Reads and writes use the same declared embed traversal. Own fields
     /// win; arbitrary nested records do not implicitly promote their fields.
     fn field_owner(&self, object: Handle, name: &str) -> Result<Option<Handle>> {
+        self.heap.observe(object, Read::Field(name.into()))?;
         let Value::Record(record) = self.heap.get(object)? else {
             return Ok(None);
         };
@@ -1426,6 +1589,7 @@ impl Vm {
             return Ok(None);
         }
         for embed in &record.embeds {
+            self.heap.observe(object, Read::Field(embed.clone()))?;
             if let Some(value) = record.get(embed)
                 && let Some(owner) = self.field_owner(*value, name)?
             {
@@ -1745,5 +1909,106 @@ mod host_wire_tests {
         );
         vm.cancel().unwrap();
         assert_eq!(vm.stats().live, 0);
+    }
+}
+
+#[cfg(test)]
+mod promise_tests {
+    use super::*;
+    fn machine() -> Vm {
+        Vm::new(
+            Program {
+                version: 1,
+                functions: vec![Function {
+                    name: "main".into(),
+                    parameters: 0,
+                    captures: 0,
+                    locals: 0,
+                    asynchronous: false,
+                    code: vec![Op::Const(Literal::Unit), Op::Return],
+                }],
+            },
+            Hosts::default(),
+        )
+        .unwrap()
+    }
+    fn take_join(vm: &mut Vm, inputs: Vec<Handle>, kind: PromiseJoin) -> Join {
+        let list = vm.heap.alloc(Value::List(inputs));
+        vm.join(kind, list).unwrap();
+        let (_, task) = vm.tasks.pop_last().unwrap();
+        let Work::Join(join) = task.work else {
+            panic!("expected join")
+        };
+        join
+    }
+    #[test]
+    fn race_and_all_choose_the_first_settlement_even_behind_a_partial_scan() {
+        for kind in PromiseJoin::ALL {
+            let mut vm = machine();
+            let inputs: Vec<_> = (0..300)
+                .map(|_| vm.heap.alloc(Value::Promise(None)))
+                .collect();
+            let mut join = take_join(&mut vm, inputs.clone(), kind);
+            assert!(vm.poll_join(&mut join, &mut 256).unwrap().is_none());
+            assert_eq!(join.cursor, 256);
+            let first = vm.heap.alloc(Value::Number(111.));
+            let later = vm.heap.alloc(Value::Number(999.));
+            let outcome = |v| {
+                if kind == PromiseJoin::All {
+                    Outcome::Thrown(v)
+                } else {
+                    Outcome::Value(v)
+                }
+            };
+            vm.settle_promise(inputs[0], Ok(outcome(first))).unwrap();
+            vm.settle_promise(inputs[299], Ok(outcome(later))).unwrap();
+            assert!(vm.poll_join(&mut join, &mut 256).unwrap().is_none());
+            assert!(vm.poll_join(&mut join, &mut 256).unwrap().is_none());
+            let result = vm.poll_join(&mut join, &mut 256).unwrap().unwrap();
+            match result {
+                Outcome::Value(h) | Outcome::Thrown(h) => assert_eq!(h, first),
+            }
+        }
+    }
+    #[test]
+    fn already_settled_race_inputs_use_input_order_not_historical_order() {
+        let mut vm = machine();
+        let inputs: Vec<_> = (0..2)
+            .map(|_| vm.heap.alloc(Value::Promise(None)))
+            .collect();
+        let first = vm.heap.alloc(Value::Number(1.));
+        let second = vm.heap.alloc(Value::Number(2.));
+        vm.settle_promise(inputs[1], Ok(Outcome::Value(second)))
+            .unwrap();
+        vm.settle_promise(inputs[0], Ok(Outcome::Value(first)))
+            .unwrap();
+        let mut join = take_join(&mut vm, inputs, PromiseJoin::Race);
+        let Outcome::Value(h) = vm.poll_join(&mut join, &mut 256).unwrap().unwrap() else {
+            panic!("unexpected Throw")
+        };
+        assert_eq!(h, first);
+    }
+    #[test]
+    fn joins_obey_scan_budgets_and_settlement_metadata_does_not_root_dead_values() {
+        let mut vm = machine();
+        let inputs: Vec<_> = (0..1000)
+            .map(|_| vm.heap.alloc(Value::Promise(None)))
+            .collect();
+        let value = vm.heap.alloc(Value::Number(1.));
+        for promise in &inputs {
+            vm.settle_promise(*promise, Ok(Outcome::Value(value)))
+                .unwrap();
+        }
+        let mut join = take_join(&mut vm, inputs, PromiseJoin::All);
+        let mut remaining = 8;
+        assert!(vm.poll_join(&mut join, &mut remaining).unwrap().is_none());
+        assert_eq!(join.cursor, 8);
+        assert_eq!(remaining, 0);
+        assert_eq!(vm.completion_order.len(), 1000);
+        drop(join);
+        vm.collect().unwrap();
+        assert!(vm.root.is_some());
+        assert!(vm.completion_order.is_empty());
+        assert_eq!(vm.stats().live, 1);
     }
 }

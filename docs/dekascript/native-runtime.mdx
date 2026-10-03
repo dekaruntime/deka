@@ -42,10 +42,20 @@ export fn App() {
 }
 ```
 
-Clicking Toggle shows and hides Hello. The VM evaluates bindings after events;
+Clicking Toggle shows and hides Hello. The VM reevaluates bindings whose observed
+state changed after events;
 Rust advances the animation between events without executing more VM code.
-Node identity is positional in this preview; keyed list reconciliation is not
-implemented. Successful source edits restart state. Compilation or initial
+Rust retains the nodes between component renders. Compatible elements and text
+nodes in the same structural slot keep their internal identity when their text,
+classes or handlers change. Removing a node or replacing its element kind ends
+that identity; showing a new node at the old position gives it a fresh identity.
+Desktop and browser presentation snapshots use the same retained store. These
+internal identities are separate from author-supplied attributes.
+
+[Binding patches and structural slots](native/binding-patches.mdx) explains
+selective reevaluation, retained identity, and last-authored property ownership.
+
+Successful source edits restart state. Compilation or initial
 render errors keep the last working application.
 
 Browser text editing, asynchronous UI event scheduling, app module loading and
@@ -570,8 +580,36 @@ convertible with `string()`, and other arithmetic operators require numbers.
 An infinite running task keeps the program alive. Cancellation or a VM fault
 releases pending work; a VM fault cannot be hidden by a successful entry return.
 Fallible host operations still deliver operational errors as Result values.
-This CLI lifetime rule does not add async window handlers: desktop event-loop
-integration is a separate feature.
+Desktop handlers use the same persistent VM scheduler, driven by the window loop.
+
+See [waiting on several promises](./native/promises) for `Promise.all`,
+`Promise.race`, checked error channels and VM turn budgets.
+
+## Console output
+
+`console.log`, `console.info` and `console.debug` write one line to stdout.
+`console.error` and `console.warn` write one line to stderr; they return normally
+and do not make the program fail. Arguments are evaluated once in source order,
+separated by spaces. Calling a method without arguments writes an empty line.
+
+```ds
+struct Point { x: number; y: number; }
+console.info("Position", Point { x: 3, y: 4 })
+console.warn(Some(7), None, Err("offline"))
+```
+
+The stdout line is `Position Point { x: 3, y: 4 }`.
+The stderr line is `Some(7) None Err("offline")`.
+All five methods share the native formatter: structs preserve their names and
+field order, enum values print as `Case(payload)`, and nested strings are quoted.
+Functions, promises and opaque host handles have no printable form and are
+rejected by the checker. A local binding named `console` follows ordinary
+record and function rules.
+
+Embedded hosts provide a synchronous `echo(string)` operation for stdout and a
+synchronous `console_stderr(string)` operation for diagnostic output, both
+returning `void`. The CLI supplies both. Browser-hosted console forwarding is a
+separate platform integration.
 
 ## Typed JSON
 

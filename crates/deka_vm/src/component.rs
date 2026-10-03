@@ -1,10 +1,11 @@
 //! Persistent component callbacks and dynamic DSX frames for native hosts.
 use crate::{
-    heap::{Handle, Value},
+    heap::{Dependencies, Handle, Value},
     ui::WireNode,
     *,
 };
 use deka_native_ui::Node;
+pub(crate) mod tree;
 
 pub struct InputSpec {
     pub target: usize,
@@ -17,11 +18,19 @@ pub struct ComponentFrame {
     pub root: Node,
     pub inputs: Vec<InputSpec>,
 }
+struct Binding {
+    value: Handle,
+    dependencies: Dependencies,
+    seen: bool,
+}
 pub struct Component {
     vm: Vm,
     instance: Handle,
     handlers: Vec<Handle>,
     evaluations: usize,
+    tree: tree::Tree,
+    bindings: std::collections::BTreeMap<Handle, Binding>,
+    slots: Vec<Vec<usize>>,
 }
 impl Component {
     pub fn new(program: Program, hosts: Hosts) -> Result<Self> {
@@ -36,6 +45,9 @@ impl Component {
             instance,
             handlers: vec![],
             evaluations: 0,
+            tree: tree::Tree::default(),
+            bindings: Default::default(),
+            slots: vec![],
         })
     }
     fn method(&self, name: &str) -> Result<Handle> {
@@ -90,14 +102,21 @@ impl Component {
         self.vm.stats()
     }
     pub fn render(&mut self) -> Result<ComponentFrame> {
-        self.vm.set_pins(vec![self.instance]);
+        let mut pins = vec![self.instance];
+        for (getter, binding) in &mut self.bindings {
+            binding.seen = false;
+            pins.extend([*getter, binding.value]);
+            pins.extend(binding.dependencies.roots());
+        }
+        self.vm.set_pins(pins);
+        self.slots.clear();
         // A plain DSX root holds live binding closures. Native host integrations
         // may instead provide a record of callbacks with a view method.
         let view = if let Value::Record(fields) = self.vm.heap.get(self.instance)? {
             if fields.contains_key("tag") {
                 self.instance
             } else {
-                self.vm.invoke_sync(self.method("view")?)?
+                self.resolve(self.method("view")?)?
             }
         } else {
             return Err("component entry must return a view or callback record".into());
@@ -105,15 +124,43 @@ impl Component {
         self.vm.pin(view);
         self.handlers.clear();
         let mut inputs = vec![];
-        let wire = self.node(view, &mut inputs)?;
-        let root = wire.into_node("root".into())?;
+        let wire = self.node(view, &mut inputs, vec![])?;
+        let root = self.tree.update_slots(wire, &self.slots)?;
+        self.bindings.retain(|_, binding| binding.seen);
+        let mut pins = vec![self.instance, view];
+        pins.extend(self.handlers.iter().copied());
+        for (getter, binding) in &self.bindings {
+            pins.extend([*getter, binding.value]);
+            pins.extend(binding.dependencies.roots());
+        }
+        self.vm.set_pins(pins);
         self.vm.collect()?;
         Ok(ComponentFrame { root, inputs })
     }
     fn resolve(&mut self, value: Handle) -> Result<Handle> {
         if matches!(self.vm.heap.get(value)?, Value::Closure { .. }) {
+            if let Some(binding) = self.bindings.get_mut(&value)
+                && !binding.dependencies.dirty(&self.vm.heap)
+            {
+                binding.seen = true;
+                return Ok(binding.value);
+            }
             self.evaluations += 1;
-            let result = self.vm.invoke_sync(value)?;
+            self.vm.heap.begin_reads();
+            let outcome = self.vm.invoke_sync(value);
+            let dependencies = self.vm.heap.end_reads();
+            let result = outcome?;
+            for h in dependencies.roots() {
+                self.vm.pin(h);
+            }
+            self.bindings.insert(
+                value,
+                Binding {
+                    value: result,
+                    dependencies,
+                    seen: true,
+                },
+            );
             // Dynamic lists own event closures which must survive until the next frame.
             self.vm.pin(result);
             Ok(result)
@@ -138,24 +185,37 @@ impl Component {
         self.handlers.push(value);
         Ok(id)
     }
-    fn children(&mut self, value: Handle, inputs: &mut Vec<InputSpec>) -> Result<Vec<WireNode>> {
+    fn children(
+        &mut self,
+        value: Handle,
+        inputs: &mut Vec<InputSpec>,
+        path: Vec<usize>,
+    ) -> Result<Vec<WireNode>> {
         let value = self.resolve(value)?;
         match self.vm.heap.get(value)?.clone() {
             Value::List(items) => {
                 let mut children = vec![];
-                for item in items {
-                    children.extend(self.children(item, inputs)?);
+                for (index, item) in items.into_iter().enumerate() {
+                    let mut slot = path.clone();
+                    slot.push(index);
+                    children.extend(self.children(item, inputs, slot)?);
                 }
                 Ok(children)
             }
             Value::Unit => Ok(vec![]),
             Value::Record(record) if record.enum_name.as_deref() == Some("Option")
                 && record.get("name").is_some_and(|h| matches!(self.vm.heap.get(*h), Ok(Value::String(name)) if name == "None")) => Ok(vec![]),
-            _ => Ok(vec![self.node(value, inputs)?]),
+            _ => Ok(vec![self.node(value, inputs, path)?]),
         }
     }
-    fn node(&mut self, value: Handle, inputs: &mut Vec<InputSpec>) -> Result<WireNode> {
+    fn node(
+        &mut self,
+        value: Handle,
+        inputs: &mut Vec<InputSpec>,
+        path: Vec<usize>,
+    ) -> Result<WireNode> {
         let value = self.resolve(value)?;
+        self.slots.push(path.clone());
         let Value::Record(fields) = self.vm.heap.get(value)?.clone() else {
             return Ok(WireNode {
                 text: Some(self.text(value)?),
@@ -193,11 +253,11 @@ impl Component {
         }
         let children = fields
             .get("children")
-            .map(|h| self.children(*h, inputs))
+            .map(|h| self.children(*h, inputs, path.clone()))
             .transpose()?
             .unwrap_or_default();
         Ok(WireNode {
-            tag: if tag == "input" { "div".into() } else { tag },
+            tag,
             classes,
             handler,
             children,
