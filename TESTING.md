@@ -27,6 +27,17 @@ The desktop workflow also packages an app, relocates it, removes the source,
 executes its real VM handlers, checks its assets/signature and verifies that a
 missing payload fails. See `tools/deka-package/README.md`.
 
+`tools/deka-package` is a separate Cargo workspace with its own lockfile. When
+a native runtime dependency changes, update and commit that lockfile too:
+
+```sh
+cargo update -p deka_vm --manifest-path tools/deka-package/Cargo.toml
+cargo check --locked --manifest-path tools/deka-package/Cargo.toml --all-targets
+```
+
+The root workspace checks do not validate this packaging workspace. Its locked
+build and relocated-app test are required evidence for native dependency changes.
+
 Before a Rust PR is pushed, run:
 
 ```sh

@@ -226,3 +226,59 @@ fn shared_host_handles_preserve_identity_without_retaining_a_dead_resource() {
     drop(second);
     assert!(weak.upgrade().is_none());
 }
+
+#[tokio::test]
+async fn imported_codec_factories_and_promise_aliases_share_export_inference() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("factory.ds"),
+        r#"export fn encoder() { return TextEncoder(); }
+export fn decoder() { return TextDecoder(); }
+export fn charset() { return TextEncoder().encoding; }
+export const P = Promise;
+export const all = P.all;
+export const race = P.race;"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("barrel.ds"),
+        "export {encoder, decoder, charset, all, race} from \"./factory.ds\";",
+    )
+    .unwrap();
+    let entry = dir.path().join("main.ds");
+    std::fs::write(
+        &entry,
+        r#"import {encoder, decoder, charset, all, race} from "./barrel.ds";
+async fn encoded(text: string) Promise<bytes> { return encoder().encode(text); }
+fn decoded(d: TextDecoder, data: bytes) string {
+    const text = unwrap(d.decode(data)) or { return "decode failed"; };
+    return text;
+}
+async fn main() Promise<string> {
+    const d = unwrap(decoder()) or { return "constructor failed"; };
+    const values = await all([encoded("hi"), encoded("🙂")]);
+    const winner = await race([encoded("one"), encoded("two")]);
+    const second = values.has(1) ? values[1] : encoder().encode("missing");
+    return charset() + ":" + decoded(d, second) + ":" + decoded(d, winner);
+}"#,
+    )
+    .unwrap();
+    let catalog = hosts();
+    let program = compiler::compile_file(&entry, &catalog, Some("main")).unwrap();
+    let program: Program = serde_json::from_slice(&serde_json::to_vec(&program).unwrap()).unwrap();
+    let mut vm = Vm::new(program, catalog).unwrap();
+    assert_eq!(
+        vm.run().await.unwrap(),
+        HostValue::String("utf-8:🙂:one".into())
+    );
+    assert_eq!(vm.stats().live, 0);
+    // Imported inferred returns must remain concrete, not Error/Infer values
+    // that silently accept an incompatible annotated return.
+    std::fs::write(
+        &entry,
+        r#"import {charset} from "./barrel.ds";
+fn main() number { return charset(); }"#,
+    )
+    .unwrap();
+    assert!(compiler::compile_file(&entry, &hosts(), Some("main")).is_err());
+}
