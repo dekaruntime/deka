@@ -10,6 +10,28 @@ pub const DEFAULT_DEKA_JSON: &str = "{\n  \"name\": \"conformance-fixture\",\n  
 pub const PACKAGE_DEKA_JSON: &str = "{\n  \"name\": \"conformance-fixture\",\n  \"security\": {\n    \"allow\": {\n      \"read\": [\"./\"],\n      \"write\": [\".cache\", \"php_modules\", \"ds_modules\"]\n    },\n    \"prompt\": false\n  }\n}\n";
 const RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+// The pinned pre-VM corpus omitted text guards on these negative programs.
+// Fill only absent guards; explicit corpus metadata remains authoritative.
+fn native_diagnostic(slug: &str) -> Option<&'static str> {
+    Some(match slug {
+        "data-types-array-find-undefined-access-fail" => {
+            "cannot access field `length` on type `Option<number>`"
+        }
+        "data-types-string-find-missing-fail" => "`string` has no field `find`",
+        "data-types-array-reduce-empty-no-initial-fail" => {
+            "cannot reduce an empty array without an initial value"
+        }
+        "flow-control-break-in-if-fail" | "flow-control-break-outside-loop-fail" => {
+            "`break` outside of loop"
+        }
+        "flow-control-continue-in-if-fail" | "flow-control-continue-outside-loop-fail" => {
+            "`continue` outside of loop"
+        }
+        "flow-control-for-of-const-reassign-fail" => "cannot assign to immutable variable `x`",
+        _ => return None,
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Status {
     Pass,
@@ -139,11 +161,18 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
         .filter(|f| *f != entry)
         .filter_map(|f| Some((f.clone(), std::fs::read_to_string(dir.join(f)).ok()?)))
         .collect();
-    let slug = format!("{category}-{name}")
+    let slug: String = format!("{category}-{name}")
         .to_lowercase()
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
+    let expected_diagnostic_contains = expected_diagnostic_contains.or_else(|| {
+        if status == Status::Fail {
+            native_diagnostic(&slug).map(str::to_owned)
+        } else {
+            None
+        }
+    });
     Some(Case {
         slug,
         status,
@@ -483,6 +512,68 @@ mod tests {
         assert_eq!(
             parse_native_diagnostics("[security] ignored\ntype mismatch at 3:1\n"),
             vec!["type mismatch at 3:1".to_string()]
+        );
+    }
+
+    #[test]
+    fn loading_unguarded_empty_reduce_rejects_an_unimplemented_method_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = dir
+            .path()
+            .join("data_types/array_reduce_empty_no_initial_fail");
+        std::fs::create_dir_all(&fixture).unwrap();
+        std::fs::write(fixture.join("test.fail.ds"), "const items = [];\n").unwrap();
+        let cases = load_cases(dir.path());
+        let [case] = cases.as_slice() else {
+            panic!("fixture must load")
+        };
+        let wrong = run(
+            false,
+            "",
+            "Run failed: method call requires a record",
+            false,
+        );
+        assert!(
+            evaluate(case, &wrong)
+                .iter()
+                .any(|reason| reason.starts_with("diagnostic:"))
+        );
+        let intended = run(
+            false,
+            "",
+            "cannot reduce an empty array without an initial value",
+            false,
+        );
+        assert!(evaluate(case, &intended).is_empty());
+    }
+
+    #[test]
+    fn explicit_corpus_diagnostic_metadata_takes_precedence() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("test.fail.ds"), "const items = [];\n").unwrap();
+        std::fs::write(
+            dir.path().join("test.json"),
+            r#"{"expectedDiagnosticContains":"new corpus expectation"}"#,
+        )
+        .unwrap();
+        let case = load_case(
+            "data_types",
+            "array_reduce_empty_no_initial_fail",
+            dir.path(),
+        )
+        .unwrap();
+        assert!(evaluate(&case, &run(false, "", "new corpus expectation", false)).is_empty());
+        assert!(
+            !evaluate(
+                &case,
+                &run(
+                    false,
+                    "",
+                    "cannot reduce an empty array without an initial value",
+                    false
+                )
+            )
+            .is_empty()
         );
     }
 }

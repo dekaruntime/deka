@@ -349,3 +349,22 @@ contract. Invalid arguments, denied capabilities and a reply with the wrong
 wire type remain VM faults; they are not operational Err values or language
 Throw. This supplies the host I/O integration hook; it does not add a fetch
 operation or a desktop async event loop by itself.
+
+## Array reduction
+
+`items.reduce(callback)` folds a nonempty array from left to right. The first
+item is the initial accumulator; subsequent calls receive the accumulator and
+the next item. A singleton array returns its item without invoking the callback.
+
+```tsx
+const total = [1, 2, 3].reduce(fn(acc: number, item: number) number {
+    return acc + item;
+}); // 6
+```
+
+The receiver and callback are evaluated once. Traversal captures the original
+length, reads each element when visited and skips indices removed by callback
+mutations. Items appended beyond that original length are not visited. Callback
+faults propagate; reducing an empty array reports
+`cannot reduce an empty array without an initial value`. The current signature
+accepts one callback and no explicit initial value.
