@@ -32,6 +32,8 @@ pub enum App {
     Verify,
     /// Fork: thread-count scaling and strip-cache benchmark.
     Scaling,
+    /// Phase 6: the start-up timeline without a window (for bugsy over ssh).
+    Startup,
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +71,7 @@ impl Args {
             Some("webgl2") => App::WebGl2,
             Some("verify") => App::Verify,
             Some("scaling") => App::Scaling,
+            Some("startup") => App::Startup,
             _ => App::World,
         };
         Self {
@@ -588,6 +591,172 @@ pub fn crop_zoom(path: &std::path::Path, rect: (u32, u32, u32, u32), factor: u32
     }
     write_png(out, ow, oh, &o);
     true
+}
+
+/// Start-up timeline: (ms since process start, label, thread).
+static TIMELINE: std::sync::Mutex<Vec<(f64, String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether this run records and prints the start-up timeline (`--timeline`).
+pub fn timeline_mode() -> bool {
+    std::env::args().any(|a| a == "--timeline")
+}
+
+/// Record a start-up timeline mark: ms since the process started (the
+/// kernel's process start time, so dyld and static initialisers before
+/// `main` are included).
+pub fn mark(label: &str) {
+    let ms = usage().since_exec_ns as f64 / 1e6;
+    let thread = std::thread::current().name().unwrap_or("?").to_owned();
+    if let Ok(mut t) = TIMELINE.lock() {
+        t.push((ms, label.to_owned(), thread));
+    }
+}
+
+/// Set once the visibility probe has seen a window of this process on screen.
+pub static ON_SCREEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `--timeline`: poll the window server (CGWindowList, every ~1 ms, on a
+/// background thread) and mark when a window of this process is first on
+/// screen. Same probe for every backend, so "window visible" is comparable.
+pub fn start_visibility_probe() {
+    if !timeline_mode() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::thread::Builder::new().name("vis-probe".into()).spawn(|| {
+            let t0 = Instant::now();
+            while t0.elapsed() < Duration::from_secs(5) {
+                if cg::own_window_on_screen() {
+                    mark("window on screen (CGWindowList)");
+                    ON_SCREEN.store(true, std::sync::atomic::Ordering::Relaxed);
+                    return;
+                }
+                std::thread::sleep(Duration::from_micros(500));
+            }
+        });
+    }
+}
+
+/// Main display size in points (window placement before an event loop runs).
+pub fn main_display_points() -> Option<(f64, f64)> {
+    #[cfg(target_os = "macos")]
+    {
+        let (w, h) = cg::main_display_points();
+        if w > 0. && h > 0. {
+            return Some((w, h));
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+mod cg {
+    use std::ffi::c_void;
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *const c_void;
+        static kCGWindowOwnerPID: *const c_void;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFArrayGetCount(array: *const c_void) -> isize;
+        fn CFArrayGetValueAtIndex(array: *const c_void, index: isize) -> *const c_void;
+        fn CFDictionaryGetValue(dict: *const c_void, key: *const c_void) -> *const c_void;
+        fn CFNumberGetValue(number: *const c_void, kind: isize, out: *mut c_void) -> bool;
+        fn CFRelease(object: *const c_void);
+    }
+    #[repr(C)]
+    struct CGRect {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+    }
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayBounds(display: u32) -> CGRect;
+    }
+    pub fn main_display_points() -> (f64, f64) {
+        // SAFETY: plain value-returning CoreGraphics queries.
+        let r = unsafe { CGDisplayBounds(CGMainDisplayID()) };
+        let _ = (r.x, r.y);
+        (r.w, r.h)
+    }
+    const ON_SCREEN_ONLY: u32 = 1;
+    const SINT32: isize = 3;
+
+    /// Whether any on-screen window belongs to this process.
+    pub fn own_window_on_screen() -> bool {
+        // SAFETY: plain CoreFoundation calls on objects owned (array, released
+        // below) or borrowed from it (dictionaries, numbers); null-checked.
+        unsafe {
+            let list = CGWindowListCopyWindowInfo(ON_SCREEN_ONLY, 0);
+            if list.is_null() {
+                return false;
+            }
+            let pid = libc::getpid();
+            let mut found = false;
+            for i in 0..CFArrayGetCount(list) {
+                let dict = CFArrayGetValueAtIndex(list, i);
+                let n = CFDictionaryGetValue(dict, kCGWindowOwnerPID);
+                let mut owner: i32 = 0;
+                if !n.is_null() && CFNumberGetValue(n, SINT32, &mut owner as *mut i32 as *mut c_void) && owner == pid {
+                    found = true;
+                    break;
+                }
+            }
+            CFRelease(list);
+            found
+        }
+    }
+}
+
+/// Record a mark at a host time given in seconds (`CACurrentMediaTime` /
+/// `mach_absolute_time` base), e.g. Metal's `presentedTime`.
+pub fn mark_host_time(label: &str, secs: f64) {
+    #[cfg(target_os = "macos")]
+    {
+        #[allow(deprecated, reason = "libc points to mach2 for these; two calls are not worth a dependency")]
+        let now_secs = unsafe {
+            let mut tb = libc::mach_timebase_info { numer: 0, denom: 0 };
+            libc::mach_timebase_info(&mut tb);
+            libc::mach_absolute_time() as f64 * tb.numer as f64 / tb.denom.max(1) as f64 / 1e9
+        };
+        let ms = usage().since_exec_ns as f64 / 1e6 - (now_secs - secs) * 1000.;
+        if let Ok(mut t) = TIMELINE.lock() {
+            t.push((ms, label.to_owned(), "metal".to_owned()));
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (label, secs);
+}
+
+/// Print the recorded marks in time order (once).
+pub fn print_timeline(backend: &str) {
+    let Ok(mut t) = TIMELINE.lock() else { return };
+    if t.is_empty() {
+        return;
+    }
+    t.sort_by(|a, b| a.0.total_cmp(&b.0));
+    #[cfg(target_os = "macos")]
+    {
+        // Reference pair for converting host times printed elsewhere.
+        #[allow(deprecated, reason = "libc points to mach2 for these; two calls are not worth a dependency")]
+        let host = unsafe {
+            let mut tb = libc::mach_timebase_info { numer: 0, denom: 0 };
+            libc::mach_timebase_info(&mut tb);
+            libc::mach_absolute_time() as f64 * tb.numer as f64 / tb.denom.max(1) as f64 / 1e9
+        };
+        println!("[timeline {backend}] reference: {:.3} ms since start = host {host:.6} s", usage().since_exec_ns as f64 / 1e6);
+    }
+    let mut last = 0.;
+    for (ms, label, thread) in t.iter() {
+        println!("[timeline {backend}] {ms:8.1} ms  (+{:6.1})  {thread:12}  {label}", ms - last);
+        last = *ms;
+    }
+    t.clear();
 }
 
 /// Print a startup trace point (ms since exec) when run with --trace.

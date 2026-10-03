@@ -80,11 +80,18 @@ struct View {
 impl Render for View {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frame_start = Instant::now();
-        if self.protocol.borrow().frame_index() == 0 {
+        let frame_index = self.protocol.borrow().frame_index();
+        if frame_index == 0 {
             common::trace("first render()");
+            if !self.protocol.borrow().first_frame_done() {
+                common::mark("first View::render() (frame 1)");
+            }
+        } else if frame_index == 1 && common::timeline_mode() {
+            common::mark("second View::render() (frame 1 has been presented)");
         }
         let step = self.protocol.borrow_mut().begin_frame();
         if matches!(step, Step::Quit) || self.quitting {
+            common::print_timeline("gpui");
             cx.quit();
             return div().size_full().into_any_element();
         }
@@ -125,6 +132,7 @@ impl Render for View {
             }
             Content::Ui { host, renderer, scene } => {
                 let root = host.borrow().render();
+                let first = !self.protocol.borrow().first_frame_done();
                 let renderer = renderer.clone();
                 let scene_store = scene.clone();
                 canvas(
@@ -142,10 +150,16 @@ impl Render for View {
                             window.request_animation_frame();
                         }
                         *scene_store.borrow_mut() = scene.clone();
+                        if first {
+                            common::mark("first scene built + laid out (deka UI)");
+                        }
                         scene
                     },
                     move |bounds, scene, window, _| {
                         paint_scene(bounds, &scene, window, &mut images.borrow_mut());
+                        if first {
+                            common::mark("first paint recorded (GPUI draws + presents after this)");
+                        }
                         let step = protocol.borrow_mut().end_frame(frame_start.elapsed());
                         let p = protocol.borrow();
                         // Non-idle runs keep animating to measure frames; idle runs do not.
@@ -180,7 +194,10 @@ pub fn run(args: Args) {
     common::trace("main");
     let protocol = Rc::new(RefCell::new(Protocol::new(args.clone(), "gpui")));
     let idle = args.idle_secs;
-    gpui::Application::new().run(move |cx: &mut App| {
+    let application = gpui::Application::new();
+    common::mark("gpui Application::new returned");
+    application.run(move |cx: &mut App| {
+        common::mark("gpui app launched (run callback)");
         let logical = size(px(WINDOW_W), px(WINDOW_H));
         let origin = match cx.primary_display() {
             Some(d) => {
@@ -205,11 +222,15 @@ pub fn run(args: Args) {
             |_, cx| {
                 cx.new(|_| {
                     let content = match args.app {
-                        AppKind::Ui => Content::Ui {
-                            host: Rc::new(RefCell::new(Host::new(common::UiApp))),
-                            renderer: Rc::new(deka_native_ui::scene::Renderer::new()),
-                            scene: Rc::new(RefCell::new(Scene::default())),
-                        },
+                        AppKind::Ui => {
+                            let c = Content::Ui {
+                                host: Rc::new(RefCell::new(Host::new(common::UiApp))),
+                                renderer: Rc::new(deka_native_ui::scene::Renderer::new()),
+                                scene: Rc::new(RefCell::new(Scene::default())),
+                            };
+                            common::mark("fonts loaded (deka renderer: fontdue, embedded font) + app host");
+                            c
+                        }
                         _ => {
                             let mut world = World::new();
                             world.start();
@@ -227,7 +248,23 @@ pub fn run(args: Args) {
                 })
             },
         );
+        common::mark("gpui window opened (incl. Metal renderer + pipelines)");
         match opened {
+            Ok(handle) if common::timeline_mode() => {
+                // Stay up until the window server shows the window (or 3 s),
+                // so "window on screen" is measured for GPUI too.
+                cx.spawn(async move |cx| {
+                    let t0 = Instant::now();
+                    while !common::ON_SCREEN.load(std::sync::atomic::Ordering::Relaxed) && t0.elapsed() < std::time::Duration::from_secs(3) {
+                        cx.background_executor().timer(std::time::Duration::from_millis(2)).await;
+                    }
+                    // Leave time for frame 1's presented handler (if instrumented).
+                    cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
+                    common::print_timeline("gpui");
+                    let _ = handle.update(cx, |_, _, cx| cx.quit());
+                })
+                .detach();
+            }
             Ok(handle) => {
                 if let Some(secs) = idle {
                     // Idle runs end on a timer, not on a frame.

@@ -576,9 +576,17 @@ struct SparseApp<P: Presenter> {
     quit: bool,
     occluded: bool,
     cursor: (f64, f64),
+    /// `--timeline`: the window has been reported visible (not occluded).
+    visible_seen: bool,
 }
 
 impl<P: Presenter> SparseApp<P> {
+    /// `--timeline` runs end once the first frame is presented and the
+    /// window has been reported visible.
+    fn timeline_done(&self) -> bool {
+        common::timeline_mode() && self.visible_seen && self.protocol.first_frame_done() && presented_recorded()
+    }
+
     fn scale(&self) -> f64 {
         self.window.as_ref().map(|w| w.scale_factor()).unwrap_or(2.)
     }
@@ -595,6 +603,7 @@ impl<P: Presenter> SparseApp<P> {
                 common::write_png(&common::shots_dir().join(format!("{name}-{}.png", P::NAME)), w, h, &rgba);
             }
         }
+        common::print_timeline(P::NAME);
         println!("[{}] GPU memory before teardown: {:.1} MB", P::NAME, common::gpu_mb());
         self.content = None;
         self.presenter = None;
@@ -637,6 +646,9 @@ impl<P: Presenter> SparseApp<P> {
             Content::Ui { host, renderer, scene } => {
                 *scene = renderer.render_at(&host.render(), lw as f32, lh as f32, scale as f32, ms, false);
                 animating = scene.animating;
+                if !self.protocol.first_frame_done() {
+                    common::mark("first scene built + laid out (deka UI)");
+                }
                 presenter.encode_deka(scene, scale);
             }
             Content::Canvas { graph, .. } => {
@@ -645,10 +657,21 @@ impl<P: Presenter> SparseApp<P> {
             }
         }
         let work_encode = t0.elapsed();
+        if !self.protocol.first_frame_done() {
+            common::mark("first scene encoded (strips)");
+        }
         let tp = Instant::now();
         match presenter.present() {
             Ok(Presented::Done) => {}
             Ok(Presented::Occluded) => {
+                if common::timeline_mode() && !self.protocol.first_frame_done() {
+                    common::mark("first frame skipped: surface occluded, waiting");
+                }
+                if flag("--redraw-spin") && !self.protocol.first_frame_done() {
+                    // Retry right away instead of waiting for winit's Occluded(false).
+                    window.request_redraw();
+                    return;
+                }
                 if !self.occluded {
                     eprintln!("[{}] occluded: pausing until visible", P::NAME);
                 }
@@ -683,6 +706,14 @@ impl<P: Presenter> SparseApp<P> {
             if let Some(secs) = self.args.idle_secs {
                 self.idle_deadline = Some(Instant::now() + Duration::from_secs_f64(secs));
             }
+            if common::timeline_mode() {
+                if self.timeline_done() {
+                    self.teardown(event_loop);
+                    return;
+                }
+                // Wait up to 2 s for the window to be reported visible.
+                self.idle_deadline = Some(Instant::now() + Duration::from_secs(2));
+            }
         }
         if let Step::Quit = step {
             if let Some(Content::Canvas { run, .. }) = self.content.as_ref()
@@ -700,35 +731,176 @@ impl<P: Presenter> SparseApp<P> {
         }
         if self.quit || self.args.first_frame || (self.args.idle_secs.is_none()) || (animating && self.args.idle_secs.is_none()) {
             window.request_redraw();
+        } else if flag("--redraw-until-visible") && !self.visible_seen {
+            // Keep a fresh frame going until the window is on screen, so the
+            // first composited frame is ours (frames before that are dropped).
+            window.request_redraw();
         }
+    }
+}
+
+/// `--timeline`: has Metal reported when frame 1 reached the screen? Marks it once.
+fn presented_recorded() -> bool {
+    #[cfg(all(feature = "hybrid-backend", target_os = "macos"))]
+    {
+        static MARKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let bits = wgpu_hal::metal::FIRST_PRESENTED_SECS.load(std::sync::atomic::Ordering::Relaxed);
+        if bits == 0 {
+            return false;
+        }
+        if !MARKED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            let index = wgpu_hal::metal::FIRST_PRESENTED_INDEX.load(std::sync::atomic::Ordering::Relaxed);
+            common::mark_host_time(&format!("first frame on screen (Metal presentedTime; present #{index})"), f64::from_bits(bits));
+        }
+        true
+    }
+    #[cfg(not(all(feature = "hybrid-backend", target_os = "macos")))]
+    true
+}
+
+/// Phase 6 start-up options (each measured on its own).
+pub fn flag(name: &str) -> bool {
+    std::env::args().any(|a| a == name)
+}
+
+/// The window's attributes; `--bg` creates it hidden so its background colour
+/// can be set before it is first shown.
+fn window_attributes(name: &str, interactive: bool) -> winit::window::WindowAttributes {
+    let mut attrs = Window::default_attributes()
+        .with_title(format!("deka A/B: winit + {name}"))
+        .with_inner_size(LogicalSize::new(WINDOW_W as f64, WINDOW_H as f64));
+    if !interactive && !flag("--plain-window") {
+        attrs = attrs.with_active(false).with_window_level(WindowLevel::AlwaysOnTop);
+        if let Some((w, h)) = common::main_display_points() {
+            attrs = attrs.with_position(LogicalPosition::new(w - WINDOW_W as f64 - 8., h - WINDOW_H as f64 - 8.));
+        }
+    }
+    if flag("--bg") {
+        attrs = attrs.with_visible(false);
+    }
+    attrs
+}
+
+/// `--bg`: paint the NSWindow's background in the app's theme colour, then
+/// show it, so the first pixels on screen are already the right colour.
+fn show_with_background(window: &Window, rgb: u32) {
+    if !flag("--bg") || window.is_visible() == Some(true) {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::runtime::AnyObject;
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = window.window_handle()
+            && let RawWindowHandle::AppKit(h) = handle.as_raw()
+        {
+            let (r, g, b) = (((rgb >> 16) & 0xff) as f64 / 255., ((rgb >> 8) & 0xff) as f64 / 255., (rgb & 0xff) as f64 / 255.);
+            // SAFETY: `ns_view` is the window's live NSView (main thread);
+            // NSColor's class method returns an autoreleased colour.
+            unsafe {
+                let view = h.ns_view.as_ptr().cast::<AnyObject>();
+                let ns_window: *mut AnyObject = objc2::msg_send![view, window];
+                let color: *mut AnyObject = objc2::msg_send![objc2::class!(NSColor), colorWithSRGBRed: r, green: g, blue: b, alpha: 1.0f64];
+                if !ns_window.is_null() && !color.is_null() {
+                    let _: () = objc2::msg_send![ns_window, setBackgroundColor: color];
+                }
+            }
+        }
+    }
+    window.set_visible(true);
+    common::mark("window shown with theme background");
+}
+
+/// The theme background of each app (what the first frame will clear to).
+fn theme_background(app: AppKind) -> u32 {
+    match app {
+        AppKind::Ui | AppKind::Canvas => 0xffffff,
+        _ => 0x000000,
+    }
+}
+
+/// `--parley`: what the real backend does for text at start-up: a parley
+/// FontContext, our embedded UI font, and the first (Latin) layout.
+/// `--parley-cjk` also lays out CJK text (system font fallback), to measure
+/// what keeping fallback lazy saves.
+#[cfg(feature = "hybrid-backend")]
+pub fn parley_startup() {
+    use parley::{FontContext, LayoutContext, StyleProperty};
+    let mut font_cx = if flag("--parley-lazy") {
+        // Embedded UI font only; the system collection (and its scan) is
+        // created when a character the UI font lacks first appears.
+        let cx = FontContext {
+            collection: parley::fontique::Collection::new(parley::fontique::CollectionOptions { shared: false, system_fonts: false }),
+            source_cache: parley::fontique::SourceCache::default(),
+        };
+        common::mark("parley FontContext (no system fonts)");
+        cx
+    } else {
+        let cx = FontContext::new();
+        common::mark("parley FontContext::new (system font scan)");
+        cx
+    };
+    let families = font_cx.collection.register_fonts(parley::fontique::Blob::new(Arc::new(common::FONT_BYTES)), None);
+    let family = families
+        .first()
+        .and_then(|(id, _)| font_cx.collection.family_name(*id).map(str::to_owned))
+        .unwrap_or_else(|| "Atkinson Hyperlegible".into());
+    let mut layout_cx: LayoutContext<[u8; 4]> = LayoutContext::new();
+    let mut lay = |text: &str, font_cx: &mut FontContext| {
+        let mut b = layout_cx.ranged_builder(font_cx, text, 2.0, true);
+        b.push_default(StyleProperty::FontSize(14.));
+        b.push_default(StyleProperty::FontFamily(parley::FontFamily::Single(parley::FontFamilyName::Named(family.clone().into()))));
+        let mut layout = b.build(text);
+        layout.break_all_lines(None);
+        layout.height()
+    };
+    let _ = lay("Setting number 1: synchronise the workspace when idle", &mut font_cx);
+    common::mark("parley first Latin layout (embedded font)");
+    if flag("--parley-cjk") {
+        let _ = lay("设置 1：空闲时同步工作区", &mut font_cx);
+        common::mark("parley first CJK layout (system font fallback)");
+    }
+}
+
+/// `--early-fonts`: parley start-up on its own thread, joined before frame 1.
+#[cfg(feature = "hybrid-backend")]
+static EARLY_FONTS: std::sync::Mutex<Option<std::thread::JoinHandle<()>>> = std::sync::Mutex::new(None);
+
+/// Start the work that does not need the window, before the event loop.
+pub fn start_early_work() {
+    #[cfg(feature = "hybrid-backend")]
+    if flag("--parley") && flag("--early-fonts")
+        && let Ok(h) = std::thread::Builder::new().name("font-init".into()).spawn(parley_startup)
+        && let Ok(mut slot) = EARLY_FONTS.lock()
+    {
+        *slot = Some(h);
     }
 }
 
 impl<P: Presenter> ApplicationHandler for SparseApp<P> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if self.window.is_some() && self.presenter.is_some() {
             return;
         }
         common::trace("resumed");
+        common::mark("app resumed (NSApplication launched)");
         let t = Instant::now();
-        let mut attrs = Window::default_attributes()
-            .with_title(format!("deka A/B: winit + {}", P::NAME))
-            .with_inner_size(LogicalSize::new(WINDOW_W as f64, WINDOW_H as f64));
-        if !self.args.interactive {
-            attrs = attrs.with_active(false).with_window_level(WindowLevel::AlwaysOnTop);
-            if let Some(m) = event_loop.primary_monitor() {
-                let s = m.size().to_logical::<f64>(m.scale_factor());
-                attrs = attrs.with_position(LogicalPosition::new(s.width - WINDOW_W as f64 - 8., s.height - WINDOW_H as f64 - 8.));
-            }
-        }
-        let window = match event_loop.create_window(attrs) {
-            Ok(w) => Arc::new(w),
-            Err(e) => {
-                eprintln!("create window: {e}");
-                event_loop.exit();
-                return;
-            }
+        let window = match self.window.take() {
+            // `--window-first`: created before the event loop ran.
+            Some(w) => w,
+            None => match event_loop.create_window(window_attributes(P::NAME, self.args.interactive)) {
+                Ok(w) => {
+                    common::mark("window created");
+                    Arc::new(w)
+                }
+                Err(e) => {
+                    eprintln!("create window: {e}");
+                    event_loop.exit();
+                    return;
+                }
+            },
         };
+        show_with_background(&window, theme_background(self.args.app));
         self.times.window_ms = t.elapsed().as_secs_f64() * 1000.;
         let presenter = match P::new(window.clone(), &mut self.times) {
             Ok(p) => p,
@@ -743,7 +915,22 @@ impl<P: Presenter> ApplicationHandler for SparseApp<P> {
         let size = window.inner_size();
         let (lw, lh) = (size.width as f64 / scale, size.height as f64 / scale);
         self.content = Some(match self.args.app {
-            AppKind::Ui => Content::Ui { host: Host::new(common::UiApp), renderer: deka_native_ui::scene::Renderer::new(), scene: DekaScene::default() },
+            AppKind::Ui => {
+                let c = Content::Ui { host: Host::new(common::UiApp), renderer: deka_native_ui::scene::Renderer::new(), scene: DekaScene::default() };
+                common::mark("fonts loaded (deka renderer: fontdue, embedded font) + app host");
+                #[cfg(feature = "hybrid-backend")]
+                if flag("--parley") {
+                    let early = EARLY_FONTS.lock().ok().and_then(|mut s| s.take());
+                    match early {
+                        Some(h) => {
+                            let _ = h.join();
+                            common::mark("font-init thread joined");
+                        }
+                        None => parley_startup(),
+                    }
+                }
+                c
+            }
             AppKind::Canvas => {
                 let shapes = self.args.shapes.first().copied().unwrap_or(1_000);
                 let layout = if shapes <= 1_000 { graph::Layout::Force } else { graph::Layout::Laid };
@@ -759,6 +946,16 @@ impl<P: Presenter> ApplicationHandler for SparseApp<P> {
         });
         self.presenter = Some(presenter);
         self.window = Some(window.clone());
+        if flag("--draw-in-resumed") {
+            // Draw frame 1 now instead of waiting for the first RedrawRequested.
+            if common::timeline_mode() {
+                common::mark("frame 1 attempt from resumed()");
+            }
+            self.frame(event_loop);
+            if self.protocol.first_frame_done() {
+                return;
+            }
+        }
         window.request_redraw();
     }
 
@@ -766,6 +963,16 @@ impl<P: Presenter> ApplicationHandler for SparseApp<P> {
         match event {
             WindowEvent::CloseRequested => self.teardown(event_loop),
             WindowEvent::Occluded(occluded) => {
+                if common::timeline_mode() {
+                    common::mark(if occluded { "window occluded" } else { "window visible (unoccluded)" });
+                }
+                if !occluded && !self.visible_seen {
+                    self.visible_seen = true;
+                    if self.timeline_done() {
+                        self.teardown(event_loop);
+                        return;
+                    }
+                }
                 self.occluded = occluded;
                 if !occluded && let Some(w) = &self.window {
                     w.request_redraw();
@@ -782,6 +989,9 @@ impl<P: Presenter> ApplicationHandler for SparseApp<P> {
             WindowEvent::RedrawRequested => {
                 if !self.protocol.first_frame_done() {
                     common::trace("RedrawRequested");
+                    if common::timeline_mode() {
+                        common::mark("RedrawRequested (frame 1 attempt)");
+                    }
                 }
                 self.frame(event_loop);
             }
@@ -820,6 +1030,21 @@ impl<P: Presenter> ApplicationHandler for SparseApp<P> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if common::timeline_mode() && self.window.is_some() {
+            if self.timeline_done() {
+                self.teardown(event_loop);
+                return;
+            }
+            // Poll for the visibility event and Metal's presented time.
+            if self.protocol.first_frame_done() {
+                if self.idle_deadline.is_some_and(|d| Instant::now() >= d) {
+                    self.teardown(event_loop);
+                    return;
+                }
+                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(2)));
+                return;
+            }
+        }
         if let Some(deadline) = self.idle_deadline {
             if Instant::now() >= deadline {
                 self.protocol.idle_done();
@@ -836,18 +1061,45 @@ impl<P: Presenter> ApplicationHandler for SparseApp<P> {
 
 pub fn run_windowed<P: Presenter>(args: Args) {
     common::trace("main");
-    let event_loop = match EventLoop::new() {
+    let mut builder = EventLoop::builder();
+    #[cfg(target_os = "macos")]
+    if flag("--no-menu") {
+        // Skip winit's default menu bar (built while the app finishes launching).
+        use winit::platform::macos::EventLoopBuilderExtMacOS;
+        builder.with_default_menu(false);
+    }
+    let event_loop = match builder.build() {
         Ok(e) => e,
         Err(e) => {
             eprintln!("event loop: {e}");
             return;
         }
     };
+    common::mark("winit event loop created");
+    // `--window-first`: create the window before the event loop runs (winit
+    // 0.30's deprecated pre-run path), so the window server starts on it
+    // while NSApplication finishes launching.
+    #[allow(deprecated, reason = "the pre-run create_window is what this option measures")]
+    let early_window = if flag("--window-first") {
+        match event_loop.create_window(window_attributes(P::NAME, args.interactive)) {
+            Ok(w) => {
+                common::mark("window created (before event loop ran)");
+                show_with_background(&w, theme_background(args.app));
+                Some(Arc::new(w))
+            }
+            Err(e) => {
+                eprintln!("create window: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut app = SparseApp::<P> {
         protocol: Protocol::new(args.clone(), P::NAME),
         args,
         times: StartupTimes::default(),
-        window: None,
+        window: early_window,
         presenter: None,
         content: None,
         clock: Instant::now(),
@@ -855,6 +1107,7 @@ pub fn run_windowed<P: Presenter>(args: Args) {
         quit: false,
         occluded: false,
         cursor: (0., 0.),
+        visible_seen: false,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("event loop: {e}");

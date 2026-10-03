@@ -20,6 +20,7 @@ pub struct HybridPresenter {
     use_depth: bool,
     scene: vello_gpu::Scene,
     images: HashMap<String, (vello_gpu::ImageId, ImageSource)>,
+    presented_once: bool,
 }
 
 fn new_device(instance: &wgpu::Instance, surface: Option<&wgpu::Surface<'_>>, limits: wgpu::Limits) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue), String> {
@@ -29,6 +30,7 @@ fn new_device(instance: &wgpu::Instance, surface: Option<&wgpu::Surface<'_>>, li
         ..Default::default()
     }))
     .map_err(|e| format!("adapter: {e}"))?;
+    common::mark("wgpu adapter requested");
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("deka-ab hybrid"),
         required_features: wgpu::Features::empty(),
@@ -36,6 +38,7 @@ fn new_device(instance: &wgpu::Instance, surface: Option<&wgpu::Surface<'_>>, li
         ..Default::default()
     }))
     .map_err(|e| format!("device: {e}"))?;
+    common::mark("wgpu device created");
     Ok((adapter, device, queue))
 }
 
@@ -79,14 +82,87 @@ impl HybridPresenter {
     }
 }
 
+/// vello_gpu renderer with the command line's settings (`--small-atlas`,
+/// `--no-belt`), for a target of `w`x`h`.
+fn make_renderer(device: &wgpu::Device, w: u32, h: u32) -> (vello_gpu::Renderer, vello_gpu::Resources) {
+    let mut settings = vello_gpu::RenderSettings::default();
+    if std::env::args().any(|a| a == "--small-atlas") {
+        // Default image atlas is 4096x4096 RGBA (64 MB) on first upload; deka's
+        // glyph bitmaps fit in 1024x1024 (4 MB), which still grows on demand.
+        settings.memory_settings.image_atlas_config.atlas_size = (1024, 1024);
+    }
+    let (mut renderer, resources) = vello_gpu::Renderer::new_with(device, &vello_gpu::RenderTargetConfig { format: FORMAT, width: w as u16, height: h as u16 }, settings);
+    common::mark("vello_gpu renderer created (pipelines)");
+    // Fork: `--no-belt` restores the stock per-call staging uploads.
+    renderer.set_staging_belt(!std::env::args().any(|a| a == "--no-belt"));
+    (renderer, resources)
+}
+
+/// Phase 6 `--early-gpu`: wgpu instance, adapter, device and the vello_gpu
+/// renderer, created on a thread started from `main`, before winit creates
+/// the event loop and the window (the surface needs the window, so only it
+/// is left for the main thread).
+struct EarlyGpu {
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    renderer: vello_gpu::Renderer,
+    resources: vello_gpu::Resources,
+}
+
+static EARLY_GPU: Mutex<Option<std::thread::JoinHandle<Result<EarlyGpu, String>>>> = Mutex::new(None);
+
+pub fn start_early_gpu() {
+    if !std::env::args().any(|a| a == "--early-gpu") {
+        return;
+    }
+    let spawned = std::thread::Builder::new().name("gpu-init".into()).spawn(|| {
+        let instance = instance();
+        common::mark("wgpu Instance created");
+        let (adapter, device, queue) = new_device(&instance, None, wgpu::Limits::default())?;
+        // The window's size is not known yet: size for the default window at 2x;
+        // the renderer adapts to the real size on its first render.
+        let (renderer, resources) = make_renderer(&device, (WINDOW_W * 2.) as u32, (WINDOW_H * 2.) as u32);
+        Ok(EarlyGpu { instance, adapter, device, queue, renderer, resources })
+    });
+    if let (Ok(h), Ok(mut slot)) = (spawned, EARLY_GPU.lock()) {
+        *slot = Some(h);
+    }
+}
+
 impl Presenter for HybridPresenter {
     const NAME: &'static str = "vello_gpu";
 
     fn new(window: Arc<Window>, times: &mut StartupTimes) -> Result<Self, String> {
         let t = Instant::now();
-        let instance = instance();
+        let early = EARLY_GPU.lock().ok().and_then(|mut s| s.take());
+        let (instance, early) = match early {
+            Some(h) => {
+                let g = h.join().map_err(|_| "gpu-init thread panicked".to_owned())??;
+                common::mark("gpu-init thread joined");
+                (g.instance.clone(), Some(g))
+            }
+            None => {
+                let instance = instance();
+                common::mark("wgpu Instance created");
+                (instance, None)
+            }
+        };
         let surface = instance.create_surface(window.clone()).map_err(|e| format!("surface: {e}"))?;
-        let (_, device, queue) = new_device(&instance, Some(&surface), wgpu::Limits::default())?;
+        common::mark("wgpu surface created");
+        let (device, queue, prebuilt) = match early {
+            Some(g) => {
+                if !surface.get_capabilities(&g.adapter).formats.contains(&FORMAT) {
+                    return Err("early adapter cannot present to this window".into());
+                }
+                (g.device, g.queue, Some((g.renderer, g.resources)))
+            }
+            None => {
+                let (_, device, queue) = new_device(&instance, Some(&surface), wgpu::Limits::default())?;
+                (device, queue, None)
+            }
+        };
         let size = window.inner_size();
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -100,22 +176,16 @@ impl Presenter for HybridPresenter {
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
+        common::mark("surface configured");
         times.device_ms = t.elapsed().as_secs_f64() * 1000.;
         let t = Instant::now();
-        let mut settings = vello_gpu::RenderSettings::default();
         if std::env::args().any(|a| a == "--small-atlas") {
-            // Default image atlas is 4096x4096 RGBA (64 MB) on first upload; deka's
-            // glyph bitmaps fit in 1024x1024 (4 MB), which still grows on demand.
-            settings.memory_settings.image_atlas_config.atlas_size = (1024, 1024);
             println!("[vello_gpu] image atlas 1024x1024 (auto-grow)");
         }
-        let (mut renderer, resources) = vello_gpu::Renderer::new_with(
-            &device,
-            &vello_gpu::RenderTargetConfig { format: FORMAT, width: size.width as u16, height: size.height as u16 },
-            settings,
-        );
-        // Fork: `--no-belt` restores the stock per-call staging uploads.
-        renderer.set_staging_belt(!std::env::args().any(|a| a == "--no-belt"));
+        let (renderer, resources) = match prebuilt {
+            Some(r) => r,
+            None => make_renderer(&device, size.width, size.height),
+        };
         let no_depth = std::env::args().any(|a| a == "--no-depth");
         // Without depth testing, keep only a 1x1 placeholder (the real one is ~25 MB at 3200x2000).
         let depth_size = if no_depth { vello_gpu::RenderSize { width: 1, height: 1 } } else { vello_gpu::RenderSize { width: size.width as u16, height: size.height as u16 } };
@@ -133,6 +203,7 @@ impl Presenter for HybridPresenter {
             depth,
             use_depth: !std::env::args().any(|a| a == "--no-depth"),
             images: HashMap::new(),
+            presented_once: false,
         })
     }
 
@@ -193,8 +264,19 @@ impl Presenter for HybridPresenter {
         let depth = self.depth.clone();
         let (w, h) = (self.config.width, self.config.height);
         self.render_to(&view, &depth, w, h)?;
+        if !self.presented_once {
+            common::mark("first render submitted");
+        }
         self.window.pre_present_notify();
         self.queue.present(frame);
+        if !self.presented_once {
+            self.presented_once = true;
+            common::mark("first present returned");
+            if common::timeline_mode() {
+                let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+                common::mark("first frame GPU work done");
+            }
+        }
         Ok(Presented::Done)
     }
 
@@ -515,6 +597,7 @@ struct Offscreen {
 impl Offscreen {
     fn new(w: u32, h: u32) -> Option<Self> {
         let instance = instance();
+        common::mark("wgpu Instance created");
         let (_, device, queue) = new_device(&instance, None, wgpu::Limits::default()).ok()?;
         let rs = vello_gpu::RenderSize { width: w as u16, height: h as u16 };
         let (mut renderer, resources) = vello_gpu::Renderer::new(&device, &vello_gpu::RenderTargetConfig { format: wgpu::TextureFormat::Rgba8Unorm, width: w as u16, height: h as u16 });
@@ -790,4 +873,26 @@ pub fn scaling(frames: usize, counts: &[usize]) {
             println!("[scaling] {name:5} threads {threads:2} strip cache {:3}: scene encode+strips mean {:5.2} p95 {:5.2} ms | render() mean {:5.2} p95 {:5.2} ms (hits {hits}, misses {misses}, entries {entries})", if cache { "on" } else { "off" }, enc.mean(), enc.p95(), ren.mean(), ren.p95());
         }
     }
+}
+
+/// Phase 6 `--app startup`: the start-up timeline offscreen (no window), for
+/// machines where windows cannot be measured (bugsy over ssh). Same marks as
+/// the windowed run minus the winit/AppKit ones.
+pub fn startup_offscreen() {
+    let Some(mut off) = Offscreen::new(3200, 2000) else { return };
+    common::mark("vello_gpu renderer created (pipelines)");
+    crate::sparse::parley_startup();
+    let host = Host::new(crate::common::UiApp);
+    let deka_renderer = deka_native_ui::scene::Renderer::new();
+    common::mark("fonts loaded (deka renderer: fontdue, embedded font) + app host");
+    let deka = deka_renderer.render_at(&host.render(), 1600., 1000., 2., 0., false);
+    common::mark("first scene built + laid out (deka UI)");
+    off.upload(&deka);
+    let mut scene = new_scene(3200, 2000);
+    encode_deka(&mut scene, &deka, 2.0, &off.images);
+    scene.flush();
+    common::mark("first scene encoded (strips)");
+    off.render(&mut scene);
+    common::mark("first frame rendered offscreen (GPU done)");
+    common::print_timeline("vello_gpu offscreen");
 }

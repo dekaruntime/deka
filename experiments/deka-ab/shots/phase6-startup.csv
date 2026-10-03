@@ -1,0 +1,18 @@
+# kind,stack,category|marker,start_ms,end_ms (iMac, median of 7 warm launches, load 3.7-4.6)
+seg,GPUI 0.2.2,1,0.0,74.0
+seg,GPUI 0.2.2,2,74.0,142.3
+seg,GPUI 0.2.2,4,142.3,148.0
+seg,winit + wgpu + vello_gpu (before),1,0.0,95.8
+seg,winit + wgpu + vello_gpu (before),2,95.8,166.1
+seg,winit + wgpu + vello_gpu (before),3,166.1,254.3
+seg,winit + wgpu + vello_gpu (before),4,254.3,342.7
+seg,winit + wgpu + vello_gpu (after),1,0.0,76.6
+seg,winit + wgpu + vello_gpu (after),2,76.6,130.2
+seg,winit + wgpu + vello_gpu (after),3,130.2,146.0
+seg,winit + wgpu + vello_gpu (after),4,146.0,159.9
+mark,GPUI 0.2.2,window on screen,190.4,190.4
+mark,GPUI 0.2.2,frame on screen,244.6,244.6
+mark,winit + wgpu + vello_gpu (before),window on screen,290.3,290.3
+mark,winit + wgpu + vello_gpu (before),frame on screen,403.8,403.8
+mark,winit + wgpu + vello_gpu (after),window on screen,194.2,194.2
+mark,winit + wgpu + vello_gpu (after),frame on screen,248.7,248.7
