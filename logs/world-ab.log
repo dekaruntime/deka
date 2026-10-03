@@ -1,0 +1,12 @@
+before {"world_cpu_ms_per_s":57.5724,"footprint_mb":33.2890625,"resident_mb":52.30859375}
+exit=0
+after {"world_cpu_ms_per_s":64.78990000000002,"footprint_mb":32.6171875,"resident_mb":52.31640625}
+exit=0
+before {"world_cpu_ms_per_s":58.88169999999999,"footprint_mb":32.859375,"resident_mb":48.6953125}
+exit=0
+after {"world_cpu_ms_per_s":94.61189999999999,"footprint_mb":31.98046875,"resident_mb":48.30859375}
+exit=0
+before {"world_cpu_ms_per_s":96.80339999999998,"footprint_mb":32.55078125,"resident_mb":48.109375}
+exit=0
+after {"world_cpu_ms_per_s":81.34380000000002,"footprint_mb":32.30078125,"resident_mb":48.75390625}
+exit=0

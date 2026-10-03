@@ -1,0 +1,27 @@
+[package]
+name = "parley-evidence"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Before/after evidence for deka_native_ui text (fontdue -> parley). Not product code."
+
+[workspace]
+
+[dependencies]
+deka_native_ui = { path = "../deka/crates/deka_native_ui", features = ["world-audio", "runtime-shaders"] }
+deka_native_ir = { path = "../deka/crates/deka_native_ir" }
+deka_vm = { path = "../deka/crates/deka_vm", features = ["compiler", "ui"] }
+png = "0.18"
+libc = "0.2"
+serde_json = "1"
+
+[profile.release]
+debug = false
+
+# deka's shipped `native` profile, so startup/idle numbers match what ships.
+[profile.native]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

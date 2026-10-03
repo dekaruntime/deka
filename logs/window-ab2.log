@@ -1,0 +1,20 @@
+before latin {"start_to_first_frame_ms":196.845,"idle_cpu_ms_over_10s":39.390000000000036,"idle_footprint_mb":30.69921875,"idle_resident_mb":46.0078125}
+exit=0
+after latin {"start_to_first_frame_ms":200.69,"idle_cpu_ms_over_10s":41.870999999999995,"idle_footprint_mb":31.54296875,"idle_resident_mb":47.98046875}
+exit=0
+before latin {"start_to_first_frame_ms":209.989,"idle_cpu_ms_over_10s":67.50899999999993,"idle_footprint_mb":31.90234375,"idle_resident_mb":47.48046875}
+exit=0
+after latin {"start_to_first_frame_ms":176.794,"idle_cpu_ms_over_10s":42.69300000000003,"idle_footprint_mb":30.234375,"idle_resident_mb":46.45703125}
+exit=0
+before latin {"start_to_first_frame_ms":200.28099999999998,"idle_cpu_ms_over_10s":30.57399999999999,"idle_footprint_mb":31.109375,"idle_resident_mb":46.421875}
+exit=0
+after latin {"start_to_first_frame_ms":216.23999999999998,"idle_cpu_ms_over_10s":31.73200000000001,"idle_footprint_mb":31.63671875,"idle_resident_mb":47.91796875}
+exit=0
+before latin {"start_to_first_frame_ms":239.362,"idle_cpu_ms_over_10s":43.343999999999994,"idle_footprint_mb":31.20703125,"idle_resident_mb":46.4921875}
+exit=0
+after latin {"start_to_first_frame_ms":222.59599999999998,"idle_cpu_ms_over_10s":75.08400000000005,"idle_footprint_mb":32.0078125,"idle_resident_mb":48.2890625}
+exit=0
+before latin {"start_to_first_frame_ms":244.554,"idle_cpu_ms_over_10s":403.616,"idle_footprint_mb":32.3671875,"idle_resident_mb":47.6328125}
+exit=0
+after latin {"start_to_first_frame_ms":183.249,"idle_cpu_ms_over_10s":176.622,"idle_footprint_mb":32.9921875,"idle_resident_mb":49.171875}
+exit=0

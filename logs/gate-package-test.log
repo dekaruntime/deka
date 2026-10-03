@@ -1,0 +1,3 @@
+/Volumes/Projects/claude/.tmp-parley/package-tests/package-test-6x_u6_v0/stage/bundle/macos/Relocation Test.app
+/Volumes/Projects/claude/.tmp-parley/package-tests/package-test-6x_u6_v0/precompiled/bundle/macos/Relocation Test.app
+PASS: deka.json metadata/icon/resources, source change, relocated app handlers, signature, missing-payload failure

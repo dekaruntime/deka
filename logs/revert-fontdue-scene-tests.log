@@ -1,0 +1,39 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling syn v3.0.5
+   Compiling serde_derive v1.0.229
+   Compiling serde v1.0.229
+   Compiling deka_native_ui v0.60.1 (/Volumes/Projects/claude/deka/crates/deka_native_ui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.84s
+     Running tests/text.rs (.target/debug/deps/text-71cdf437bde13037)
+
+running 3 tests
+test every_visible_glyph_is_painted_once ... ok
+test text_boxes_take_their_measured_size_and_wrap_at_the_container ... FAILED
+test min_content_never_breaks_inside_a_word ... FAILED
+
+failures:
+
+---- text_boxes_take_their_measured_size_and_wrap_at_the_container stdout ----
+
+thread 'text_boxes_take_their_measured_size_and_wrap_at_the_container' (51686557) panicked at crates/deka_native_ui/tests/text.rs:47:9:
+assertion `left == right` failed: @1x
+  left: (128.0, 20.0)
+ right: (120.0, 20.0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- min_content_never_breaks_inside_a_word stdout ----
+
+thread 'min_content_never_breaks_inside_a_word' (51686556) panicked at crates/deka_native_ui/tests/text.rs:76:5:
+assertion `left == right` failed
+  left: 8.0
+ right: 56.0
+
+
+failures:
+    min_content_never_breaks_inside_a_word
+    text_boxes_take_their_measured_size_and_wrap_at_the_container
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p deka_native_ui --test text`

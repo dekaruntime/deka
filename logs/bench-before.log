@@ -1,0 +1,4 @@
+renderer new 2.126 ms; first Latin-only sheet frame @2x 1.836 ms (597 paints, 230 images)
+first full sheet frame (Japanese + emoji added) @2x 1.862 ms (678 paints, 275 images)
+sheet @2x steady frame: mean 1.875 ms  p50 1.777  p95 2.438  max 3.626
+world frame (animating): mean 0.185 ms  p50 0.169  p95 0.274  max 0.463

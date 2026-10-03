@@ -1,0 +1,35 @@
+   Compiling deka_native_ui v0.60.1 (/Volumes/Projects/claude/deka/crates/deka_native_ui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.07s
+     Running unittests src/lib.rs (.target/debug/deps/deka_native_ui-7eb60749dbbed948)
+
+running 13 tests
+test animation::tests::easing_zero_duration_and_clock_rollback_are_explicit ... ok
+test animation::tests::identity_survives_reordering_and_removal_releases_tracks ... ok
+test text::tests::falls_back_to_system_fonts_for_japanese_and_emoji ... FAILED
+test text::tests::rasterises_at_device_scale_with_the_same_logical_geometry ... ok
+test text::tests::wraps_at_the_box_width_and_only_at_break_opportunities ... ok
+test world::tests::movement_collision_and_focus_loss ... ok
+test text::tests::measures_known_strings_with_the_bundled_face ... ok
+test text::tests::rasterises_each_glyph_once_across_frames_and_colours ... ok
+test world::tests::diagonal_speed_and_frame_cadence_are_consistent ... ok
+test world::tests::depth_order_changes_when_walking_behind_tree ... ok
+test world::tests::door_fades_change_room_once_and_return_to_same_house ... ok
+test world::tests::reduced_motion_skips_fade_and_invalid_clock_does_not_poison_world ... ok
+test world::tests::pcm_is_finite_non_silent_and_mute_clears_pending_effects ... ok
+
+failures:
+
+---- text::tests::falls_back_to_system_fonts_for_japanese_and_emoji stdout ----
+ICU4X data error: No segmentation model for complex script: Chinese/Japanese
+
+thread 'text::tests::falls_back_to_system_fonts_for_japanese_and_emoji' (51669828) panicked at crates/deka_native_ui/src/text.rs:493:9:
+no .notdef boxes
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    text::tests::falls_back_to_system_fonts_for_japanese_and_emoji
+
+test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p deka_native_ui --lib`

@@ -1,0 +1,36 @@
+before latin {"start_to_first_frame_ms":1111.249,"idle_cpu_ms_over_10s":31.059000000000005,"idle_footprint_mb":30.3125,"idle_resident_mb":45.7734375}
+exit=0
+after latin {"start_to_first_frame_ms":838.657,"idle_cpu_ms_over_10s":33.667,"idle_footprint_mb":31.625,"idle_resident_mb":48.078125}
+exit=0
+before latin {"start_to_first_frame_ms":228.17200000000003,"idle_cpu_ms_over_10s":29.702000000000005,"idle_footprint_mb":31.33203125,"idle_resident_mb":46.73828125}
+exit=0
+after latin {"start_to_first_frame_ms":231.657,"idle_cpu_ms_over_10s":89.77400000000002,"idle_footprint_mb":31.7734375,"idle_resident_mb":48.07421875}
+exit=0
+before latin {"start_to_first_frame_ms":196.20499999999998,"idle_cpu_ms_over_10s":489.13000000000005,"idle_footprint_mb":30.828125,"idle_resident_mb":46.33203125}
+exit=0
+after latin {"start_to_first_frame_ms":231.296,"idle_cpu_ms_over_10s":365.734,"idle_footprint_mb":32.34765625,"idle_resident_mb":48.703125}
+exit=0
+before latin {"start_to_first_frame_ms":278.815,"idle_cpu_ms_over_10s":256.3739999999999,"idle_footprint_mb":31.93359375,"idle_resident_mb":47.41796875}
+exit=0
+after latin {"start_to_first_frame_ms":221.48000000000002,"idle_cpu_ms_over_10s":24.546999999999986,"idle_footprint_mb":31.51171875,"idle_resident_mb":47.7109375}
+exit=0
+before latin {"start_to_first_frame_ms":229.11200000000002,"idle_cpu_ms_over_10s":24.249999999999993,"idle_footprint_mb":31.484375,"idle_resident_mb":46.65625}
+exit=0
+after latin {"start_to_first_frame_ms":224.852,"idle_cpu_ms_over_10s":213.60899999999998,"idle_footprint_mb":31.52734375,"idle_resident_mb":47.76953125}
+exit=0
+before latin {"start_to_first_frame_ms":217.934,"idle_cpu_ms_over_10s":475.512,"idle_footprint_mb":32.72265625,"idle_resident_mb":48.18359375}
+exit=0
+after latin {"start_to_first_frame_ms":258.49100000000004,"idle_cpu_ms_over_10s":230.446,"idle_footprint_mb":34.86328125,"idle_resident_mb":51.4453125}
+exit=0
+before full {"start_to_first_frame_ms":182.125,"idle_cpu_ms_over_10s":82.83200000000002,"idle_footprint_mb":32.6171875,"idle_resident_mb":48.04296875}
+exit=0
+after full {"start_to_first_frame_ms":261.512,"idle_cpu_ms_over_10s":32.43600000000002,"idle_footprint_mb":35.4765625,"idle_resident_mb":57.390625}
+exit=0
+before full {"start_to_first_frame_ms":191.0,"idle_cpu_ms_over_10s":30.973,"idle_footprint_mb":30.8359375,"idle_resident_mb":46.36328125}
+exit=0
+after full {"start_to_first_frame_ms":259.328,"idle_cpu_ms_over_10s":26.158000000000015,"idle_footprint_mb":33.8515625,"idle_resident_mb":52.55078125}
+exit=0
+before full {"start_to_first_frame_ms":199.466,"idle_cpu_ms_over_10s":23.879999999999985,"idle_footprint_mb":31.04296875,"idle_resident_mb":46.40625}
+exit=0
+after full {"start_to_first_frame_ms":255.091,"idle_cpu_ms_over_10s":20.84199999999997,"idle_footprint_mb":33.390625,"idle_resident_mb":51.85546875}
+exit=0
