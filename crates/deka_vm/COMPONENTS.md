@@ -6,7 +6,16 @@ node tree; dynamic children, classes, and input values are evaluated initially
 and when an observed source address changes. The component owns a lasting Rust node store; a frame
 contains presentation snapshots plus input specifications for the platform's
 editable text adapter. Compatible elements/text in the same structural slot
-retain internal identities; an omitted conditional does not shift later slots. Removed or replaced nodes receive fresh identities on insertion.
+retain internal identities; an omitted conditional does not shift later slots. A replacement or newly inserted node receives a fresh identity.
+
+The node allocation itself is retained, rather than an entry in a strong index.
+Roots and children hold strong node references; parent links and the identity
+index are weak. A retained reference keeps its detached node and subtree usable
+without keeping its former parent or session VM alive. Dropping the last root,
+child or handle reference releases the resource; expired index entries are
+pruned during tree updates. Independent sessions never alias their node resources,
+even when their local display identity strings match. Public DekaScript handle
+brands and queries still await the APS 73 approval recorded under note 08.
 
 Native events queue closure handles onto the persistent VM scheduler, then the
 host requests a new frame. Async handlers and their child tasks survive the
