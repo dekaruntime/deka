@@ -167,6 +167,7 @@ pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
         modifiers: ModifiersState::empty(),
         focused: true,
         presented: 0,
+        drawn_scale: None,
         shown_with_frame: false,
         menu_installed: false,
         failed: None,
@@ -204,6 +205,8 @@ struct Shell<C: Content> {
     modifiers: ModifiersState,
     focused: bool,
     presented: u64,
+    /// The scale factor the last frame was drawn at.
+    drawn_scale: Option<f64>,
     /// Frame one went into the window before it was shown (macOS), so the
     /// window has its content when it first becomes visible.
     shown_with_frame: bool,
@@ -301,12 +304,21 @@ impl<C: Content> Shell<C> {
         if size.width == 0 || size.height == 0 {
             return;
         }
+        // Showing a window reports its size again: nothing to redraw then.
         if (size.width, size.height) != (surface.config.width, surface.config.height) {
             surface.config.width = size.width;
             surface.config.height = size.height;
             surface.surface.configure(&gpu.device, &surface.config);
+            self.schedule.invalidate();
         }
-        self.schedule.invalidate();
+    }
+
+    /// The window's scale factor is `scale` (winit also reports it when a
+    /// window is first shown): redraw only if frames were drawn at another.
+    fn rescale(&mut self, scale: f64) {
+        if self.drawn_scale != Some(scale) {
+            self.schedule.invalidate();
+        }
     }
 
     fn input(&mut self, input: Input) {
@@ -367,6 +379,7 @@ impl<C: Content> Shell<C> {
         );
         trace::mark("frame: scene built");
         gpu.draw_into_layer(&surface.surface, &surface.config, scene, scale)?;
+        self.drawn_scale = Some(scale);
         trace::mark("frame: presented");
         Ok(scene.animating)
     }
@@ -488,6 +501,7 @@ impl<C: Content> Shell<C> {
         }
         window.pre_present_notify();
         gpu.queue.present(texture);
+        self.drawn_scale = Some(scale);
         if first {
             trace::mark("frame: presented");
         }
@@ -526,7 +540,7 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.resize(size),
-            WindowEvent::ScaleFactorChanged { .. } => self.schedule.invalidate(),
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => self.rescale(scale_factor),
             WindowEvent::Occluded(true) => self.schedule.set_occluded(true),
             WindowEvent::Occluded(false) => {
                 trace::mark("visible");
