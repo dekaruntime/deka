@@ -14,7 +14,6 @@ fn hosts() -> (Hosts, Lines) {
                 vec![HostType::String],
                 HostType::Unit,
                 false,
-                None,
                 move |args| {
                     let HostValue::String(text) = &args[0] else {
                         panic!("console sink expects text");
@@ -124,7 +123,6 @@ fn diagnostic_output_requires_a_typed_stderr_sink() {
             vec![HostType::String],
             HostType::Number,
             false,
-            None,
             |_| HostReply::Ready(Ok(HostValue::Number(1.))),
         ))
         .unwrap();

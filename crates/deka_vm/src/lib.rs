@@ -9,6 +9,7 @@ pub mod compiler;
 pub mod demo;
 mod heap;
 mod host;
+pub mod http_headers;
 mod json;
 pub use json::{JsonField, JsonShape};
 mod machine;
@@ -37,3 +38,6 @@ pub mod v8_control;
 
 #[cfg(feature = "host")]
 pub mod url;
+
+#[cfg(feature = "host")]
+pub mod http_request;

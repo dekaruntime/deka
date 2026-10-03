@@ -88,7 +88,6 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
             vec![],
             HostType::Handle("TextEncoder".into()),
             false,
-            None,
             |_| {
                 HostReply::Ready(Ok(HostValue::Handle(HostHandle::new(
                     "TextEncoder",
@@ -104,7 +103,6 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
             vec![HostType::Handle("TextEncoder".into()), HostType::String],
             HostType::Bytes,
             false,
-            None,
             |args| {
                 let [HostValue::Handle(handle), HostValue::String(text)] = args.as_slice() else {
                     unreachable!("checked text encoder arguments")
@@ -127,7 +125,6 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
             ],
             HostType::Handle("TextDecoder".into()),
             false,
-            None,
             |args| {
                 let [HostValue::String(label), HostValue::Record(options)] = args.as_slice() else {
                     unreachable!("checked text decoder arguments")
@@ -155,7 +152,6 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
             ],
             HostType::String,
             false,
-            None,
             |args| {
                 let [
                     HostValue::Handle(handle),
@@ -185,7 +181,6 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
             vec![HostType::Handle("TextEncoder".into())],
             HostType::String,
             false,
-            None,
             |args| {
                 let HostValue::Handle(handle) = &args[0] else {
                     unreachable!("checked encoder")
@@ -209,7 +204,6 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
                 vec![HostType::Handle("TextDecoder".into())],
                 ty,
                 false,
-                None,
                 move |args| {
                     let HostValue::Handle(handle) = &args[0] else {
                         unreachable!("checked decoder")

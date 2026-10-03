@@ -1,0 +1,57 @@
+# Native requests
+
+`Request(url)` returns `Result<Request, string>`. It constructs a Rust-owned
+GET request with an empty header list and no body. Construction performs no
+network I/O. Pass an absolute URL: native programs have no ambient browser base.
+Invalid URLs and URLs containing a username or password return `Err`; they never
+throw.
+
+```ds
+fn describe(request: Request) string {
+    return request.method + " " + request.url
+}
+const label = match Request("https://EXAMPLE.com:443/a/../tour#project") {
+    Ok(request) => describe(request),
+    Err(message) => "Invalid request: " + message,
+}
+console.log(label)
+// GET https://example.com/tour#project
+```
+
+`url`, `method`, and `headers` are readonly properties. URL normalization uses
+the same Rust URL implementation as the [URL global](./url). `Request.url`
+retains its fragment, following the [Fetch Request getter](https://fetch.spec.whatwg.org/#dom-request-url).
+The later HTTP transport decides which schemes it supports and excludes the
+fragment when sending a request.
+
+## Shared headers
+
+`request.headers` is a mutable [Headers](./headers) handle. Reading the property
+repeatedly returns the same Rust-owned resource. Aliases see each other's edits,
+and a retained header handle remains usable after the request binding is released.
+
+```ds
+fn project(request: Request) string {
+    const headers = request.headers
+    const updated = headers.set("X-Project", "Deka")
+    return match request.headers.get("x-project") {
+        Ok(value) => string(value),
+        Err(message) => message,
+    }
+}
+console.log(match Request("https://example.com") {
+    Ok(request) => project(request),
+    Err(message) => message,
+})
+// Some("Deka")
+```
+
+Each new request starts with its own empty headers. Header operations use the
+native Headers validation and Result rules. Supplying the wrong constructor or
+header argument type, forging a request with a record, or assigning to a readonly
+request property is a compile error.
+
+This first native slice supports the default GET constructor and metadata.
+RequestInit/input/body overloads, body consumption, cloning, abort signals,
+HTTP transport policies, and browser forwarding remain separate work. It does
+not accept an initializer object yet.
