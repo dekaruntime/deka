@@ -106,6 +106,24 @@ fn timeline_ms(label: &str) -> Option<f64> {
         .map(|(ms, _)| *ms)
 }
 
+/// The backend's own start-up marks (the new window's `window::trace`).
+pub static BACKEND_MARKS: Mutex<Option<fn() -> Vec<(&'static str, Instant)>>> = Mutex::new(None);
+
+/// `TRACE` line: every mark in ms since exec, in time order.
+fn trace_line() -> String {
+    let now_ms = usage().since_exec_ns as f64 / 1e6;
+    let now = Instant::now();
+    let mut all: Vec<(f64, String)> = TIMELINE.lock().map(|t| t.clone()).unwrap_or_default();
+    if let Some(f) = BACKEND_MARKS.lock().ok().and_then(|f| *f) {
+        for (label, at) in f() {
+            all.push((now_ms - now.duration_since(at).as_secs_f64() * 1000., label.to_owned()));
+        }
+    }
+    all.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let parts: Vec<String> = all.iter().map(|(ms, l)| format!("{l}={ms:.1}")).collect();
+    format!("TRACE {}", parts.join(" | "))
+}
+
 static ON_SCREEN: AtomicBool = AtomicBool::new(false);
 /// Bounds of this process's window when the window server first listed it.
 static FIRST_BOUNDS: Mutex<Option<display::Rect>> = Mutex::new(None);
@@ -494,6 +512,7 @@ impl Protocol {
             load_avg(),
             placement()
         );
+        println!("{}", trace_line());
     }
 
     fn idle(&self, secs: f64) {

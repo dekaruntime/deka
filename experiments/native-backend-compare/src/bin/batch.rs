@@ -245,7 +245,9 @@ fn main() {
             say!("FAIL {backend} {}: the child saw its window off the virtual display", args.join(" "));
             return false;
         }
-        let windowed = args.first() != Some(&"snap") || backend == "gpui";
+        // Every run opens a window except the new backend's offscreen snap and
+        // the comparison.
+        let windowed = !matches!(args.first(), Some(&"snap") | Some(&"compare")) || backend == "gpui";
         let needs_result = args.first() != Some(&"snap") && args.first() != Some(&"compare");
         // A start-up run can exit within one poll of its window appearing;
         // then the child's own sighting (placement=virtual) is the evidence.
@@ -324,6 +326,9 @@ fn main() {
     for r in &results {
         let _ = writeln!(log, "{r}");
     }
+    for line in summary(&results) {
+        say!("{line}");
+    }
     if interrupted {
         say!("INTERRUPTED");
         std::process::exit(130);
@@ -332,4 +337,62 @@ fn main() {
         std::process::exit(1);
     }
     say!("OK {} results; every window stayed on virtual display {id}", results.len());
+}
+
+fn median(mut v: Vec<f64>) -> f64 {
+    if v.is_empty() {
+        return f64::NAN;
+    }
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    if n % 2 == 1 { v[n / 2] } else { (v[n / 2 - 1] + v[n / 2]) / 2. }
+}
+
+/// Median of each metric per (kind, backend, app), with its run count.
+fn summary(results: &[String]) -> Vec<String> {
+    let parse = |line: &str| -> Vec<(String, String)> {
+        line.split_whitespace()
+            .filter_map(|kv| kv.split_once('='))
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect()
+    };
+    let metrics: [(&str, &[&str]); 3] = [
+        ("start", &["visible_with_frame_ms", "first_frame_ms", "window_on_screen_ms", "footprint_mb", "gpu_mb"]),
+        ("idle", &["redraws", "cpu_pct", "footprint_mb", "gpu_mb"]),
+        ("animate", &["fps", "cpu_pct", "kernel_pct", "footprint_mb", "gpu_mb"]),
+    ];
+    let mut out = vec![];
+    for (kind, keys) in metrics {
+        let mut groups: Vec<(String, String)> = vec![];
+        for line in results.iter().filter(|l| l.starts_with(&format!("RESULT {kind} "))) {
+            let kv = parse(line);
+            let get = |k: &str| kv.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone()).unwrap_or_default();
+            let g = (get("backend"), get("app"));
+            if !groups.contains(&g) {
+                groups.push(g);
+            }
+        }
+        for (backend, app) in groups {
+            let rows: Vec<Vec<(String, String)>> = results
+                .iter()
+                .filter(|l| l.starts_with(&format!("RESULT {kind} ")))
+                .map(|l| parse(l))
+                .filter(|kv| {
+                    kv.contains(&("backend".into(), backend.clone())) && kv.contains(&("app".into(), app.clone()))
+                })
+                .collect();
+            let cols: Vec<String> = keys
+                .iter()
+                .map(|k| {
+                    let vals: Vec<f64> = rows
+                        .iter()
+                        .filter_map(|kv| kv.iter().find(|(a, _)| a == k).and_then(|(_, v)| v.parse().ok()))
+                        .collect();
+                    format!("{k}={:.2}", median(vals))
+                })
+                .collect();
+            out.push(format!("MEDIAN {kind} backend={backend} app={app} n={} {}", rows.len(), cols.join(" ")));
+        }
+    }
+    out
 }

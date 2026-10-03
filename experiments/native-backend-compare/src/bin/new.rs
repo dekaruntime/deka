@@ -25,6 +25,9 @@ fn main() {
         return;
     }
     let protocol = Protocol::new("new");
+    if let Ok(mut m) = BACKEND_MARKS.lock() {
+        *m = Some(deka_native_ui::window::trace::marks);
+    }
     let display = require_virtual_display();
     let on_frame = move |_: deka_native_ui::window::Frame| protocol.frame();
     match app_name().as_str() {
