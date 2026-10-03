@@ -46,8 +46,9 @@ reactor wakes the VM through the window's turn/wake interface when work complete
 
 This first surface accepts absolute HTTP/HTTPS URL strings with no embedded
 credentials. It normalizes the URL through the same engine as Request and removes
-the fragment before transport. Request initialization, Request-valued arguments
-and AbortController/AbortSignal are separate surfaces.
+the fragment before transport. The optional signal initializer is documented in
+[request cancellation](./abort). Other Request initialization and Request-valued
+arguments remain separate surfaces.
 
 Redirects retain the old Rust transport's ten-request bound and revalidate each
 URL's scheme and credentials. `response.url` reports the final URL. Network
@@ -59,4 +60,4 @@ The buffered response limit is 16 MiB, inherited from the earlier Rust HTTP
 transport and now enforced while receiving data, including chunked responses.
 There is no implicit proxy configuration from environment variables. Dropping or
 cancelling the VM releases pending host futures and their active requests.
-Individual request aborts and timeouts belong to AbortController/AbortSignal.
+Individual request aborts and timeouts use [AbortController/AbortSignal](./abort).

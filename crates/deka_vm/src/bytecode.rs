@@ -109,6 +109,8 @@ pub enum Op {
     /// source's fields merged over it. Backs `{...obj}` in object literals.
     RecordExtend,
     Field(String),
+    /// Only checker-proven Option fields may default to nominal None.
+    OptionalField(String),
     /// Like `Field`, but a record without the key stays itself. Backs the
     /// embed-path walk in a promoted method call: a literal may nest the
     /// embedded record under its type name or carry its fields flat.

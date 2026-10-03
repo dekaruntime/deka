@@ -205,6 +205,105 @@ export fn App() { let message="idle"; return <view><p>{message}</p><button onCli
         drop(host);
         assert_eq!(server.finish().unwrap(), ["/message"]);
     }
+    #[test]
+    fn desktop_button_cancels_one_fetch_keeps_others_and_handles_a_transport_failure() {
+        use std::io::Read;
+        let (arrived, receiver) = tokio::sync::oneshot::channel();
+        let arrived = std::sync::Mutex::new(Some(arrived));
+        let server = http_fixture::Server::new(move |path, stream| match path {
+            "/cancel" => {
+                arrived
+                    .lock()
+                    .map_err(|_| std::io::Error::other("poisoned arrival gate"))?
+                    .take()
+                    .ok_or_else(|| std::io::Error::other("duplicate cancellation"))?
+                    .send(())
+                    .map_err(|_| std::io::Error::other("arrival receiver dropped"))?;
+                let mut byte = [0];
+                match stream.read(&mut byte) {
+                    Ok(0) => Ok(vec![]),
+                    Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => Ok(vec![]),
+                    Ok(_) => Err(std::io::Error::other(
+                        "cancelled desktop request stayed connected",
+                    )),
+                    Err(e) => Err(e),
+                }
+            }
+            "/good" => Ok(http_fixture::reply("200 OK", "", br#""After""#)),
+            "/fail" => Ok(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort"
+                    .to_vec(),
+            ),
+            _ => Err(std::io::Error::other("unexpected request")),
+        })
+        .unwrap();
+        let source = format!(
+            r#"export fn App() {{
+            let message="Ready";
+            return (<view><p>{{message}}</p><button onClick={{async fn(){{
+                message="Loading";
+                const controller=AbortController();
+                const stopped=fetch("{}",{{signal:Some(controller.signal)}});
+                const good=fetch("{}"); const failed=fetch("{}");
+                await arrived(); controller.abort("Stopped");
+                const a=match await stopped{{Ok(r)=>"Unexpected",Err(e)=>e}};
+                const b=unwrap(await good) or{{message="Good failed";return;}};
+                const text=unwrap(await b.json<string>()) or{{message="JSON failed";return;}};
+                const error=match await failed{{Ok(r)=>"Unexpected",Err(e)=>"Failed"}};
+                message=a+";"+text+";"+error;
+            }}}}>Load</button></view>);
+        }}"#,
+            server.url("/cancel"),
+            server.url("/good"),
+            server.url("/fail")
+        );
+        let app = Desktop::new(|| {
+            let mut hosts = crate::hosts()?;
+            let arrival = std::cell::RefCell::new(Some(receiver));
+            hosts.register(
+                HostOp::new("arrived", vec![], HostType::Unit, true, move |_| {
+                    let receiver = arrival.borrow_mut().take().expect("one arrival consumer");
+                    HostReply::Pending(Box::pin(async move {
+                        receiver.await.map_err(|e| e.to_string())?;
+                        Ok(HostValue::Unit)
+                    }))
+                })
+                .with_global_binding(),
+            )?;
+            let program = compiler::compile_entry(&source, &hosts, "App")?;
+            ui::VmApp::with_hosts(program, hosts)
+        })
+        .unwrap();
+        let mut host = deka_native_ui::Host::new(app);
+        let (send, receive) = mpsc::sync_channel(1);
+        let waker = Waker::from(Arc::new(Signal(send)));
+        host.set_waker(deka_native_ui::Waker::new(move || waker.wake_by_ref()));
+        assert_eq!(text(&host.render()), "ReadyLoad");
+        host.click(0);
+        for _ in 0..400 {
+            if text(&host.render()) == "Stopped;After;FailedLoad" {
+                break;
+            }
+            if host.has_ready_work() {
+                host.run_turn(32);
+            } else {
+                receive
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("cancel/fetch completion lost the window wake");
+            }
+        }
+        assert_eq!(text(&host.render()), "Stopped;After;FailedLoad");
+        assert!(!host.has_ready_work());
+        for _ in 0..32 {
+            assert!(!host.run_turn(32));
+        }
+        drop(host);
+        let requests = server.finish().unwrap();
+        assert_eq!(requests.len(), 3);
+        for path in ["/cancel", "/good", "/fail"] {
+            assert!(requests.iter().any(|request| request == path));
+        }
+    }
     #[cfg(feature = "desktop")]
     #[test]
     fn a_reloaded_vm_keeps_the_windows_wake_and_finishes_new_async_work() {

@@ -1,0 +1,53 @@
+# Native request cancellation
+
+`AbortController()` creates a Rust-owned controller. Its readonly `.signal` is
+one canonical `AbortSignal`; aliases observe the same state. `controller.abort()`
+sets the default string reason `"AbortError"`. `controller.abort("Stopped")`
+sets a custom string reason. The first abort wins.
+
+`signal.aborted` is a boolean and `signal.reason` is `Option<string>`. A signal
+never throws. Pass it to fetch through the optional signal initializer:
+
+```ds
+async fn cancelOne(url: string) Promise<string> {
+    const controller = AbortController()
+    const request = fetch(url, { signal: Some(controller.signal) })
+    controller.abort("Stopped")
+    return match await request {
+        Ok(response) => "Unexpected response",
+        Err(reason) => reason,
+    }
+}
+```
+
+`cancelOne(url)` returns `Stopped`. The `Some(...)` is DekaScript's existing
+Option syntax. Omit the initializer, pass `{}`, or use `{ signal: None }` to run
+without a signal. Cancelling a pending request drops its Rust HTTP future and
+connection; unrelated requests and VM tasks continue. A pre-aborted signal
+returns `Err(reason)` without opening a connection.
+
+```ds
+async fn withDeadline(url: string) Promise<string> {
+    const signal = unwrap(AbortSignal.timeout(0)) or { return "Invalid timeout"; }
+    return match await fetch(url, { signal: Some(signal) }) {
+        Ok(response) => "Unexpected response",
+        Err(reason) => reason,
+    }
+}
+```
+
+`withDeadline(url)` returns `TimeoutError`. Replace `0` with a nonnegative whole
+number of milliseconds for an actual deadline. `AbortSignal.timeout(ms)` returns
+`Result<AbortSignal, string>` and rejects fractional, negative, non-finite or
+unsafe integer durations. The deadline uses Tokio's clock and is shared across
+all requests using the signal. Subscriptions belong to pending operations and
+are released when those operations finish or are dropped. An unused signal does
+not spawn a detached timer or keep a program alive.
+
+These are buffered requests: abort applies while fetch sends the request and
+receives the full body. Once fetch has returned a Response, later aborts do not
+invalidate its already owned body. Streaming bodies, event listeners,
+AbortSignal.any/abort and arbitrary JavaScript abort reasons are separate
+surfaces. Other Request initialization fields remain under the Request contract;
+this initializer supplies a signal only. Desktop async handlers use exactly the
+same operations through the VM's turn/wake interface.
