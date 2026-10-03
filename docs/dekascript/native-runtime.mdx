@@ -380,9 +380,28 @@ are rejected.
 
 The package must declare the requested name/version and provide a `.ds` or
 `.dsx` entry. Imports use its package name as described above. This initial
-native command supports packages without dependencies of their own; packages
-declaring transitive dependencies are rejected explicitly. Lock replay and
-checksum enforcement are separate from recording a downloaded tarball's hash.
+native command installs packages and their own dependencies using exact pins.
+
+`deka install` restores exactly the packages pinned in `deka.lock`, using their
+recorded tarball URLs without selecting new versions. It replaces stale files
+and packages, and preserves `deka.json` and `deka.lock` byte for byte. All
+downloads and package checks finish before the existing module tree is replaced;
+a failed download leaves that tree intact. An empty lock restores an empty tree.
+Both re-adding the same locked version and replaying its lock entry verify the
+tarball's SHA-256 before replacing live files. A changed archive is a named
+checksum error; a missing or malformed locked hash is refused. A first download
+records its hash, and an explicit version change records the new archive's hash.
+The reused package index lists versions; it does not provide a separate digest
+for a first download.
+
+Package commands accept `--directory <project>` to select a project explicitly;
+otherwise they use the current directory.
+
+Package archives are checked before promotion: JavaScript, WASM, Rust source/artifacts, native executables, shared libraries and native object/archive files are refused with the offending path. WASM and native binary signatures are checked even when the file is renamed. DekaScript source, metadata and ordinary assets remain supported.
+
+A package’s own exact-pin dependencies are downloaded into the same flat `ds_modules` tree and recorded with their edges, URLs and hashes in `deka.lock`. Shared dependencies and cycles are resolved once; conflicting pins fail explicitly. Add stages the complete reachable dependency graph before replacing it. Install replays the locked graph without registry version selection and checks that each archive’s dependency declarations agree with the lock. Imports inside a package use that package’s declarations; root imports still require a root `deka.json` declaration.
+
+Package commands return a nonzero status for unknown packages or versions, download failures, checksum mismatches and non-DekaScript archives. Archive errors include the package/version and offending file where available, so a failed transitive package is identifiable. These errors preserve the previous installation and project/lock bytes.
 
 
 ## CLI async lifetime

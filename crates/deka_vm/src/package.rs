@@ -5,6 +5,11 @@ use std::collections::BTreeMap;
 /// Version, tarball URL, dependency metadata, tarball SHA-256.
 pub type LockEntry = (String, String, serde_json::Value, String);
 
+/// Legacy pm stored name@version descriptors; native pins store just version.
+pub fn version_pin<'a>(name: &str, pin: &'a str) -> &'a str {
+    pin.strip_prefix(&format!("{name}@")).unwrap_or(pin)
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Lock {
     #[serde(rename = "lockfileVersion")]
@@ -24,12 +29,7 @@ impl Lock {
         self.packages
             .into_iter()
             .map(|(name, (pin, _, _, _))| {
-                // Legacy pm entries used name@version; native entries store the
-                // version directly. Both describe the same exact package pin.
-                let version = pin
-                    .strip_prefix(&format!("{name}@"))
-                    .unwrap_or(&pin)
-                    .to_owned();
+                let version = version_pin(&name, &pin).to_owned();
                 (name, version)
             })
             .collect()
