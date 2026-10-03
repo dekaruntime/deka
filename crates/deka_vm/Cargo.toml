@@ -49,4 +49,5 @@ path = "src/bin/v8_ui.rs"
 required-features = ["gpu", "v8-control"]
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 tempfile = "3.23"
