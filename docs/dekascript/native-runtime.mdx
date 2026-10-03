@@ -50,13 +50,16 @@ state changed after events;
 Rust advances the animation between events without executing more VM code.
 Rust retains the nodes between component renders. Compatible elements and text
 nodes in the same structural slot keep their internal identity when their text,
-classes or handlers change. Removing a node or replacing its element kind ends
-that identity; showing a new node at the old position gives it a fresh identity.
+classes or handlers change. Removing a node detaches it from the visible tree;
+showing a new node at the old position or replacing the element kind gives the
+new node a fresh identity.
 Desktop and browser presentation snapshots use the same retained store. These
 internal identities are separate from author-supplied attributes.
 
 [Binding patches and structural slots](native/binding-patches.mdx) explains
 selective reevaluation, retained identity, and last-authored property ownership.
+[Node resources and handle lifetime](native/node-handles.mdx) describes retained
+aliases, detached ownership, and the pending public node API.
 
 Successful source edits restart state. Compilation or initial
 render errors keep the last working application.

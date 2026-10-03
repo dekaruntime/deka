@@ -1,0 +1,42 @@
+# Native node resources and handle lifetime
+
+The native tree keeps one Rust allocation for each node. An internal handle
+points to that allocation, rather than a copy of the renderer's current frame.
+Aliases share the same node and observe its current effective properties.
+Desktop and browser presentation adapters use the same store.
+
+The visible root and each parent's ordered child list own their nodes. A retained
+handle can also own a node. Parent links and the identity index are weak: they
+help locate an existing node without keeping an unreachable tree alive.
+
+Removing a node detaches it from the visible tree and clears its parent link.
+An existing handle keeps that node and its subtree alive. Showing a new node in
+the old slot creates a different allocation and identity. Dropping the last
+root, child, or retained reference releases the node and its resources; expired
+index entries are pruned during tree updates. A child's handle does not keep its
+former parent or the component VM alive.
+
+Different application sessions never alias their node resources. Their local
+renderer identity strings can look alike, but those strings do not establish
+resource equality or permit a handle to name a node in another session. An
+identity lookup is internal; it is separate from an author's `id` attribute.
+
+## VM ownership and current public scope
+
+The same node allocation can be held as a typed, Rust-owned opaque VM value.
+DekaScript aliases and containers retain that resource through the tracing GC;
+collection releases the VM reference automatically. A record, string, number,
+or a differently branded host value cannot forge the node's checked type.
+The integration tests use a private TestNode catalog to retain an actual
+component node. Its typed receiver method observes authored text updates through
+the same allocation, reads the subtree after hiding it, and collection releases
+the last VM reference.
+
+Public source-facing node brands and the `view` query/write methods still need
+the [APS 73 approval](https://github.com/dekaruntime/aps/issues/73). This page
+explains the implemented resource/lifetime foundation; it does not expose the
+proposed names or promise a callable public node API. Listener tracing, selector
+syntax and structural mutation validation belong to their following features.
+
+[Binding patches](binding-patches.mdx) describe how unchanged authored values
+preserve direct edits to retained properties.
