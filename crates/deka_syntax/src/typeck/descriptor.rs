@@ -114,13 +114,38 @@ pub fn collect_recurse_refs<'a>(tree: &DescriptorTree<'a>, out: &mut Vec<&'a str
 #[derive(Clone, Debug)]
 pub struct JsonCall<'a> {
     pub operation: JsonOperation,
-    pub shape: DescriptorTree<'a>,
+    pub shape: JsonDescriptor<'a>,
+}
+
+/// Static structural records are JSON data without gaining a dynamic top type.
+#[derive(Clone, Debug)]
+pub enum JsonDescriptor<'a> {
+    Type(DescriptorTree<'a>),
+    Record(Vec<(&'a str, JsonDescriptor<'a>)>),
+    Array(Box<JsonDescriptor<'a>>),
+    Tuple(Vec<JsonDescriptor<'a>>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JsonOperation {
     ToJson,
     ParseJson,
+}
+impl JsonOperation {
+    /// Global names specialize through the same checked receiver operation.
+    pub fn namespace_method(name: &str) -> Option<Self> {
+        match name {
+            "parse" => Some(Self::ParseJson),
+            "stringify" => Some(Self::ToJson),
+            _ => None,
+        }
+    }
+    pub fn receiver_method(self) -> &'static str {
+        match self {
+            Self::ParseJson => "parseJSON",
+            Self::ToJson => "toJSON",
+        }
+    }
 }
 
 /// A recorded `.type()` call site inside a `super` function. `param` is set

@@ -1,0 +1,32 @@
+# Native JSON
+
+The native VM provides `JSON.stringify(value)` and `JSON.parse<T>(text)`.
+The receiver forms `value.toJSON()` and `text.parseJSON<T>()` use the same
+Rust conversion. Parsing returns `Result<T, string>` for syntax and shape
+errors; it never throws an `Exception`.
+
+```ds
+struct Project { title: string }
+
+const text = JSON.stringify(Project { title: "Deka" })
+// {"Project":{"title":"Deka"}}
+
+const title = match (JSON.parse<Project>(text)) {
+  Ok(project) => project.title,
+  Err(message) => "Could not read project: " + message,
+}
+```
+
+The first native slice supports numbers, strings, booleans, arrays, tuples, static records
+and structs whose fields are required. Structs retain the existing JSON
+format: their type name wraps the field object. Nested structs have their
+own wrappers. Parsed values keep their nominal identity and receiver
+methods, including calls through interfaces. Object key ordering is not
+an API guarantee.
+
+Option, Result, other enums, newtypes, unions and optional struct fields
+await the JSON type-mapping decision; these shapes fail native compilation
+with an explicit diagnostic. Recursive and function-valued types are also
+unsupported. A local value called `JSON` behaves normally. User-declared
+`toJSON` receiver methods keep precedence for receiver calls; the namespace
+serializer uses the checked data shape directly.

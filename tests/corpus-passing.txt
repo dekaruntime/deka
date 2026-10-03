@@ -30,8 +30,10 @@ async-async-recursive-wrong-return-fail
 async-async-return-await-wrong-type-fail
 async-async-return-missing-value-fail
 async-async-return-promise-of-promise
+async-async-return-value
 async-async-return-wrong-value-type-fail
 async-async-struct-method-runtime-fail
+async-async-unawaited-promise-concat
 async-async-void-function
 async-async-void-promise-used-as-value-fail
 async-async-void-returns-value-fail
@@ -548,6 +550,20 @@ interfaces-interface-unknown-field-type-fail
 interfaces-interface-with-enum-field
 interfaces-interface-with-type-argument-fail
 interfaces-interface-with-visibility-modifier-fail
+json-parse-empty-object
+json-parse-invalid
+json-parse-null
+json-parse-number
+json-parse-object-x
+json-parse-string
+json-parse-true
+json-roundtrip-name
+json-stringify-array-field
+json-stringify-empty
+json-stringify-nested
+json-stringify-object
+json-validate-bad
+json-validate-ok
 modules-collection-element-inferred-export
 modules-collection-element-inferred-export-negative
 modules-cross-module-struct-identity-001
@@ -711,5 +727,3 @@ unsafe-unsafe-catch-rejected-fail
 unsafe-unsafe-err-message-rejected-fail
 unsafe-unsafe-error-is-jserror-fail
 unsafe-unsafe-typed-result-mismatch-fail
-async-async-return-value
-async-async-unawaited-promise-concat

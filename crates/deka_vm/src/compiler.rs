@@ -3,6 +3,8 @@ use crate::{Function, Hosts, ListMut, Literal, Op, Program, PromiseJoin, Result}
 pub use deka_syntax::console::STDERR_OPERATION as CONSOLE_ERROR_OPERATION;
 use deka_syntax::{Diagnostic, Severity, ast::*, typeck::ExceptionEmit};
 use std::collections::{BTreeMap, HashMap};
+#[path = "json_compiler.rs"]
+mod json_lower;
 
 pub fn compile(source: &str, hosts: &Hosts) -> Result<Program> {
     compile_entry(source, hosts, "main")
@@ -423,6 +425,17 @@ fn lower_module<'a>(
     diagnostics(&checked.errors).map_err(|e| format!("{}: {e}", path.display()))?;
     entry.names.clear();
     entry.checked.clear();
+    lower.import_json_factories(path, entry);
+    lower.json_calls = checked
+        .json_calls
+        .iter()
+        .map(|(p, call)| {
+            (
+                *p as usize,
+                (call.operation, lower.json_types.shape(&call.shape, path)),
+            )
+        })
+        .collect();
     lower.hosts.clear();
     for op in hosts.globals() {
         lower.hosts.insert(op.name.clone(), op.name.clone());
@@ -657,6 +670,7 @@ fn lower_module<'a>(
         }
     }
     let mut exported = BTreeMap::new();
+    lower.reserve_json_factories(path, entry);
     // Receiver methods hoist: a method call may precede the declaration
     // (methods are type-level; values are not), so every method lowers before
     // any other statement. Enum declarations hoist with them: their interned
@@ -667,6 +681,7 @@ fn lower_module<'a>(
             lower.statement(stmt, entry)?;
         }
     }
+    lower.finish_json_factories(entry)?;
     for stmt in ast.statements {
         if matches!(stmt, Stmt::ReceiverMethod { .. } | Stmt::Enum { .. }) {
             continue;
@@ -926,6 +941,46 @@ fn compile_modules(
         }
     }
 
+    // JSON descriptors are built in their declaring namespace. Export only
+    // the roots: nested private factory schemas remain compiler metadata.
+    for (path, _) in modules {
+        let mut imports = HashMap::new();
+        for stmt in asts[path].statements {
+            if let Stmt::Import { source, .. } = stmt {
+                let exports = if host_module(source) {
+                    &host_exports
+                } else {
+                    &module_exports[&module_path(path, source, project)?]
+                };
+                imports.insert(*source, exports);
+            }
+        }
+        let fragments = deka_syntax::build_module_build_fragments(asts[path], &imports);
+        let exports = module_exports.get_mut(path).expect("parsed module exports");
+        for stmt in asts[path].statements {
+            if let Stmt::Export {
+                decl:
+                    ExportDecl::NamedGroup {
+                        names,
+                        source: None,
+                    },
+                ..
+            } = stmt
+            {
+                for name in *names {
+                    if let Some(tree) = fragments.get(name.name) {
+                        exports
+                            .build_fragments
+                            .insert(name.alias.unwrap_or(name.name), tree.clone());
+                    }
+                }
+            }
+        }
+        for (module, _) in modules {
+            augment_reexports(module, &barrels, &mut module_exports, &mut Vec::new());
+        }
+    }
+
     // Nominal struct identity follows declarations through aliases and barrels.
     // Module ordinals keep filesystem paths out of serialized applications.
     let mut struct_identities: HashMap<std::path::PathBuf, BTreeMap<String, String>> =
@@ -1078,6 +1133,9 @@ fn compile_modules(
         enum_patterns: HashMap::new(),
         pattern_types: HashMap::new(),
         signature_calls: HashMap::new(),
+        json_calls: HashMap::new(),
+        json_types: json_lower::JsonTypes::new(&asts, &struct_identities, &edges),
+        json_factories: Default::default(),
         newtype_results: HashMap::new(),
         console_outputs: ["echo", CONSOLE_ERROR_OPERATION]
             .into_iter()
@@ -1390,6 +1448,9 @@ struct Lower<'a> {
     enum_patterns: HashMap<usize, String>,
     pattern_types: HashMap<usize, Result<Op>>,
     signature_calls: HashMap<usize, crate::TypeDescriptor>,
+    json_calls: HashMap<usize, (deka_syntax::typeck::JsonOperation, Result<crate::JsonShape>)>,
+    json_types: json_lower::JsonTypes,
+    json_factories: BTreeMap<String, (std::path::PathBuf, usize)>,
     newtype_results: HashMap<usize, String>,
 }
 impl<'a> Lower<'a> {
@@ -2671,6 +2732,9 @@ impl<'a> Lower<'a> {
                 }
             }
             Expr::Call { callee, args, .. } => {
+                if self.json_call(e, c)? {
+                    return Ok(());
+                }
                 if let Expr::FieldAccess { object, .. } = callee {
                     let site = e as *const Expr as usize;
                     if self.type_of_calls.contains(&site) {
