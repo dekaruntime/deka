@@ -1,0 +1,57 @@
+# Native Headers
+
+`Headers` owns an HTTP header list in Rust. Language aliases point at the same
+list; no JavaScript engine or browser DOM is involved. Its declarations come
+from the host catalog shared by `deka check`, `deka run` and desktop handlers.
+
+```ds
+import { echo } from "io"
+
+fn main() {
+    const headers = unwrap(Headers([["Content-Type", "application/json"]])) or {
+        echo("Invalid headers")
+        return;
+    }
+    const changed = unwrap(headers.set("X-Project", "Deka")) or {
+        echo("Invalid header")
+        return;
+    }
+    const value = unwrap(headers.get("x-project")) or {
+        echo("Invalid header name")
+        return;
+    }
+    echo(match value { Some(text) => text, None => "Missing" })
+}
+```
+
+Construction accepts `Array<[string, string]>`; `Headers()` creates an empty
+list. Both return `Result<Headers, string>`. Names are case-insensitive and
+stored lowercase. Values use HTTP whitespace normalization and byte-string
+characters. Invalid names or values produce `Err`; failed mutations leave the
+list unchanged. These rules follow the [Fetch header-list model](https://fetch.spec.whatwg.org/#headers-class), with Deka's typed error rules.
+
+| Method | Result |
+| --- | --- |
+| `get(name)` | `Result<Option<string>, string>` |
+| `has(name)` | `Result<boolean, string>` |
+| `append(name, value)` | `Result<void, string>` |
+| `set(name, value)` | `Result<void, string>` |
+| `delete(name)` | `Result<void, string>` |
+| `getSetCookie()` | `Array<string>` |
+| `entries()` | `Array<[string, string]>` |
+| `keys()` | `Array<string>` |
+| `values()` | `Array<string>` |
+
+A valid missing name produces `Ok(None)`; a present empty value produces
+`Ok(Some(""))`. `append` keeps duplicate values, while `set` replaces them.
+Lookup combines duplicates with `", "`. `getSetCookie()` preserves separate
+cookie fields. Entry snapshots sort names and combine duplicates, except
+`set-cookie`, whose values remain separate.
+
+Collections are snapshots: modifying a returned array does not change the
+header list, and later header edits do not change an earlier snapshot. Use
+`append`, `set` or `delete` to mutate the shared list.
+
+The native subset accepts pair lists, not record/copy initializers or JavaScript
+iterators. Browser guards and delegation are separate platform work. Request,
+Response and fetch will use the same Rust header storage and transport bytes.

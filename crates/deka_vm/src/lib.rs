@@ -9,6 +9,7 @@ pub mod compiler;
 pub mod demo;
 mod heap;
 mod host;
+pub mod http_headers;
 mod json;
 pub use json::{JsonField, JsonShape};
 mod machine;
