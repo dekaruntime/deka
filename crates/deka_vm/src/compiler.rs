@@ -153,7 +153,7 @@ impl Project {
     /// Resolve a bare specifier to a package file: `name` (or
     /// `@scope/name`) plus an optional subpath. Every failure names the
     /// package and the cause.
-    fn package_path(&self, source: &str) -> Result<std::path::PathBuf> {
+    fn package_path(&self, importer: &std::path::Path, source: &str) -> Result<std::path::PathBuf> {
         let segments: Vec<&str> = source.split('/').collect();
         let (name, subpath) = if source.starts_with('@') {
             if segments.len() < 2 {
@@ -171,7 +171,35 @@ impl Project {
                 "package {name} cannot be resolved: deka.json not found in this directory or any parent"
             ));
         };
-        let Some(declared) = self.dependencies.get(&name) else {
+        let mut dependencies = None;
+        if let Ok(relative) = importer.strip_prefix(root.join("ds_modules")) {
+            let mut components = relative.components();
+            if let Some(std::path::Component::Normal(first)) = components.next() {
+                let mut owner = root.join("ds_modules").join(first);
+                if first.to_string_lossy().starts_with('@')
+                    && let Some(std::path::Component::Normal(package)) = components.next()
+                {
+                    owner.push(package);
+                }
+                let manifest_path = owner.join("deka.json");
+                let manifest: serde_json::Value = serde_json::from_slice(
+                    &std::fs::read(&manifest_path)
+                        .map_err(|e| format!("{}: {e}", manifest_path.display()))?,
+                )
+                .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+                // Hand-placed legacy packages without this field used the root
+                // declarations. An explicit package map supplies its own scope.
+                if let Some(value) = manifest.get("dependencies") {
+                    dependencies = Some(
+                        serde_json::from_value::<BTreeMap<String, String>>(value.clone()).map_err(
+                            |e| format!("{}: invalid dependencies: {e}", manifest_path.display()),
+                        )?,
+                    );
+                }
+            }
+        }
+        let declarations = dependencies.as_ref().unwrap_or(&self.dependencies);
+        let Some(declared) = declarations.get(&name) else {
             return Err(format!(
                 "package {name} is not declared in deka.json dependencies"
             ));
@@ -182,32 +210,33 @@ impl Project {
                 "package {name} is not installed (ds_modules/{name} is missing)"
             ));
         };
-        let entry = if subpath.is_empty() {
-            let manifest_entry = std::fs::read_to_string(directory.join("deka.json"))
-                .ok()
-                .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
-                .and_then(|manifest| manifest.get("entry")?.as_str().map(str::to_owned));
-            let entry = manifest_entry.unwrap_or_else(|| "index.ds".into());
-            // Version agreement is checked once per package root resolution:
-            // deka.json declares, deka.lock pins, ds_modules provides.
-            let installed = std::fs::read_to_string(directory.join("deka.json"))
-                .ok()
-                .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
-                .and_then(|manifest| manifest.get("version")?.as_str().map(str::to_owned));
-            if let Some(installed) = installed {
-                if installed != *declared {
-                    return Err(format!(
-                        "package {name} version mismatch: deka.json expects {declared}, ds_modules has {installed}"
-                    ));
-                }
-                if let Some(pin) = self.lock.get(&name)
-                    && *pin != installed
-                {
-                    return Err(format!(
-                        "package {name} version mismatch: deka.lock pins {pin}, ds_modules has {installed}"
-                    ));
-                }
+        let installed_manifest = std::fs::read_to_string(directory.join("deka.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok());
+        // The importing manifest declares, deka.lock pins, ds_modules provides.
+        // Check agreement for both root and subpath imports.
+        if let Some(installed) = installed_manifest
+            .as_ref()
+            .and_then(|manifest| manifest.get("version")?.as_str())
+        {
+            if installed != declared {
+                return Err(format!(
+                    "package {name} version mismatch: deka.json expects {declared}, ds_modules has {installed}"
+                ));
             }
+            if let Some(pin) = self.lock.get(&name)
+                && pin != installed
+            {
+                return Err(format!(
+                    "package {name} version mismatch: deka.lock pins {pin}, ds_modules has {installed}"
+                ));
+            }
+        }
+        let entry = if subpath.is_empty() {
+            let entry = installed_manifest
+                .as_ref()
+                .and_then(|manifest| manifest.get("entry")?.as_str())
+                .unwrap_or("index.ds");
             directory.join(entry)
         } else {
             directory.join(subpath.join("/"))
@@ -231,7 +260,7 @@ fn module_path(
         let path = parent.parent().ok_or("module has no parent")?.join(source);
         return std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()));
     }
-    project.package_path(source)
+    project.package_path(parent, source)
 }
 /// Modules in dependency order. A module already being loaded is not loaded
 /// again (import cycles load, deka#1206); reads of exports that initialize

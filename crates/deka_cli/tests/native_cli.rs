@@ -47,6 +47,15 @@ fn install_replaces_a_stale_tree_for_an_empty_lock_and_requires_a_lockfile() {
         0
     );
     assert_eq!(fs::read(project.path().join("deka.lock")).unwrap(), bytes);
+    let elsewhere = tempfile::tempdir().unwrap();
+    assert_eq!(
+        ok(cli(
+            elsewhere.path(),
+            &["install", "--directory", project.path().to_str().unwrap()]
+        )),
+        "Installed 0 packages\n"
+    );
+    assert!(!elsewhere.path().join("ds_modules").exists());
     assert_eq!(
         cli(project.path(), &["install", "@deka/demo@1.2.3"])
             .status
