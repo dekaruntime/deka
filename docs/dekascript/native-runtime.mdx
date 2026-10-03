@@ -133,3 +133,21 @@ wrapper. An explicit optional `children?: ReactNode` declaration is also allowed
 `<slot />` handles its absence. Direct `{props.children}` still obeys the ordinary
 optional-value type rule. Named slots and fallback content are not supported yet.
 `<children />` is not an alias for `<slot />`.
+
+## Struct embedding
+
+Embedding a struct promotes its fields and methods. You can supply the embedded
+value or initialize its fields directly; defaults and empty embeds are filled
+when the value is created. Supplied initializers run once, in written order.
+
+```tsx
+struct Position { x: number; y: number = 2; }
+struct Player { Position; }
+let player = Player { x: 3 };
+player.x = player.x + player.y;
+// player.x is 5. A shared Position supplied explicitly sees promoted writes too.
+```
+
+Own fields take precedence over embedded fields. Writes through `let` update the
+original embedded value, including aliases. Writes through `const` remain a
+compile error. Arbitrary nested object fields are not promoted.

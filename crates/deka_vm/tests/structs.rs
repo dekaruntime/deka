@@ -78,7 +78,7 @@ async fn optional_field_stays_absent_when_omitted() {
         .iter()
         .flat_map(|f| &f.code)
         .filter_map(|op| match op {
-            Op::Record(names) => Some(names),
+            Op::Struct { fields, .. } => Some(fields),
             _ => None,
         })
         .collect();
@@ -107,7 +107,7 @@ fn defaults_are_appended_in_declaration_order() {
         .iter()
         .flat_map(|f| &f.code)
         .find_map(|op| match op {
-            Op::Record(names) => Some(names.clone()),
+            Op::Struct { fields, .. } => Some(fields.clone()),
             _ => None,
         })
         .unwrap();

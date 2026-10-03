@@ -711,6 +711,20 @@ impl Vm {
                         .alloc(Value::Record(names.into_iter().zip(items).collect())),
                 );
             }
+            Op::Struct {
+                name,
+                fields,
+                embeds,
+            } => {
+                let items = arguments(frame, fields.len())?;
+                frame
+                    .stack
+                    .push(self.heap.alloc(Value::Record(crate::heap::Record {
+                        fields: fields.into_iter().zip(items).collect(),
+                        struct_name: Some(name),
+                        embeds,
+                    })));
+            }
             Op::RecordExtend => {
                 let source = pop(frame)?;
                 let target = pop(frame)?;
@@ -720,7 +734,7 @@ impl Vm {
                 let Value::Record(mut fields) = self.heap.get(target)?.clone() else {
                     return Err("extend requires record".into());
                 };
-                fields.extend(extra);
+                fields.extend(extra.fields);
                 frame.stack.push(self.heap.alloc(Value::Record(fields)));
             }
             Op::Field(name) => {
@@ -737,7 +751,13 @@ impl Vm {
                     Value::String(text) if name == "length" => {
                         self.heap.alloc(Value::Number(text.chars().count() as f64))
                     }
-                    Value::Record(fields) => *fields.get(&name).ok_or("missing field")?,
+                    Value::Record(_) => {
+                        let owner = self.field_owner(h, &name)?.ok_or("missing field")?;
+                        let Value::Record(fields) = self.heap.get(owner)? else {
+                            unreachable!()
+                        };
+                        *fields.get(&name).ok_or("missing field")?
+                    }
                     _ => return Err("unsupported field access".into()),
                 };
                 frame.stack.push(value);
@@ -788,6 +808,7 @@ impl Vm {
             Op::FieldSet(name) => {
                 let value = pop(frame)?;
                 let object = pop(frame)?;
+                let object = self.field_owner(object, &name)?.unwrap_or(object);
                 match self.heap.get_mut(object)? {
                     Value::Record(fields) => {
                         fields.insert(name.clone(), value);
@@ -823,6 +844,27 @@ impl Vm {
             }
         }
         Ok(Step::Continue)
+    }
+    /// Reads and writes use the same declared embed traversal. Own fields
+    /// win; arbitrary nested records do not implicitly promote their fields.
+    fn field_owner(&self, object: Handle, name: &str) -> Result<Option<Handle>> {
+        let Value::Record(record) = self.heap.get(object)? else {
+            return Ok(None);
+        };
+        if record.contains_key(name) {
+            return Ok(Some(object));
+        }
+        if record.struct_name.is_none() {
+            return Ok(None);
+        }
+        for embed in &record.embeds {
+            if let Some(value) = record.get(embed)
+                && let Some(owner) = self.field_owner(*value, name)?
+            {
+                return Ok(Some(owner));
+            }
+        }
+        Ok(None)
     }
     /// Shared call setup for `Call` and `MethodCall`: build the next frame,
     /// or spawn a task when the closure is async.

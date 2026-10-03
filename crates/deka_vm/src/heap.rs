@@ -16,7 +16,7 @@ pub(crate) enum Value {
     Bool(bool),
     String(String),
     List(Vec<Handle>),
-    Record(BTreeMap<String, Handle>),
+    Record(Record),
     // Component attributes are getters; nested children are retained values.
     Props(BTreeMap<String, Handle>),
     Cell(Handle),
@@ -26,6 +26,33 @@ pub(crate) enum Value {
         slot_children: Option<Handle>,
     },
     Promise(Option<Result<Handle>>),
+}
+/// Ordinary records and nominal structs share field storage. Struct identity
+/// and embed names come from bytecode, never from the shape of user data.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Record {
+    pub fields: BTreeMap<String, Handle>,
+    pub struct_name: Option<String>,
+    pub embeds: Vec<String>,
+}
+impl std::ops::Deref for Record {
+    type Target = BTreeMap<String, Handle>;
+    fn deref(&self) -> &Self::Target {
+        &self.fields
+    }
+}
+impl std::ops::DerefMut for Record {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.fields
+    }
+}
+impl FromIterator<(String, Handle)> for Record {
+    fn from_iter<T: IntoIterator<Item = (String, Handle)>>(iter: T) -> Self {
+        Self {
+            fields: iter.into_iter().collect(),
+            ..Self::default()
+        }
+    }
 }
 impl From<Literal> for Value {
     fn from(v: Literal) -> Self {
@@ -123,7 +150,8 @@ impl Heap {
                     todo.extend(captures);
                     todo.extend(slot_children);
                 }
-                Value::Record(fields) | Value::Props(fields) => todo.extend(fields.values()),
+                Value::Record(fields) => todo.extend(fields.values()),
+                Value::Props(fields) => todo.extend(fields.values()),
                 _ => {}
             }
         }

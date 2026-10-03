@@ -87,6 +87,12 @@ pub enum Op {
     /// list is under the arguments on the stack.
     ListMut(ListMut),
     Record(Vec<String>),
+    /// A nominal struct with canonical nested embedded values.
+    Struct {
+        name: String,
+        fields: Vec<String>,
+        embeds: Vec<String>,
+    },
     /// Like `Record`, but builds component props: attribute values are
     /// zero-argument getter closures that `Field` calls on every read.
     Props(Vec<String>),

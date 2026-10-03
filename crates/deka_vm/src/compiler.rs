@@ -1133,6 +1133,46 @@ impl<'a> Lower<'a> {
         }
         Ok(())
     }
+    fn struct_value(
+        &mut self,
+        name: &str,
+        supplied: &[(String, usize)],
+        c: &mut Context,
+    ) -> Result<()> {
+        let declared = self.structs.get(name).cloned().unwrap_or_default();
+        let embeds = self.struct_embeds.get(name).cloned().unwrap_or_default();
+        let mut names = vec![];
+        // Preserve written order for the fields owned by this struct.
+        for (field, slot) in supplied {
+            if declared.iter().any(|(n, _, _)| n == field) {
+                c.emit(Op::Load(*slot));
+                names.push(field.clone());
+            }
+        }
+        for (field, default, optional) in declared {
+            if optional || names.contains(&field) {
+                continue;
+            }
+            if let Some(default) = default {
+                self.expr(default, c)?;
+                names.push(field);
+            }
+        }
+        for embed in &embeds {
+            if let Some((_, slot)) = supplied.iter().find(|(n, _)| n == embed) {
+                c.emit(Op::Load(*slot));
+            } else {
+                self.struct_value(embed, supplied, c)?;
+            }
+            names.push(embed.clone());
+        }
+        c.emit(Op::Struct {
+            name: name.into(),
+            fields: names,
+            embeds,
+        });
+        self.attach_methods(name, c)
+    }
     fn scoped(&mut self, body: &[Stmt<'a>], c: &mut Context) -> Result<()> {
         let outer = c.names.clone();
         let outer_checked = c.checked.clone();
@@ -2038,26 +2078,16 @@ impl<'a> Lower<'a> {
                 }
             }
             Expr::StructLiteral { name, fields, .. } => {
-                // A struct value is a record. Fields the literal gives come in
-                // written order; declared fields it omits are filled from
-                // their defaults (optional fields stay absent).
-                let declared = self.structs.get(*name).cloned().unwrap_or_default();
-                let mut names = vec![];
+                // Evaluate supplied fields once in source order, then build
+                // canonical embedded values from the promoted field slots.
+                let mut supplied = vec![];
                 for f in *fields {
                     self.expr(&f.value, c)?;
-                    names.push(f.name.to_string());
+                    let slot = c.bind(&format!("<struct field {}>", c.function.locals));
+                    c.emit(Op::Store(slot));
+                    supplied.push((f.name.to_string(), slot));
                 }
-                for (field, default, optional) in declared {
-                    if optional || names.contains(&field) {
-                        continue;
-                    }
-                    if let Some(default) = default {
-                        self.expr(default, c)?;
-                        names.push(field);
-                    }
-                }
-                c.emit(Op::Record(names));
-                self.attach_methods(name, c)?;
+                self.struct_value(name, &supplied, c)?;
             }
             Expr::FieldAccess { object, field, .. } => {
                 // Enum namespace access: `Color.Red` where `Color` names an
