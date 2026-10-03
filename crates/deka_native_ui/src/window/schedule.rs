@@ -62,6 +62,13 @@ impl Schedule {
         }
     }
 
+    /// The window became visible showing the frame it was given before it
+    /// was shown (macOS frame one): redraw only if something changed since.
+    pub(crate) fn shown_with_frame(&mut self) {
+        self.occluded = false;
+        self.retry = None;
+    }
+
     /// The surface refused a frame because the window is not visible.
     pub(crate) fn surface_occluded(&mut self, now: Instant) {
         self.occluded = true;
@@ -152,6 +159,19 @@ mod tests {
         assert!(!s.wants_frame(), "changes while hidden wait for visibility");
         s.set_occluded(false);
         assert!(s.wants_frame(), "becoming visible redraws");
+    }
+
+    #[test]
+    fn a_window_shown_with_its_frame_does_not_redraw_it_on_becoming_visible() {
+        let mut s = Schedule::new();
+        // Frame one went into the hidden window; AppKit then reports it
+        // hidden and, once composited, visible.
+        s.presented(false);
+        s.set_occluded(true);
+        s.shown_with_frame();
+        assert!(!s.wants_frame(), "the frame on screen is current");
+        s.invalidate();
+        assert!(s.wants_frame(), "a change still redraws");
     }
 
     #[test]

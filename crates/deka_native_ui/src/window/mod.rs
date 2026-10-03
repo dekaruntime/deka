@@ -15,6 +15,7 @@ mod input;
 mod mac;
 mod render;
 mod schedule;
+pub mod trace;
 mod ui;
 
 pub use render::Snapshot;
@@ -27,7 +28,7 @@ use schedule::{Schedule, Wait};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
+use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
@@ -71,6 +72,10 @@ pub struct Options {
     /// Inner size in logical pixels.
     pub width: f64,
     pub height: f64,
+    /// Top-left of the window's frame in logical global screen coordinates
+    /// (origin at the top left of the main display), on any display. `None`
+    /// centres it on the main display.
+    pub position: Option<(f64, f64)>,
     /// The window's colour before frame one is drawn.
     pub background: u32,
     /// Close the window after this many presented frames.
@@ -85,6 +90,7 @@ impl Options {
             title: title.into(),
             width,
             height,
+            position: None,
             background: 0xffffff,
             frames: None,
             on_frame: None,
@@ -132,6 +138,7 @@ pub fn snapshot(scene: &Scene, scale: f32) -> Result<Snapshot, String> {
 /// Run the event loop for `content`. Exits the process with status 1 when no
 /// window can be opened (no display, no GPU).
 pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
+    trace::mark("show");
     crate::text::warm_on_thread();
     let mut builder = EventLoop::<Wake>::with_user_event();
     #[cfg(target_os = "macos")]
@@ -147,6 +154,7 @@ pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
             std::process::exit(1);
         }
     };
+    trace::mark("event loop built");
     let mut shell = Shell {
         proxy: event_loop.create_proxy(),
         content,
@@ -159,6 +167,9 @@ pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
         modifiers: ModifiersState::empty(),
         focused: true,
         presented: 0,
+        drawn_scale: None,
+        shown_with_frame: false,
+        menu_installed: false,
         failed: None,
     };
     if let Err(e) = event_loop.run_app(&mut shell) {
@@ -194,6 +205,12 @@ struct Shell<C: Content> {
     modifiers: ModifiersState,
     focused: bool,
     presented: u64,
+    /// The scale factor the last frame was drawn at.
+    drawn_scale: Option<f64>,
+    /// Frame one went into the window before it was shown (macOS), so the
+    /// window has its content when it first becomes visible.
+    shown_with_frame: bool,
+    menu_installed: bool,
     /// Why the window could not be shown (reported after the loop ends).
     failed: Option<String>,
 }
@@ -213,23 +230,37 @@ enum Drawn {
 
 impl<C: Content> Shell<C> {
     fn open(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-        let attributes = Window::default_attributes()
+        let mut attributes = Window::default_attributes()
             .with_title(self.options.title.clone())
             .with_inner_size(LogicalSize::new(self.options.width, self.options.height))
             // Shown once its background is the application's colour.
             .with_visible(!cfg!(target_os = "macos"));
+        if let Some((x, y)) = self.options.position {
+            attributes = attributes.with_position(LogicalPosition::new(x, y));
+        }
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
                 .map_err(|e| format!("cannot create a window: {e}"))?,
         );
+        trace::mark("window created");
+        // On macOS the window stays hidden until frame one is in it (`first_frame`).
         #[cfg(target_os = "macos")]
         {
+            // AppKit clamps a new window's content rect to the main screen, so a
+            // position on another display only holds once the window exists;
+            // it is still hidden here.
+            if let Some((x, y)) = self.options.position {
+                window.set_outer_position(LogicalPosition::new(x, y));
+            }
             mac::set_background(&window, self.options.background);
-            window.set_visible(true);
         }
         let mut gpu = match std::mem::replace(&mut self.gpu, GpuState::Failed) {
-            GpuState::Starting(pending) => pending.join()?,
+            GpuState::Starting(pending) => {
+                let gpu = pending.join()?;
+                trace::mark("gpu joined");
+                gpu
+            }
             GpuState::Ready(gpu) => *gpu,
             GpuState::Failed => return Err("no GPU".into()),
         };
@@ -237,7 +268,9 @@ impl<C: Content> Shell<C> {
             .instance
             .create_surface(window.clone())
             .map_err(|e| format!("cannot draw into the window: {e}"))?;
+        trace::mark("surface created");
         let format = gpu.adopt(&surface)?;
+        trace::mark("surface adopted");
         let size = window.inner_size();
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -251,6 +284,7 @@ impl<C: Content> Shell<C> {
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&gpu.device, &config);
+        trace::mark("surface configured");
         self.surface = Some(Surface { surface, config });
         self.gpu = GpuState::Ready(Box::new(gpu));
         self.window = Some(window);
@@ -270,18 +304,118 @@ impl<C: Content> Shell<C> {
         if size.width == 0 || size.height == 0 {
             return;
         }
+        // Showing a window reports its size again: nothing to redraw then.
         if (size.width, size.height) != (surface.config.width, surface.config.height) {
             surface.config.width = size.width;
             surface.config.height = size.height;
             surface.surface.configure(&gpu.device, &surface.config);
+            self.schedule.invalidate();
         }
-        self.schedule.invalidate();
+    }
+
+    /// The window's scale factor is `scale` (winit also reports it when a
+    /// window is first shown): redraw only if frames were drawn at another.
+    fn rescale(&mut self, scale: f64) {
+        if self.drawn_scale != Some(scale) {
+            self.schedule.invalidate();
+        }
     }
 
     fn input(&mut self, input: Input) {
         if self.content.input(input) {
             self.schedule.invalidate();
         }
+    }
+
+    /// Frame one, and the window shown with it.
+    ///
+    /// On macOS, wgpu hands out no surface texture until AppKit reports the
+    /// window visible, tens of milliseconds after it is ordered front, so the
+    /// window would appear in its background colour and get its content
+    /// later. Instead frame one is drawn straight into the hidden window's
+    /// layer and the window is shown with it (GPUI did the same). If that
+    /// fails, the window is shown and frame one takes the usual path.
+    fn first_frame(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        {
+            let drawn =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.draw_hidden()));
+            if let Some(window) = &self.window {
+                window.set_visible(true);
+            }
+            trace::mark("window shown");
+            match drawn {
+                Ok(Ok(animating)) => {
+                    self.shown_with_frame = true;
+                    self.presented_frame(event_loop, animating);
+                    return;
+                }
+                Ok(Err(error)) => eprintln!("deka: frame one waits for the window: {error}"),
+                Err(_) => eprintln!("deka: frame one waits for the window after a panic"),
+            }
+        }
+        self.frame(event_loop);
+    }
+
+    /// macOS: frame one into the hidden window's layer (see `first_frame`).
+    /// Returns whether the scene animates.
+    #[cfg(target_os = "macos")]
+    fn draw_hidden(&mut self) -> Result<bool, String> {
+        let (Some(window), Some(surface), GpuState::Ready(gpu)) =
+            (&self.window, &self.surface, &mut self.gpu)
+        else {
+            return Err("no window surface".into());
+        };
+        let size = window.inner_size();
+        if (size.width, size.height) != (surface.config.width, surface.config.height) {
+            return Err("the window changed size".into());
+        }
+        trace::mark("frame: start");
+        let scale = window.scale_factor();
+        let scene = self.content.frame(
+            (f64::from(size.width) / scale) as f32,
+            (f64::from(size.height) / scale) as f32,
+            scale as f32,
+        );
+        trace::mark("frame: scene built");
+        gpu.draw_into_layer(&surface.surface, &surface.config, scene, scale)?;
+        self.drawn_scale = Some(scale);
+        trace::mark("frame: presented");
+        Ok(scene.animating)
+    }
+
+    /// Bookkeeping after a frame reached the window.
+    fn presented_frame(&mut self, event_loop: &ActiveEventLoop, animating: bool) {
+        self.schedule.presented(animating);
+        self.presented += 1;
+        let frame = Frame {
+            index: self.presented,
+            presented_at: Instant::now(),
+        };
+        self.content.presented(self.focused);
+        if let Some(on_frame) = self.options.on_frame.as_mut() {
+            on_frame(frame);
+        }
+        if self.options.frames.is_some_and(|n| self.presented >= n) {
+            event_loop.exit();
+        }
+        // Normally the visibility event installs it first.
+        if self.presented >= 2 {
+            self.install_menu();
+        }
+    }
+
+    /// The app menu, once the window is on screen: building it holds the
+    /// main thread for tens of milliseconds, which before the window shows
+    /// would hold the window back.
+    fn install_menu(&mut self) {
+        if self.menu_installed {
+            return;
+        }
+        self.menu_installed = true;
+        #[cfg(target_os = "macos")]
+        mac::install_menu();
+        trace::mark("menu installed");
     }
 
     /// Draw and present one frame. Never panics: a failed or panicking frame
@@ -292,26 +426,13 @@ impl<C: Content> Shell<C> {
         }
         let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.draw()));
         match drawn {
-            Ok(Ok(Drawn::Presented { animating })) => {
-                self.schedule.presented(animating);
-                self.presented += 1;
-                let frame = Frame {
-                    index: self.presented,
-                    presented_at: Instant::now(),
-                };
-                self.content.presented(self.focused);
-                if self.presented == 1 {
-                    #[cfg(target_os = "macos")]
-                    mac::install_menu();
+            Ok(Ok(Drawn::Presented { animating })) => self.presented_frame(event_loop, animating),
+            Ok(Ok(Drawn::Occluded)) => {
+                if self.presented == 0 {
+                    trace::mark("frame: refused while not visible");
                 }
-                if let Some(on_frame) = self.options.on_frame.as_mut() {
-                    on_frame(frame);
-                }
-                if self.options.frames.is_some_and(|n| self.presented >= n) {
-                    event_loop.exit();
-                }
+                self.schedule.surface_occluded(Instant::now())
             }
-            Ok(Ok(Drawn::Occluded)) => self.schedule.surface_occluded(Instant::now()),
             Ok(Ok(Drawn::Skipped)) => self.schedule.skipped(),
             Ok(Ok(Drawn::Retry)) => self.schedule.invalidate(),
             Ok(Err(error)) => {
@@ -340,12 +461,19 @@ impl<C: Content> Shell<C> {
             surface.config.height = size.height;
             surface.surface.configure(&gpu.device, &surface.config);
         }
+        let first = self.presented == 0;
+        if first {
+            trace::mark("frame: start");
+        }
         let scale = window.scale_factor();
         let scene = self.content.frame(
             (f64::from(size.width) / scale) as f32,
             (f64::from(size.height) / scale) as f32,
             scale as f32,
         );
+        if first {
+            trace::mark("frame: scene built");
+        }
         let texture = match surface.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -357,6 +485,9 @@ impl<C: Content> Shell<C> {
             }
             other => return Err(format!("no surface texture: {other:?}")),
         };
+        if first {
+            trace::mark("frame: texture acquired");
+        }
         let view = texture.texture.create_view(&Default::default());
         gpu.draw(
             scene,
@@ -365,8 +496,15 @@ impl<C: Content> Shell<C> {
             surface.config.width,
             surface.config.height,
         )?;
+        if first {
+            trace::mark("frame: drawn");
+        }
         window.pre_present_notify();
         gpu.queue.present(texture);
+        self.drawn_scale = Some(scale);
+        if first {
+            trace::mark("frame: presented");
+        }
         Ok(Drawn::Presented {
             animating: scene.animating,
         })
@@ -382,13 +520,14 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
         if self.window.is_some() {
             return;
         }
+        trace::mark("resumed");
         if let Err(error) = self.open(event_loop) {
             self.failed = Some(error);
             event_loop.exit();
             return;
         }
         // Frame one now, not on the first RedrawRequested.
-        self.frame(event_loop);
+        self.first_frame(event_loop);
     }
 
     fn user_event(&mut self, _: &ActiveEventLoop, _: Wake) {
@@ -401,8 +540,19 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.resize(size),
-            WindowEvent::ScaleFactorChanged { .. } => self.schedule.invalidate(),
-            WindowEvent::Occluded(occluded) => self.schedule.set_occluded(occluded),
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => self.rescale(scale_factor),
+            WindowEvent::Occluded(true) => self.schedule.set_occluded(true),
+            WindowEvent::Occluded(false) => {
+                trace::mark("visible");
+                if std::mem::take(&mut self.shown_with_frame) {
+                    self.schedule.shown_with_frame();
+                } else {
+                    self.schedule.set_occluded(false);
+                }
+                if self.presented > 0 {
+                    self.install_menu();
+                }
+            }
             WindowEvent::RedrawRequested => self.frame(event_loop),
             WindowEvent::Focused(focused) => {
                 self.focused = focused;
