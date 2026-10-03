@@ -113,7 +113,7 @@ mod tests {
         for network in [false, true] {
             let app=Desktop::new(|| {
                 let mut hosts=crate::hosts()?;
-                hosts.register(HostOp::new("probe", vec![], HostType::String, true, None, move |_| HostReply::Pending(Box::pin(async move {
+                hosts.register(HostOp::new("probe", vec![], HostType::String, true, move |_| HostReply::Pending(Box::pin(async move {
                     if network {
                         let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e|e.to_string())?;
                         let address=listener.local_addr().map_err(|e|e.to_string())?;
