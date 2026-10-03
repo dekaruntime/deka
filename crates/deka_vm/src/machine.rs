@@ -959,17 +959,30 @@ impl Vm {
             Op::JsonParse(shape) => {
                 let factories = pop(frame)?;
                 let text = pop(frame)?;
-                let Value::String(text) = self.heap.get(text)? else {
-                    return Err("JSON.parse requires string input".into());
-                };
-                let text = text.clone();
-                let (case, index, value) =
-                    match crate::json::parse(&mut self.heap, &text, &shape, factories) {
-                        Ok(value) => ("Ok", 0, value),
-                        Err(error) => ("Err", 1, self.heap.alloc(Value::String(error))),
-                    };
-                let result = self.enum_value("Result".into(), case.into(), index, Some(value));
+                let result = self.parse_json(text, &shape, factories)?;
                 frame.stack.push(result);
+            }
+            Op::JsonParseResult(shape) => {
+                let factories = pop(frame)?;
+                let result = pop(frame)?;
+                let Value::Record(record) = self.heap.get(result)? else {
+                    return Err("JSON body read requires a Result".into());
+                };
+                if record.enum_name.as_deref() != Some("Result") {
+                    return Err("JSON body read requires a nominal Result".into());
+                }
+                let case = *record.get("name").ok_or("JSON body Result has no case")?;
+                let payload = *record
+                    .get("value")
+                    .ok_or("JSON body Result has no payload")?;
+                let value = match self.heap.get(case)? {
+                    Value::String(case) if case == "Err" => result,
+                    Value::String(case) if case == "Ok" => {
+                        self.parse_json(payload, &shape, factories)?
+                    }
+                    _ => return Err("invalid JSON body Result case".into()),
+                };
+                frame.stack.push(value);
             }
             Op::Descriptor(descriptor) => {
                 let h = self.intern_descriptor(descriptor);
@@ -1515,6 +1528,23 @@ impl Vm {
             Value::Props(_) => TypeDescriptor::new("object", "Object"),
             _ => return Err("uninitialized value has no runtime type".into()),
         })
+    }
+    fn parse_json(
+        &mut self,
+        text: Handle,
+        shape: &crate::JsonShape,
+        factories: Handle,
+    ) -> Result<Handle> {
+        let Value::String(text) = self.heap.get(text)? else {
+            return Err("JSON.parse requires string input".into());
+        };
+        let text = text.clone();
+        let (case, index, value) = match crate::json::parse(&mut self.heap, &text, shape, factories)
+        {
+            Ok(value) => ("Ok", 0, value),
+            Err(error) => ("Err", 1, self.heap.alloc(Value::String(error))),
+        };
+        Ok(self.enum_value("Result".into(), case.into(), index, Some(value)))
     }
     /// Declared and prelude enums use this one nominal constructor. Field
     /// storage remains compatible with existing case/payload access.

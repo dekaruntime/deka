@@ -3,6 +3,13 @@ use super::*;
 use deka_syntax::typeck::{DescriptorTree, JsonDescriptor, JsonOperation};
 use std::path::{Path, PathBuf};
 
+#[derive(Clone)]
+pub(super) struct Call {
+    pub operation: JsonOperation,
+    pub shape: Result<crate::JsonShape>,
+    pub body_operation: Option<String>,
+}
+
 #[derive(Default)]
 pub(super) struct JsonTypes {
     contexts: HashMap<PathBuf, BTreeMap<String, String>>,
@@ -150,7 +157,11 @@ impl<'a> Lower<'a> {
         Ok(())
     }
     pub(super) fn json_call(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<bool> {
-        let Some((operation, shape)) = self.json_calls.get(&(e as *const Expr as usize)).cloned()
+        let Some(Call {
+            operation,
+            shape,
+            body_operation,
+        }) = self.json_calls.get(&(e as *const Expr as usize)).cloned()
         else {
             return Ok(false);
         };
@@ -163,6 +174,37 @@ impl<'a> Lower<'a> {
             return Err("checked JSON call has an invalid shape".into());
         };
         let shape = shape?;
+        if let Some(operation) = body_operation {
+            // Start consumption now, before spawning the conversion task. This
+            // makes bodyUsed and competing reads identical to text()/bytes().
+            let function = self.functions.len();
+            self.functions.push(Function {
+                name: "<JSON body>".into(),
+                parameters: 2,
+                captures: 0,
+                locals: 2,
+                asynchronous: true,
+                code: vec![
+                    Op::Load(0),
+                    Op::Await,
+                    Op::Load(1),
+                    Op::JsonParseResult(shape.clone()),
+                    Op::Return,
+                ],
+            });
+            c.emit(Op::Closure {
+                function,
+                captures: vec![],
+            });
+            self.expr(object, c)?;
+            c.emit(Op::Host {
+                operation,
+                arguments: 1,
+            });
+            self.json_factory_record(&shape, c)?;
+            c.emit(Op::Call(2));
+            return Ok(true);
+        }
         let input = if let [argument] = *args {
             argument
         } else {
@@ -174,16 +216,20 @@ impl<'a> Lower<'a> {
                 c.emit(Op::JsonStringify(shape));
             }
             JsonOperation::ParseJson => {
-                let mut factories = Default::default();
-                factory_ids(&shape, &mut factories);
-                for identity in &factories {
-                    c.emit_load(&factory_name(identity))?;
-                }
-                c.emit(Op::Record(factories.into_iter().collect()));
+                self.json_factory_record(&shape, c)?;
                 c.emit(Op::JsonParse(shape));
             }
         }
         Ok(true)
+    }
+    fn json_factory_record(&self, shape: &crate::JsonShape, c: &mut Context) -> Result<()> {
+        let mut factories = Default::default();
+        factory_ids(shape, &mut factories);
+        for identity in &factories {
+            c.emit_load(&factory_name(identity))?;
+        }
+        c.emit(Op::Record(factories.into_iter().collect()));
+        Ok(())
     }
     pub(super) fn import_json_factories(&self, module: &Path, c: &mut Context) {
         for (identity, (origin, slot)) in &self.json_factories {

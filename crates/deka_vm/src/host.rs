@@ -257,6 +257,8 @@ pub struct HostOp {
     /// is the receiver; the same schema declares and dispatches the method.
     pub receiver_method: Option<(String, String)>,
     pub receiver_property: bool,
+    /// Specialize this async string-body reader with the checked JSON schema.
+    pub json_body: bool,
     defaults: Vec<HostValue>,
     handler: Rc<HostHandler>,
 }
@@ -278,6 +280,10 @@ impl HostOp {
     pub fn with_receiver_property(mut self, owner: &str, property: &str) -> Self {
         self.receiver_method = Some((owner.into(), property.into()));
         self.receiver_property = true;
+        self
+    }
+    pub fn with_json_body(mut self) -> Self {
+        self.json_body = true;
         self
     }
     fn parameters_source(&self, start: usize) -> String {
@@ -344,6 +350,7 @@ impl HostOp {
             global: false,
             receiver_method: None,
             receiver_property: false,
+            json_body: false,
             defaults: Vec::new(),
             handler: Rc::new(handler),
         }
@@ -380,6 +387,17 @@ impl Hosts {
             if !ty.accepts(value) || default_source(value).is_none() {
                 return Err("invalid host default argument".into());
             }
+        }
+        if op.json_body
+            && (op.receiver_method.is_none()
+                || op.receiver_property
+                || !op.asynchronous
+                || !op.result_channel
+                || op.result != HostType::String
+                || op.args.len() != 1
+                || !op.defaults.is_empty())
+        {
+            return Err("JSON body reader must be an async Result<string> receiver method".into());
         }
         if op.receiver_property && op.receiver_method.is_none() {
             return Err("host property needs a receiver".into());
@@ -486,9 +504,14 @@ impl Hosts {
             // Receiver declarations are metadata, never executed. The compiler
             // dispatches their checked call sites directly to this host op.
             source.push_str(&format!(
-                "fn (self {owner}) {method}({}) {} {{}}\n",
+                "fn (self {owner}) {method}{}({}) {} {{}}\n",
+                if op.json_body { "<T>" } else { "" },
                 op.parameters_source(1),
-                op.output_source()
+                if op.json_body {
+                    "Promise<Result<T, string>>".into()
+                } else {
+                    op.output_source()
+                }
             ));
         }
         source

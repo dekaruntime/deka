@@ -10,6 +10,7 @@ pub mod demo;
 mod heap;
 mod host;
 pub mod http_headers;
+pub mod http_response;
 mod json;
 pub use json::{JsonField, JsonShape};
 mod machine;

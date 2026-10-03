@@ -62,6 +62,11 @@ impl TextDecoder {
         result
     }
 }
+/// Complete UTF-8 body decoding uses the same replacement/BOM machinery as
+/// the public TextDecoder, without introducing a second decoder.
+pub(crate) fn decode_utf8(input: &[u8]) -> Result<String> {
+    TextDecoder::new("utf-8", false, false)?.decode(input, false)
+}
 fn fields<const N: usize>(fields: [(&str, HostType); N]) -> HostType {
     HostType::Record(
         fields
