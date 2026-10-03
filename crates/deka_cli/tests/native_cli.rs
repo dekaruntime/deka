@@ -24,6 +24,45 @@ fn add_requires_one_exact_pin_without_mutating_the_project() {
     assert!(!project.path().join("deka.lock").exists());
     assert!(!project.path().join("ds_modules").exists());
 }
+
+#[test]
+fn install_replaces_a_stale_tree_for_an_empty_lock_and_requires_a_lockfile() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(project.path().join("deka.json"), b"{\"name\":\"consumer\"}").unwrap();
+    let missing = cli(project.path(), &["install"]);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("deka.lock"));
+    let bytes = b"{\"lockfileVersion\":1,\"packages\":{}}";
+    fs::write(project.path().join("deka.lock"), bytes).unwrap();
+    fs::create_dir(project.path().join("ds_modules")).unwrap();
+    fs::write(project.path().join("ds_modules/stale.ds"), "wrong").unwrap();
+    assert_eq!(
+        ok(cli(project.path(), &["install"])),
+        "Installed 0 packages\n"
+    );
+    assert_eq!(
+        fs::read_dir(project.path().join("ds_modules"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(fs::read(project.path().join("deka.lock")).unwrap(), bytes);
+    let elsewhere = tempfile::tempdir().unwrap();
+    assert_eq!(
+        ok(cli(
+            elsewhere.path(),
+            &["install", "--directory", project.path().to_str().unwrap()]
+        )),
+        "Installed 0 packages\n"
+    );
+    assert!(!elsewhere.path().join("ds_modules").exists());
+    assert_eq!(
+        cli(project.path(), &["install", "@deka/demo@1.2.3"])
+            .status
+            .code(),
+        Some(2)
+    );
+}
 fn ok(output: Output) -> String {
     assert!(
         output.status.success(),
@@ -201,5 +240,111 @@ fn uncaught_throw_prints_to_stderr_and_exits_unsuccessfully() {
         String::from_utf8_lossy(&output.stderr).contains("uncaught Throw: fatal"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn run_drains_unawaited_tasks_after_entry_or_module_returns() {
+    let project = tempfile::tempdir().unwrap();
+    let worker = r#"
+import { echo } from "io";
+async fn worker() Promise<void> {
+    let total = 0;
+    for (let i = 0; i < 2000; i += 1) { total += i; }
+    echo("worker completed");
+}
+"#;
+    for (name, source, args) in [
+        (
+            "entry.ds",
+            format!("{worker} fn main() {{ const pending = worker(); echo(\"main returned\"); }}"),
+            vec!["run", "entry.ds", "--entry", "main"],
+        ),
+        (
+            "module.ds",
+            format!("{worker} const pending = worker(); echo(\"main returned\");"),
+            vec!["run", "module.ds"],
+        ),
+    ] {
+        fs::write(project.path().join(name), source).unwrap();
+        assert_eq!(
+            ok(cli(project.path(), &args)),
+            "main returned\nworker completed\n"
+        );
+    }
+}
+
+#[test]
+fn run_and_relocated_executable_await_the_production_time_module() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("timer.ds"),
+        r#"
+import { echo } from "io";
+import { sleep } from "time";
+async fn main() Promise<void> {
+    const pending = sleep(1);
+    echo("before");
+    await pending;
+    echo("after");
+}
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        ok(cli(project.path(), &["run", "timer.ds", "--entry", "main"])),
+        "before\nafter\n"
+    );
+    let out = tempfile::tempdir().unwrap();
+    let executable = out.path().join("timer");
+    ok(cli(
+        project.path(),
+        &[
+            "build",
+            "timer.ds",
+            "--entry",
+            "main",
+            "--outfile",
+            executable.to_str().unwrap(),
+        ],
+    ));
+    drop(project);
+    assert_eq!(
+        ok(Command::new(executable)
+            .current_dir(out.path())
+            .env_clear()
+            .output()
+            .unwrap()),
+        "before\nafter\n"
+    );
+}
+
+#[test]
+fn timer_globals_finish_after_main_returns_and_clear_their_work() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("timers.ds"),
+        r#"
+import { echo } from "io";
+let interval = 0;
+let count = 0;
+fn main() {
+    const cancelled = setTimeout(fn() { echo("wrong"); }, 1000);
+    clearTimeout(cancelled);
+    interval = setInterval(fn() {
+        count += 1;
+        if (count == 2) { clearInterval(interval); echo("interval done"); }
+    }, 1);
+    echo("main returned");
+}
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        ok(cli(
+            project.path(),
+            &["run", "timers.ds", "--entry", "main"]
+        )),
+        "main returned\ninterval done\n"
     );
 }

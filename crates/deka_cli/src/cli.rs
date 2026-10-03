@@ -137,6 +137,28 @@ fn register_add(registry: &mut Registry) {
         subcommands: &[],
         handler: cmd_add,
     });
+    package_directory_param(registry);
+}
+
+fn register_install(registry: &mut Registry) {
+    registry.add_command(CommandSpec {
+        name: "install",
+        owner: "deka_cli",
+        category: "Packages",
+        summary: "restore exactly the packages pinned in deka.lock",
+        aliases: &[],
+        subcommands: &[],
+        handler: cmd_install,
+    });
+    package_directory_param(registry);
+}
+
+fn package_directory_param(registry: &mut Registry) {
+    registry.add_param(ParamSpec {
+        name: "--directory",
+        description: "project directory (default: current directory)",
+        kind: ParamKind::Value,
+    });
 }
 
 /// Registration functions in help/ownership order (the ownership index
@@ -151,6 +173,7 @@ pub fn register_fns() -> Vec<fn(&mut Registry)> {
         register_test,
         register_init,
         register_add,
+        register_install,
     ]
 }
 
@@ -373,10 +396,33 @@ fn cmd_add(ctx: &Context) -> HandlerResult {
         ));
     };
     crate::packages::parse_spec(spec).map_err(CommandError::usage)?;
-    let directory = std::env::current_dir().map_err(|e| CommandError::Runtime(e.to_string()))?;
+    let directory = package_directory(ctx)?;
     runtime(crate::packages::add(&directory, spec))?;
     ctx.out().print(format_args!("Added {spec}\n"));
     Ok(ExitStatus::SUCCESS)
+}
+
+fn cmd_install(ctx: &Context) -> HandlerResult {
+    if !ctx.args.positionals.is_empty() {
+        return Err(CommandError::usage("usage: deka install"));
+    }
+    let directory = package_directory(ctx)?;
+    let count = crate::packages::install(&directory).map_err(CommandError::Runtime)?;
+    ctx.out()
+        .print(format_args!("Installed {count} packages\n"));
+    Ok(ExitStatus::SUCCESS)
+}
+
+fn package_directory(ctx: &Context) -> std::result::Result<PathBuf, CommandError> {
+    if ctx.args.params.keys().any(|name| name != "--directory") {
+        return Err(CommandError::usage(
+            "package commands accept only --directory",
+        ));
+    }
+    if let Some(directory) = ctx.param::<PathBuf>("--directory")? {
+        return Ok(directory);
+    }
+    std::env::current_dir().map_err(|e| CommandError::Runtime(e.to_string()))
 }
 
 /// Run a compiled application (its executable carries an embedded payload).

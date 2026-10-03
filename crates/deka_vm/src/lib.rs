@@ -1,5 +1,7 @@
 //! PHPX-derived Rust bytecode VM shared by native Deka and browser previews.
 mod bytecode;
+mod callback;
+pub use callback::{HostCallback, HostContext, HostJob};
 #[cfg(feature = "compiler")]
 pub mod compiler;
 #[cfg(feature = "host")]
@@ -10,6 +12,10 @@ mod machine;
 #[cfg(feature = "compiler")]
 pub mod package;
 mod stack;
+#[cfg(feature = "host")]
+pub mod time;
+#[cfg(feature = "host")]
+pub mod timers;
 pub use bytecode::*;
 pub use heap::HeapStats;
 pub use host::*;

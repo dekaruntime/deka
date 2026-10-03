@@ -91,7 +91,7 @@ pub fn test_entries(path: &std::path::Path) -> Result<Vec<String>> {
         .collect())
 }
 fn host_module(source: &str) -> bool {
-    matches!(source, "vm:host" | "io" | "test")
+    matches!(source, "vm:host" | "io" | "test" | "time")
 }
 
 /// The project a compile resolves packages against: the nearest ancestor of
@@ -153,7 +153,7 @@ impl Project {
     /// Resolve a bare specifier to a package file: `name` (or
     /// `@scope/name`) plus an optional subpath. Every failure names the
     /// package and the cause.
-    fn package_path(&self, source: &str) -> Result<std::path::PathBuf> {
+    fn package_path(&self, importer: &std::path::Path, source: &str) -> Result<std::path::PathBuf> {
         let segments: Vec<&str> = source.split('/').collect();
         let (name, subpath) = if source.starts_with('@') {
             if segments.len() < 2 {
@@ -171,7 +171,35 @@ impl Project {
                 "package {name} cannot be resolved: deka.json not found in this directory or any parent"
             ));
         };
-        let Some(declared) = self.dependencies.get(&name) else {
+        let mut dependencies = None;
+        if let Ok(relative) = importer.strip_prefix(root.join("ds_modules")) {
+            let mut components = relative.components();
+            if let Some(std::path::Component::Normal(first)) = components.next() {
+                let mut owner = root.join("ds_modules").join(first);
+                if first.to_string_lossy().starts_with('@')
+                    && let Some(std::path::Component::Normal(package)) = components.next()
+                {
+                    owner.push(package);
+                }
+                let manifest_path = owner.join("deka.json");
+                let manifest: serde_json::Value = serde_json::from_slice(
+                    &std::fs::read(&manifest_path)
+                        .map_err(|e| format!("{}: {e}", manifest_path.display()))?,
+                )
+                .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+                // Hand-placed legacy packages without this field used the root
+                // declarations. An explicit package map supplies its own scope.
+                if let Some(value) = manifest.get("dependencies") {
+                    dependencies = Some(
+                        serde_json::from_value::<BTreeMap<String, String>>(value.clone()).map_err(
+                            |e| format!("{}: invalid dependencies: {e}", manifest_path.display()),
+                        )?,
+                    );
+                }
+            }
+        }
+        let declarations = dependencies.as_ref().unwrap_or(&self.dependencies);
+        let Some(declared) = declarations.get(&name) else {
             return Err(format!(
                 "package {name} is not declared in deka.json dependencies"
             ));
@@ -182,32 +210,33 @@ impl Project {
                 "package {name} is not installed (ds_modules/{name} is missing)"
             ));
         };
-        let entry = if subpath.is_empty() {
-            let manifest_entry = std::fs::read_to_string(directory.join("deka.json"))
-                .ok()
-                .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
-                .and_then(|manifest| manifest.get("entry")?.as_str().map(str::to_owned));
-            let entry = manifest_entry.unwrap_or_else(|| "index.ds".into());
-            // Version agreement is checked once per package root resolution:
-            // deka.json declares, deka.lock pins, ds_modules provides.
-            let installed = std::fs::read_to_string(directory.join("deka.json"))
-                .ok()
-                .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
-                .and_then(|manifest| manifest.get("version")?.as_str().map(str::to_owned));
-            if let Some(installed) = installed {
-                if installed != *declared {
-                    return Err(format!(
-                        "package {name} version mismatch: deka.json expects {declared}, ds_modules has {installed}"
-                    ));
-                }
-                if let Some(pin) = self.lock.get(&name)
-                    && *pin != installed
-                {
-                    return Err(format!(
-                        "package {name} version mismatch: deka.lock pins {pin}, ds_modules has {installed}"
-                    ));
-                }
+        let installed_manifest = std::fs::read_to_string(directory.join("deka.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok());
+        // The importing manifest declares, deka.lock pins, ds_modules provides.
+        // Check agreement for both root and subpath imports.
+        if let Some(installed) = installed_manifest
+            .as_ref()
+            .and_then(|manifest| manifest.get("version")?.as_str())
+        {
+            if installed != declared {
+                return Err(format!(
+                    "package {name} version mismatch: deka.json expects {declared}, ds_modules has {installed}"
+                ));
             }
+            if let Some(pin) = self.lock.get(&name)
+                && pin != installed
+            {
+                return Err(format!(
+                    "package {name} version mismatch: deka.lock pins {pin}, ds_modules has {installed}"
+                ));
+            }
+        }
+        let entry = if subpath.is_empty() {
+            let entry = installed_manifest
+                .as_ref()
+                .and_then(|manifest| manifest.get("entry")?.as_str())
+                .unwrap_or("index.ds");
             directory.join(entry)
         } else {
             directory.join(subpath.join("/"))
@@ -231,7 +260,7 @@ fn module_path(
         let path = parent.parent().ok_or("module has no parent")?.join(source);
         return std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()));
     }
-    project.package_path(source)
+    project.package_path(parent, source)
 }
 /// Modules in dependency order. A module already being loaded is not loaded
 /// again (import cycles load, deka#1206); reads of exports that initialize
@@ -348,11 +377,25 @@ fn lower_module<'a>(
             imports.insert(source, exports);
         }
     }
-    let checked = deka_syntax::check_program_with_imports(ast, source, &imports);
+    let globals = hosts
+        .globals()
+        .filter_map(|op| {
+            host_exports
+                .values
+                .get_key_value(op.name.as_str())
+                .map(|(name, ty)| (*name, ty.clone()))
+        })
+        .collect();
+    let checked = deka_syntax::typeck::check_program_with_imports_and_globals(
+        ast, source, &imports, &globals,
+    );
     diagnostics(&checked.errors).map_err(|e| format!("{}: {e}", path.display()))?;
     entry.names.clear();
     entry.checked.clear();
     lower.hosts.clear();
+    for op in hosts.globals() {
+        lower.hosts.insert(op.name.clone(), op.name.clone());
+    }
     lower.declared.clear();
     lower.newtypes.clear();
     lower.structs.clear();
@@ -943,6 +986,7 @@ fn compile_modules(
     let mut lower = Lower {
         functions: vec![],
         hosts: BTreeMap::new(),
+        host_arities: hosts.declarations_names_and_arities(),
         declared: std::collections::BTreeSet::new(),
         newtypes: std::collections::BTreeSet::new(),
         structs: BTreeMap::new(),
@@ -1226,6 +1270,7 @@ type StructFields<'a> = Vec<(String, Option<&'a Expr<'a>>, bool)>;
 struct Lower<'a> {
     functions: Vec<Function>,
     hosts: BTreeMap<String, String>,
+    host_arities: BTreeMap<String, usize>,
     /// Top-level names declared anywhere in the current module. A call to one
     /// of these before its declaration is a forward reference; a call to any
     /// other unbound name is an unknown built-in.
@@ -2395,7 +2440,35 @@ impl<'a> Lower<'a> {
                 c.patch(end);
             }
             Expr::Identifier { name, .. } => {
-                c.emit_load(name)?;
+                if !c.names.contains_key(*name)
+                    && let Some(operation) = self.hosts.get(*name)
+                {
+                    let argc = *self
+                        .host_arities
+                        .get(operation)
+                        .ok_or("unknown host signature")?;
+                    let mut code = (0..argc).map(Op::Load).collect::<Vec<_>>();
+                    code.push(Op::Host {
+                        operation: operation.clone(),
+                        arguments: argc,
+                    });
+                    code.push(Op::Return);
+                    let function = self.functions.len();
+                    self.functions.push(Function {
+                        name: operation.clone(),
+                        parameters: argc,
+                        captures: 0,
+                        locals: argc,
+                        asynchronous: false,
+                        code,
+                    });
+                    c.emit(Op::Closure {
+                        function,
+                        captures: vec![],
+                    });
+                } else {
+                    c.emit_load(name)?;
+                }
             }
             Expr::Paren { expr, .. } | Expr::Safe { expr, .. } => self.expr(expr, c)?,
             Expr::Binary {
