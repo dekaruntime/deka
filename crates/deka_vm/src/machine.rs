@@ -979,6 +979,20 @@ impl Vm {
             }
             Value::Record(record) => {
                 ancestors.push(value);
+                if record.enum_name.is_some() {
+                    let name = record.get("name").ok_or("enum has no case name")?;
+                    let Value::String(name) = self.heap.get(*name)? else {
+                        return Err("enum case name is not text".into());
+                    };
+                    let text = match record.get("value") {
+                        Some(payload) => {
+                            format!("{name}({})", self.inspect(*payload, true, ancestors)?)
+                        }
+                        None => name.clone(),
+                    };
+                    ancestors.pop();
+                    return Ok(text);
+                }
                 let mut parts = vec![];
                 for name in &record.order {
                     // Receiver methods are runtime attachments, not data fields.

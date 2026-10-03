@@ -134,6 +134,8 @@ impl Component {
                 Ok(children)
             }
             Value::Unit => Ok(vec![]),
+            Value::Record(record) if record.enum_name.as_deref() == Some("Option")
+                && record.get("name").is_some_and(|h| matches!(self.vm.heap.get(*h), Ok(Value::String(name)) if name == "None")) => Ok(vec![]),
             _ => Ok(vec![self.node(value, inputs)?]),
         }
     }

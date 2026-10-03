@@ -19,6 +19,7 @@ async-async-missing-promise-return-type-fail
 async-async-multiple-awaits
 async-async-mutable-method-on-immutable-receiver-fail
 async-async-nested-await
+async-async-nested-generic-return
 async-async-no-return-type
 async-async-param-missing-type-fail
 async-async-param-missing-type-method-fail
@@ -195,7 +196,10 @@ error-globals-console-log-multiple-args
 error-globals-console-log-reassign-fail
 error-globals-console-printable-array
 error-globals-console-printable-boolean
+error-globals-console-printable-enum
 error-globals-console-printable-number
+error-globals-console-printable-result
+error-globals-console-printable-result-ok
 error-globals-console-printable-string
 error-globals-console-printable-struct
 error-globals-console-printable-tuple

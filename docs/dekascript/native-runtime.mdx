@@ -191,3 +191,28 @@ arithmetic retain the checked result type, while unboxing returns the plain
 primitive. User-defined `getType` and `signature` methods keep precedence over
 the builtins. Descriptors survive collection while the VM runs and are released
 when it finishes or is cancelled. No JavaScript helper is involved.
+
+## Option and Result values
+
+`Option` and `Result` are prelude enums. Namespace and short constructors create
+real enum values through the same VM operation as declared enums:
+
+```tsx
+const present: Option<number> = Option.Some(7); // or Some(7)
+const absent: Option<number> = Option.None;    // or None
+const success: Result<number, string> = Result.Ok(1); // or Ok(1)
+const failure: Result<number, string> = Result.Err("boom"); // or Err("boom")
+console.log(present, absent, success, failure);
+// Some(7) None Ok(1) Err("boom")
+```
+
+`string(value)` and `console.log(value)` share the enum formatter. Use
+`echo(string(value))` for the text-only `echo` operation. Nested enums retain
+their cases (`Some(Ok(7))`); string payloads are quoted and escaped. Declared
+variants follow the same rule (`Circle(5)`, `Empty`). Objects with fields named
+`name`, `index` or `value` keep object formatting; they do not become enums.
+`None` also remains an empty child in a view. Constructors and printing do not
+change the rules for string concatenation or widen the host wire types.
+
+The native VM retains `Some` as a value, rather than erasing it to its payload
+as the former JavaScript backend did.

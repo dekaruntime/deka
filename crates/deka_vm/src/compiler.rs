@@ -1136,6 +1136,52 @@ struct Lower<'a> {
     newtype_results: HashMap<usize, String>,
 }
 impl<'a> Lower<'a> {
+    /// Prelude cases have the same ordered schema and bytecode as declared enums.
+    fn enum_cases(&self, name: &str) -> Option<Vec<(String, bool)>> {
+        self.enums.get(name).cloned().or_else(|| {
+            let cases: &[(&str, bool)] = match name {
+                "Option" => &[("Some", true), ("None", false)],
+                "Result" => &[("Ok", true), ("Err", true)],
+                _ => return None,
+            };
+            Some(cases.iter().map(|(n, p)| ((*n).into(), *p)).collect())
+        })
+    }
+    fn enum_constructor(
+        &mut self,
+        name: &str,
+        case: &str,
+        payload: Option<&Expr<'a>>,
+        c: &mut Context,
+    ) -> Result<()> {
+        let cases = self
+            .enum_cases(name)
+            .ok_or_else(|| format!("enum `{name}` is not declared in this module"))?;
+        let (index, (_, has_payload)) = cases
+            .iter()
+            .enumerate()
+            .find(|(_, (n, _))| n == case)
+            .ok_or_else(|| format!("case `{case}` not found in enum `{name}`"))?;
+        if *has_payload != payload.is_some() {
+            return Err(format!(
+                "case `{case}` of enum `{name}` has the wrong payload arity"
+            ));
+        }
+        if let Some(value) = payload {
+            self.expr(value, c)?;
+        } else if self.enums.contains_key(name) {
+            // Payload-free declared cases remain interned at their declaration.
+            c.emit_load(&format!("{name}${case}"))?;
+            return Ok(());
+        }
+        c.emit(Op::Enum {
+            name: name.into(),
+            case: case.into(),
+            index,
+            payload: *has_payload,
+        });
+        Ok(())
+    }
     /// Every method visible on a value of `type_name`: its own plus those
     /// promoted through embedded structs, as (method key, mangled name).
     fn methods_for(&self, type_name: &str, seen: &mut Vec<String>) -> Vec<(String, String)> {
@@ -1726,9 +1772,7 @@ impl<'a> Lower<'a> {
             Expr::Boolean { value, .. } => {
                 c.emit(Op::Const(Literal::Bool(*value)));
             }
-            Expr::None { .. } => {
-                c.emit(Op::Const(Literal::Unit));
-            }
+            Expr::None { .. } => self.enum_constructor("Option", "None", None, c)?,
             Expr::Ternary {
                 condition,
                 then_branch,
@@ -2178,23 +2222,12 @@ impl<'a> Lower<'a> {
                 self.struct_value(name, &supplied, c)?;
             }
             Expr::FieldAccess { object, field, .. } => {
-                // Enum namespace access: `Color.Red` where `Color` names an
-                // enum loads the interned case record.
+                // A checked namespace case shares construction with constructor syntax.
                 if let Expr::Identifier { name, .. } = object
                     && !c.names.contains_key(*name)
-                    && let Some(cases) = self.enums.get(*name)
+                    && self.enum_cases(name).is_some()
                 {
-                    let mangled = format!("{}${}", name, field);
-                    let Some((_, has_payload)) = cases.iter().find(|(case, _)| case == field)
-                    else {
-                        return Err(format!("case `{field}` not found in enum `{name}`"));
-                    };
-                    if *has_payload {
-                        return Err(format!(
-                            "case `{field}` of enum `{name}` carries a payload; construct it with `{name}.{field}(value)`"
-                        ));
-                    }
-                    c.emit_load(&mangled)?;
+                    self.enum_constructor(name, field, None, c)?;
                     return Ok(());
                 }
                 self.expr(object, c)?;
@@ -2204,49 +2237,9 @@ impl<'a> Lower<'a> {
                 enum_name,
                 case_name,
                 payload,
-                span,
                 ..
             } => {
-                let Some(cases) = self.enums.get(*enum_name).cloned() else {
-                    return Err(format!(
-                        "{}:{}: enum `{enum_name}` is not declared in this module (Option and Result land with note 05)",
-                        span.start.line, span.start.column
-                    ));
-                };
-                let Some((index, has_payload)) = cases
-                    .iter()
-                    .enumerate()
-                    .find(|(_, (case, _))| case == case_name)
-                    .map(|(i, (_, p))| (i, *p))
-                else {
-                    return Err(format!(
-                        "case `{case_name}` not found in enum `{enum_name}`"
-                    ));
-                };
-                match (payload, has_payload) {
-                    (None, false) => {
-                        c.emit_load(&format!("{}${}", enum_name, case_name))?;
-                    }
-                    (Some(value), true) => {
-                        self.expr(value, c)?;
-                        c.emit(Op::Enum {
-                            name: (*enum_name).into(),
-                            case: (*case_name).into(),
-                            index,
-                            payload: true,
-                        });
-                    }
-                    (None, true) => {
-                        return Err(format!(
-                            "case `{case_name}` of enum `{enum_name}` needs its payload"
-                        ));
-                    }
-                    (Some(_), false) => {
-                        return Err(format!(
-                            "case `{case_name}` of enum `{enum_name}` carries no payload"
-                        ));
-                    }
-                }
+                self.enum_constructor(enum_name, case_name, payload.as_deref(), c)?;
             }
             Expr::IndexAccess { object, index, .. } => {
                 self.expr(object, c)?;

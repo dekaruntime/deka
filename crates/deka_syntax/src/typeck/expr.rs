@@ -524,7 +524,34 @@ impl<'a> Checker<'a> {
     /// `Error`/`Infer`/`Var` are accepted here so an already-diagnosed or
     /// checker-opaque expression does not also fail printability.
     fn is_printable(&mut self, ty: &Type<'a>, span: ast::Span) -> bool {
-        matches!(ty, Type::Error | Type::Infer | Type::Var) || self.descriptor_tree(ty, span).is_ok()
+        // An absent enum payload leaves a genuinely unconstrained channel
+        // (`None`, `Ok(x)`, `Err(e)`). For this predicate alone, substitute an
+        // empty printable leaf. Reflection still requires concrete types, and
+        // the existing descriptor walk still guards recursion and functions.
+        fn printable_shape<'a>(ty: &Type<'a>) -> Type<'a> {
+            match ty {
+                Type::Var => Type::None,
+                Type::Option { inner } => Type::Option {
+                    inner: Box::new(printable_shape(inner)),
+                },
+                Type::Generic { base, args } => Type::Generic {
+                    base,
+                    args: args.iter().map(printable_shape).collect(),
+                },
+                Type::Array { elem } => Type::Array {
+                    elem: Box::new(printable_shape(elem)),
+                },
+                Type::Tuple { elements } => Type::Tuple {
+                    elements: elements.iter().map(printable_shape).collect(),
+                },
+                Type::Union { members } => Type::Union {
+                    members: members.iter().map(printable_shape).collect(),
+                },
+                _ => ty.clone(),
+            }
+        }
+        matches!(ty, Type::Error | Type::Infer | Type::Var)
+            || self.descriptor_tree(&printable_shape(ty), span).is_ok()
     }
 
     /// Check one `Printable`-bound console argument: evaluate it, then run
@@ -5297,11 +5324,21 @@ impl<'a> Checker<'a> {
                             Type::Named {
                                 name: "number" | "boolean",
                             } => (Some(super::types::UnwrapKind::WidenToString), ret),
-                            Type::Struct { .. } if self.is_printable(&arg_type, span) => {
+                            Type::None | Type::Option { .. } | Type::Struct { .. }
+                                if self.is_printable(&arg_type, span) =>
+                            {
+                                (Some(super::types::UnwrapKind::WidenToString), ret)
+                            }
+                            Type::Named { name }
+                                if self.enums.contains_key(name)
+                                    && self.is_printable(&arg_type, span) =>
+                            {
                                 (Some(super::types::UnwrapKind::WidenToString), ret)
                             }
                             Type::Generic { base, .. }
-                                if self.structs.contains_key(base)
+                                if (self.structs.contains_key(base)
+                                    || self.enums.contains_key(base)
+                                    || *base == "Result")
                                     && self.is_printable(&arg_type, span) =>
                             {
                                 (Some(super::types::UnwrapKind::WidenToString), ret)
