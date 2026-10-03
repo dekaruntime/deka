@@ -328,6 +328,36 @@ value needs an imported default currently produces a named compile error;
 its default must run in the declaring module, never in the importer’s scope.
 
 
+## Values at the Rust host boundary
+
+A host operation declares its input and output schema once in `HostType`.
+The compiler generates DekaScript signatures from that schema, and dispatch
+checks Rust replies against it. Nested records and typed lists retain their
+fields and element values; empty lists are supported. Structural record type
+annotations use `{status: number, body: bytes}`. Existing string-list host
+operations remain compatible.
+
+`bytes` is an immutable buffer of octets (APS 15), separate from `Array<number>`. DekaScript can read
+its `.length` and indexed bytes (numbers from 0 to 255). The host bridge copies
+records, lists and bytes; it does not offer shared mutable buffers. Cyclic values
+and values nested 64 levels deep fail with a host-boundary diagnostic.
+
+Rust integrations can declare an opaque type such as `Socket` with
+`HostType::Handle("Socket".into())`, return a `HostHandle::new("Socket", resource)`,
+and accept it in another operation. DekaScript can retain and pass the handle
+but cannot construct it, inspect its resource, or pass a different opaque brand.
+Rust retrieves its own resource through `downcast_ref`. Language aliases and
+Rust clones retain one resource; VM garbage collection, cancellation and drop
+release references. A resource returned to Rust stays alive until Rust releases
+its last reference. No application-level reference counting is required in
+DekaScript.
+
+Async operations use the same schemas. With `with_result_channel()`, successful
+replies become `Ok(value)` and operational failures become `Err(message)`.
+A Rust reply that violates its declared schema is a VM protocol error, not an
+operational `Err`. This bridge supplies the values needed for response and
+socket integrations; it does not by itself add a public `fetch` API.
+
 ## Timer globals and native callbacks
 
 `setTimeout(callback, ms)` queues one callback after a delay;
