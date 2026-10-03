@@ -589,8 +589,47 @@ convertible with `string()`, and other arithmetic operators require numbers.
 An infinite running task keeps the program alive. Cancellation or a VM fault
 releases pending work; a VM fault cannot be hidden by a successful entry return.
 Fallible host operations still deliver operational errors as Result values.
-This CLI lifetime rule does not add async window handlers: desktop event-loop
-integration is a separate feature.
+Desktop handlers use the same persistent VM scheduler, driven by the window loop.
+
+## Waiting on several promises
+
+`Promise.all` accepts an array of promises with the same value type and returns
+`Promise<Array<T>>`. It snapshots the inputs and preserves their order, regardless
+of completion order. `Promise.race` returns the first completed input's value.
+Inputs already completed when a race starts are considered in array order. A
+race leaves the other tasks running; the CLI still waits for them before exiting.
+
+```tsx
+async fn value(n: number) Promise<number> { return n; }
+async fn main() Promise<number> {
+    const values = await Promise.all([value(7), value(8)]);
+    return values.has(1) ? values[1] : 0;
+}
+// 8
+```
+
+`Promise.all<number>([])` completes with an empty array. `Promise.race<number>([])`
+remains pending without scheduling idle turns. A host `Err` remains ordinary
+`Result` data in either combinator. Authored `Throw` remains checked control flow:
+collecting `Promise<Exception<T, E>>` gives `Promise<Exception<Array<T>, E>>`, which
+must be handled by `match` or `try` after awaiting it. A race preserves its input's
+`Exception<T, E>` contract.
+
+Namespace aliases (`const P = Promise`) and method aliases (`const all = Promise.all`)
+keep their types, including through relative imports. Local bindings named
+`Promise` retain their ordinary meaning. This slice rejects partial captures such
+as `Promise.all(_)` and `Promise.race(_)`, plain function annotations that erase
+the native generic contract, and an unbounded type parameter passed to `all`.
+Capture the method itself and call it with a concrete promise value type.
+
+The CLI runs at most 4,096 VM work steps per poll, with at most 256 instructions
+per task slice. Joins scan their inputs in bounded slices, park while inputs are
+pending, and keep values rooted across suspension. Long-running applications have
+no default lifetime instruction quota. Rust embedders can still opt into
+`Vm::set_instruction_limit` for a finite execution guard. Synchronous view
+initialization and binding queries retain separate finite guards. These are work
+budgets, not wall-clock guarantees: allocation, garbage collection and a host's
+synchronous work also take time.
 
 ## Console output
 

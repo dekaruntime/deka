@@ -1,5 +1,5 @@
 //! DSC is linked as a library; no JS emission or compiler subprocess.
-use crate::{Function, Hosts, ListMut, Literal, Op, Program, Result};
+use crate::{Function, Hosts, ListMut, Literal, Op, Program, PromiseJoin, Result};
 pub use deka_syntax::console::STDERR_OPERATION as CONSOLE_ERROR_OPERATION;
 use deka_syntax::{Diagnostic, Severity, ast::*, typeck::ExceptionEmit};
 use std::collections::{BTreeMap, HashMap};
@@ -331,6 +331,44 @@ fn load_modules(
 /// (`mark_checked = false`) those alias a placeholder local so body lowering
 /// resolves, in the real pass they alias the exporter's slot and their reads
 /// become checked loads (deka#1206).
+fn native_globals<'a>(
+    hosts: &Hosts,
+    host_exports: &deka_syntax::ModuleExports<'a>,
+) -> HashMap<&'a str, deka_syntax::typeck::Type<'a>> {
+    let mut globals: HashMap<_, _> = hosts
+        .globals()
+        .filter_map(|op| {
+            host_exports
+                .values
+                .get_key_value(op.name.as_str())
+                .map(|(name, ty)| (*name, ty.clone()))
+        })
+        .collect();
+    let fields = PromiseJoin::ALL
+        .into_iter()
+        .map(|kind| {
+            let name = format!("__promise_{}", kind.name());
+            let mut ty = host_exports
+                .values
+                .get(name.as_str())
+                .expect("native promise declaration")
+                .clone();
+            // Each intrinsic carries its own polymorphic binder through aliases.
+            ty = deka_syntax::typeck::Type::Generic {
+                base: if kind == PromiseJoin::All {
+                    "$PromiseAll"
+                } else {
+                    "$PromiseRace"
+                },
+                args: vec![ty],
+            };
+            (kind.name(), ty)
+        })
+        .collect();
+    globals.insert("Promise", deka_syntax::typeck::Type::Object { fields });
+    globals
+}
+
 #[allow(clippy::too_many_arguments)]
 fn lower_module<'a>(
     path: &std::path::Path,
@@ -378,15 +416,7 @@ fn lower_module<'a>(
             imports.insert(source, exports);
         }
     }
-    let globals = hosts
-        .globals()
-        .filter_map(|op| {
-            host_exports
-                .values
-                .get_key_value(op.name.as_str())
-                .map(|(name, ty)| (*name, ty.clone()))
-        })
-        .collect();
+    let globals = native_globals(hosts, host_exports);
     let checked = deka_syntax::typeck::check_program_with_imports_and_globals(
         ast, source, &imports, &globals,
     );
@@ -710,7 +740,11 @@ fn compile_modules(
     project: &Project,
 ) -> Result<Program> {
     let arena = bumpalo::Bump::new();
-    let declarations = hosts.declarations();
+    let declarations = hosts.declarations()
+        + &PromiseJoin::ALL
+            .into_iter()
+            .map(PromiseJoin::declaration)
+            .collect::<String>();
     let host_parse = deka_syntax::parse(&declarations, &arena);
     diagnostics(&host_parse.errors)?;
     let host_ast = host_parse.program.ok_or("missing host declarations")?;
@@ -851,6 +885,45 @@ fn compile_modules(
     }
     for (path, _source) in modules {
         augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new());
+    }
+
+    let globals = native_globals(hosts, &host_exports);
+    for _ in 0..=modules.len() {
+        let before: Vec<_> = modules
+            .iter()
+            .map(|(path, _)| module_exports[path].values.clone())
+            .collect();
+        for (path, _) in modules {
+            let mut exports = module_exports[path].clone();
+            let mut imports = HashMap::new();
+            for stmt in asts[path].statements {
+                if let Stmt::Import { source, .. } = stmt {
+                    let imported = if host_module(source) {
+                        &host_exports
+                    } else {
+                        &module_exports[&module_path(path, source, project)?]
+                    };
+                    imports.insert(*source, imported);
+                }
+            }
+            deka_syntax::typeck::refresh_module_export_values_with_globals(
+                asts[path],
+                &imports,
+                &globals,
+                &mut exports,
+            );
+            module_exports.insert(path.clone(), exports);
+        }
+        for (path, _) in modules {
+            augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new());
+        }
+        if modules
+            .iter()
+            .zip(before)
+            .all(|((path, _), values)| module_exports[path].values == values)
+        {
+            break;
+        }
     }
 
     // Nominal struct identity follows declarations through aliases and barrels.
@@ -2436,6 +2509,31 @@ impl<'a> Lower<'a> {
                 c.patch(otherwise);
                 self.expr(else_branch, c)?;
                 c.patch(end);
+            }
+            Expr::Identifier {
+                name: "Promise", ..
+            } if !c.names.contains_key("Promise") => {
+                for kind in PromiseJoin::ALL {
+                    let function = self.functions.len();
+                    self.functions.push(Function {
+                        name: format!("Promise.{}", kind.name()),
+                        parameters: 1,
+                        captures: 0,
+                        locals: 1,
+                        asynchronous: false,
+                        code: vec![Op::Load(0), Op::PromiseJoin(kind), Op::Return],
+                    });
+                    c.emit(Op::Closure {
+                        function,
+                        captures: vec![],
+                    });
+                }
+                c.emit(Op::Record(
+                    PromiseJoin::ALL
+                        .into_iter()
+                        .map(|kind| kind.name().to_owned())
+                        .collect(),
+                ));
             }
             Expr::Identifier { name, .. } => {
                 if !c.names.contains_key(*name)

@@ -88,11 +88,66 @@ impl<'a> Type<'a> {
     /// inspect [`Type::is_hook_fn`] before unwrapping.
     pub fn function_contract(&self) -> Self {
         match self {
-            Type::Generic { base: "Hook", args } if args.len() == 1 => args[0].function_contract(),
-            Type::Generic { base: "Component", args } if args.len() == 1 => Type::Function {
-                params: vec![args[0].clone()], ret: Box::new(Type::react_node()), optional: 0,
+            Type::Generic {
+                base: "Hook" | "$PromiseAll" | "$PromiseRace",
+                args,
+            } if args.len() == 1 => args[0].function_contract(),
+            Type::Generic {
+                base: "Component",
+                args,
+            } if args.len() == 1 => Type::Function {
+                params: vec![args[0].clone()],
+                ret: Box::new(Type::react_node()),
+                optional: 0,
             },
             _ => self.clone(),
+        }
+    }
+
+    /// Native All collects values but forwards an authored Throw as checked
+    /// control flow. This marker is retained by aliases; ordinary function
+    /// assignment must not erase the effect transformation.
+    pub fn is_native_promise_fn(&self) -> bool {
+        matches!(self, Type::Generic { base: "$PromiseAll" | "$PromiseRace", args } if args.len() == 1)
+    }
+
+    pub fn is_promise_all(&self) -> bool {
+        matches!(self, Type::Generic { base: "$PromiseAll", args } if args.len() == 1)
+    }
+
+    pub fn promise_all_return(self) -> Self {
+        match self {
+            Type::Generic {
+                base: "Promise",
+                args,
+            } if args.len() == 1 => {
+                let inner = args.into_iter().next().unwrap();
+                let inner = match inner {
+                    Type::Array { elem } => match *elem {
+                        Type::Generic {
+                            base: "Exception",
+                            args,
+                        } if args.len() == 2 => Type::Generic {
+                            base: "Exception",
+                            args: vec![
+                                Type::Array {
+                                    elem: Box::new(args[0].clone()),
+                                },
+                                args[1].clone(),
+                            ],
+                        },
+                        other => Type::Array {
+                            elem: Box::new(other),
+                        },
+                    },
+                    other => other,
+                };
+                Type::Generic {
+                    base: "Promise",
+                    args: vec![inner],
+                }
+            }
+            other => other,
         }
     }
 
@@ -191,7 +246,16 @@ impl<'a> Type<'a> {
 /// substitution does.
 pub fn substitute_type<'a>(ty: &Type<'a>, subst: &std::collections::HashMap<&'a str, Type<'a>>) -> Type<'a> {
     match ty {
-        Type::Param { name } => subst.get(name).cloned().unwrap_or_else(|| Type::Param { name }),
+        // The native function's own T is a separate binder; transporting it
+        // through identity<R>, a record, or a module must retain that binder.
+        Type::Generic {
+            base: "$PromiseAll" | "$PromiseRace",
+            ..
+        } => ty.clone(),
+        Type::Param { name } => subst
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Type::Param { name }),
         // A parameter resolved through the module-export path arrives as
         // `Named` (the exporter's tables do not know the declaring scope's
         // type parameters), so it must substitute exactly as `Param` does —

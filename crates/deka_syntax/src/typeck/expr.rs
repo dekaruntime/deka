@@ -3810,12 +3810,30 @@ impl<'a> Checker<'a> {
                             }
                             self.note_hook_call(name, *span, super::hooks::is_hook_builtin(name));
                         }
+                        let was_promise_all = callee_type.is_promise_all();
                         if let Type::Function {
                             params,
                             ret,
                             optional,
                         } = callee_type.function_contract()
                         {
+                            let mut subst = HashMap::new();
+                            if let Some(param) = params.first() {
+                                infer_type_args(
+                                    param,
+                                    &left_type,
+                                    &collect_param_names(&params),
+                                    &mut subst,
+                                );
+                            }
+                            let params: Vec<_> =
+                                params.iter().map(|p| substitute_type(p, &subst)).collect();
+                            let ret = substitute_type(&ret, &subst);
+                            let ret = if was_promise_all {
+                                self.promise_all_return(ret, *span)
+                            } else {
+                                ret
+                            };
                             let required = params.len().saturating_sub(optional);
                             if params.len() < 1 || required > 1 {
                                 self.error_span(
@@ -3841,7 +3859,7 @@ impl<'a> Checker<'a> {
                                     ),
                                 );
                             }
-                            *ret
+                            ret
                         } else if callee_type.is_error() {
                             Type::Error
                         } else {
@@ -3856,6 +3874,16 @@ impl<'a> Checker<'a> {
                     } => {
                         let callee_type = self.check_expr(callee);
                         self.note_hook_callee(callee, &callee_type, *span);
+                        if callee_type.is_native_promise_fn()
+                            && !type_args.is_empty()
+                            && type_args.len() != 1
+                        {
+                            self.error_span(
+                                *span,
+                                "native promise combinators take exactly one type argument",
+                            );
+                        }
+                        let was_promise_all = callee_type.is_promise_all();
                         let callee_type = callee_type.function_contract();
                         if let Type::Function {
                             params,
@@ -3863,16 +3891,33 @@ impl<'a> Checker<'a> {
                             optional,
                         } = callee_type
                         {
-                            let subst = if params.iter().any(|p| contains_param(p))
+                            let mut subst = if params.iter().any(|p| contains_param(p))
                                 || contains_param(&ret)
                             {
                                 self.infer_substitution(type_args, &params, args)
                             } else {
                                 HashMap::new()
                             };
+                            let left_index = args
+                                .iter()
+                                .position(|arg| Self::is_hole_expr(arg))
+                                .unwrap_or(0);
+                            if let Some(param) = params.get(left_index) {
+                                infer_type_args(
+                                    param,
+                                    &left_type,
+                                    &collect_param_names(&params),
+                                    &mut subst,
+                                );
+                            }
                             let substituted_params: Vec<Type<'a>> =
                                 params.iter().map(|p| substitute_type(p, &subst)).collect();
                             let substituted_ret = substitute_type(&ret, &subst);
+                            let substituted_ret = if was_promise_all {
+                                self.promise_all_return(substituted_ret, *span)
+                            } else {
+                                substituted_ret
+                            };
 
                             let has_hole = args.iter().any(|a| Self::is_hole_expr(a));
                             let provided: Vec<&ast::Expr<'a>> = args.iter().collect();
@@ -3901,26 +3946,23 @@ impl<'a> Checker<'a> {
                                 }
                             }
 
-                            if !has_hole {
-                                if substituted_params.is_empty() {
-                                    self.error_span(
-                                        *span,
-                                        "pipe right-hand call takes no arguments",
-                                    );
-                                } else if !self.is_assignable(&substituted_params[0], &left_type)
-                                {
-                                    self.error_span(
-                                        left.span(),
-                                        super::with_union_narrowing_hint(
-                                            format!(
-                                                "pipe expected argument type `{}`, found type `{left_type}`",
-                                                substituted_params[0]
-                                            ),
-                                            &substituted_params[0],
-                                            &left_type,
+                            if substituted_params.is_empty() {
+                                self.error_span(*span, "pipe right-hand call takes no arguments");
+                            } else if substituted_params
+                                .get(left_index)
+                                .is_some_and(|expected| !self.is_assignable(expected, &left_type))
+                            {
+                                self.error_span(
+                                    left.span(),
+                                    super::with_union_narrowing_hint(
+                                        format!(
+                                            "pipe expected argument type `{}`, found type `{left_type}`",
+                                            substituted_params[left_index]
                                         ),
-                                    );
-                                }
+                                        &substituted_params[left_index],
+                                        &left_type,
+                                    ),
+                                );
                             }
 
                             let required = substituted_params.len().saturating_sub(optional);
@@ -5177,6 +5219,15 @@ impl<'a> Checker<'a> {
         })
     }
 
+    fn promise_all_return(&mut self, ret: Type<'a>, span: ast::Span) -> Type<'a> {
+        if contains_param(&ret) {
+            self.error_span(span, "Promise.all requires a concrete promise value type; an unbounded type parameter may carry Exception");
+            Type::Error
+        } else {
+            ret.promise_all_return()
+        }
+    }
+
     fn check_call(
         &mut self,
         expr: &ast::Expr<'a>,
@@ -5422,7 +5473,15 @@ impl<'a> Checker<'a> {
 
         let callee_type = self.check_expr(callee);
         self.note_hook_callee(callee, &callee_type, span);
+        if callee_type.is_native_promise_fn() && !type_args.is_empty() && type_args.len() != 1 {
+            self.error_span(
+                span,
+                "native promise combinators take exactly one type argument",
+            );
+        }
         let was_hook = callee_type.is_hook_fn();
+        let was_promise_all = callee_type.is_promise_all();
+        let was_native_promise = callee_type.is_native_promise_fn();
         let callee_type = callee_type.function_contract();
 
         match callee_type {
@@ -5491,8 +5550,17 @@ impl<'a> Checker<'a> {
                     .iter()
                     .map(|p| unsolved_params_to_var(&substitute_type(p, &subst), &subst))
                     .collect();
+                if was_promise_all && subst.values().any(contains_param) {
+                    self.error_span(span, "Promise.all requires a concrete promise value type; an unbounded type parameter may carry Exception");
+                    return Type::Error;
+                }
                 let substituted_ret =
                     unsolved_params_to_var(&substitute_type(&ret, &subst), &subst);
+                let substituted_ret = if was_promise_all {
+                    self.promise_all_return(substituted_ret, span)
+                } else {
+                    substituted_ret
+                };
 
                 let hole_positions: Vec<usize> = args
                     .iter()
@@ -5508,6 +5576,10 @@ impl<'a> Checker<'a> {
                     );
                 }
 
+                if was_native_promise && !hole_positions.is_empty() {
+                    self.error_span(span, "capture the promise combinator itself; partial application would erase its polymorphic contract");
+                    return Type::Error;
+                }
                 if !hole_positions.is_empty() {
                     // Partial application: `add(1, _)` becomes a function that
                     // takes the hole arguments and forwards them. Non-hole
@@ -5833,6 +5905,10 @@ fn collect_param_names_rec<'a>(
     seen: &mut std::collections::HashSet<&'a str>,
 ) {
     match ty {
+        Type::Generic {
+            base: "$PromiseAll" | "$PromiseRace",
+            ..
+        } => (),
         Type::Param { name } => {
             if seen.insert(*name) {
                 names.push(*name);
@@ -5857,6 +5933,10 @@ fn collect_param_names_rec<'a>(
 
 fn contains_param(ty: &Type<'_>) -> bool {
     match ty {
+        Type::Generic {
+            base: "$PromiseAll" | "$PromiseRace",
+            ..
+        } => false,
         Type::Param { .. } => true,
         Type::Option { inner } => contains_param(inner),
         Type::Array { elem } => contains_param(elem),
@@ -5878,6 +5958,10 @@ fn contains_param(ty: &Type<'_>) -> bool {
 /// parameter to a real type.
 fn unsolved_params_to_var<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Type<'a> {
     match ty {
+        Type::Generic {
+            base: "$PromiseAll" | "$PromiseRace",
+            ..
+        } => ty.clone(),
         Type::Param { name } if !subst.contains_key(name) => Type::Var,
         Type::Option { inner } => Type::Option {
             inner: Box::new(unsolved_params_to_var(inner, subst)),
