@@ -68,6 +68,10 @@ pub enum Op {
         arguments: usize,
     },
     Await,
+    /// Frame-local handler; saves operand depth and receives the thrown payload.
+    Handler(usize),
+    EndHandler,
+    Throw,
     Return,
     List(usize),
     ListAppend,
@@ -90,6 +94,9 @@ pub enum Op {
     /// A nominal struct with canonical nested embedded values.
     Struct {
         name: String,
+        /// Module/declaration identity is independent of display names and aliases.
+        #[serde(default)]
+        identity: Option<String>,
         fields: Vec<String>,
         embeds: Vec<String>,
     },
@@ -123,6 +130,7 @@ pub enum Op {
         case: String,
     },
     MatchType(TypeDescriptor),
+    MatchStruct(String),
     MatchTuple(usize),
     /// Scalar pattern equality returns false for a different value kind.
     MatchEqual,
@@ -211,7 +219,9 @@ impl Program {
                     Op::LoadChecked { slot, .. } if *slot >= f.locals => {
                         return Err("invalid local operand".into());
                     }
-                    Op::Jump(i) | Op::JumpIfFalse(i) | Op::JumpIfUnit(i) if *i >= f.code.len() => {
+                    Op::Jump(i) | Op::JumpIfFalse(i) | Op::JumpIfUnit(i) | Op::Handler(i)
+                        if *i >= f.code.len() =>
+                    {
                         return Err("invalid jump".into());
                     }
                     Op::Closure { function, captures } => {

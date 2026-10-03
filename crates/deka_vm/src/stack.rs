@@ -19,6 +19,12 @@ impl Stack {
         self.values.pop()
     }
 
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+    pub fn truncate(&mut self, length: usize) {
+        self.values.truncate(length);
+    }
     pub fn roots(&self) -> impl Iterator<Item = Handle> + '_ {
         self.values.iter().copied()
     }

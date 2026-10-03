@@ -2678,6 +2678,9 @@ impl<'a> Checker<'a> {
         let expected = self.exception_expected.take();
         let scrutinee_type =
             self.check_exception_use(scrutinee, super::exceptions::Use::Match, None);
+        if matches!(scrutinee_type, Type::Generic { base: "Exception", .. }) {
+            self.exception_forms.match_sources.insert(scrutinee as *const _);
+        }
         // rfd#56 phase 2: matching a value whose type is a bounded type
         // parameter checks the pattern — and later the exhaustiveness — as
         // the bound. `<T: A | B | C>` is matched exactly like `A | B | C`;

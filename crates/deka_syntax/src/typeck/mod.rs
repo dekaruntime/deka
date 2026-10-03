@@ -99,6 +99,9 @@ pub struct ExceptionLowering<'a> {
     pub forms: HashMap<*const ast::Expr<'a>, ExceptionEmit>,
     /// Distinguish checked metadata from the legacy parser-only emit API.
     pub checked: bool,
+    /// Actual Exception-typed match subjects, distinct from matches whose
+    /// bodies merely consume an Exception and produce an ordinary value.
+    pub match_sources: HashSet<*const ast::Expr<'a>>,
     /// Result-typed values whose reflection must survive representation erasure.
     pub result_values: HashSet<*const ast::Expr<'a>>,
     /// Resolved Result patterns; spelling alone cannot identify a builtin enum.
@@ -2484,6 +2487,7 @@ impl<'a> Checker<'a> {
     /// one surfaces as a lowering bug far away from this call site (deka#367).
     pub(super) fn reset_lowering_state(&mut self) {
         self.exception_forms.clear();
+        self.exception_forms.match_sources.clear();
         self.exception_forms.catches.clear();
         self.exception_forms.result_values.clear();
         self.exception_forms.result_patterns.clear();
