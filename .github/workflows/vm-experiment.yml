@@ -11,6 +11,7 @@ on:
       - 'crates/deka_executable/**'
       - 'crates/deka_native_web/**'
       - 'crates/corpus_gate/**'
+      - 'vendor/**'
       - 'tools/deka-package/**'
       - 'tests/corpus-passing.txt'
       - 'scripts/testsuite-corpus-version'
@@ -39,6 +40,10 @@ jobs:
           cargo fmt -p deka_native_web -p deka_vm -p deka_native_ir -p deka_native_ui -p deka_cli -p deka_executable --check
           cargo check --locked -p deka_vm --all-targets --features compiler,host,ui
           cargo clippy --locked -p deka_vm --all-targets --features compiler,host,ui --no-deps -- -D warnings
+          # The desktop window (winit + wgpu + vello_gpu) builds on Linux with no system
+          # packages: X11, Wayland and Vulkan are loaded at run time. Its GPU tests run on macOS.
+          cargo clippy --locked -p deka_native_ui --all-targets --features gpu --no-deps -- -D warnings
+          cargo test --locked -p deka_native_ui --features gpu
           ./run.sh
           cargo test --locked --release -p deka_cli --no-default-features
       - name: Compile source and execute without a compiler
@@ -92,8 +97,18 @@ jobs:
         run: |
           cargo check --locked -p deka_vm --all-targets --all-features
           cargo test --locked --release -p deka_cli --lib
-          # macOS always ships Japanese and colour-emoji faces, so the system font fallback test runs here.
-          cargo test --locked --release -p deka_native_ui --lib text::
+          # macOS always ships Japanese and colour-emoji faces (the system font fallback test), and
+          # every runner has a Metal device, so the window's pixel tests draw on a real GPU here.
+          cargo test --locked --release -p deka_native_ui --features world-audio
+          cargo clippy --locked -p deka_native_ui --all-targets --all-features --no-deps -- -D warnings
+          # GPUI is gone: no desktop crate may link it again.
+          for package in deka_native_ui deka_vm deka_cli; do
+            cargo tree --locked -p "$package" --all-features -e normal --prefix none > "tree-$package.txt"
+            if grep -q '^gpui ' "tree-$package.txt"; then
+              echo "$package depends on gpui"
+              exit 1
+            fi
+          done
           cargo tree --locked -p deka_vm --no-default-features --features compiler,gpu -e normal --prefix none > native-dependencies.txt
           if grep -Eq '^(deno_core|deno_v8|serde_v8|v8) ' native-dependencies.txt; then
             echo "VM-only feature set unexpectedly links a V8 dependency"

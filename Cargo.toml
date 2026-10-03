@@ -42,6 +42,9 @@ members = [
     "crates/deka_build",
     "crates/corpus_gate",
 ]
+# Vendored forks are path dependencies wired in through [patch.crates-io], not members:
+# their own lints and formatting stay upstream's.
+exclude = ["vendor/vello_gpu"]
 
 [workspace.package]
 version = "0.60.1"
@@ -93,3 +96,10 @@ opt-level = "s"
 lto = true
 codegen-units = 1
 strip = true
+
+# deka's fork of vello_gpu 0.3.0 (multicore strips, staging-belt uploads, shape API,
+# panics turned into errors). The delta against crates.io is vendor/vello_gpu.diff.
+# Patching keeps the dependency declared as the upstream crate and version, so
+# returning to upstream is deleting this line once the changes land there.
+[patch.crates-io]
+vello_gpu = { path = "vendor/vello_gpu" }
