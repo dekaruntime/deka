@@ -11,7 +11,7 @@ function snapshot() {
     return node("view", "p-6 gap-4 bg-[#F3EFE3] text-[#1A1611]", [
         node("p", "text-2xl", [text("Deka native VM")]),
         node("p", "", [text("DekaScript markup, state and handlers. Rust draws the window.")]),
-        node("p", "text-2xl", [text("Count:"), text(count)]),
+        node("p", "text-2xl", [text("Count: "), text(count)]),
         node("div", "flex-row gap-3", [
             node("button", "", [text("Add one")], 0),
             node("button", "", [text("Reset")], 1),
