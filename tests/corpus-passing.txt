@@ -197,6 +197,7 @@ error-globals-assign-undefined-global-fail
 error-globals-call-null-fail
 error-globals-call-undefined-fail
 error-globals-chain-missing-property-fail
+error-globals-console-error-stderr
 error-globals-console-log
 error-globals-console-log-function-fail
 error-globals-console-log-multiple-args

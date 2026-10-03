@@ -348,3 +348,36 @@ fn main() {
         "main returned\ninterval done\n"
     );
 }
+
+#[test]
+fn console_levels_write_formatted_values_to_the_correct_process_streams() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("console.ds"),
+        r#"
+        struct Point { x: number; }
+        enum Event { Ready, Loaded(number), }
+        console.log("log", Point { x: 7 });
+        console.info("info", Event.Loaded(8));
+        console.debug("debug", Some(9), None);
+        console.error("error", Ok(7), Err("io"));
+        console.warn("warn", [1, 2]);
+        console.error();
+    "#,
+    )
+    .unwrap();
+    let output = cli(project.path(), &["run", "console.ds"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "log Point { x: 7 }\ninfo Loaded(8)\ndebug Some(9) None\n"
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "error Ok(7) Err(\"io\")\nwarn [ 1, 2 ]\n\n"
+    );
+}
