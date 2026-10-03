@@ -146,6 +146,45 @@ export fn App() { let message="idle"; return <view><p>{message}</p><button onCli
         }
     }
 
+    #[test]
+    fn desktop_button_reads_a_file_snapshot_and_returns_to_idle() {
+        let app=Desktop::new(||{
+            let hosts=crate::hosts()?;
+            let program=compiler::compile_entry(r#"export fn App(){let message="Ready";
+                return (<view><p>{message}</p><button onClick={async fn(){
+                    message="Reading";
+                    const file=unwrap(File([TextEncoder().encode("notes")],"notes.txt")) or{message="Failed";return;};
+                    const part=unwrap(file.slice(1,4)) or{message="Failed";return;};
+                    const text=unwrap(await part.text()) or{message="Failed";return;};message=file.name+":"+text;
+                }}>Read</button></view>);
+            }"#,&hosts,"App")?;
+            ui::VmApp::with_hosts(program,hosts)
+        }).unwrap();
+        let mut host = deka_native_ui::Host::new(app);
+        let (send, receive) = mpsc::sync_channel(1);
+        let waker = Waker::from(Arc::new(Signal(send)));
+        host.set_waker(deka_native_ui::Waker::new(move || waker.wake_by_ref()));
+        assert_eq!(text(&host.render()), "ReadyRead");
+        host.click(0);
+        for _ in 0..200 {
+            if text(&host.render()) == "notes.txt:oteRead" {
+                break;
+            }
+            if host.has_ready_work() {
+                host.run_turn(32);
+            } else {
+                receive
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("snapshot read did not wake window");
+            }
+        }
+        assert_eq!(text(&host.render()), "notes.txt:oteRead");
+        assert!(!host.has_ready_work());
+        for _ in 0..32 {
+            assert!(!host.run_turn(32));
+        }
+    }
+
     mod http_fixture {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
