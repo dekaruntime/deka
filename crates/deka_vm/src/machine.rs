@@ -603,6 +603,13 @@ impl Vm {
                     (Value::Bool(a), Value::String(b)) if matches!(op, Op::Add) => {
                         Value::String(a.to_string() + &b)
                     }
+                    (a, b)
+                        if matches!(op, Op::Add)
+                            && (matches!(a, Value::Promise(_))
+                                || matches!(b, Value::Promise(_))) =>
+                    {
+                        Value::String(promise_add_text(a)? + &promise_add_text(b)?)
+                    }
                     (Value::Descriptor(a), Value::Descriptor(b))
                         if matches!(op, Op::Equal | Op::NotEqual) =>
                     {
@@ -1516,6 +1523,17 @@ fn pop(frame: &mut Frame) -> Result<Handle> {
 /// JavaScript's ToInt32: truncate toward zero, then keep the low 32 bits.
 fn int32(n: f64) -> i32 {
     (n.trunc() as i64) as i32
+}
+// Only the checker's existing Promise + scalar rule uses this formatter.
+// It never awaits a Promise or widens general printing/string conversion.
+fn promise_add_text(value: Value) -> Result<String> {
+    match value {
+        Value::Promise(_) => Ok("[object Promise]".into()),
+        Value::String(text) => Ok(text),
+        Value::Number(number) => Ok(number_text(number)),
+        Value::Bool(value) => Ok(value.to_string()),
+        _ => Err("invalid arithmetic operands".into()),
+    }
 }
 /// How `string(x)` turns a number into text; string+number concat uses the
 /// same conversion, as the note-03 decision requires.
