@@ -138,8 +138,9 @@ impl Images {
 /// Record `scene` into `target`, scaled to device pixels.
 ///
 /// Clips are applied as rectangle clips and shared by consecutive paints with
-/// the same clip; a paint entirely inside its clip needs none. Images are
-/// snapped to the device pixel grid (glyph rasters are already device-sized).
+/// the same clip; a paint entirely inside its clip needs none. Images map onto
+/// their rectangle exactly; glyph rasters are already device-sized and land on
+/// whole device pixels, where the renderer samples them one to one.
 pub(crate) fn encode(target: &mut vello_gpu::Scene, scene: &Scene, scale: f64, images: &Images) {
     let s = Affine::scale(scale);
     target.set_transform(s);
@@ -210,7 +211,7 @@ fn draw_image(
     if image_w == 0 || image_h == 0 {
         return;
     }
-    let (x, y) = ((r.x0 * scale).round(), (r.y0 * scale).round());
+    let (x, y) = (r.x0 * scale, r.y0 * scale);
     let (sx, sy) = (
         r.width() * scale / f64::from(image_w),
         r.height() * scale / f64::from(image_h),

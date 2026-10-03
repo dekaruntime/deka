@@ -11331,8 +11331,6 @@ dependencies = [
 [[package]]
 name = "vello_gpu_shaders"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccf14e175813d9ddefdf52d9430d075de46c1d72560e917575857c97d6fc74cc"
 dependencies = [
  "naga",
  "wesl",

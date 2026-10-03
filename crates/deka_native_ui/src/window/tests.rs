@@ -125,6 +125,45 @@ mod gpu {
     }
 
     #[test]
+    fn upscaled_images_are_filtered_up_to_their_edges() {
+        // Black, white, white, black, drawn 4x wider (8 logical px at 2x). Bilinear
+        // filtering with edge padding is symmetric and ends on the edge texels.
+        let image = GlyphImage {
+            id: "i".into(),
+            width: 4,
+            height: 1,
+            rgba: [0u8, 255, 255, 0]
+                .iter()
+                .flat_map(|&v| [v, v, v, 255])
+                .collect(),
+        };
+        let scene = Scene {
+            width: 16.,
+            height: 4.,
+            background: 0xff0000,
+            paint: vec![Paint {
+                rect: rect(0., 0., 8., 2.),
+                clip: rect(0., 0., 16., 4.),
+                color: 0,
+                radius: 0.,
+                image: Some("i".into()),
+                opacity: 1.,
+            }],
+            images: vec![image],
+            ..Default::default()
+        };
+        let shot = snapshot(&scene, 2.).expect("render");
+        let row: Vec<u8> = (0..16).map(|x| shot.pixel(x, 1)[1]).collect();
+        let expected = [
+            0, 0, 32, 96, 159, 223, 255, 255, 255, 255, 223, 159, 96, 32, 0, 0,
+        ];
+        assert!(
+            row.iter().zip(expected).all(|(a, e)| a.abs_diff(e) <= 2),
+            "row {row:?}, expected {expected:?}"
+        );
+    }
+
+    #[test]
     fn a_scale_change_renders_the_same_scene_at_the_new_density() {
         let one = snapshot(&sample(), 1.).expect("1x");
         let two = snapshot(&sample(), 2.).expect("2x");
