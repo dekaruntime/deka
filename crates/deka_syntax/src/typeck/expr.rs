@@ -3973,6 +3973,9 @@ impl<'a> Checker<'a> {
                     }
                     ast::Expr::IndexAccess { object, .. } => {
                         let object_type = self.check_expr(object);
+                        if matches!(object_type, Type::Named { name: "bytes" }) {
+                            self.error_at_expr(left, "cannot assign to immutable bytes");
+                        }
                         if matches!(
                             object_type,
                             Type::Array { .. } | Type::Tuple { .. } | Type::Object { .. }

@@ -168,23 +168,42 @@ impl Vm {
         })
     }
     pub(crate) fn to_host(&self, h: Handle) -> Result<HostValue> {
-        Ok(match self.heap.get(h)? {
+        self.to_host_inner(h, &mut Vec::new())
+    }
+    fn to_host_inner(&self, h: Handle, ancestors: &mut Vec<Handle>) -> Result<HostValue> {
+        if ancestors.contains(&h) {
+            return Err("cyclic value cannot cross the host boundary".into());
+        }
+        if ancestors.len() >= 64 {
+            return Err("host value nesting limit exceeded".into());
+        }
+        ancestors.push(h);
+        let value = match self.heap.get(h)? {
             Value::Unit => HostValue::Unit,
             Value::Number(n) => HostValue::Number(*n),
             Value::Bool(b) => HostValue::Bool(*b),
             Value::String(s) => HostValue::String(s.clone()),
-            Value::List(items) => HostValue::Strings(
+            Value::Bytes(bytes) => HostValue::Bytes(bytes.clone()),
+            Value::Host(handle) => HostValue::Handle(handle.clone()),
+            Value::List(items) => HostValue::List(
                 items
                     .iter()
-                    .map(|h| match self.heap.get(*h)? {
-                        Value::String(s) => Ok(s.clone()),
-                        _ => Err("host list values must contain strings".into()),
-                    })
+                    .map(|h| self.to_host_inner(*h, ancestors))
+                    .collect::<Result<_>>()?,
+            ),
+            // Enums cross through their declared Result channel, not record-shape guessing.
+            Value::Record(record) if record.enum_name.is_none() => HostValue::Record(
+                record
+                    .fields
+                    .iter()
+                    .map(|(name, h)| Ok((name.clone(), self.to_host_inner(*h, ancestors)?)))
                     .collect::<Result<_>>()?,
             ),
             Value::Closure { .. } => HostValue::Callback(self.context.callback(h)),
             _ => return Err("unsupported host wire value".into()),
-        })
+        };
+        ancestors.pop();
+        Ok(value)
     }
     fn host_result(
         &mut self,
@@ -211,7 +230,27 @@ impl Vm {
         })
     }
     pub(crate) fn alloc_host_value(&mut self, value: HostValue) -> Result<Handle> {
+        self.alloc_host_value_inner(value, 0)
+    }
+    fn alloc_host_value_inner(&mut self, value: HostValue, depth: usize) -> Result<Handle> {
+        if depth >= 64 {
+            return Err("host value nesting limit exceeded".into());
+        }
         let value = match value {
+            HostValue::Bytes(bytes) => Value::Bytes(bytes),
+            HostValue::Handle(handle) => Value::Host(handle),
+            HostValue::List(items) => Value::List(
+                items
+                    .into_iter()
+                    .map(|v| self.alloc_host_value_inner(v, depth + 1))
+                    .collect::<Result<_>>()?,
+            ),
+            HostValue::Record(fields) => Value::Record(
+                fields
+                    .into_iter()
+                    .map(|(name, v)| Ok((name, self.alloc_host_value_inner(v, depth + 1)?)))
+                    .collect::<Result<_>>()?,
+            ),
             HostValue::Callback(callback) => {
                 if !self.context.owns(&callback) {
                     return Err("callback belongs to another VM".into());
@@ -316,7 +355,7 @@ impl Vm {
                     ..
                 } => match future.as_mut().poll(cx) {
                     Poll::Ready(v) => Some(
-                        self.host_result(v, *result, *result_channel)
+                        self.host_result(v, result.clone(), *result_channel)
                             .map(Outcome::Value),
                     ),
                     Poll::Pending => None,
@@ -981,6 +1020,9 @@ impl Vm {
                     Value::List(items) if name == "length" => {
                         self.heap.alloc(Value::Number(items.len() as f64))
                     }
+                    Value::Bytes(bytes) if name == "length" => {
+                        self.heap.alloc(Value::Number(bytes.len() as f64))
+                    }
                     Value::String(text) if name == "length" => {
                         self.heap.alloc(Value::Number(text.chars().count() as f64))
                     }
@@ -1025,6 +1067,12 @@ impl Vm {
                         frame
                             .stack
                             .push(*items.get(index).ok_or("index out of bounds")?);
+                    }
+                    Value::Bytes(bytes) => {
+                        let byte = *bytes.get(index).ok_or("index out of bounds")?;
+                        frame
+                            .stack
+                            .push(self.heap.alloc(Value::Number(byte as f64)));
                     }
                     Value::String(text) => {
                         let ch = text
@@ -1098,6 +1146,8 @@ impl Vm {
             Value::Number(_) => TypeDescriptor::new("number", "number"),
             Value::Bool(_) => TypeDescriptor::new("boolean", "boolean"),
             Value::String(_) => TypeDescriptor::new("string", "string"),
+            Value::Bytes(_) => TypeDescriptor::new("bytes", "bytes"),
+            Value::Host(handle) => TypeDescriptor::new("opaque", handle.name()),
             Value::List(_) => TypeDescriptor::new("array", "Array"),
             Value::Record(record) => {
                 if let Some(name) = &record.struct_name {
@@ -1485,5 +1535,46 @@ fn arguments(frame: &mut Frame, count: usize) -> Result<Vec<Handle>> {
 impl Drop for Vm {
     fn drop(&mut self) {
         self.context.close();
+    }
+}
+
+#[cfg(all(test, feature = "compiler"))]
+mod host_wire_tests {
+    use super::*;
+    #[test]
+    fn wire_conversion_rejects_cycles_and_depth_but_allows_shared_children() {
+        let hosts = Hosts::default();
+        let program = compiler::compile("fn main() {}", &hosts).unwrap();
+        let mut vm = Vm::new(program, hosts).unwrap();
+        let a = vm.heap.alloc(Value::Unit);
+        vm.heap.replace(a, Value::List(vec![a])).unwrap();
+        assert_eq!(
+            vm.to_host(a).unwrap_err(),
+            "cyclic value cannot cross the host boundary"
+        );
+        let leaf = vm.heap.alloc(Value::Number(7.));
+        let shared = vm.heap.alloc(Value::List(vec![leaf, leaf]));
+        assert_eq!(
+            vm.to_host(shared).unwrap(),
+            HostValue::List(vec![HostValue::Number(7.); 2])
+        );
+        let mut deep = leaf;
+        for _ in 0..64 {
+            deep = vm.heap.alloc(Value::List(vec![deep]));
+        }
+        assert_eq!(
+            vm.to_host(deep).unwrap_err(),
+            "host value nesting limit exceeded"
+        );
+        let mut host = HostValue::Unit;
+        for _ in 0..64 {
+            host = HostValue::List(vec![host]);
+        }
+        assert_eq!(
+            vm.alloc_host_value(host).unwrap_err(),
+            "host value nesting limit exceeded"
+        );
+        vm.cancel().unwrap();
+        assert_eq!(vm.stats().live, 0);
     }
 }

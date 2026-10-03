@@ -441,7 +441,8 @@ fn lower_module<'a>(
                     name: Some((*name).into()),
                     case: String::new(),
                 }),
-                Bytes | ErrorClass(_) => {
+                Bytes => Ok(Op::MatchType(crate::TypeDescriptor::new("bytes", "bytes"))),
+                ErrorClass(_) => {
                     Err("this host type pattern is not supported by the native VM".into())
                 }
             };
