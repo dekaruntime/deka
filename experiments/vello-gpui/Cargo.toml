@@ -1,0 +1,73 @@
+[package]
+name = "vello-gpui-spike"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+description = "Spike: vello rendering shown inside a GPUI window. Not product code."
+
+# Standalone workspace: this crate is NOT a member of the deka workspace and
+# cannot affect deka's build or CI.
+[workspace]
+
+[features]
+default = ["vello"]
+# The size measurement builds `size-probe` with and without this feature.
+vello = ["dep:vello", "dep:pollster", "dep:png", "dep:skrifa"]
+# Reads vello's GPU bump counters (adds a readback per frame; diagnostics only).
+diag = ["vello", "vello/debug_layers"]
+# vello_cpu + vello_gpu benchmark (`vello-gpui sparse`).
+sparse = ["vello", "dep:vello_cpu", "dep:vello_gpu"]
+
+[dependencies]
+# Same as deka: shaders compiled at runtime (no Xcode `metal` tool needed).
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+# Same versions deka_native_ui already uses.
+image = { version = "0.25", default-features = false }
+# Lean: no wgpu default features (all backends). Metal is enabled below; vello's
+# own `wgpu` feature brings wgsl (its shaders are WGSL, compiled by naga at startup).
+vello = { version = "=0.11.0", optional = true, default-features = false, features = ["wgpu"] }
+pollster = { version = "0.4", optional = true }
+png = { version = "0.18", optional = true }
+# Same skrifa vello itself uses (glyph ids + advances for the text tile).
+skrifa = { version = "0.44", optional = true }
+# Sparse-strips renderers (no compute shaders), for the Q5 comparison only.
+vello_cpu = { version = "=0.3.0", optional = true, features = ["multithreading"] }
+vello_gpu = { version = "=0.3.0", optional = true, default-features = false, features = ["wgpu"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-video = "0.4.3"
+core-foundation = "0.10"
+objc2 = "0.6"
+# Same objc2-metal wgpu-hal 30 uses; only extra features are switched on.
+objc2-metal = { version = "0.3.2", features = ["MTLDevice", "MTLTexture", "MTLResource", "MTLAllocation", "MTLPixelFormat", "objc2-io-surface"] }
+objc2-io-surface = "0.3.2"
+objc2-quartz-core = { version = "0.3.2", features = ["CALayer", "CAMetalLayer", "objc2-core-foundation"] }
+objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
+raw-window-handle = "0.6"
+wgpu = { version = "=30.0.1", default-features = false, features = ["metal"] }
+
+[[bin]]
+name = "vello-gpui"
+path = "src/main.rs"
+required-features = ["vello"]
+
+# Size probe: the same GPUI window, with or without vello+wgpu linked and used.
+[[bin]]
+name = "size-probe"
+path = "src/size_probe.rs"
+
+# graph.rs is shared between the two spike crates and names a feature of each.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("vello-backend"))'] }
+
+[profile.release]
+debug = false
+
+# Same settings as deka's shipped `native` profile, for the size measurement.
+[profile.native]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
