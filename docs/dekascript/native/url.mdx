@@ -1,0 +1,56 @@
+# Native URLs
+
+`URL(input, base = None)` returns `Result<URL, string>`. Pass an absolute URL,
+or supply `Some(base)` to resolve a relative path. Invalid inputs produce
+`Err`; they never throw. An explicit `Some("")` is an invalid base, distinct
+from omitting it.
+
+```ds
+const address = match URL("../project", Some("https://example.com/apps/tour/")) {
+    Ok(url) => url.href,
+    Err(message) => "Invalid URL: " + message,
+}
+console.log(address)
+// https://example.com/apps/project
+```
+
+A URL exposes readonly `href`, `origin`, `protocol`, `username`, `password`,
+`host`, `hostname`, `port`, `pathname`, `search`, `hash`, and `searchParams`.
+`toString()` and `toJSON()` return its serialized address. URL parsing and
+component serialization use Rust's WHATWG URL implementation. Origins such as
+`mailto:` serialize as the string `"null"`; this is origin text, not a null value.
+
+## Query parameters
+
+`URLSearchParams(text = "")` creates ordered query parameters. Duplicate names
+and empty values are retained. A leading `?` is optional. Form encoding uses
+`+` for spaces and percent encoding for literal plus signs.
+
+```ds
+const params = URLSearchParams("project=Deka&project=Tour&empty=")
+console.log(params.get("empty"), params.get("missing"))
+// Some("") None
+params.set("project", "Native UI")
+params.append("language", "DekaScript")
+console.log(params.toString())
+// project=Native+UI&empty=&language=DekaScript
+```
+
+`get(name)` returns `Option<string>`; `getAll(name)` returns `Array<string>`.
+`append(name, value)`, `set(name, value)`, `delete(name, value = None)`, and
+`sort()` mutate the parameters. `has(name, value = None)` returns a boolean.
+For value-specific filtering, pass `Some(value)` to `delete` or `has`; an empty
+string is a real value. `size` is readonly. Sorting is stable by UTF-16 name
+order. `keys()`, `values()`, and `entries()` return snapshot arrays; entries have
+the tuple type `[string, string]`. `toString()` produces the encoded query.
+
+A URL's `searchParams` is a shared Rust-owned object: reading it repeatedly
+returns the same handle. Its mutations update the URL's `href` and `search`,
+and aliases see each other's changes. These query updates can change encoding
+from `%20` to `+`. Removing all parameters removes the URL's query delimiter.
+A retained parameter handle remains usable after its URL binding is released.
+
+This native slice supports string constructors, readonly URL fields, and the
+parameter methods above. URL property assignment awaits a failure-visible
+mutation policy. Record/pair constructor overloads, static URL helpers, callback
+iteration, and browser-hosted forwarding are separate additions.

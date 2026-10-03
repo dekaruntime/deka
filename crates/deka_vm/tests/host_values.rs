@@ -476,3 +476,306 @@ fn bytes_are_immutable_even_when_the_binding_is_mutable() {
         );
     }
 }
+
+#[test]
+fn nominal_options_round_trip_and_preserve_absent_empty_and_nested_values() {
+    let mut hosts = Hosts::default();
+    let ty = HostType::Option(Box::new(HostType::String));
+    hosts
+        .register(HostOp::new(
+            "optionEcho",
+            vec![ty.clone()],
+            ty.clone(),
+            false,
+            None,
+            |args| HostReply::Ready(Ok(args[0].clone())),
+        ))
+        .unwrap();
+    let list = HostType::List(Box::new(ty));
+    hosts
+        .register(HostOp::new(
+            "optionsEcho",
+            vec![list.clone()],
+            list,
+            false,
+            None,
+            |args| HostReply::Ready(Ok(args[0].clone())),
+        ))
+        .unwrap();
+    for (value, expected) in [
+        ("None", "None"),
+        ("Some(\"\")", "Some(\"\")"),
+        ("Some(\"yes\")", "Some(\"yes\")"),
+    ] {
+        let source = format!(
+            "import {{ optionEcho }} from \"vm:host\"; fn main() string {{ return string(optionEcho({value})); }}"
+        );
+        assert_eq!(
+            run(&source, hosts.clone()).unwrap(),
+            HostValue::String(expected.into())
+        );
+    }
+    assert_eq!(run(r#"import { optionsEcho } from "vm:host"; fn main() Array<Option<string>> { return optionsEcho([None,Some(""),Some("yes")]); }"#, hosts.clone()).unwrap(),HostValue::List(vec![HostValue::Option(None), HostValue::Option(Some(Box::new(HostValue::String("".into())))), HostValue::Option(Some(Box::new(HostValue::String("yes".into()))))]));
+    assert!(
+        compiler::compile(
+            "import { optionEcho } from \"vm:host\"; fn main() { optionEcho(Some(7)); }",
+            &hosts
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn host_option_output_is_checked_and_is_not_record_shape_guessing() {
+    let mut hosts = Hosts::default();
+    hosts
+        .register(HostOp::new(
+            "badOption",
+            vec![],
+            HostType::Option(Box::new(HostType::String)),
+            false,
+            None,
+            |_| HostReply::Ready(Ok(HostValue::Option(Some(Box::new(HostValue::Number(7.)))))),
+        ))
+        .unwrap();
+    assert_eq!(
+        run(
+            "import { badOption } from \"vm:host\"; fn main() { badOption(); }",
+            hosts
+        )
+        .unwrap_err(),
+        "host returned the wrong result type"
+    );
+    let mut hosts = Hosts::default();
+    hosts
+        .register(HostOp::new(
+            "takeOption",
+            vec![HostType::Option(Box::new(HostType::String))],
+            HostType::Unit,
+            false,
+            None,
+            |_| panic!("wrong shape must not reach host"),
+        ))
+        .unwrap();
+    assert!(compiler::compile("import { takeOption } from \"vm:host\"; fn main() { takeOption({name: \"None\", index: 1}); }",&hosts).is_err());
+}
+
+#[test]
+fn host_options_compose_with_results_and_records() {
+    let mut hosts = Hosts::default();
+    let option = HostType::Option(Box::new(HostType::String));
+    hosts
+        .register(
+            HostOp::new(
+                "optionalRead",
+                vec![HostType::Bool],
+                option.clone(),
+                false,
+                None,
+                |args| {
+                    HostReply::Ready(if args[0] == HostValue::Bool(true) {
+                        Ok(HostValue::Option(None))
+                    } else {
+                        Err("offline".into())
+                    })
+                },
+            )
+            .with_result_channel(),
+        )
+        .unwrap();
+    hosts
+        .register(HostOp::new(
+            "optionalRecord",
+            vec![],
+            schema([("value", option)]),
+            false,
+            None,
+            |_| {
+                HostReply::Ready(Ok(record([(
+                    "value",
+                    HostValue::Option(Some(Box::new(HostValue::String("yes".into())))),
+                )])))
+            },
+        ))
+        .unwrap();
+    assert_eq!(run(r#"import { optionalRead, optionalRecord } from "vm:host";
+fn main() string { const record=optionalRecord(); return string(optionalRead(true)) + ":" + string(optionalRead(false)) + ":" + string(record.value); }"#,hosts).unwrap(),HostValue::String("Ok(None):Err(\"offline\"):Some(\"yes\")".into()));
+}
+#[test]
+fn host_tuple_outputs_are_checked_and_preserve_member_types() {
+    let pair = HostType::Tuple(vec![HostType::String, HostType::Number]);
+    let mut hosts = Hosts::default();
+    hosts
+        .register(HostOp::new(
+            "pair",
+            vec![pair.clone()],
+            pair.clone(),
+            false,
+            None,
+            |args| HostReply::Ready(Ok(args[0].clone())),
+        ))
+        .unwrap();
+    assert_eq!(run(r#"import { pair } from "vm:host"; fn main() string { const [name,n]=pair(["hello",7]);return name+string(n); }"#,hosts.clone()).unwrap(),HostValue::String("hello7".into()));
+    assert!(
+        compiler::compile(
+            r#"import { pair } from "vm:host"; fn main() { pair(["hello","wrong"]); }"#,
+            &hosts
+        )
+        .is_err()
+    );
+    for output in [
+        HostValue::List(vec![]),
+        HostValue::List(vec![
+            HostValue::String("yes".into()),
+            HostValue::String("wrong".into()),
+        ]),
+    ] {
+        let mut hosts = Hosts::default();
+        hosts
+            .register(HostOp::new(
+                "badPair",
+                vec![],
+                pair.clone(),
+                false,
+                None,
+                move |_| HostReply::Ready(Ok(output.clone())),
+            ))
+            .unwrap();
+        assert_eq!(
+            run(
+                r#"import { badPair } from "vm:host"; fn main() { badPair(); }"#,
+                hosts
+            )
+            .unwrap_err(),
+            "host returned the wrong result type"
+        );
+    }
+}
+
+#[tokio::test]
+async fn suspended_result_options_preserve_success_absence_and_io_failure() {
+    for (reply, expected) in [
+        (Ok(HostValue::Option(None)), "missing"),
+        (
+            Ok(HostValue::Option(Some(Box::new(HostValue::String(
+                "".into(),
+            ))))),
+            "present:",
+        ),
+        (Err("offline".into()), "error:offline"),
+    ] {
+        let mut hosts = Hosts::default();
+        hosts
+            .register(
+                HostOp::new(
+                    "optionalRead",
+                    vec![],
+                    HostType::Option(Box::new(HostType::String)),
+                    true,
+                    None,
+                    move |_| {
+                        let reply = reply.clone();
+                        let mut first = true;
+                        HostReply::Pending(Box::pin(std::future::poll_fn(move |cx| {
+                            if first {
+                                first = false;
+                                cx.waker().wake_by_ref();
+                                return Poll::Pending;
+                            }
+                            Poll::Ready(reply.clone())
+                        })))
+                    },
+                )
+                .with_result_channel(),
+            )
+            .unwrap();
+        let program=compiler::compile(r#"import { optionalRead } from "vm:host";
+async fn main() Promise<string> {
+    try { return match await optionalRead() { Ok(value)=>match value { Some(text)=>"present:"+text,None=>"missing" },Err(error)=>"error:"+error }; }
+    catch (error) { return "unexpected throw"; }
+}"#,&hosts).unwrap();
+        let program = serde_json::from_str(&serde_json::to_string(&program).unwrap()).unwrap();
+        let mut vm = Vm::new(program, hosts).unwrap();
+        assert_eq!(vm.run().await.unwrap(), HostValue::String(expected.into()));
+        assert_eq!(vm.stats().live, 0);
+    }
+}
+#[test]
+fn options_inside_tuple_records_round_trip_without_structural_erasure() {
+    let ty = HostType::Record(
+        [(
+            "pair".into(),
+            HostType::Tuple(vec![
+                HostType::String,
+                HostType::Option(Box::new(HostType::String)),
+            ]),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let mut hosts = Hosts::default();
+    hosts
+        .register(HostOp::new(
+            "echoPair",
+            vec![ty.clone()],
+            ty,
+            false,
+            None,
+            |args| HostReply::Ready(Ok(args[0].clone())),
+        ))
+        .unwrap();
+    assert_eq!(run(r#"import { echoPair } from "vm:host";
+fn main() string { const pair: [string,Option<string>] = ["name",Some("")];const output=echoPair({pair:pair});const [name,value]=output.pair;return name+":"+string(value); }
+"#,hosts).unwrap(),HostValue::String("name:Some(\"\")".into()));
+}
+
+#[tokio::test]
+async fn list_of_tuple_literals_default_and_member_types_follow_one_host_schema() {
+    let pairs = HostType::List(Box::new(HostType::Tuple(vec![
+        HostType::String,
+        HostType::String,
+    ])));
+    let mut hosts = Hosts::default();
+    hosts
+        .register(
+            HostOp::new("pairs", vec![pairs.clone()], pairs, false, None, |args| {
+                HostReply::Ready(Ok(args[0].clone()))
+            })
+            .with_global_binding()
+            .with_defaults(vec![HostValue::List(vec![])]),
+        )
+        .unwrap();
+    let program = compiler::compile(
+        r#"fn main() Array<[string,string]> { return pairs([["X","one"],["x","two"]]); }"#,
+        &hosts,
+    )
+    .unwrap();
+    let mut vm = Vm::new(program, hosts.clone()).unwrap();
+    assert_eq!(
+        vm.run().await.unwrap(),
+        HostValue::List(vec![
+            HostValue::List(vec![
+                HostValue::String("X".into()),
+                HostValue::String("one".into())
+            ]),
+            HostValue::List(vec![
+                HostValue::String("x".into()),
+                HostValue::String("two".into())
+            ]),
+        ])
+    );
+    let program = compiler::compile(
+        "fn main() Array<[string,string]> { return pairs(); }",
+        &hosts,
+    )
+    .unwrap();
+    let mut vm = Vm::new(program, hosts.clone()).unwrap();
+    assert_eq!(vm.run().await.unwrap(), HostValue::List(vec![]));
+    for source in [
+        r#"fn main() { pairs([["x"]]); }"#,
+        r#"fn main() { pairs([["x","a","b"]]); }"#,
+        r#"fn main() { pairs([["x",7]]); }"#,
+    ] {
+        assert!(compiler::compile(source, &hosts).is_err(), "{source}");
+    }
+}

@@ -34,3 +34,6 @@ pub mod ui;
 #[cfg(feature = "v8-control")]
 #[cfg(feature = "ui")]
 pub mod v8_control;
+
+#[cfg(feature = "host")]
+pub mod url;

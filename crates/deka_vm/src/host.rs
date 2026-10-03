@@ -51,6 +51,7 @@ pub enum HostValue {
     String(String),
     Strings(Vec<String>),
     List(Vec<HostValue>),
+    Option(Option<Box<HostValue>>),
     Record(BTreeMap<String, HostValue>),
     Bytes(Vec<u8>),
     Handle(HostHandle),
@@ -64,6 +65,8 @@ pub enum HostType {
     String,
     Strings,
     List(Box<HostType>),
+    Option(Box<HostType>),
+    Tuple(Vec<HostType>),
     Record(BTreeMap<String, HostType>),
     Bytes,
     Handle(String),
@@ -81,6 +84,13 @@ impl HostType {
             | (Self::Callback, HostValue::Callback(_)) => true,
             (Self::Strings, HostValue::List(items)) => {
                 items.iter().all(|v| Self::String.accepts(v))
+            }
+            (Self::Option(item), HostValue::Option(value)) => {
+                value.as_ref().is_none_or(|v| item.accepts(v))
+            }
+            (Self::Tuple(types), HostValue::List(items)) => {
+                types.len() == items.len()
+                    && types.iter().zip(items).all(|(ty, value)| ty.accepts(value))
             }
             (Self::List(item), HostValue::List(items)) => items.iter().all(|v| item.accepts(v)),
             (Self::List(item), HostValue::Strings(_)) => **item == Self::String,
@@ -100,6 +110,15 @@ impl HostType {
             Self::Strings => "Array<string>".into(),
             Self::Bytes => "bytes".into(),
             Self::Callback => "(fn() void) | (fn() Promise<void>)".into(),
+            Self::Option(item) => format!("Option<{}>", item.source()),
+            Self::Tuple(items) => format!(
+                "[{}]",
+                items
+                    .iter()
+                    .map(Self::source)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Self::List(item) => format!("Array<{}>", item.source()),
             Self::Record(fields) => format!(
                 "{{{}}}",
@@ -125,7 +144,12 @@ impl HostType {
                     ty.validate(handles, depth + 1)?;
                 }
             }
-            Self::List(item) => item.validate(handles, depth + 1)?,
+            Self::List(item) | Self::Option(item) => item.validate(handles, depth + 1)?,
+            Self::Tuple(items) => {
+                for item in items {
+                    item.validate(handles, depth + 1)?;
+                }
+            }
             Self::Handle(name) => {
                 // Uppercase names distinguish host brands from built-in primitives.
                 if !identifier(name)
@@ -170,6 +194,16 @@ impl HostType {
                         };
                         s
                     })
+                    .collect(),
+            ),
+            (Self::Option(item), HostValue::Option(value)) => {
+                HostValue::Option(value.map(|value| Box::new(item.normalize(*value))))
+            }
+            (Self::Tuple(types), HostValue::List(items)) => HostValue::List(
+                types
+                    .iter()
+                    .zip(items)
+                    .map(|(ty, value)| ty.normalize(value))
                     .collect(),
             ),
             (Self::List(item), HostValue::List(items)) => {
@@ -480,6 +514,8 @@ impl Hosts {
 }
 fn default_source(value: &HostValue) -> Option<String> {
     Some(match value {
+        HostValue::Option(None) => "None".into(),
+        HostValue::Option(Some(value)) => format!("Some({})", default_source(value)?),
         HostValue::Bool(value) => value.to_string(),
         HostValue::Number(value) if value.is_finite() => value.to_string(),
         HostValue::String(value) => serde_json::to_string(value).ok()?,

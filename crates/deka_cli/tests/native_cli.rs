@@ -381,3 +381,40 @@ fn console_levels_write_formatted_values_to_the_correct_process_streams() {
         "error Ok(7) Err(\"io\")\nwarn [ 1, 2 ]\n\n"
     );
 }
+
+#[test]
+fn url_globals_run_and_survive_relocation_without_source() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(project.path().join("url.ds"),r#"
+fn show(url: URL) string {
+    const params=url.searchParams;
+    params.set("project","Native UI");
+    console.log(string(params.get("missing")),string(params.get("empty")));
+    return url.href;
+}
+const result=match URL("./demo?project=old&empty=",Some("https://example.com/tour/")) { Ok(url)=>show(url),Err(error)=>error };
+console.log(result);
+console.log(match URL("://bad") { Ok(url)=>"wrong",Err(error)=>"invalid handled" });
+"#).unwrap();
+    let expected = "None Some(\"\")\nhttps://example.com/tour/demo?project=Native+UI&empty=\ninvalid handled\n";
+    assert_eq!(ok(cli(project.path(), &["run", "url.ds"])), expected);
+    let output = tempfile::tempdir().unwrap();
+    let binary = output.path().join("url-app");
+    ok(cli(
+        project.path(),
+        &["build", "url.ds", "--outfile", binary.to_str().unwrap()],
+    ));
+    drop(project);
+    let elsewhere = tempfile::tempdir().unwrap();
+    let result = Command::new(binary)
+        .current_dir(elsewhere.path())
+        .env_clear()
+        .output()
+        .unwrap();
+    assert!(
+        result.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(ok(result), expected);
+}

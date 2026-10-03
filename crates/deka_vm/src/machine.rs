@@ -333,6 +333,19 @@ impl Vm {
                     .map(|h| self.to_host_inner(*h, ancestors))
                     .collect::<Result<_>>()?,
             ),
+            Value::Record(record) if record.enum_name.as_deref() == Some("Option") => {
+                let name = record.get("name").ok_or("Option has no case")?;
+                match self.heap.get(*name)? {
+                    Value::String(case) if case == "None" => HostValue::Option(None),
+                    Value::String(case) if case == "Some" => {
+                        HostValue::Option(Some(Box::new(self.to_host_inner(
+                            *record.get("value").ok_or("Some has no payload")?,
+                            ancestors,
+                        )?)))
+                    }
+                    _ => return Err("invalid Option case".into()),
+                }
+            }
             // Enums cross through their declared Result channel, not record-shape guessing.
             Value::Record(record) if record.enum_name.is_none() => HostValue::Record(
                 record
@@ -379,6 +392,15 @@ impl Vm {
             return Err("host value nesting limit exceeded".into());
         }
         let value = match value {
+            HostValue::Option(value) => {
+                return Ok(match value {
+                    Some(value) => {
+                        let payload = self.alloc_host_value_inner(*value, depth + 1)?;
+                        self.enum_value("Option".into(), "Some".into(), 0, Some(payload))
+                    }
+                    None => self.enum_value("Option".into(), "None".into(), 1, None),
+                });
+            }
             HostValue::Bytes(bytes) => Value::Bytes(bytes),
             HostValue::Handle(handle) => Value::Host(handle),
             HostValue::List(items) => Value::List(
