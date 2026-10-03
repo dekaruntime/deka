@@ -38,3 +38,6 @@ pub mod v8_control;
 
 #[cfg(feature = "host")]
 pub mod url;
+
+#[cfg(feature = "host")]
+pub mod http_request;
