@@ -127,6 +127,18 @@ fn register_init(registry: &mut Registry) {
     });
 }
 
+fn register_add(registry: &mut Registry) {
+    registry.add_command(CommandSpec {
+        name: "add",
+        owner: "deka_cli",
+        category: "Packages",
+        summary: "install an exact package version and save its pin",
+        aliases: &[],
+        subcommands: &[],
+        handler: cmd_add,
+    });
+}
+
 /// Registration functions in help/ownership order (the ownership index
 /// re-runs these to attribute flags to their command).
 pub fn register_fns() -> Vec<fn(&mut Registry)> {
@@ -138,6 +150,7 @@ pub fn register_fns() -> Vec<fn(&mut Registry)> {
         register_build,
         register_test,
         register_init,
+        register_add,
     ]
 }
 
@@ -351,6 +364,19 @@ fn cmd_init(ctx: &Context) -> HandlerResult {
         .map(PathBuf::from)
         .unwrap_or_else(|| ".".into());
     runtime(init(&directory))
+}
+
+fn cmd_add(ctx: &Context) -> HandlerResult {
+    let [spec] = ctx.args.positionals.as_slice() else {
+        return Err(CommandError::usage(
+            "usage: deka add <name>@<exact-version>",
+        ));
+    };
+    crate::packages::parse_spec(spec).map_err(CommandError::usage)?;
+    let directory = std::env::current_dir().map_err(|e| CommandError::Runtime(e.to_string()))?;
+    runtime(crate::packages::add(&directory, spec))?;
+    ctx.out().print(format_args!("Added {spec}\n"));
+    Ok(ExitStatus::SUCCESS)
 }
 
 /// Run a compiled application (its executable carries an embedded payload).

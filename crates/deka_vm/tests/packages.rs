@@ -54,6 +54,30 @@ async fn hand_placed_package_imports_and_runs() {
 }
 
 #[tokio::test]
+async fn legacy_descriptor_pins_resolve_and_still_guard_installed_versions() {
+    let dir = tempfile::tempdir().unwrap();
+    project_with_mathpkg(dir.path());
+    let app = write(
+        dir.path(),
+        "app.ds",
+        "import { answer } from \"mathpkg\"; fn main() number { return answer(); }",
+    );
+    for (pin, success) in [("mathpkg@1.2.3", true), ("mathpkg@9.9.9", false)] {
+        let lock = serde_json::json!({"lockfileVersion": 1, "packages": {"mathpkg": [pin, "deka.gg:mathpkg", {}, ""]}});
+        write(dir.path(), "deka.lock", &lock.to_string());
+        if success {
+            assert_eq!(result(&app).await.unwrap(), HostValue::Number(42.));
+        } else {
+            let error = result(&app).await.unwrap_err();
+            assert!(
+                error.contains("deka.lock pins 9.9.9, ds_modules has 1.2.3"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn scoped_package_layout_resolves() {
     let dir = tempfile::tempdir().unwrap();
     write(

@@ -1,6 +1,7 @@
 //! Public native compiler/VM CLI. The legacy V8 CLI remains a separate crate.
 //! Command dispatch lives in [`cli`]; this module holds the implementations.
 pub mod cli;
+mod packages;
 
 use deka_cli_core::registry::Output;
 use deka_vm::{HostOp, HostReply, HostType, HostValue, Hosts, Program, Result, Vm, compiler};
