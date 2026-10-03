@@ -426,3 +426,33 @@ Package archives are checked before promotion: JavaScript, WASM, Rust source/art
 A package’s own exact-pin dependencies are downloaded into the same flat `ds_modules` tree and recorded with their edges, URLs and hashes in `deka.lock`. Shared dependencies and cycles are resolved once; conflicting pins fail explicitly. Add stages the complete reachable dependency graph before replacing it. Install replays the locked graph without registry version selection and checks that each archive’s dependency declarations agree with the lock. Imports inside a package use that package’s declarations; root imports still require a root `deka.json` declaration.
 
 Package commands return a nonzero status for unknown packages or versions, download failures, checksum mismatches and non-DekaScript archives. Archive errors include the package/version and offending file where available, so a failed transitive package is identifiable. These errors preserve the previous installation and project/lock bytes.
+
+
+## CLI async lifetime
+
+An async call creates a running task and returns its Promise. `await` suspends
+only the caller while other tasks continue. After a file or its selected entry
+returns normally, `deka run` waits for every running task before exiting,
+including tasks started by those tasks. A pending host operation keeps the
+program alive; the entry's result and suspended values stay rooted until work
+finishes.
+
+```tsx
+import { echo } from "io";
+
+async fn work() Promise<void> {
+    let total = 0;
+    for (let i = 0; i < 2000; i += 1) { total += i; }
+    echo("worker completed");
+}
+const pending = work();
+echo("main returned");
+// main returned
+// worker completed
+```
+
+An infinite running task keeps the program alive. Cancellation or a VM fault
+releases pending work; a VM fault cannot be hidden by a successful entry return.
+Fallible host operations still deliver operational errors as Result values.
+This CLI lifetime rule does not add async window handlers: desktop event-loop
+integration is a separate feature.

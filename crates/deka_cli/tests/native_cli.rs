@@ -244,6 +244,37 @@ fn uncaught_throw_prints_to_stderr_and_exits_unsuccessfully() {
 }
 
 #[test]
+fn run_drains_unawaited_tasks_after_entry_or_module_returns() {
+    let project = tempfile::tempdir().unwrap();
+    let worker = r#"
+import { echo } from "io";
+async fn worker() Promise<void> {
+    let total = 0;
+    for (let i = 0; i < 2000; i += 1) { total += i; }
+    echo("worker completed");
+}
+"#;
+    for (name, source, args) in [
+        (
+            "entry.ds",
+            format!("{worker} fn main() {{ const pending = worker(); echo(\"main returned\"); }}"),
+            vec!["run", "entry.ds", "--entry", "main"],
+        ),
+        (
+            "module.ds",
+            format!("{worker} const pending = worker(); echo(\"main returned\");"),
+            vec!["run", "module.ds"],
+        ),
+    ] {
+        fs::write(project.path().join(name), source).unwrap();
+        assert_eq!(
+            ok(cli(project.path(), &args)),
+            "main returned\nworker completed\n"
+        );
+    }
+}
+
+#[test]
 fn run_and_relocated_executable_await_the_production_time_module() {
     let project = tempfile::tempdir().unwrap();
     fs::write(
