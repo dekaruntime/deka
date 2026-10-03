@@ -335,9 +335,8 @@ impl<'a> Checker<'a> {
                     .map(|t| self.resolve_ast_type_rec(t, seen))
                     .collect(),
             },
-            ast::Type::Record { span, .. } => {
-                self.error_span(*span, "tuple/record types are not supported in v2 typeck");
-                Type::Error
+            ast::Type::Record { fields, .. } => Type::Object {
+                fields: fields.iter().map(|field| (field.name, self.resolve_ast_type_rec(&field.ty, seen))).collect(),
             }
         }
     }

@@ -16,6 +16,8 @@ pub(crate) enum Value {
     Number(f64),
     Bool(bool),
     String(String),
+    Bytes(Vec<u8>),
+    Host(crate::HostHandle),
     List(Vec<Handle>),
     Record(Record),
     // Component attributes are getters; nested children are retained values.

@@ -205,7 +205,7 @@ fn registry_declarations_are_valid_and_the_checker_guards_result_payloads() {
                     HostOp::new(
                         &format!("op_{i}_{asynchronous}"),
                         vec![],
-                        *ty,
+                        ty.clone(),
                         asynchronous,
                         None,
                         |_| unreachable!(),
@@ -219,9 +219,23 @@ fn registry_declarations_are_valid_and_the_checker_guards_result_payloads() {
     let arena = bumpalo::Bump::new();
     let parsed = deka_syntax::parse(&source, &arena);
     assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
-    let ast = parsed.program.unwrap();
-    let checked = deka_syntax::check_program(&ast, &source);
-    assert!(checked.errors.is_empty(), "{:?}\n{source}", checked.errors);
+    parsed.program.unwrap();
+    let mut names = Vec::new();
+    let mut calls = String::new();
+    for i in 0..5 {
+        names.push(format!("op_{i}_false"));
+        names.push(format!("op_{i}_true"));
+        calls.push_str(&format!(
+            "const a{i} = op_{i}_false(); const b{i} = await op_{i}_true();"
+        ));
+    }
+    // Bodyless signatures belong to the host declaration module; checking that
+    // file as an ordinary application would reject its ambient declarations.
+    let consumer = format!(
+        "import {{ {} }} from \"vm:host\"; async fn main() {{ {calls} }}",
+        names.join(", ")
+    );
+    compiler::compile(&consumer, &hosts).unwrap();
     let hosts = host(|_| unreachable!(), true);
     let error = compiler::compile(
         r#"

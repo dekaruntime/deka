@@ -1562,7 +1562,9 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     .map(|t| ast_type_to_export_type(t, structs, enums, aliases, newtypes, seen))
                     .collect(),
             },
-            ast::Type::Record { .. } => Type::Error,
+            ast::Type::Record { fields, .. } => Type::Object {
+                fields: fields.iter().map(|field| (field.name, ast_type_to_export_type(&field.ty, structs, enums, aliases, newtypes, seen))).collect(),
+            },
             ast::Type::Union { members, .. } => Type::Union {
                 members: members
                     .iter()
