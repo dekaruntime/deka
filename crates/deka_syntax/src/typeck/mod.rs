@@ -150,6 +150,8 @@ pub struct TypeckResult<'a> {
     /// keyed by declaration name. The emitter interns one frozen const per
     /// referenced declaration (and its recursive-reference group).
     pub super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
+    /// Read-only opaque property call sites, dispatched through the host registry.
+    pub native_property_calls: HashMap<*const ast::Expr<'a>, &'a str>,
     /// `.toJSON()` and `.parseJSON<T>()` call sites specialized to a static shape.
     pub json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
     /// Builtin array call sites: accessors produce Option (deka#561,
@@ -240,6 +242,9 @@ fn export_type_ast_refs<'a>(
     }
 }
 
+/// Opaque property signatures indexed by receiver declaration identity.
+pub type NativeProperties<'a> = HashMap<(usize, &'a str), (&'a str, Type<'a>)>;
+
 /// Type information exported by a compiled module, used to seed the
 /// typechecker of its importers.
 #[derive(Clone, Debug)]
@@ -261,6 +266,8 @@ pub struct ModuleExports<'a> {
     pub aliases: HashMap<&'a str, ast::Type<'a>>,
     pub opaques: HashMap<&'a str, Type<'a>>,
     pub newtypes: HashMap<&'a str, NewtypeInfo>,
+    /// Compiler-supplied opaque property signatures, derived from host functions.
+    pub native_properties: NativeProperties<'a>,
     pub receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
     /// Value bindings (functions / constants) exported by the module.
     pub values: HashMap<&'a str, Type<'a>>,
@@ -306,6 +313,7 @@ impl<'a> Default for ModuleExports<'a> {
             opaques: HashMap::new(),
             newtypes: HashMap::new(),
             receiver_methods: HashMap::new(),
+            native_properties: HashMap::new(),
             values: HashMap::new(),
             default_export_declared_name: None,
             re_exports: HashSet::new(),
@@ -840,10 +848,20 @@ pub fn check_program_with_imports_and_globals<'a>(
     imports: &HashMap<&str, &ModuleExports<'a>>,
     globals: &HashMap<&'a str, Type<'a>>,
 ) -> TypeckResult<'a> {
+    check_program_with_native_declarations(program, _source, imports, globals, None)
+}
+
+/// Native opaque types and their receiver signatures share the host registry's
+/// declaration module. They are ambient types, never forgeable record shapes.
+pub fn check_program_with_native_declarations<'a>(
+    program: &'a Program<'a>,
+    _source: &str,
+    imports: &HashMap<&str, &ModuleExports<'a>>,
+    globals: &HashMap<&'a str, Type<'a>>,
+    declarations: Option<&ModuleExports<'a>>,
+) -> TypeckResult<'a> {
     let mut checker = Checker::new(program, imports);
-    checker
-        .globals
-        .extend(globals.iter().map(|(name, ty)| (*name, ty.clone())));
+    checker.seed_native_declarations(globals, declarations);
     checker.check_program();
 
     TypeckResult {
@@ -856,6 +874,7 @@ pub fn check_program_with_imports_and_globals<'a>(
         signature_calls: checker.signature_calls,
         static_type_calls: checker.static_type_calls,
         super_trees: checker.super_trees,
+        native_property_calls: checker.native_property_calls,
         json_calls: checker.json_calls,
         array_builtin_calls: checker.array_builtin_calls,
         number_math_calls: checker.number_math_calls,
@@ -966,21 +985,25 @@ pub fn refresh_module_export_values<'a>(
     imports: &HashMap<&str, &ModuleExports<'a>>,
     exports: &mut ModuleExports<'a>,
 ) {
-    refresh_module_export_values_with_globals(program, imports, &HashMap::new(), exports);
+    refresh_module_export_values_with_native_declarations(
+        program,
+        imports,
+        exports,
+        &HashMap::new(),
+        None,
+    )
 }
 
-/// Export inference sees the same native globals as module checking, so a
-/// namespace/function alias cannot lose its checked contract when imported.
-pub fn refresh_module_export_values_with_globals<'a>(
+/// Propagate native constructor and method types through exported factories.
+pub fn refresh_module_export_values_with_native_declarations<'a>(
     program: &'a Program<'a>,
     imports: &HashMap<&str, &ModuleExports<'a>>,
-    globals: &HashMap<&'a str, Type<'a>>,
     exports: &mut ModuleExports<'a>,
+    globals: &HashMap<&'a str, Type<'a>>,
+    declarations: Option<&ModuleExports<'a>>,
 ) {
     let mut checker = Checker::new(program, imports);
-    checker
-        .globals
-        .extend(globals.iter().map(|(name, ty)| (*name, ty.clone())));
+    checker.seed_native_declarations(globals, declarations);
     checker.infer_only = true;
     checker.check_program();
     let mut inferred_values = checker.globals.clone();
@@ -1856,7 +1879,12 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     Type::Function {
                         params: param_types,
                         ret: Box::new(ret),
-                        optional: 0,
+                        optional: function
+                            .params
+                            .iter()
+                            .rev()
+                            .take_while(|param| param.default_value.is_some())
+                            .count(),
                     },
                 );
             }
@@ -2126,6 +2154,9 @@ struct Checker<'a> {
     /// declaration. Declaration-derived, not a lowering pass effect — NOT
     /// cleared by `reset_lowering_state`.
     super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
+    native_receiver_methods: HashMap<(usize, &'a str), MethodInfo<'a>>,
+    native_properties: NativeProperties<'a>,
+    native_property_calls: HashMap<*const ast::Expr<'a>, &'a str>,
     json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
     /// Builtin `Array.first()`/`Array.last()`/`Array.pop()`/`Array.shift()`
     /// call sites to rewrite to an Option-producing expression, keyed by call
@@ -2262,6 +2293,9 @@ impl<'a> Checker<'a> {
             signature_calls: HashMap::new(),
             static_type_calls: HashMap::new(),
             super_trees: HashMap::new(),
+            native_properties: HashMap::new(),
+            native_receiver_methods: HashMap::new(),
+            native_property_calls: HashMap::new(),
             json_calls: HashMap::new(),
             index_flow: indexing::IndexFlow::default(),
             array_builtin_calls: HashMap::new(),
@@ -2526,6 +2560,7 @@ impl<'a> Checker<'a> {
         self.type_of_calls.clear();
         self.signature_calls.clear();
         self.static_type_calls.clear();
+        self.native_property_calls.clear();
         self.json_calls.clear();
         self.array_builtin_calls.clear();
         self.index_flow = indexing::IndexFlow::default();
@@ -2553,6 +2588,26 @@ impl<'a> Checker<'a> {
         self.scopes.push(HashMap::new());
         self.capture_scopes.push(HashMap::new());
         self.context_scopes.push(HashMap::new());
+    }
+
+    fn seed_native_declarations(
+        &mut self,
+        globals: &HashMap<&'a str, Type<'a>>,
+        declarations: Option<&ModuleExports<'a>>,
+    ) {
+        if let Some(declarations) = declarations {
+            self.opaques.extend(declarations.opaques.clone());
+            self.native_properties
+                .extend(declarations.native_properties.clone());
+            for ((owner, method), info) in &declarations.build_receiver_methods {
+                if let Some(Type::Opaque { identity, .. }) = declarations.opaques.get(owner) {
+                    self.native_receiver_methods
+                        .insert((*identity, *method), info.clone());
+                }
+            }
+        }
+        self.globals
+            .extend(globals.iter().map(|(name, ty)| (*name, ty.clone())));
     }
 
     fn declare_var(&mut self, name: &'a str, ty: Type<'a>) {
