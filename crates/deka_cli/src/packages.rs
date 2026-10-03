@@ -333,7 +333,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::{
         io::Write,
-        net::TcpListener,
+        net::{SocketAddr, TcpListener, TcpStream},
         sync::{
             Arc, Mutex,
             atomic::{AtomicBool, Ordering},
@@ -344,39 +344,43 @@ mod tests {
         url: String,
         requests: Arc<Mutex<Vec<String>>>,
         stop: Arc<AtomicBool>,
-        thread: Option<std::thread::JoinHandle<()>>,
+        address: SocketAddr,
+        thread: Option<std::thread::JoinHandle<std::io::Result<()>>>,
     }
     impl Fixture {
         fn new(responses: BTreeMap<String, Vec<u8>>) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let url = format!("http://{}", listener.local_addr().unwrap());
-            listener.set_nonblocking(true).unwrap();
+            let address = listener.local_addr().unwrap();
+            let url = format!("http://{address}");
+            listener.set_nonblocking(false).unwrap();
             let requests = Arc::new(Mutex::new(Vec::new()));
             let seen = requests.clone();
             let stop = Arc::new(AtomicBool::new(false));
             let stopping = stop.clone();
-            let thread = std::thread::spawn(move || {
-                while !stopping.load(Ordering::Relaxed) {
-                    let (mut stream, _) = match listener.accept() {
-                        Ok(connection) => connection,
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            std::thread::sleep(std::time::Duration::from_millis(1));
-                            continue;
-                        }
-                        Err(e) => panic!("fixture accept: {e}"),
-                    };
-                    stream
-                        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-                        .unwrap();
+            let thread = std::thread::spawn(move || -> std::io::Result<()> {
+                loop {
+                    let (mut stream, _) = listener.accept()?;
+                    if stopping.load(Ordering::Acquire) {
+                        return Ok(());
+                    }
+                    stream.set_nonblocking(false)?;
+                    let timeout = Some(std::time::Duration::from_secs(5));
+                    stream.set_read_timeout(timeout)?;
+                    stream.set_write_timeout(timeout)?;
                     let mut request = Vec::new();
                     while !request.ends_with(b"\r\n\r\n") {
                         let mut byte = [0];
-                        stream.read_exact(&mut byte).unwrap();
+                        stream.read_exact(&mut byte)?;
                         request.push(byte[0]);
                     }
-                    let request = String::from_utf8(request).unwrap();
-                    let path = request.split_whitespace().nth(1).unwrap();
-                    seen.lock().unwrap().push(path.into());
+                    let request = String::from_utf8(request)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                    let path = request.split_whitespace().nth(1).ok_or_else(|| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, "missing request path")
+                    })?;
+                    seen.lock()
+                        .map_err(|e| std::io::Error::other(e.to_string()))?
+                        .push(path.into());
                     let body = responses.get(path);
                     let status = if body.is_some() {
                         "200 OK"
@@ -384,14 +388,19 @@ mod tests {
                         "404 Not Found"
                     };
                     let bytes = body.map(Vec::as_slice).unwrap_or(b"missing");
-                    write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).unwrap();
-                    stream.write_all(bytes).unwrap();
+                    write!(
+                        stream,
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        bytes.len()
+                    )?;
+                    stream.write_all(bytes)?;
                 }
             });
             Self {
                 url,
                 requests,
                 stop,
+                address,
                 thread: Some(thread),
             }
         }
@@ -399,11 +408,55 @@ mod tests {
             Registry::new(&self.url, &self.url).unwrap()
         }
     }
+    impl Fixture {
+        fn shutdown(&mut self) -> Result<()> {
+            self.stop.store(true, Ordering::Release);
+            let Some(thread) = self.thread.take() else {
+                return Ok(());
+            };
+            if !thread.is_finished() {
+                // Wake blocking accept, even when no HTTP request was made.
+                if let Err(error) =
+                    TcpStream::connect_timeout(&self.address, std::time::Duration::from_secs(5))
+                    && !thread.is_finished()
+                {
+                    // Do not hang cleanup if the wake connection itself failed.
+                    return Err(format!("fixture shutdown connection: {error}"));
+                }
+            }
+            match thread.join() {
+                Ok(result) => result.map_err(|error| format!("fixture server I/O: {error}")),
+                Err(_) => Err("fixture server thread panicked".into()),
+            }
+        }
+    }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            self.stop.store(true, Ordering::Relaxed);
-            self.thread.take().unwrap().join().unwrap();
+            if let Err(error) = self.shutdown() {
+                if std::thread::panicking() {
+                    eprintln!("{error}");
+                } else {
+                    panic!("{error}");
+                }
+            }
         }
+    }
+
+    #[test]
+    fn fixture_reports_incomplete_request_as_io_error() {
+        let mut fixture = Fixture::new(BTreeMap::new());
+        let mut stream = TcpStream::connect(fixture.address).unwrap();
+        stream.write_all(b"GET /unfinished").unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        // Wait for the server's error before shutdown can cancel this request.
+        for _ in 0..500 {
+            if fixture.thread.as_ref().unwrap().is_finished() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let error = fixture.shutdown().unwrap_err();
+        assert!(error.starts_with("fixture server I/O:"), "{error}");
     }
     fn tarball(name: &str, version: &str, entry: &str) -> Vec<u8> {
         let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
