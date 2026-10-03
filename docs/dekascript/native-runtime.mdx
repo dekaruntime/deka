@@ -169,3 +169,25 @@ echo(string(p)); // Point { x: 1, y: 2 }
 `echo` still takes text, as before. This does not make arbitrary object-to-string
 casts or string-plus-struct concatenation legal. Cyclic or deeply nested output
 uses bounded placeholders rather than recursing indefinitely.
+
+## Runtime types and declared signatures
+
+`.getType()` returns an immutable, interned `Type` value describing the current
+runtime value. `.signature()` describes the type declared at that source site.
+Use `.toString()` to display either descriptor; equality compares interned type
+identity. This slice exposes `toString()`, not schema-field introspection.
+
+```tsx
+let value: number | string = "hello";
+value.getType().toString(); // string
+value = 42;
+value.getType().toString(); // number
+value.signature().toString(); // number | string
+```
+
+Structs, enums and newtypes retain their names. Arrays report `Array` at runtime;
+their static signature can describe the element type. Newtype construction and
+arithmetic retain the checked result type, while unboxing returns the plain
+primitive. User-defined `getType` and `signature` methods keep precedence over
+the builtins. Descriptors survive collection while the VM runs and are released
+when it finishes or is cancelled. No JavaScript helper is involved.

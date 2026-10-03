@@ -50,6 +50,7 @@ pub struct Vm {
     root: Option<Handle>,
     instructions: u64,
     instruction_limit: u64,
+    descriptors: BTreeMap<TypeDescriptor, Handle>,
 }
 impl Vm {
     pub fn new(program: Program, hosts: Hosts) -> Result<Self> {
@@ -67,6 +68,7 @@ impl Vm {
             root: None,
             instructions: 0,
             instruction_limit: 10_000_000,
+            descriptors: BTreeMap::new(),
         };
         let frame = vm.frame(0, vec![], vec![], None)?;
         vm.root = Some(vm.spawn(Work::Code(vec![frame])));
@@ -87,6 +89,7 @@ impl Vm {
     pub fn cancel(&mut self) -> Result<()> {
         self.tasks.clear();
         self.pins.clear();
+        self.descriptors.clear();
         self.root = None;
         self.heap.collect([])
     }
@@ -96,6 +99,7 @@ impl Vm {
             .into_iter()
             .chain(self.pins.iter().copied())
             .collect();
+        roots.extend(self.descriptors.values().copied());
         for task in self.tasks.values() {
             roots.push(task.promise);
             if let Work::Code(frames) = &task.work {
@@ -429,6 +433,15 @@ impl Vm {
                     (Value::Bool(a), Value::String(b)) if matches!(op, Op::Add) => {
                         Value::String(a.to_string() + &b)
                     }
+                    (Value::Descriptor(a), Value::Descriptor(b))
+                        if matches!(op, Op::Equal | Op::NotEqual) =>
+                    {
+                        Value::Bool(if matches!(op, Op::Equal) {
+                            a == b
+                        } else {
+                            a != b
+                        })
+                    }
                     (Value::Bool(a), Value::Bool(b)) if matches!(op, Op::Equal | Op::NotEqual) => {
                         Value::Bool(if matches!(op, Op::Equal) {
                             a == b
@@ -457,6 +470,30 @@ impl Vm {
                 frame.stack.push(self.heap.alloc(Value::Bool(!b)));
             }
             Op::Jump(ip) => frame.ip = ip,
+            Op::Newtype(name) => {
+                let value = self.heap.get(pop(frame)?)?.clone();
+                frame.stack.push(self.heap.alloc_newtype(value, name));
+            }
+            Op::GetType => {
+                let value = pop(frame)?;
+                let descriptor = self.type_of(value)?;
+                let h = self.intern_descriptor(descriptor);
+                frame.stack.push(h);
+            }
+            Op::Descriptor(descriptor) => {
+                let h = self.intern_descriptor(descriptor);
+                frame.stack.push(h);
+            }
+            Op::Enum {
+                name,
+                case,
+                index,
+                payload,
+            } => {
+                let value = if payload { Some(pop(frame)?) } else { None };
+                let h = self.enum_value(name, case, index, value);
+                frame.stack.push(h);
+            }
             Op::ToString => {
                 let h = pop(frame)?;
                 let text = self.value_text(h)?;
@@ -466,7 +503,7 @@ impl Vm {
             Op::ToNumber => {
                 let h = pop(frame)?;
                 let value = match self.heap.get(h)? {
-                    Value::Number(_) => h,
+                    Value::Number(n) => self.heap.alloc(Value::Number(*n)),
                     Value::Bool(b) => self.heap.alloc(Value::Number(if *b { 1. } else { 0. })),
                     _ => return Err("toNumber() only accepts number or bool".into()),
                 };
@@ -564,6 +601,14 @@ impl Vm {
                 if let Value::Props(fields) = self.heap.get(receiver)? {
                     let value = *fields.get(name.as_str()).ok_or("missing field")?;
                     self.read_prop(frames, Some(value), Some(args))?;
+                    return Ok(Step::Continue);
+                }
+                if let Value::Descriptor(descriptor) = self.heap.get(receiver)?
+                    && name == "toString"
+                    && args.is_empty()
+                {
+                    let text = descriptor.name.clone();
+                    frame.stack.push(self.heap.alloc(Value::String(text)));
                     return Ok(Step::Continue);
                 }
                 let Value::Record(fields) = self.heap.get(receiver)? else {
@@ -716,6 +761,7 @@ impl Vm {
                         order: fields.clone(),
                         fields: fields.into_iter().zip(items).collect(),
                         struct_name: Some(name),
+                        enum_name: None,
                         embeds,
                     })));
             }
@@ -846,6 +892,61 @@ impl Vm {
             }
         }
         Ok(Step::Continue)
+    }
+    fn intern_descriptor(&mut self, descriptor: TypeDescriptor) -> Handle {
+        if let Some(h) = self.descriptors.get(&descriptor) {
+            return *h;
+        }
+        let h = self.heap.alloc(Value::Descriptor(descriptor.clone()));
+        self.descriptors.insert(descriptor, h);
+        h
+    }
+    fn type_of(&self, value: Handle) -> Result<TypeDescriptor> {
+        if let Some(name) = self.heap.newtype_name(value)? {
+            return Ok(TypeDescriptor::new("newtype", name));
+        }
+        Ok(match self.heap.get(value)? {
+            Value::Unit => TypeDescriptor::new("none", "None"),
+            Value::Number(_) => TypeDescriptor::new("number", "number"),
+            Value::Bool(_) => TypeDescriptor::new("boolean", "boolean"),
+            Value::String(_) => TypeDescriptor::new("string", "string"),
+            Value::List(_) => TypeDescriptor::new("array", "Array"),
+            Value::Record(record) => {
+                if let Some(name) = &record.struct_name {
+                    TypeDescriptor::new("struct", name)
+                } else if let Some(name) = &record.enum_name {
+                    TypeDescriptor::new("enum", name)
+                } else {
+                    TypeDescriptor::new("object", "Object")
+                }
+            }
+            Value::Closure { .. } => TypeDescriptor::new("function", "Function"),
+            Value::Descriptor(_) => TypeDescriptor::new("object", "Type"),
+            Value::Promise(_) => TypeDescriptor::new("object", "Promise"),
+            Value::Props(_) => TypeDescriptor::new("object", "Object"),
+            _ => return Err("uninitialized value has no runtime type".into()),
+        })
+    }
+    /// Declared and prelude enums use this one nominal constructor. Field
+    /// storage remains compatible with existing case/payload access.
+    fn enum_value(
+        &mut self,
+        name: String,
+        case: String,
+        index: usize,
+        value: Option<Handle>,
+    ) -> Handle {
+        let label = self.heap.alloc(Value::String(case));
+        let index = self.heap.alloc(Value::Number(index as f64));
+        let mut record: crate::heap::Record = [("name".into(), label), ("index".into(), index)]
+            .into_iter()
+            .collect();
+        if let Some(value) = value {
+            record.order.push("value".into());
+            record.insert("value".into(), value);
+        }
+        record.enum_name = Some(name);
+        self.heap.alloc(Value::Record(record))
     }
     /// All textual output shares one formatter. Strings are raw at the
     /// top level and quoted within structured data, matching existing output.
