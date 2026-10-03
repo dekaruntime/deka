@@ -17,6 +17,8 @@ gpu = [
     "dep:pollster",
     "dep:num_cpus",
     "dep:objc2",
+    "dep:objc2-metal",
+    "dep:objc2-quartz-core",
     "dep:libc",
 ]
 world-audio = ["gpu", "dep:rodio"]
@@ -49,6 +51,10 @@ num_cpus = { version = "1.16", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 # AppKit calls winit does not expose: the window's colour before frame one, the menu bar.
 objc2 = { version = "0.6", optional = true }
+# Frame one drawn into the window's Metal layer before the window is shown
+# (window/render.rs); the versions wgpu's Metal backend uses.
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLCommandBuffer", "MTLCommandQueue", "MTLDrawable", "MTLResource", "MTLTexture"], optional = true }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer", "objc2-metal"], optional = true }
 # Performance-core count (sysctl hw.perflevel0.physicalcpu).
 libc = { version = "0.2", optional = true }
 

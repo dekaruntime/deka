@@ -167,6 +167,7 @@ pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
         modifiers: ModifiersState::empty(),
         focused: true,
         presented: 0,
+        menu_installed: false,
         failed: None,
     };
     if let Err(e) = event_loop.run_app(&mut shell) {
@@ -202,6 +203,7 @@ struct Shell<C: Content> {
     modifiers: ModifiersState,
     focused: bool,
     presented: u64,
+    menu_installed: bool,
     /// Why the window could not be shown (reported after the loop ends).
     failed: Option<String>,
 }
@@ -235,6 +237,7 @@ impl<C: Content> Shell<C> {
                 .map_err(|e| format!("cannot create a window: {e}"))?,
         );
         trace::mark("window created");
+        // On macOS the window stays hidden until frame one is in it (`first_frame`).
         #[cfg(target_os = "macos")]
         {
             // AppKit clamps a new window's content rect to the main screen, so a
@@ -244,9 +247,7 @@ impl<C: Content> Shell<C> {
                 window.set_outer_position(LogicalPosition::new(x, y));
             }
             mac::set_background(&window, self.options.background);
-            window.set_visible(true);
         }
-        trace::mark("window shown");
         let mut gpu = match std::mem::replace(&mut self.gpu, GpuState::Failed) {
             GpuState::Starting(pending) => {
                 let gpu = pending.join()?;
@@ -310,6 +311,95 @@ impl<C: Content> Shell<C> {
         }
     }
 
+    /// Frame one, and the window shown with it.
+    ///
+    /// On macOS, wgpu hands out no surface texture until AppKit reports the
+    /// window visible, tens of milliseconds after it is ordered front, so the
+    /// window would appear in its background colour and get its content
+    /// later. Instead frame one is drawn straight into the hidden window's
+    /// layer and the window is shown with it (GPUI did the same). If that
+    /// fails, the window is shown and frame one takes the usual path.
+    fn first_frame(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        {
+            let drawn =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.draw_hidden()));
+            if let Some(window) = &self.window {
+                window.set_visible(true);
+            }
+            trace::mark("window shown");
+            match drawn {
+                Ok(Ok(animating)) => {
+                    self.presented_frame(event_loop, animating);
+                    return;
+                }
+                Ok(Err(error)) => eprintln!("deka: frame one waits for the window: {error}"),
+                Err(_) => eprintln!("deka: frame one waits for the window after a panic"),
+            }
+        }
+        self.frame(event_loop);
+    }
+
+    /// macOS: frame one into the hidden window's layer (see `first_frame`).
+    /// Returns whether the scene animates.
+    #[cfg(target_os = "macos")]
+    fn draw_hidden(&mut self) -> Result<bool, String> {
+        let (Some(window), Some(surface), GpuState::Ready(gpu)) =
+            (&self.window, &self.surface, &mut self.gpu)
+        else {
+            return Err("no window surface".into());
+        };
+        let size = window.inner_size();
+        if (size.width, size.height) != (surface.config.width, surface.config.height) {
+            return Err("the window changed size".into());
+        }
+        trace::mark("frame: start");
+        let scale = window.scale_factor();
+        let scene = self.content.frame(
+            (f64::from(size.width) / scale) as f32,
+            (f64::from(size.height) / scale) as f32,
+            scale as f32,
+        );
+        trace::mark("frame: scene built");
+        gpu.draw_into_layer(&surface.surface, &surface.config, scene, scale)?;
+        trace::mark("frame: presented");
+        Ok(scene.animating)
+    }
+
+    /// Bookkeeping after a frame reached the window.
+    fn presented_frame(&mut self, event_loop: &ActiveEventLoop, animating: bool) {
+        self.schedule.presented(animating);
+        self.presented += 1;
+        let frame = Frame {
+            index: self.presented,
+            presented_at: Instant::now(),
+        };
+        self.content.presented(self.focused);
+        if let Some(on_frame) = self.options.on_frame.as_mut() {
+            on_frame(frame);
+        }
+        if self.options.frames.is_some_and(|n| self.presented >= n) {
+            event_loop.exit();
+        }
+        // Normally the visibility event installs it first.
+        if self.presented >= 2 {
+            self.install_menu();
+        }
+    }
+
+    /// The app menu, once the window is on screen: building it holds the
+    /// main thread for tens of milliseconds, which before the window shows
+    /// would hold the window back.
+    fn install_menu(&mut self) {
+        if self.menu_installed {
+            return;
+        }
+        self.menu_installed = true;
+        #[cfg(target_os = "macos")]
+        mac::install_menu();
+        trace::mark("menu installed");
+    }
+
     /// Draw and present one frame. Never panics: a failed or panicking frame
     /// is logged and skipped.
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
@@ -318,26 +408,7 @@ impl<C: Content> Shell<C> {
         }
         let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.draw()));
         match drawn {
-            Ok(Ok(Drawn::Presented { animating })) => {
-                self.schedule.presented(animating);
-                self.presented += 1;
-                let frame = Frame {
-                    index: self.presented,
-                    presented_at: Instant::now(),
-                };
-                self.content.presented(self.focused);
-                if self.presented == 1 {
-                    #[cfg(target_os = "macos")]
-                    mac::install_menu();
-                    trace::mark("menu installed");
-                }
-                if let Some(on_frame) = self.options.on_frame.as_mut() {
-                    on_frame(frame);
-                }
-                if self.options.frames.is_some_and(|n| self.presented >= n) {
-                    event_loop.exit();
-                }
-            }
+            Ok(Ok(Drawn::Presented { animating })) => self.presented_frame(event_loop, animating),
             Ok(Ok(Drawn::Occluded)) => {
                 if self.presented == 0 {
                     trace::mark("frame: refused while not visible");
@@ -437,7 +508,7 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
             return;
         }
         // Frame one now, not on the first RedrawRequested.
-        self.frame(event_loop);
+        self.first_frame(event_loop);
     }
 
     fn user_event(&mut self, _: &ActiveEventLoop, _: Wake) {
@@ -454,6 +525,9 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
             WindowEvent::Occluded(occluded) => {
                 if !occluded {
                     trace::mark("visible");
+                    if self.presented > 0 {
+                        self.install_menu();
+                    }
                 }
                 self.schedule.set_occluded(occluded)
             }
