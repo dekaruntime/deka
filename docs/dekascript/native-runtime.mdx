@@ -44,8 +44,17 @@ export fn App() {
 
 Clicking Toggle shows and hides Hello. The VM evaluates bindings after events;
 Rust advances the animation between events without executing more VM code.
-Node identity is positional in this preview; keyed list reconciliation is not
-implemented. Successful source edits restart state. Compilation or initial
+Rust retains the nodes between component renders. Compatible elements and text
+nodes at the same child position keep their internal identity when their text,
+classes or handlers change. Removing a node or replacing its element kind ends
+that identity; showing a new node at the old position gives it a fresh identity.
+Desktop and browser presentation snapshots use the same retained store. These
+internal identities are separate from author-supplied attributes.
+
+Matching remains positional; keyed list reconciliation and public node access
+are not implemented. Bindings still reevaluate after events and write the
+authored frame; property patches and imperative edits are subsequent work.
+Successful source edits restart state. Compilation or initial
 render errors keep the last working application.
 
 Browser text editing, asynchronous UI event scheduling, app module loading and
@@ -611,3 +620,29 @@ no default lifetime instruction quota. Rust embedders can still opt into
 initialization and binding queries retain separate finite guards. These are work
 budgets, not wall-clock guarantees: allocation, garbage collection and a host's
 synchronous work also take time.
+
+## Console output
+
+`console.log`, `console.info` and `console.debug` write one line to stdout.
+`console.error` and `console.warn` write one line to stderr; they return normally
+and do not make the program fail. Arguments are evaluated once in source order,
+separated by spaces. Calling a method without arguments writes an empty line.
+
+```ds
+struct Point { x: number; y: number; }
+console.info("Position", Point { x: 3, y: 4 })
+console.warn(Some(7), None, Err("offline"))
+```
+
+The stdout line is `Position Point { x: 3, y: 4 }`.
+The stderr line is `Some(7) None Err("offline")`.
+All five methods share the native formatter: structs preserve their names and
+field order, enum values print as `Case(payload)`, and nested strings are quoted.
+Functions, promises and opaque host handles have no printable form and are
+rejected by the checker. A local binding named `console` follows ordinary
+record and function rules.
+
+Embedded hosts provide a synchronous `echo(string)` operation for stdout and a
+synchronous `console_stderr(string)` operation for diagnostic output, both
+returning `void`. The CLI supplies both. Browser-hosted console forwarding is a
+separate platform integration.

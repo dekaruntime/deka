@@ -1,15 +1,19 @@
 # VM component experiment
 
 `Component` keeps a VM entry result alive as a record of named callbacks. The
-host calls callbacks with scalar or string-list values. `view` returns a DSX
+host calls callbacks with typed host values. `view` returns a DSX
 node tree; dynamic children, classes, and input values are evaluated when the
-host requests a frame. A frame contains shared native renderer nodes plus input
-specifications for the platform's editable text adapter.
+host requests a frame. The component owns a lasting Rust node store; a frame
+contains presentation snapshots plus input specifications for the platform's
+editable text adapter. Compatible positional elements/text retain internal
+identities. Removed or replaced nodes receive fresh identities on insertion.
 
-Native events invoke closure handles, then the host requests a new frame. This
-is an explicit event protocol, not React reconciliation or a dependency-tracking
-binding implementation. The host owns asynchronous work and delivers completion
-callbacks; UI event handlers are synchronous in this experiment.
+Native events queue closure handles onto the persistent VM scheduler, then the
+host requests a new frame. Async handlers and their child tasks survive the
+event call. Native hosts drive the bounded turn/ready/wake interface; bindings
+still evaluate synchronously. This does not implement dependency tracking or
+property ownership for imperative edits. Keyed-list identity remains separate
+from the current positional matching policy.
 
 The compiler now lowers one-argument `Array.map` callbacks, list length, and
 immutable list append. Each iteration creates fresh callback parameter cells,
@@ -20,8 +24,8 @@ rendering. Invalid event IDs and missing component callbacks return errors.
 
 `input` supports `value`, `placeholder`, `onInput`, and `onKeyDown`. Its layout
 rectangle belongs to the shared renderer; actual text editing belongs to the
-native host. This change does not add browser input parity or production language
-support. The experiment still uses the pinned DSC compiler and its syntax limits.
+native host. This does not add browser input parity. Source compiles through the
+local DekaScript compiler crate; a standalone DSC process is not involved.
 
 ## Packaging custom host programs
 
@@ -43,5 +47,12 @@ the compiler and Tauri bundler remain build-time dependencies.
 component test invokes the second mapped row over 300 frames, checks captured
 identity and bounded heap slots, and clears the list. Disabling event execution
 makes its selected-value assertion fail; restoring it passes.
+
+`tests/node_identity.rs` drives actual component/session renders. It verifies
+stable identities after state updates, fresh identities after removal or kind
+replacement, and independent session stores. Bypassing the retained store
+reuses a removed positional ID and fails; bypassing identity-aware presentation
+replacement also fails. The browser preview tests check the same identity
+behavior through real pointer events and scene snapshots, without a display.
 
 -codex

@@ -5,6 +5,7 @@ use crate::{
     *,
 };
 use deka_native_ui::Node;
+pub(crate) mod tree;
 
 pub struct InputSpec {
     pub target: usize,
@@ -22,6 +23,7 @@ pub struct Component {
     instance: Handle,
     handlers: Vec<Handle>,
     evaluations: usize,
+    tree: tree::Tree,
 }
 impl Component {
     pub fn new(program: Program, hosts: Hosts) -> Result<Self> {
@@ -36,6 +38,7 @@ impl Component {
             instance,
             handlers: vec![],
             evaluations: 0,
+            tree: tree::Tree::default(),
         })
     }
     fn method(&self, name: &str) -> Result<Handle> {
@@ -106,7 +109,7 @@ impl Component {
         self.handlers.clear();
         let mut inputs = vec![];
         let wire = self.node(view, &mut inputs)?;
-        let root = wire.into_node("root".into())?;
+        let root = self.tree.update(wire)?;
         self.vm.collect()?;
         Ok(ComponentFrame { root, inputs })
     }
@@ -197,7 +200,7 @@ impl Component {
             .transpose()?
             .unwrap_or_default();
         Ok(WireNode {
-            tag: if tag == "input" { "div".into() } else { tag },
+            tag,
             classes,
             handler,
             children,

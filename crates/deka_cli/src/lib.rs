@@ -85,18 +85,23 @@ pub(crate) fn source(path: &Path, entry: Option<String>) -> Result<Source> {
 }
 pub(crate) fn hosts() -> Result<Hosts> {
     let mut hosts = Hosts::default();
-    for name in ["echo", "print"] {
+    for name in ["echo", "print", compiler::CONSOLE_ERROR_OPERATION] {
+        let diagnostic = name == compiler::CONSOLE_ERROR_OPERATION;
         hosts.register(HostOp::new(
             name,
             vec![HostType::String],
             HostType::Unit,
             false,
             None,
-            |args| {
+            move |args| {
                 let HostValue::String(value) = &args[0] else {
                     unreachable!()
                 };
-                println!("{value}");
+                if diagnostic {
+                    eprintln!("{value}");
+                } else {
+                    println!("{value}");
+                }
                 HostReply::Ready(Ok(HostValue::Unit))
             },
         ))?;
