@@ -1,0 +1,40 @@
+# Native text encoding
+
+The CLI and desktop hosts provide `TextEncoder()` and `TextDecoder()`. These
+are ordinary Deka function calls. Rust owns each codec; Deka values hold opaque
+handles, and aliases share decoder state. Method arguments and read-only
+properties are checked before execution from the same catalog used for dispatch.
+
+```ds
+import { echo } from "io";
+
+fn main() {
+    const encoder = TextEncoder();
+    const decoder = unwrap(TextDecoder()) or { return; };
+    const text = unwrap(decoder.decode(encoder.encode("Hello, café 🙂"))) or { return; };
+    echo(encoder.encoding + ":" + text);
+}
+```
+
+Run the example with `deka run codec.ds --entry main`. For an npm installation,
+use `npx deka run codec.ds --entry main`. Output: `utf-8:Hello, café 🙂`.
+
+`encode(text = "")` returns `bytes`. `TextDecoder(label = "utf-8", options =
+{fatal: false, ignoreBOM: false})` returns `Result<TextDecoder, string>`;
+unsupported labels are errors. Decoder labels follow the
+[Encoding Standard](https://encoding.spec.whatwg.org/#interface-textdecoder).
+Explicit options contain both checked boolean fields. The encoder's `encoding`
+and decoder's `encoding`, `fatal`, and `ignoreBOM` are read-only properties.
+
+`decode(input, options = {stream: false})` returns `Result<string, string>`.
+Malformed input is replaced with U+FFFD by default; `fatal: true` returns `Err`.
+A decoder with `ignoreBOM: false` removes the initial BOM for its encoding.
+With `{stream: true}`, the decoder retains incomplete characters and BOM state
+across calls, including through aliases. A final decode with `stream: false`
+flushes pending input and resets the decoder for the next stream. To flush
+without additional data, pass `encoder.encode()` as the empty input.
+
+This preview supports `encode` and incremental `decode`. It does not yet expose
+`encodeInto`, mutable byte destinations, or codec stream classes. Browser host
+registration follows the separate browser-global integration; native host
+availability alone does not enable these globals in the tour.
