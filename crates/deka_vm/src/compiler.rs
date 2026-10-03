@@ -974,6 +974,7 @@ fn compile_modules(
             op.args == [crate::HostType::String]
                 && op.result == crate::HostType::Unit
                 && !op.asynchronous
+                && !op.result_channel
         }),
     };
     let mut entry = Context::new("<entry>", false);

@@ -29,6 +29,7 @@ enum Work {
     Host {
         future: HostFuture,
         result: HostType,
+        result_channel: bool,
     },
 }
 struct Task {
@@ -179,12 +180,29 @@ impl Vm {
             _ => return Err("unsupported host wire value".into()),
         })
     }
-    fn host_result(&mut self, value: Result<HostValue>, expected: HostType) -> Result<Handle> {
-        let value = value?;
+    fn host_result(
+        &mut self,
+        value: Result<HostValue>,
+        expected: HostType,
+        result_channel: bool,
+    ) -> Result<Handle> {
+        let value = match value {
+            Ok(value) => value,
+            Err(error) if result_channel => {
+                let payload = self.heap.alloc(Value::String(error));
+                return Ok(self.enum_value("Result".into(), "Err".into(), 1, Some(payload)));
+            }
+            Err(error) => return Err(error),
+        };
         if !expected.accepts(&value) {
             return Err("host returned the wrong result type".into());
         }
-        Ok(self.alloc_host_value(value))
+        let payload = self.alloc_host_value(value);
+        Ok(if result_channel {
+            self.enum_value("Result".into(), "Ok".into(), 0, Some(payload))
+        } else {
+            payload
+        })
     }
     pub(crate) fn alloc_host_value(&mut self, value: HostValue) -> Handle {
         let value = match value {
@@ -224,8 +242,15 @@ impl Vm {
         for id in ids {
             let mut task = self.tasks.remove(&id).unwrap();
             let result = match &mut task.work {
-                Work::Host { future, result } => match future.as_mut().poll(cx) {
-                    Poll::Ready(v) => Some(self.host_result(v, *result).map(Outcome::Value)),
+                Work::Host {
+                    future,
+                    result,
+                    result_channel,
+                } => match future.as_mut().poll(cx) {
+                    Poll::Ready(v) => Some(
+                        self.host_result(v, *result, *result_channel)
+                            .map(Outcome::Value),
+                    ),
                     Poll::Pending => None,
                 },
                 Work::Code(frames) => {
@@ -711,14 +736,16 @@ impl Vm {
                     .into_iter()
                     .map(|h| self.to_host(h))
                     .collect::<Result<Vec<_>>>()?;
-                let (reply, expected, asynchronous) = self.hosts.call(&operation, args)?;
+                let (reply, expected, asynchronous, result_channel) =
+                    self.hosts.call(&operation, args)?;
                 let h = match reply {
                     HostReply::Pending(future) => self.spawn(Work::Host {
                         future,
                         result: expected,
+                        result_channel,
                     }),
                     HostReply::Ready(value) => {
-                        let result = self.host_result(value, expected);
+                        let result = self.host_result(value, expected, result_channel);
                         if asynchronous {
                             self.heap
                                 .alloc(Value::Promise(Some(result.map(Outcome::Value))))

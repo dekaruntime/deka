@@ -36,7 +36,7 @@ impl HostType {
         match self {
             Self::Unit => "void",
             Self::Number => "number",
-            Self::Bool => "bool",
+            Self::Bool => "boolean",
             Self::String => "string",
             Self::Strings => "Array<string>",
         }
@@ -53,10 +53,30 @@ pub struct HostOp {
     pub args: Vec<HostType>,
     pub result: HostType,
     pub asynchronous: bool,
+    /// Operational failures are Result data. Protocol/capability faults remain
+    /// VM errors. The declaration and dispatch share this output contract.
+    pub result_channel: bool,
     pub capability: Option<String>,
     handler: Rc<dyn Fn(Vec<HostValue>) -> HostReply>,
 }
 impl HostOp {
+    /// Declare `Result<T, string>` (or `Promise<Result<T, string>>`) output.
+    pub fn with_result_channel(mut self) -> Self {
+        self.result_channel = true;
+        self
+    }
+    fn output_source(&self) -> String {
+        let value = if self.result_channel {
+            format!("Result<{}, string>", self.result.source())
+        } else {
+            self.result.source().to_owned()
+        };
+        if self.asynchronous {
+            format!("Promise<{value}>")
+        } else {
+            value
+        }
+    }
     pub fn new(
         name: &str,
         args: Vec<HostType>,
@@ -70,6 +90,7 @@ impl HostOp {
             args,
             result,
             asynchronous,
+            result_channel: false,
             capability: capability.map(str::to_owned),
             handler: Rc::new(handler),
         }
@@ -109,7 +130,7 @@ impl Hosts {
         &self,
         name: &str,
         args: Vec<HostValue>,
-    ) -> Result<(HostReply, HostType, bool)> {
+    ) -> Result<(HostReply, HostType, bool, bool)> {
         let op = self.operation(name)?;
         if let Some(cap) = &op.capability
             && !self.grants.contains(cap)
@@ -125,7 +146,7 @@ impl Hosts {
                 "synchronous host operation {name} returned a future"
             ));
         }
-        Ok((reply, op.result, op.asynchronous))
+        Ok((reply, op.result, op.asynchronous, op.result_channel))
     }
     /// The compiler's imported module signatures come from the same registry as dispatch.
     pub fn declarations(&self) -> String {
@@ -146,15 +167,25 @@ impl Hosts {
                     HostType::Strings => "return [];",
                     HostType::String => "return \"\";",
                 };
+                let value = if op.result_channel {
+                    // Declaration bodies are parsed only to collect signatures;
+                    // dispatch invokes the registered Rust handler. Keep this
+                    // body valid even for the void payload type.
+                    match op.result {
+                        HostType::Unit => "return Ok((fn() void {})());".to_owned(),
+                        _ => format!(
+                            "return Ok({});",
+                            value.trim_start_matches("return ").trim_end_matches(';')
+                        ),
+                    }
+                } else {
+                    value.to_owned()
+                };
                 format!(
                     "export {}fn {}({args}) {} {{ {value} }}\n",
                     if op.asynchronous { "async " } else { "" },
                     op.name,
-                    if op.asynchronous {
-                        format!("Promise<{}>", op.result.source())
-                    } else {
-                        op.result.source().to_owned()
-                    }
+                    op.output_source()
                 )
             })
             .collect()
