@@ -10,6 +10,8 @@ mod machine;
 #[cfg(feature = "compiler")]
 pub mod package;
 mod stack;
+#[cfg(feature = "host")]
+pub mod time;
 pub use bytecode::*;
 pub use heap::HeapStats;
 pub use host::*;
