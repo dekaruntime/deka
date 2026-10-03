@@ -6,6 +6,11 @@ use crate::scene::Scene;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 
+/// A window layer's drawable (macOS).
+#[cfg(target_os = "macos")]
+pub(crate) type Drawable =
+    objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_quartz_core::CAMetalDrawable>>;
+
 /// Non-sRGB BGRA, like GPUI's Metal layer: colours are sRGB values, blended as such.
 pub(crate) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 /// Formats the renderer can target, in order of preference (never an sRGB view:
@@ -212,8 +217,21 @@ impl Gpu {
         scene: &Scene,
         scale: f64,
     ) -> Result<(), String> {
-        use objc2::runtime::ProtocolObject;
-        use objc2_metal::{MTLCommandBuffer, MTLCommandQueue, MTLTextureType};
+        let (drawable, texture) = self.layer_texture(surface, config)?;
+        let view = texture.create_view(&Default::default());
+        self.draw(scene, scale, &view, config.width, config.height)?;
+        self.present_drawable(&drawable)
+    }
+
+    /// The surface layer's next drawable, and its texture wrapped for wgpu
+    /// with the surface's configuration.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn layer_texture(
+        &self,
+        surface: &wgpu::Surface<'_>,
+        config: &wgpu::SurfaceConfiguration,
+    ) -> Result<(Drawable, wgpu::Texture), String> {
+        use objc2_metal::MTLTextureType;
         use objc2_quartz_core::CAMetalDrawable;
         use wgpu::hal::api::Metal;
         // SAFETY: the surface was created by this device's instance; the layer
@@ -224,9 +242,8 @@ impl Gpu {
                 objc2::rc::autoreleasepool(|_| surface.render_layer().lock().nextDrawable())
                     .ok_or("the window layer has no drawable")
             })?;
-        // SAFETY: the drawable's texture has the surface's configured format
-        // and size (`configure` set the layer's pixel format and drawable
-        // size); it is a single 2D layer with one mip level.
+        // SAFETY: `configure` gave the layer this pixel format, drawable size
+        // and usage; a drawable is a single 2D layer with one mip level.
         let texture = unsafe {
             wgpu::hal::metal::Device::texture_from_raw(
                 drawable.texture(),
@@ -243,13 +260,13 @@ impl Gpu {
             )
         };
         // SAFETY: as above; the descriptor matches the raw texture, and its
-        // contents are discarded (the frame clears it), so it starts
+        // contents are discarded (a frame clears it), so it starts
         // UNINITIALIZED.
         let texture = unsafe {
             self.device.create_texture_from_hal::<Metal>(
                 texture,
                 &wgpu::TextureDescriptor {
-                    label: Some("deka frame one"),
+                    label: Some("deka layer drawable"),
                     size: wgpu::Extent3d {
                         width: config.width,
                         height: config.height,
@@ -259,24 +276,30 @@ impl Gpu {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: config.format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    usage: config.usage,
                     view_formats: &[],
                 },
                 wgpu::TextureUses::UNINITIALIZED,
             )
         };
-        let view = texture.create_view(&Default::default());
-        self.draw(scene, scale, &view, config.width, config.height)?;
-        // Present on the queue wgpu just submitted the frame to, so it is shown
-        // only once drawn (what wgpu's own present does).
+        Ok((drawable, texture))
+    }
+
+    /// Present `drawable` on the queue the frame was submitted to, so it is
+    /// shown only once drawn (what wgpu's own present does).
+    #[cfg(target_os = "macos")]
+    pub(crate) fn present_drawable(&self, drawable: &Drawable) -> Result<(), String> {
+        use objc2::runtime::ProtocolObject;
+        use objc2_metal::{MTLCommandBuffer, MTLCommandQueue};
         // SAFETY: the raw queue is only used to create and commit one command
         // buffer, after wgpu's submission.
-        let queue = unsafe { self.queue.as_hal::<Metal>() }.ok_or("the GPU queue is not Metal")?;
+        let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }
+            .ok_or("the GPU queue is not Metal")?;
         let buffer = queue
             .as_raw()
             .commandBuffer()
             .ok_or("no Metal command buffer")?;
-        buffer.presentDrawable(ProtocolObject::from_ref(&*drawable));
+        buffer.presentDrawable(ProtocolObject::from_ref(&**drawable));
         buffer.commit();
         Ok(())
     }
@@ -334,6 +357,12 @@ impl Gpu {
         });
         let view = texture.create_view(&Default::default());
         self.draw(scene, scale, &view, width, height)?;
+        self.read_back(&texture)
+    }
+
+    /// Straight RGBA rows of `texture` (which needs COPY_SRC).
+    pub(crate) fn read_back(&self, texture: &wgpu::Texture) -> Result<Snapshot, String> {
+        let (width, height) = (texture.width(), texture.height());
         let padded = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -381,7 +410,7 @@ impl Gpu {
                 rgba.extend_from_slice(&row[..(width * 4) as usize]);
             }
         }
-        if self.format == wgpu::TextureFormat::Bgra8Unorm {
+        if texture.format() == wgpu::TextureFormat::Bgra8Unorm {
             for pixel in rgba.chunks_exact_mut(4) {
                 pixel.swap(0, 2);
             }

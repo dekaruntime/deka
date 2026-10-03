@@ -167,6 +167,7 @@ pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
         modifiers: ModifiersState::empty(),
         focused: true,
         presented: 0,
+        shown_with_frame: false,
         menu_installed: false,
         failed: None,
     };
@@ -203,6 +204,9 @@ struct Shell<C: Content> {
     modifiers: ModifiersState,
     focused: bool,
     presented: u64,
+    /// Frame one went into the window before it was shown (macOS), so the
+    /// window has its content when it first becomes visible.
+    shown_with_frame: bool,
     menu_installed: bool,
     /// Why the window could not be shown (reported after the loop ends).
     failed: Option<String>,
@@ -330,6 +334,7 @@ impl<C: Content> Shell<C> {
             trace::mark("window shown");
             match drawn {
                 Ok(Ok(animating)) => {
+                    self.shown_with_frame = true;
                     self.presented_frame(event_loop, animating);
                     return;
                 }
@@ -522,14 +527,17 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.resize(size),
             WindowEvent::ScaleFactorChanged { .. } => self.schedule.invalidate(),
-            WindowEvent::Occluded(occluded) => {
-                if !occluded {
-                    trace::mark("visible");
-                    if self.presented > 0 {
-                        self.install_menu();
-                    }
+            WindowEvent::Occluded(true) => self.schedule.set_occluded(true),
+            WindowEvent::Occluded(false) => {
+                trace::mark("visible");
+                if std::mem::take(&mut self.shown_with_frame) {
+                    self.schedule.shown_with_frame();
+                } else {
+                    self.schedule.set_occluded(false);
                 }
-                self.schedule.set_occluded(occluded)
+                if self.presented > 0 {
+                    self.install_menu();
+                }
             }
             WindowEvent::RedrawRequested => self.frame(event_loop),
             WindowEvent::Focused(focused) => {
