@@ -1,5 +1,5 @@
 use crate::{
-    heap::{Handle, Heap, Value},
+    heap::{Handle, Heap, Outcome, Value},
     stack::Stack,
     *,
 };
@@ -18,6 +18,11 @@ struct Frame {
     /// (`props.onSelect()`): on return, the getter's result is called with
     /// these arguments instead of being handed to the caller.
     then_call: Option<Vec<Handle>>,
+    handlers: Vec<Handler>,
+}
+struct Handler {
+    target: usize,
+    stack_depth: usize,
 }
 enum Work {
     Code(Vec<Frame>),
@@ -33,7 +38,7 @@ struct Task {
 enum Step {
     Continue,
     Blocked,
-    Complete(Handle),
+    Complete(Outcome),
 }
 /// What a call setup produced: a frame to enter or a spawned task's promise.
 enum Invocation {
@@ -153,6 +158,7 @@ impl Vm {
             stack: Stack::new(),
             slot_children,
             then_call: None,
+            handlers: vec![],
         })
     }
     pub(crate) fn to_host(&self, h: Handle) -> Result<HostValue> {
@@ -219,7 +225,7 @@ impl Vm {
             let mut task = self.tasks.remove(&id).unwrap();
             let result = match &mut task.work {
                 Work::Host { future, result } => match future.as_mut().poll(cx) {
-                    Poll::Ready(v) => Some(self.host_result(v, *result)),
+                    Poll::Ready(v) => Some(self.host_result(v, *result).map(Outcome::Value)),
                     Poll::Pending => None,
                 },
                 Work::Code(frames) => {
@@ -262,7 +268,10 @@ impl Vm {
             return Poll::Ready(Err(e));
         }
         match self.heap.get(root) {
-            Ok(Value::Promise(Some(Ok(h)))) => Poll::Ready(Ok(*h)),
+            Ok(Value::Promise(Some(Ok(Outcome::Value(h))))) => Poll::Ready(Ok(*h)),
+            Ok(Value::Promise(Some(Ok(Outcome::Thrown(h))))) => {
+                Poll::Ready(Err(format!("uncaught Throw: {}", self.value_text(*h)?)))
+            }
             Ok(Value::Promise(Some(Err(e)))) => Poll::Ready(Err(e.clone())),
             Ok(Value::Promise(None)) => {
                 if progressed {
@@ -328,6 +337,18 @@ impl Vm {
         let frame = self.frame(function, captures, args, slot_children)?;
         self.root = Some(self.spawn(Work::Code(vec![frame])));
         self.finish_sync()
+    }
+    fn raise(&mut self, frames: &mut Vec<Frame>, value: Handle) -> Result<Step> {
+        while let Some(frame) = frames.last_mut() {
+            if let Some(handler) = frame.handlers.pop() {
+                frame.stack.truncate(handler.stack_depth);
+                frame.stack.push(value);
+                frame.ip = handler.target;
+                return Ok(Step::Continue);
+            }
+            frames.pop();
+        }
+        Ok(Step::Complete(Outcome::Thrown(value)))
     }
     fn step(&mut self, frames: &mut Vec<Frame>) -> Result<Step> {
         let frame = frames.last_mut().ok_or("empty call stack")?;
@@ -503,6 +524,11 @@ impl Vm {
                     }
                     _ => false,
                 };
+                frame.stack.push(self.heap.alloc(Value::Bool(matched)));
+            }
+            Op::MatchStruct(identity) => {
+                let h = pop(frame)?;
+                let matched = matches!(self.heap.get(h)?, Value::Record(record) if record.struct_identity.as_ref() == Some(&identity));
                 frame.stack.push(self.heap.alloc(Value::Bool(matched)));
             }
             Op::MatchType(expected) => {
@@ -694,7 +720,8 @@ impl Vm {
                     HostReply::Ready(value) => {
                         let result = self.host_result(value, expected);
                         if asynchronous {
-                            self.heap.alloc(Value::Promise(Some(result)))
+                            self.heap
+                                .alloc(Value::Promise(Some(result.map(Outcome::Value))))
                         } else {
                             result?
                         }
@@ -705,7 +732,10 @@ impl Vm {
             Op::Await => {
                 let promise = pop(frame)?;
                 match self.heap.get(promise)? {
-                    Value::Promise(Some(result)) => frame.stack.push(result.clone()?),
+                    Value::Promise(Some(result)) => match result.clone()? {
+                        Outcome::Value(h) => frame.stack.push(h),
+                        Outcome::Thrown(h) => return self.raise(frames, h),
+                    },
                     Value::Promise(None) => {
                         frame.stack.push(promise);
                         frame.ip -= 1;
@@ -713,6 +743,17 @@ impl Vm {
                     }
                     _ => return Err("await requires a promise".into()),
                 }
+            }
+            Op::Handler(target) => frame.handlers.push(Handler {
+                target,
+                stack_depth: frame.stack.len(),
+            }),
+            Op::EndHandler => {
+                frame.handlers.pop().ok_or("missing exception handler")?;
+            }
+            Op::Throw => {
+                let value = pop(frame)?;
+                return self.raise(frames, value);
             }
             Op::Return => {
                 let result = pop(frame)?;
@@ -724,7 +765,7 @@ impl Vm {
                 if let Some(parent) = frames.last_mut() {
                     parent.stack.push(result);
                 } else {
-                    return Ok(Step::Complete(result));
+                    return Ok(Step::Complete(Outcome::Value(result)));
                 }
             }
             Op::List(count) => {
@@ -783,6 +824,7 @@ impl Vm {
             }
             Op::Struct {
                 name,
+                identity,
                 fields,
                 embeds,
             } => {
@@ -793,6 +835,7 @@ impl Vm {
                         order: fields.clone(),
                         fields: fields.into_iter().zip(items).collect(),
                         struct_name: Some(name),
+                        struct_identity: identity,
                         enum_name: None,
                         embeds,
                     })));

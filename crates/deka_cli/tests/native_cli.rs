@@ -171,3 +171,21 @@ fn an_async_export_in_a_dependency_does_not_change_the_root_entry() {
     fs::write(p.join("async.test.ds"), "import { assert } from \"test\"; async fn value() Promise<number> { return 42; } async fn test_value() Promise<void> { assert(await value() == 42); }").unwrap();
     assert!(ok(cli(p, &["test"])).contains("1 passed, 0 failed"));
 }
+
+#[test]
+fn uncaught_throw_prints_to_stderr_and_exits_unsuccessfully() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("main.ds"),
+        "fn fail() Exception<number, string> { return Throw(\"fatal\"); }",
+    )
+    .unwrap();
+    let output = cli(project.path(), &["run", "main.ds", "--entry", "fail"]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("uncaught Throw: fatal"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

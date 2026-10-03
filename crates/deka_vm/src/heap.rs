@@ -26,7 +26,13 @@ pub(crate) enum Value {
         captures: Vec<Handle>,
         slot_children: Option<Handle>,
     },
-    Promise(Option<Result<Handle>>),
+    Promise(Option<Result<Outcome>>),
+}
+/// Language throws carry rooted values separately from VM faults.
+#[derive(Clone, Debug)]
+pub(crate) enum Outcome {
+    Value(Handle),
+    Thrown(Handle),
 }
 /// Ordinary records and nominal structs share field storage. Struct identity
 /// and embed names come from bytecode, never from the shape of user data.
@@ -34,6 +40,7 @@ pub(crate) enum Value {
 pub(crate) struct Record {
     pub fields: BTreeMap<String, Handle>,
     pub struct_name: Option<String>,
+    pub struct_identity: Option<String>,
     pub enum_name: Option<String>,
     pub order: Vec<String>,
     pub embeds: Vec<String>,
@@ -159,7 +166,8 @@ impl Heap {
             }
             slot.marked = true;
             match slot.value.as_ref().unwrap() {
-                Value::Cell(h) | Value::Promise(Some(Ok(h))) => todo.push(*h),
+                Value::Cell(h)
+                | Value::Promise(Some(Ok(Outcome::Value(h) | Outcome::Thrown(h)))) => todo.push(*h),
                 Value::List(items) => todo.extend(items),
                 Value::Closure {
                     captures,

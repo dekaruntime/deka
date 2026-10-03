@@ -1,6 +1,6 @@
 //! DSC is linked as a library; no JS emission or compiler subprocess.
 use crate::{Function, Hosts, ListMut, Literal, Op, Program, Result};
-use deka_syntax::{Diagnostic, Severity, ast::*};
+use deka_syntax::{Diagnostic, Severity, ast::*, typeck::ExceptionEmit};
 use std::collections::{BTreeMap, HashMap};
 
 pub fn compile(source: &str, hosts: &Hosts) -> Result<Program> {
@@ -318,7 +318,8 @@ fn lower_module<'a>(
     source: &str,
     hosts: &Hosts,
     host_exports: &deka_syntax::ModuleExports<'_>,
-    module_exports: &HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'_>>,
+    module_exports: &HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'a>>,
+    struct_identities: &HashMap<std::path::PathBuf, BTreeMap<String, String>>,
     bindings: &HashMap<std::path::PathBuf, BTreeMap<String, usize>>,
     project: &Project,
     forward: Option<&BTreeMap<String, (String, std::path::PathBuf)>>,
@@ -365,9 +366,29 @@ fn lower_module<'a>(
     lower.declared.clear();
     lower.newtypes.clear();
     lower.structs.clear();
+    lower.imported_structs.clear();
+    lower.struct_identities = struct_identities[path].clone();
     lower.enums.clear();
     lower.method_decls.clear();
     lower.struct_embeds.clear();
+    lower.exception_forms = checked
+        .exception_forms
+        .forms
+        .iter()
+        .map(|(p, form)| (*p as usize, *form))
+        .collect();
+    lower.exception_sources = checked
+        .exception_forms
+        .match_sources
+        .iter()
+        .map(|p| *p as usize)
+        .collect();
+    lower.catch_types = checked
+        .exception_forms
+        .catches
+        .iter()
+        .map(|(p, name)| (*p as usize, (*name).to_owned()))
+        .collect();
     lower.enum_patterns = checked
         .enum_case_patterns
         .iter()
@@ -500,9 +521,7 @@ fn lower_module<'a>(
         } = stmt
         {
             for spec in *specifiers {
-                if spec.is_type_only {
-                    // Type-only imports resolve for the checker (which rejects
-                    // value uses) and erase here: no slot, no host lookup.
+                if spec.is_type_only && host_module(source) {
                     continue;
                 }
                 if host_module(source) {
@@ -511,6 +530,31 @@ fn lower_module<'a>(
                     continue;
                 }
                 let target = module_path(path, source, project)?;
+                if let Some(info) = module_exports[&target].structs.get(spec.imported) {
+                    lower.imported_structs.insert(spec.local.to_owned());
+                    lower.struct_identities.insert(
+                        spec.local.into(),
+                        struct_identities[&target][spec.imported].clone(),
+                    );
+                    lower.structs.insert(
+                        spec.local.into(),
+                        info.fields
+                            .iter()
+                            .map(|f| (f.name.to_owned(), f.default_value.as_ref(), f.optional))
+                            .collect(),
+                    );
+                    lower.struct_embeds.insert(
+                        spec.local.into(),
+                        info.embeds.iter().map(|e| e.name.to_owned()).collect(),
+                    );
+                    // Struct names are type bindings, not runtime cells.
+                    continue;
+                }
+                if spec.is_type_only {
+                    // Type-only imports resolve for the checker (which rejects
+                    // value uses) and erase here: no slot, no host lookup.
+                    continue;
+                }
                 if let Some((imported, origin)) =
                     forward.and_then(|f| f.get(spec.local).map(|f| (&f.0, &f.1)))
                 {
@@ -583,6 +627,9 @@ fn lower_module<'a>(
                     Some(source) => {
                         let target = module_path(path, source, project)?;
                         for name in *names {
+                            if module_exports[&target].structs.contains_key(name.name) {
+                                continue;
+                            }
                             let external = name.alias.unwrap_or(name.name);
                             let slot = bindings.get(&target).and_then(|b| b.get(name.name));
                             match (slot, deferred.as_deref_mut()) {
@@ -771,6 +818,54 @@ fn compile_modules(
         augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new());
     }
 
+    // Nominal struct identity follows declarations through aliases and barrels.
+    // Module ordinals keep filesystem paths out of serialized applications.
+    let mut struct_identities: HashMap<std::path::PathBuf, BTreeMap<String, String>> =
+        HashMap::new();
+    for (i, (path, _)) in modules.iter().enumerate() {
+        let mut names = BTreeMap::new();
+        for stmt in asts[path].statements {
+            if let Stmt::Struct { name, .. } = stmt {
+                names.insert((*name).to_owned(), format!("struct:{i}:{name}"));
+            }
+        }
+        struct_identities.insert(path.clone(), names);
+    }
+    loop {
+        let mut changed = false;
+        for (path, _) in modules {
+            for stmt in asts[path].statements {
+                let Stmt::Export {
+                    decl: ExportDecl::NamedGroup { names, source },
+                    ..
+                } = stmt
+                else {
+                    continue;
+                };
+                let target = match source {
+                    Some(source) => module_path(path, source, project)?,
+                    None => path.clone(),
+                };
+                for name in *names {
+                    let Some(identity) = struct_identities[&target].get(name.name).cloned() else {
+                        continue;
+                    };
+                    let external = name.alias.unwrap_or(name.name).to_owned();
+                    if !struct_identities[path].contains_key(&external) {
+                        struct_identities
+                            .get_mut(path)
+                            .unwrap()
+                            .insert(external, identity);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     // A module is a cycle member when it can reach itself through the graph
     // (following value imports and barrel re-exports alike).
     let mut members: std::collections::BTreeSet<std::path::PathBuf> = Default::default();
@@ -861,11 +956,16 @@ fn compile_modules(
         declared: std::collections::BTreeSet::new(),
         newtypes: std::collections::BTreeSet::new(),
         structs: BTreeMap::new(),
+        struct_identities: BTreeMap::new(),
+        imported_structs: Default::default(),
         method_calls: HashMap::new(),
         enums: BTreeMap::new(),
         method_decls: BTreeMap::new(),
         struct_embeds: BTreeMap::new(),
         type_of_calls: Default::default(),
+        exception_forms: HashMap::new(),
+        exception_sources: Default::default(),
+        catch_types: HashMap::new(),
         enum_patterns: HashMap::new(),
         pattern_types: HashMap::new(),
         signature_calls: HashMap::new(),
@@ -907,6 +1007,7 @@ fn compile_modules(
                     hosts,
                     &host_exports,
                     &module_exports,
+                    &struct_identities,
                     &scratch_bindings,
                     project,
                     forward.get(member),
@@ -966,6 +1067,7 @@ fn compile_modules(
             hosts,
             &host_exports,
             &module_exports,
+            &struct_identities,
             &bindings,
             project,
             forward.get(path),
@@ -1040,6 +1142,7 @@ fn diagnostics(items: &[Diagnostic]) -> Result<()> {
 struct LoopTargets {
     breaks: Vec<usize>,
     continues: Vec<usize>,
+    handler_depth: usize,
 }
 #[derive(Clone)]
 struct Context {
@@ -1050,6 +1153,7 @@ struct Context {
     /// naming the export and both files (deka#1206).
     checked: BTreeMap<String, String>,
     loops: Vec<LoopTargets>,
+    handler_depth: usize,
 }
 impl Context {
     fn new(name: &str, asynchronous: bool) -> Self {
@@ -1065,6 +1169,7 @@ impl Context {
             names: BTreeMap::new(),
             checked: BTreeMap::new(),
             loops: vec![],
+            handler_depth: 0,
         }
     }
     fn bind(&mut self, name: &str) -> usize {
@@ -1101,7 +1206,7 @@ impl Context {
     }
     fn patch_to(&mut self, at: usize, target: usize) {
         match &mut self.function.code[at] {
-            Op::Jump(i) | Op::JumpIfFalse(i) | Op::JumpIfUnit(i) => *i = target,
+            Op::Jump(i) | Op::JumpIfFalse(i) | Op::JumpIfUnit(i) | Op::Handler(i) => *i = target,
             _ => unreachable!(),
         }
     }
@@ -1141,6 +1246,8 @@ struct Lower<'a> {
     /// Struct declarations in the current module. A struct value is a record;
     /// the declaration only matters when a literal omits fields.
     structs: BTreeMap<String, StructFields<'a>>,
+    struct_identities: BTreeMap<String, String>,
+    imported_structs: std::collections::BTreeSet<String>,
     /// Receiver-method call sites in the current module, keyed by expression
     /// address: the free function the call rewrites to and the embed path to
     /// the declaring receiver. Recorded by the typechecker.
@@ -1161,6 +1268,9 @@ struct Lower<'a> {
     /// The host registry supplies the output sink and its wire signature.
     console_output: bool,
     type_of_calls: std::collections::BTreeSet<usize>,
+    exception_forms: HashMap<usize, ExceptionEmit>,
+    exception_sources: std::collections::BTreeSet<usize>,
+    catch_types: HashMap<usize, String>,
     enum_patterns: HashMap<usize, String>,
     pattern_types: HashMap<usize, Result<Op>>,
     signature_calls: HashMap<usize, crate::TypeDescriptor>,
@@ -1263,6 +1373,11 @@ impl<'a> Lower<'a> {
                 continue;
             }
             if let Some(default) = default {
+                if self.imported_structs.contains(name) {
+                    return Err(format!(
+                        "imported struct `{name}` default `{field}` requires declaration-module evaluation"
+                    ));
+                }
                 self.expr(default, c)?;
                 names.push(field);
             }
@@ -1277,6 +1392,7 @@ impl<'a> Lower<'a> {
         }
         c.emit(Op::Struct {
             name: name.into(),
+            identity: self.struct_identities.get(name).cloned(),
             fields: names,
             embeds,
         });
@@ -1480,6 +1596,12 @@ impl<'a> Lower<'a> {
                 if let Op::MatchEnum { case, .. } = &mut predicate {
                     *case = (*name).into();
                 }
+                if let Op::MatchType(crate::TypeDescriptor { kind, name }) = &predicate
+                    && kind == "struct"
+                    && let Some(identity) = self.struct_identities.get(name)
+                {
+                    predicate = Op::MatchStruct(identity.clone());
+                }
                 let extracts_payload = matches!(predicate, Op::MatchEnum { .. });
                 c.emit(Op::Load(value));
                 c.emit(predicate);
@@ -1530,7 +1652,14 @@ impl<'a> Lower<'a> {
             }
             Pattern::Struct { name, fields, .. } => {
                 c.emit(Op::Load(value));
-                c.emit(Op::MatchType(crate::TypeDescriptor::new("struct", name)));
+                c.emit(match self.struct_identities.get(*name) {
+                    Some(identity) => Op::MatchStruct(identity.clone()),
+                    None => {
+                        return Err(format!(
+                            "struct pattern `{name}` has no declaration identity"
+                        ));
+                    }
+                });
                 failed.push(c.emit(Op::JumpIfFalse(0)));
                 for field in *fields {
                     c.emit(Op::Load(value));
@@ -1551,7 +1680,14 @@ impl<'a> Lower<'a> {
     ) -> Result<()> {
         let outer = c.names.clone();
         let outer_checked = c.checked.clone();
-        self.expr(scrutinee, c)?;
+        if self
+            .exception_sources
+            .contains(&(scrutinee as *const Expr as usize))
+        {
+            self.capture_exception(scrutinee, "Exception", c)?;
+        } else {
+            self.expr(scrutinee, c)?;
+        }
         let value = c.bind(&format!("<match value {}>", c.function.locals));
         c.emit(Op::Store(value));
         self.match_arms(value, arms, c)?;
@@ -1571,6 +1707,18 @@ impl<'a> Lower<'a> {
             if let Some(guard) = &arm.guard {
                 self.expr(guard, c)?;
                 next.push(c.emit(Op::JumpIfFalse(0)));
+            }
+            if arm.bodyless
+                && let Expr::EnumConstructor {
+                    payload: Some(Expr::Identifier { name, .. }),
+                    ..
+                } = &arm.body
+                && name.starts_with("$__deka_passthrough_")
+            {
+                c.emit(Op::Load(value));
+                c.emit(Op::Field("value".into()));
+                let slot = c.bind(name);
+                c.emit(Op::Store(slot));
             }
             self.expr(&arm.body, c)?;
             if arm.bodyless {
@@ -1593,6 +1741,36 @@ impl<'a> Lower<'a> {
         }
         c.names = outer;
         c.checked = outer_checked;
+        Ok(())
+    }
+    /// Only the authored subject is guarded. Arm bodies run after the handler
+    /// has been removed, so a handler's Throw propagates to its caller.
+    fn capture_exception(
+        &mut self,
+        subject: &Expr<'a>,
+        channel: &str,
+        c: &mut Context,
+    ) -> Result<()> {
+        let handler = c.emit(Op::Handler(0));
+        c.handler_depth += 1;
+        self.expr(subject, c)?;
+        c.handler_depth -= 1;
+        c.emit(Op::EndHandler);
+        c.emit(Op::Enum {
+            name: channel.into(),
+            case: "Ok".into(),
+            index: 0,
+            payload: true,
+        });
+        let end = c.emit(Op::Jump(0));
+        c.patch(handler);
+        c.emit(Op::Enum {
+            name: channel.into(),
+            case: if channel == "Result" { "Err" } else { "Throw" }.into(),
+            index: 1,
+            payload: true,
+        });
+        c.patch(end);
         Ok(())
     }
     fn unwrap_binding(
@@ -1741,6 +1919,51 @@ impl<'a> Lower<'a> {
                 self.scoped(else_body, c)?;
                 c.patch(end);
             }
+            Stmt::Try {
+                body,
+                catch_name,
+                catch_type,
+                catch_body,
+                ..
+            } => {
+                let outer = c.names.clone();
+                let outer_checked = c.checked.clone();
+                let handler = c.emit(Op::Handler(0));
+                c.handler_depth += 1;
+                self.scoped(body, c)?;
+                c.handler_depth -= 1;
+                c.emit(Op::EndHandler);
+                let end = c.emit(Op::Jump(0));
+                c.patch(handler);
+                let slot = c.bind(catch_name);
+                if !c.loops.is_empty() {
+                    c.emit(Op::Rebind(slot));
+                }
+                c.emit(Op::Store(slot));
+                if let Some(ty) = catch_type {
+                    let name = self
+                        .catch_types
+                        .get(&(ty as *const Type as usize))
+                        .ok_or("typed catch has no checked constructor")?;
+                    if !self.struct_identities.contains_key(name) {
+                        return Err("host error constructors in typed catches require native host error support".into());
+                    }
+                    c.emit(Op::Load(slot));
+                    c.emit(Op::MatchStruct(self.struct_identities[name].clone()));
+                    let rethrow = c.emit(Op::JumpIfFalse(0));
+                    self.scoped(catch_body, c)?;
+                    let handled = c.emit(Op::Jump(0));
+                    c.patch(rethrow);
+                    c.emit(Op::Load(slot));
+                    c.emit(Op::Throw);
+                    c.patch(handled);
+                } else {
+                    self.scoped(catch_body, c)?;
+                }
+                c.patch(end);
+                c.names = outer;
+                c.checked = outer_checked;
+            }
             Stmt::For {
                 init,
                 condition,
@@ -1769,7 +1992,10 @@ impl<'a> Lower<'a> {
                     c.emit(Op::Const(Literal::Bool(true)));
                 }
                 let end = c.emit(Op::JumpIfFalse(0));
-                c.loops.push(LoopTargets::default());
+                c.loops.push(LoopTargets {
+                    handler_depth: c.handler_depth,
+                    ..Default::default()
+                });
                 self.scoped(body, c)?;
                 let step_start = c.function.code.len();
                 if let Some(step) = step {
@@ -1800,7 +2026,10 @@ impl<'a> Lower<'a> {
                 c.emit(Op::Field("length".into()));
                 c.emit(Op::Less);
                 let end = c.emit(Op::JumpIfFalse(0));
-                c.loops.push(LoopTargets::default());
+                c.loops.push(LoopTargets {
+                    handler_depth: c.handler_depth,
+                    ..Default::default()
+                });
                 let item = c.bind(name);
                 c.emit(Op::Rebind(item));
                 c.emit(Op::Load(list));
@@ -1837,12 +2066,18 @@ impl<'a> Lower<'a> {
                 if c.loops.is_empty() {
                     return Err("break outside a loop".into());
                 }
+                for _ in c.loops.last().unwrap().handler_depth..c.handler_depth {
+                    c.emit(Op::EndHandler);
+                }
                 let jump = c.emit(Op::Jump(0));
                 c.loops.last_mut().unwrap().breaks.push(jump);
             }
             Stmt::Continue { .. } => {
                 if c.loops.is_empty() {
                     return Err("continue outside a loop".into());
+                }
+                for _ in c.loops.last().unwrap().handler_depth..c.handler_depth {
+                    c.emit(Op::EndHandler);
                 }
                 let jump = c.emit(Op::Jump(0));
                 c.loops.last_mut().unwrap().continues.push(jump);
@@ -1934,6 +2169,56 @@ impl<'a> Lower<'a> {
         Ok(children)
     }
     fn expr(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
+        match self
+            .exception_forms
+            .get(&(e as *const Expr as usize))
+            .copied()
+        {
+            Some(ExceptionEmit::Ok | ExceptionEmit::Throw) => {
+                let Expr::EnumConstructor {
+                    payload: Some(payload),
+                    ..
+                } = e
+                else {
+                    return Err("checked Exception constructor lacks a payload".into());
+                };
+                self.expr(payload, c)?;
+                if self.exception_forms[&(e as *const Expr as usize)] == ExceptionEmit::Throw {
+                    c.emit(Op::Throw);
+                }
+                return Ok(());
+            }
+            Some(ExceptionEmit::ToResult) => {
+                let Expr::Call {
+                    callee: Expr::FieldAccess { object, .. },
+                    ..
+                } = e
+                else {
+                    return Err("checked Exception conversion has an invalid call".into());
+                };
+                return self.capture_exception(object, "Result", c);
+            }
+            Some(ExceptionEmit::FromResult) => {
+                let Expr::Call { args, .. } = e else {
+                    return Err("checked Exception.from has an invalid call".into());
+                };
+                self.expr(&args[0], c)?;
+                c.emit(Op::Dup);
+                c.emit(Op::MatchEnum {
+                    name: Some("Result".into()),
+                    case: "Ok".into(),
+                });
+                let err = c.emit(Op::JumpIfFalse(0));
+                c.emit(Op::Field("value".into()));
+                let end = c.emit(Op::Jump(0));
+                c.patch(err);
+                c.emit(Op::Field("value".into()));
+                c.emit(Op::Throw);
+                c.patch(end);
+                return Ok(());
+            }
+            _ => {}
+        }
         match e {
             Expr::JsxElement { element, .. } => {
                 if element.tag == "slot" {
