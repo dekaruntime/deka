@@ -15,6 +15,7 @@ mod input;
 mod mac;
 mod render;
 mod schedule;
+pub mod trace;
 mod ui;
 
 pub use render::Snapshot;
@@ -27,7 +28,7 @@ use schedule::{Schedule, Wait};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
+use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
@@ -71,6 +72,10 @@ pub struct Options {
     /// Inner size in logical pixels.
     pub width: f64,
     pub height: f64,
+    /// Top-left of the window's frame in logical global screen coordinates
+    /// (origin at the top left of the main display), on any display. `None`
+    /// centres it on the main display.
+    pub position: Option<(f64, f64)>,
     /// The window's colour before frame one is drawn.
     pub background: u32,
     /// Close the window after this many presented frames.
@@ -85,6 +90,7 @@ impl Options {
             title: title.into(),
             width,
             height,
+            position: None,
             background: 0xffffff,
             frames: None,
             on_frame: None,
@@ -132,6 +138,7 @@ pub fn snapshot(scene: &Scene, scale: f32) -> Result<Snapshot, String> {
 /// Run the event loop for `content`. Exits the process with status 1 when no
 /// window can be opened (no display, no GPU).
 pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
+    trace::mark("show");
     crate::text::warm_on_thread();
     let mut builder = EventLoop::<Wake>::with_user_event();
     #[cfg(target_os = "macos")]
@@ -147,6 +154,7 @@ pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
             std::process::exit(1);
         }
     };
+    trace::mark("event loop built");
     let mut shell = Shell {
         proxy: event_loop.create_proxy(),
         content,
@@ -213,23 +221,38 @@ enum Drawn {
 
 impl<C: Content> Shell<C> {
     fn open(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-        let attributes = Window::default_attributes()
+        let mut attributes = Window::default_attributes()
             .with_title(self.options.title.clone())
             .with_inner_size(LogicalSize::new(self.options.width, self.options.height))
             // Shown once its background is the application's colour.
             .with_visible(!cfg!(target_os = "macos"));
+        if let Some((x, y)) = self.options.position {
+            attributes = attributes.with_position(LogicalPosition::new(x, y));
+        }
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
                 .map_err(|e| format!("cannot create a window: {e}"))?,
         );
+        trace::mark("window created");
         #[cfg(target_os = "macos")]
         {
+            // AppKit clamps a new window's content rect to the main screen, so a
+            // position on another display only holds once the window exists;
+            // it is still hidden here.
+            if let Some((x, y)) = self.options.position {
+                window.set_outer_position(LogicalPosition::new(x, y));
+            }
             mac::set_background(&window, self.options.background);
             window.set_visible(true);
         }
+        trace::mark("window shown");
         let mut gpu = match std::mem::replace(&mut self.gpu, GpuState::Failed) {
-            GpuState::Starting(pending) => pending.join()?,
+            GpuState::Starting(pending) => {
+                let gpu = pending.join()?;
+                trace::mark("gpu joined");
+                gpu
+            }
             GpuState::Ready(gpu) => *gpu,
             GpuState::Failed => return Err("no GPU".into()),
         };
@@ -237,7 +260,9 @@ impl<C: Content> Shell<C> {
             .instance
             .create_surface(window.clone())
             .map_err(|e| format!("cannot draw into the window: {e}"))?;
+        trace::mark("surface created");
         let format = gpu.adopt(&surface)?;
+        trace::mark("surface adopted");
         let size = window.inner_size();
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -251,6 +276,7 @@ impl<C: Content> Shell<C> {
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&gpu.device, &config);
+        trace::mark("surface configured");
         self.surface = Some(Surface { surface, config });
         self.gpu = GpuState::Ready(Box::new(gpu));
         self.window = Some(window);
@@ -303,6 +329,7 @@ impl<C: Content> Shell<C> {
                 if self.presented == 1 {
                     #[cfg(target_os = "macos")]
                     mac::install_menu();
+                    trace::mark("menu installed");
                 }
                 if let Some(on_frame) = self.options.on_frame.as_mut() {
                     on_frame(frame);
@@ -311,7 +338,12 @@ impl<C: Content> Shell<C> {
                     event_loop.exit();
                 }
             }
-            Ok(Ok(Drawn::Occluded)) => self.schedule.surface_occluded(Instant::now()),
+            Ok(Ok(Drawn::Occluded)) => {
+                if self.presented == 0 {
+                    trace::mark("frame: refused while not visible");
+                }
+                self.schedule.surface_occluded(Instant::now())
+            }
             Ok(Ok(Drawn::Skipped)) => self.schedule.skipped(),
             Ok(Ok(Drawn::Retry)) => self.schedule.invalidate(),
             Ok(Err(error)) => {
@@ -340,12 +372,19 @@ impl<C: Content> Shell<C> {
             surface.config.height = size.height;
             surface.surface.configure(&gpu.device, &surface.config);
         }
+        let first = self.presented == 0;
+        if first {
+            trace::mark("frame: start");
+        }
         let scale = window.scale_factor();
         let scene = self.content.frame(
             (f64::from(size.width) / scale) as f32,
             (f64::from(size.height) / scale) as f32,
             scale as f32,
         );
+        if first {
+            trace::mark("frame: scene built");
+        }
         let texture = match surface.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -357,6 +396,9 @@ impl<C: Content> Shell<C> {
             }
             other => return Err(format!("no surface texture: {other:?}")),
         };
+        if first {
+            trace::mark("frame: texture acquired");
+        }
         let view = texture.texture.create_view(&Default::default());
         gpu.draw(
             scene,
@@ -365,8 +407,14 @@ impl<C: Content> Shell<C> {
             surface.config.width,
             surface.config.height,
         )?;
+        if first {
+            trace::mark("frame: drawn");
+        }
         window.pre_present_notify();
         gpu.queue.present(texture);
+        if first {
+            trace::mark("frame: presented");
+        }
         Ok(Drawn::Presented {
             animating: scene.animating,
         })
@@ -382,6 +430,7 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
         if self.window.is_some() {
             return;
         }
+        trace::mark("resumed");
         if let Err(error) = self.open(event_loop) {
             self.failed = Some(error);
             event_loop.exit();
@@ -402,7 +451,12 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.resize(size),
             WindowEvent::ScaleFactorChanged { .. } => self.schedule.invalidate(),
-            WindowEvent::Occluded(occluded) => self.schedule.set_occluded(occluded),
+            WindowEvent::Occluded(occluded) => {
+                if !occluded {
+                    trace::mark("visible");
+                }
+                self.schedule.set_occluded(occluded)
+            }
             WindowEvent::RedrawRequested => self.frame(event_loop),
             WindowEvent::Focused(focused) => {
                 self.focused = focused;

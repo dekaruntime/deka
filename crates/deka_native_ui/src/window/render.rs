@@ -72,12 +72,14 @@ impl Gpu {
         instance: wgpu::Instance,
         surface: Option<&wgpu::Surface<'_>>,
     ) -> Result<Self, String> {
+        super::trace::mark("gpu: instance");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: surface,
             ..Default::default()
         }))
         .map_err(|e| format!("no GPU adapter: {e}"))?;
+        super::trace::mark("gpu: adapter");
         // vello_gpu needs no compute shaders and fits WebGL2-class limits, so a
         // device that cannot offer the defaults still gets a renderer.
         let device = [
@@ -94,11 +96,13 @@ impl Gpu {
             .ok()
         });
         let (device, queue) = device.ok_or("the GPU adapter refused a device")?;
+        super::trace::mark("gpu: device");
         // An uncaptured wgpu error would panic; log it and keep the window alive.
         device.on_uncaptured_error(std::sync::Arc::new(|error| {
             eprintln!("deka: GPU error: {error}");
         }));
         let (renderer, resources) = renderer(&device, FORMAT);
+        super::trace::mark("gpu: renderer");
         let mut scene = vello_gpu::Scene::new(1, 1);
         scene.set_parallelism(strip_threads());
         Ok(Self {
@@ -120,6 +124,7 @@ impl Gpu {
         let thread = std::thread::Builder::new()
             .name("deka-gpu-init".into())
             .spawn(move || {
+                super::trace::mark("gpu: thread");
                 let _ = send.send(Gpu::new());
             })
             .ok();
