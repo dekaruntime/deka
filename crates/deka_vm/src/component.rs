@@ -52,7 +52,7 @@ impl Component {
         let args = args
             .into_iter()
             .map(|value| self.vm.alloc_host_value(value))
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         let result = self.vm.invoke_args(method, args)?;
         self.vm.to_host(result)
     }
@@ -61,7 +61,7 @@ impl Component {
         let args = args
             .into_iter()
             .map(|value| self.vm.alloc_host_value(value))
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         self.vm.invoke_args(handler, args)?;
         Ok(())
     }

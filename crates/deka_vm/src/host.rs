@@ -1,4 +1,4 @@
-use crate::Result;
+use crate::{HostCallback, HostContext, Result};
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
@@ -12,6 +12,7 @@ pub enum HostValue {
     Bool(bool),
     String(String),
     Strings(Vec<String>),
+    Callback(HostCallback),
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum HostType {
@@ -20,6 +21,7 @@ pub enum HostType {
     Bool,
     String,
     Strings,
+    Callback,
 }
 impl HostType {
     pub fn accepts(self, value: &HostValue) -> bool {
@@ -30,6 +32,7 @@ impl HostType {
                 | (Self::Bool, HostValue::Bool(_))
                 | (Self::String, HostValue::String(_))
                 | (Self::Strings, HostValue::Strings(_))
+                | (Self::Callback, HostValue::Callback(_))
         )
     }
     pub fn source(self) -> &'static str {
@@ -39,6 +42,7 @@ impl HostType {
             Self::Bool => "boolean",
             Self::String => "string",
             Self::Strings => "Array<string>",
+            Self::Callback => "(fn() void) | (fn() Promise<void>)",
         }
     }
 }
@@ -47,6 +51,8 @@ pub enum HostReply {
     Ready(Result<HostValue>),
     Pending(HostFuture),
 }
+type HostHandler = dyn Fn(&HostContext, Vec<HostValue>) -> HostReply;
+
 #[derive(Clone)]
 pub struct HostOp {
     pub name: String,
@@ -57,7 +63,8 @@ pub struct HostOp {
     /// VM errors. The declaration and dispatch share this output contract.
     pub result_channel: bool,
     pub capability: Option<String>,
-    handler: Rc<dyn Fn(Vec<HostValue>) -> HostReply>,
+    pub global: bool,
+    handler: Rc<HostHandler>,
 }
 impl HostOp {
     /// Declare `Result<T, string>` (or `Promise<Result<T, string>>`) output.
@@ -85,12 +92,34 @@ impl HostOp {
         capability: Option<&str>,
         handler: impl Fn(Vec<HostValue>) -> HostReply + 'static,
     ) -> Self {
+        Self::with_context(
+            name,
+            args,
+            result,
+            asynchronous,
+            capability,
+            move |_, args| handler(args),
+        )
+    }
+    pub fn with_global_binding(mut self) -> Self {
+        self.global = true;
+        self
+    }
+    pub fn with_context(
+        name: &str,
+        args: Vec<HostType>,
+        result: HostType,
+        asynchronous: bool,
+        capability: Option<&str>,
+        handler: impl Fn(&HostContext, Vec<HostValue>) -> HostReply + 'static,
+    ) -> Self {
         Self {
             name: name.into(),
             args,
             result,
             asynchronous,
             result_channel: false,
+            global: false,
             capability: capability.map(str::to_owned),
             handler: Rc::new(handler),
         }
@@ -130,6 +159,7 @@ impl Hosts {
         &self,
         name: &str,
         args: Vec<HostValue>,
+        context: &HostContext,
     ) -> Result<(HostReply, HostType, bool, bool)> {
         let op = self.operation(name)?;
         if let Some(cap) = &op.capability
@@ -140,13 +170,22 @@ impl Hosts {
         if args.len() != op.args.len() || !op.args.iter().zip(&args).all(|(t, v)| t.accepts(v)) {
             return Err(format!("invalid arguments for host operation {name}"));
         }
-        let reply = (op.handler)(args);
+        let reply = (op.handler)(context, args);
         if !op.asynchronous && matches!(reply, HostReply::Pending(_)) {
             return Err(format!(
                 "synchronous host operation {name} returned a future"
             ));
         }
         Ok((reply, op.result, op.asynchronous, op.result_channel))
+    }
+    pub(crate) fn declarations_names_and_arities(&self) -> BTreeMap<String, usize> {
+        self.operations
+            .values()
+            .map(|op| (op.name.clone(), op.args.len()))
+            .collect()
+    }
+    pub fn globals(&self) -> impl Iterator<Item = &HostOp> {
+        self.operations.values().filter(|op| op.global)
     }
     /// The compiler's imported module signatures come from the same registry as dispatch.
     pub fn declarations(&self) -> String {
@@ -166,6 +205,7 @@ impl Hosts {
                     HostType::Bool => "return false;",
                     HostType::Strings => "return [];",
                     HostType::String => "return \"\";",
+                    HostType::Callback => "return fn() void {};",
                 };
                 let value = if op.result_channel {
                     // Declaration bodies are parsed only to collect signatures;

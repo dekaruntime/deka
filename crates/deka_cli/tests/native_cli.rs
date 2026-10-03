@@ -318,3 +318,33 @@ async fn main() Promise<void> {
         "before\nafter\n"
     );
 }
+
+#[test]
+fn timer_globals_finish_after_main_returns_and_clear_their_work() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("timers.ds"),
+        r#"
+import { echo } from "io";
+let interval = 0;
+let count = 0;
+fn main() {
+    const cancelled = setTimeout(fn() { echo("wrong"); }, 1000);
+    clearTimeout(cancelled);
+    interval = setInterval(fn() {
+        count += 1;
+        if (count == 2) { clearInterval(interval); echo("interval done"); }
+    }, 1);
+    echo("main returned");
+}
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        ok(cli(
+            project.path(),
+            &["run", "timers.ds", "--entry", "main"]
+        )),
+        "main returned\ninterval done\n"
+    );
+}
