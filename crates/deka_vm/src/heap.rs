@@ -12,6 +12,7 @@ pub(crate) struct Handle {
 pub(crate) enum Value {
     Unit,
     Uninitialized,
+    Descriptor(crate::TypeDescriptor),
     Number(f64),
     Bool(bool),
     String(String),
@@ -33,6 +34,8 @@ pub(crate) enum Value {
 pub(crate) struct Record {
     pub fields: BTreeMap<String, Handle>,
     pub struct_name: Option<String>,
+    pub enum_name: Option<String>,
+    pub order: Vec<String>,
     pub embeds: Vec<String>,
 }
 impl std::ops::Deref for Record {
@@ -48,10 +51,14 @@ impl std::ops::DerefMut for Record {
 }
 impl FromIterator<(String, Handle)> for Record {
     fn from_iter<T: IntoIterator<Item = (String, Handle)>>(iter: T) -> Self {
-        Self {
-            fields: iter.into_iter().collect(),
-            ..Self::default()
+        let mut record = Self::default();
+        for (name, value) in iter {
+            if !record.fields.contains_key(&name) {
+                record.order.push(name.clone());
+            }
+            record.fields.insert(name, value);
         }
+        record
     }
 }
 impl From<Literal> for Value {
@@ -69,6 +76,7 @@ struct Slot {
     value: Option<Value>,
     generation: u64,
     marked: bool,
+    newtype: Option<String>,
 }
 #[derive(Default)]
 pub(crate) struct Heap {
@@ -89,12 +97,14 @@ impl Heap {
         self.allocations += 1;
         let index = if let Some(i) = self.free.pop() {
             self.slots[i].value = Some(value);
+            self.slots[i].newtype = None;
             i
         } else {
             self.slots.push(Slot {
                 value: Some(value),
                 generation: 0,
                 marked: false,
+                newtype: None,
             });
             self.slots.len() - 1
         };
@@ -102,6 +112,15 @@ impl Heap {
             index,
             generation: self.slots[index].generation,
         }
+    }
+    pub fn alloc_newtype(&mut self, value: Value, name: String) -> Handle {
+        let h = self.alloc(value);
+        self.slots[h.index].newtype = Some(name);
+        h
+    }
+    pub fn newtype_name(&self, h: Handle) -> Result<Option<&str>> {
+        self.get(h)?;
+        Ok(self.slots[h.index].newtype.as_deref())
     }
     pub fn get(&self, h: Handle) -> Result<&Value> {
         self.slots
@@ -158,6 +177,7 @@ impl Heap {
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if slot.value.is_some() && !slot.marked {
                 slot.value = None;
+                slot.newtype = None;
                 slot.generation = slot
                     .generation
                     .checked_add(1)
