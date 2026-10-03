@@ -388,4 +388,12 @@ recorded tarball URLs without selecting new versions. It replaces stale files
 and packages, and preserves `deka.json` and `deka.lock` byte for byte. All
 downloads and package checks finish before the existing module tree is replaced;
 a failed download leaves that tree intact. An empty lock restores an empty tree.
-Checksum enforcement is separate from recording a downloaded tarball's hash.
+Both re-adding the same locked version and replaying its lock entry verify the
+tarball's SHA-256 before replacing live files. A changed archive is a named
+checksum error; a missing or malformed locked hash is refused. A first download
+records its hash, and an explicit version change records the new archive's hash.
+The reused package index lists versions; it does not provide a separate digest
+for a first download.
+
+Package commands accept `--directory <project>` to select a project explicitly;
+otherwise they use the current directory.

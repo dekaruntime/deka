@@ -15,25 +15,37 @@ const INDEX: &str = "https://deka.gg";
 const CDN: &str = "https://pub-6d81db17678348abba85f93fde4b4400.r2.dev";
 const MAX_ARCHIVE: u64 = 64 * 1024 * 1024;
 
+#[cfg(test)]
+thread_local! {
+    static TEST_ENDPOINT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 #[derive(Deserialize)]
 struct IndexEntry {
     versions: Vec<String>,
 }
-struct Registry<'a> {
-    index: &'a str,
-    cdn: &'a str,
+struct Registry {
+    index: String,
+    cdn: String,
     client: reqwest::blocking::Client,
 }
-impl<'a> Registry<'a> {
-    fn new(index: &'a str, cdn: &'a str) -> Result<Self> {
+impl Registry {
+    fn new(index: &str, cdn: &str) -> Result<Self> {
         Ok(Self {
-            index,
-            cdn,
+            index: index.to_owned(),
+            cdn: cdn.to_owned(),
             client: reqwest::blocking::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .map_err(|e| e.to_string())?,
         })
+    }
+    fn production() -> Result<Self> {
+        #[cfg(test)]
+        if let Some(url) = TEST_ENDPOINT.with(|endpoint| endpoint.borrow().clone()) {
+            return Self::new(&url, &url);
+        }
+        Self::new(INDEX, CDN)
     }
     fn archive(&self, name: &str, version: &str) -> Result<(String, Vec<u8>)> {
         let package = name.strip_prefix("@deka/").ok_or_else(|| {
@@ -104,6 +116,25 @@ pub(crate) fn parse_spec(spec: &str) -> Result<(&str, &str)> {
         ));
     }
     Ok((name, version))
+}
+
+fn validate_digest(name: &str, expected: &str) -> Result<()> {
+    if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "missing or invalid tarball SHA-256 for package {name}"
+        ));
+    }
+    Ok(())
+}
+fn verify_digest(name: &str, bytes: &[u8], expected: &str) -> Result<()> {
+    validate_digest(name, expected)?;
+    let actual = format!("{:x}", Sha256::digest(bytes));
+    if !actual.eq_ignore_ascii_case(expected) {
+        return Err(format!(
+            "checksum mismatch for package {name}: expected {expected}, got {actual}"
+        ));
+    }
+    Ok(())
 }
 
 fn read_json(path: &Path) -> Result<Value> {
@@ -206,9 +237,9 @@ fn validate_package(bytes: &[u8], package: &Path, name: &str, version: &str) -> 
 }
 
 pub(crate) fn add(directory: &Path, spec: &str) -> Result<()> {
-    add_from(directory, spec, &Registry::new(INDEX, CDN)?)
+    add_from(directory, spec, &Registry::production()?)
 }
-fn add_from(directory: &Path, spec: &str, registry: &Registry<'_>) -> Result<()> {
+fn add_from(directory: &Path, spec: &str, registry: &Registry) -> Result<()> {
     let (name, version) = parse_spec(spec)?;
     let manifest_path = directory.join("deka.json");
     let lock_path = directory.join("deka.lock");
@@ -252,7 +283,18 @@ fn add_from(directory: &Path, spec: &str, registry: &Registry<'_>) -> Result<()>
         parse_spec(&format!("{dependency}@{pin}"))?;
     }
     dependencies.insert(name.into(), Value::String(version.into()));
+    let expected = lock
+        .packages
+        .get(name)
+        .filter(|(pin, _, _, _)| deka_vm::package::version_pin(name, pin) == version)
+        .map(|(_, _, _, hash)| hash.as_str());
+    if let Some(hash) = expected {
+        validate_digest(name, hash)?;
+    }
     let (url, bytes) = registry.archive(name, version)?;
+    if let Some(hash) = expected {
+        verify_digest(name, &bytes, hash)?;
+    }
     let stage = tempfile::Builder::new()
         .prefix(".deka-add-")
         .tempdir_in(directory)
@@ -337,10 +379,10 @@ fn add_from(directory: &Path, spec: &str, registry: &Registry<'_>) -> Result<()>
 }
 
 pub(crate) fn install(directory: &Path) -> Result<usize> {
-    install_from(directory, &Registry::new(INDEX, CDN)?)
+    install_from(directory, &Registry::production()?)
 }
 
-fn install_from(directory: &Path, registry: &Registry<'_>) -> Result<usize> {
+fn install_from(directory: &Path, registry: &Registry) -> Result<usize> {
     read_json(&directory.join("deka.json"))?;
     let lock: Lock = serde_json::from_slice(
         &fs::read(directory.join("deka.lock")).map_err(|e| format!("deka.lock: {e}"))?,
@@ -349,9 +391,10 @@ fn install_from(directory: &Path, registry: &Registry<'_>) -> Result<usize> {
     if lock.version != 1 {
         return Err(format!("unsupported deka.lock version {}", lock.version));
     }
-    for (name, (pin, url, _, _)) in &lock.packages {
+    for (name, (pin, url, _, expected)) in &lock.packages {
         let version = deka_vm::package::version_pin(name, pin);
         parse_spec(&format!("{name}@{version}"))?;
+        validate_digest(name, expected)?;
         let url =
             reqwest::Url::parse(url).map_err(|e| format!("invalid tarball URL for {name}: {e}"))?;
         if !matches!(url.scheme(), "http" | "https") {
@@ -368,9 +411,10 @@ fn install_from(directory: &Path, registry: &Registry<'_>) -> Result<usize> {
         .map_err(|e| e.to_string())?;
     let modules = stage.path().join("modules");
     fs::create_dir(&modules).map_err(|e| e.to_string())?;
-    for (name, (pin, url, _, _)) in &lock.packages {
+    for (name, (pin, url, _, expected)) in &lock.packages {
         let version = deka_vm::package::version_pin(name, pin);
         let bytes = registry.download(url, name, version)?;
+        verify_digest(name, &bytes, expected)?;
         let package = modules.join(name);
         fs::create_dir_all(&package).map_err(|e| e.to_string())?;
         validate_package(&bytes, &package, name, version)?;
@@ -409,6 +453,7 @@ mod tests {
     struct Fixture {
         url: String,
         requests: Arc<Mutex<Vec<String>>>,
+        responses: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
         stop: Arc<AtomicBool>,
         address: SocketAddr,
         thread: Option<std::thread::JoinHandle<std::io::Result<()>>>,
@@ -423,6 +468,8 @@ mod tests {
             let seen = requests.clone();
             let stop = Arc::new(AtomicBool::new(false));
             let stopping = stop.clone();
+            let responses = Arc::new(Mutex::new(responses));
+            let replies = responses.clone();
             let thread = std::thread::spawn(move || -> std::io::Result<()> {
                 loop {
                     let (mut stream, _) = listener.accept()?;
@@ -447,13 +494,17 @@ mod tests {
                     seen.lock()
                         .map_err(|e| std::io::Error::other(e.to_string()))?
                         .push(path.into());
-                    let body = responses.get(path);
+                    let body = replies
+                        .lock()
+                        .map_err(|e| std::io::Error::other(e.to_string()))?
+                        .get(path)
+                        .cloned();
                     let status = if body.is_some() {
                         "200 OK"
                     } else {
                         "404 Not Found"
                     };
-                    let bytes = body.map(Vec::as_slice).unwrap_or(b"missing");
+                    let bytes = body.as_deref().unwrap_or(b"missing");
                     write!(
                         stream,
                         "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -465,13 +516,32 @@ mod tests {
             Self {
                 url,
                 requests,
+                responses,
                 stop,
                 address,
                 thread: Some(thread),
             }
         }
-        fn registry(&self) -> Registry<'_> {
+        fn registry(&self) -> Registry {
             Registry::new(&self.url, &self.url).unwrap()
+        }
+        fn command(
+            &self,
+            directory: &Path,
+            args: &[&str],
+        ) -> (std::process::ExitCode, String, String) {
+            struct Restore(Option<String>);
+            impl Drop for Restore {
+                fn drop(&mut self) {
+                    TEST_ENDPOINT.with(|endpoint| *endpoint.borrow_mut() = self.0.take());
+                }
+            }
+            let _restore =
+                Restore(TEST_ENDPOINT.with(|endpoint| endpoint.replace(Some(self.url.clone()))));
+            let mut args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+            args.extend(["--directory".into(), directory.display().to_string()]);
+            let (code, out, err) = crate::cli::registry().run_captured(&args);
+            (code, out.string().to_owned(), err.string().to_owned())
         }
     }
     impl Fixture {
@@ -648,11 +718,7 @@ mod tests {
             tarball("@deka/wrong", "1.2.3", "export const answer = 0;"),
         ));
         for (spec, registry, needle) in [
-            (
-                "@deka/demo@1.2.3",
-                wrong.registry(),
-                "manifest does not match",
-            ),
+            ("@deka/demo@1.2.3", wrong.registry(), "checksum mismatch"),
             ("@deka/demo@2.0.0", fixture.registry(), "unknown version"),
             ("@deka/missing@1.2.3", fixture.registry(), "unknown package"),
         ] {
@@ -688,6 +754,112 @@ mod tests {
         }
         assert!(fixture.requests.lock().unwrap().is_empty());
         assert!(!project.path().join("deka.lock").exists());
+    }
+
+    #[test]
+    fn real_commands_reject_tampered_tarballs_without_changing_live_files() {
+        let original = tarball("@deka/demo", "1.2.3", "export const answer = 42;");
+        let fixture = Fixture::new(responses("demo", original.clone()));
+        let project = project();
+        let (code, _, err) = fixture.command(project.path(), &["add", "@deka/demo@1.2.3"]);
+        assert_eq!(code, std::process::ExitCode::SUCCESS, "{err}");
+        let manifest = fs::read(project.path().join("deka.json")).unwrap();
+        let lock = fs::read(project.path().join("deka.lock")).unwrap();
+        let entry = project.path().join("ds_modules/@deka/demo/index.ds");
+        let source = fs::read(&entry).unwrap();
+        let url = "/demo/1.2.3/demo-1.2.3.tgz";
+        fixture.responses.lock().unwrap().insert(
+            url.into(),
+            tarball("@deka/demo", "1.2.3", "export const answer = 666;"),
+        );
+        for args in [&["add", "@deka/demo@1.2.3"][..], &["install"][..]] {
+            let (code, _, error) = fixture.command(project.path(), args);
+            assert_eq!(code, std::process::ExitCode::from(1));
+            assert!(
+                error.contains("checksum mismatch for package @deka/demo"),
+                "{error}"
+            );
+            assert_eq!(fs::read(&entry).unwrap(), source);
+            assert_eq!(
+                fs::read(project.path().join("deka.json")).unwrap(),
+                manifest
+            );
+            assert_eq!(fs::read(project.path().join("deka.lock")).unwrap(), lock);
+        }
+        fixture
+            .responses
+            .lock()
+            .unwrap()
+            .insert(url.into(), original);
+        fs::remove_dir_all(project.path().join("ds_modules")).unwrap();
+        let (code, _, error) = fixture.command(project.path(), &["install"]);
+        assert_eq!(code, std::process::ExitCode::SUCCESS, "{error}");
+        assert_eq!(fs::read(&entry).unwrap(), source);
+    }
+
+    #[test]
+    fn real_commands_refuse_missing_hashes_before_requests_and_allow_explicit_new_versions() {
+        let fixture = Fixture::new(responses(
+            "demo",
+            tarball("@deka/demo", "1.2.3", "export const answer = 42;"),
+        ));
+        let project = project();
+        assert_eq!(
+            fixture
+                .command(project.path(), &["add", "@deka/demo@1.2.3"])
+                .0,
+            std::process::ExitCode::SUCCESS
+        );
+        let saved = fs::read(project.path().join("deka.lock")).unwrap();
+        let before = fixture.requests.lock().unwrap().len();
+        for invalid in ["", "xyz", &"g".repeat(64)] {
+            let mut lock: Lock = serde_json::from_slice(&saved).unwrap();
+            lock.packages.get_mut("@deka/demo").unwrap().3 = invalid.into();
+            fs::write(project.path().join("deka.lock"), encode(&lock).unwrap()).unwrap();
+            for args in [&["add", "@deka/demo@1.2.3"][..], &["install"][..]] {
+                let (code, _, error) = fixture.command(project.path(), args);
+                assert_eq!(code, std::process::ExitCode::from(1));
+                assert!(
+                    error.contains("missing or invalid tarball SHA-256 for package @deka/demo"),
+                    "{error}"
+                );
+            }
+        }
+        assert_eq!(fixture.requests.lock().unwrap().len(), before);
+        fs::write(project.path().join("deka.lock"), saved).unwrap();
+        let next = tarball("@deka/demo", "2.0.0", "export const answer = 99;");
+        fixture.responses.lock().unwrap().extend([
+            (
+                "/api/registry/demo.json".into(),
+                br#"{"versions":["1.2.3","2.0.0"]}"#.to_vec(),
+            ),
+            ("/demo/2.0.0/demo-2.0.0.tgz".into(), next.clone()),
+        ]);
+        let (code, _, error) = fixture.command(project.path(), &["add", "@deka/demo@2.0.0"]);
+        assert_eq!(code, std::process::ExitCode::SUCCESS, "{error}");
+        let lock = read_json(&project.path().join("deka.lock")).unwrap();
+        assert_eq!(lock["packages"]["@deka/demo"][0], "2.0.0");
+        assert_eq!(
+            lock["packages"]["@deka/demo"][3],
+            format!("{:x}", Sha256::digest(&next))
+        );
+    }
+
+    #[test]
+    fn an_unlocked_first_download_still_checks_the_package_manifest() {
+        let fixture = Fixture::new(responses(
+            "demo",
+            tarball("@deka/wrong", "1.2.3", "export const answer = 0;"),
+        ));
+        let project = project();
+        let (code, _, error) = fixture.command(project.path(), &["add", "@deka/demo@1.2.3"]);
+        assert_eq!(code, std::process::ExitCode::from(1));
+        assert!(
+            error.contains("package manifest does not match @deka/demo@1.2.3"),
+            "{error}"
+        );
+        assert!(!project.path().join("deka.lock").exists());
+        assert!(!project.path().join("ds_modules").exists());
     }
 
     #[test]
@@ -751,7 +923,7 @@ mod tests {
                 "1.2.3".into(),
                 format!("{}/missing.tgz", fixture.url),
                 json!({}),
-                "unused".into(),
+                "0".repeat(64),
             ),
         );
         fs::write(project.path().join("deka.lock"), encode(&lock).unwrap()).unwrap();
@@ -794,7 +966,7 @@ mod tests {
                 "expected HTTP(S)",
             ),
         ] {
-            let lock = json!({"lockfileVersion": 1, "packages": {name: [version, url, {}, ""]}});
+            let lock = json!({"lockfileVersion": 1, "packages": {name: [version, url, {}, "0".repeat(64)]}});
             fs::write(project.path().join("deka.lock"), encode(&lock).unwrap()).unwrap();
             let error = install_from(project.path(), &fixture.registry()).unwrap_err();
             assert!(error.contains(diagnostic), "{error}");
