@@ -16,9 +16,14 @@ pub struct HostHandle {
 }
 impl HostHandle {
     pub fn new<T: Any>(name: &str, resource: T) -> Self {
+        Self::from_shared(name, Rc::new(resource))
+    }
+    /// Retain the caller's allocation directly so repeated handles to the same
+    /// Rust-owned resource preserve identity without another ownership layer.
+    pub fn from_shared<T: Any>(name: &str, resource: Rc<T>) -> Self {
         Self {
             name: name.into(),
-            resource: Rc::new(resource),
+            resource,
         }
     }
     pub fn name(&self) -> &str {
@@ -215,6 +220,11 @@ pub struct HostOp {
     pub result_channel: bool,
     pub capability: Option<String>,
     pub global: bool,
+    /// A declared method on an opaque Rust-owned receiver. Its first argument
+    /// is the receiver; the same schema declares and dispatches the method.
+    pub receiver_method: Option<(String, String)>,
+    pub receiver_property: bool,
+    defaults: Vec<HostValue>,
     handler: Rc<HostHandler>,
 }
 impl HostOp {
@@ -222,6 +232,41 @@ impl HostOp {
     pub fn with_result_channel(mut self) -> Self {
         self.result_channel = true;
         self
+    }
+    pub fn with_defaults(mut self, defaults: Vec<HostValue>) -> Self {
+        self.defaults = defaults;
+        self
+    }
+    pub fn with_receiver_method(mut self, owner: &str, method: &str) -> Self {
+        self.receiver_method = Some((owner.into(), method.into()));
+        self.receiver_property = false;
+        self
+    }
+    pub fn with_receiver_property(mut self, owner: &str, property: &str) -> Self {
+        self.receiver_method = Some((owner.into(), property.into()));
+        self.receiver_property = true;
+        self
+    }
+    fn parameters_source(&self, start: usize) -> String {
+        self.args
+            .iter()
+            .enumerate()
+            .skip(start)
+            .map(|(i, ty)| {
+                let default = i
+                    .checked_sub(self.args.len() - self.defaults.len())
+                    .and_then(|j| self.defaults.get(j))
+                    .map(|value| {
+                        format!(
+                            " = {}",
+                            default_source(value).expect("validated host default")
+                        )
+                    })
+                    .unwrap_or_default();
+                format!("arg{i}: {}{default}", ty.source())
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
     fn output_source(&self) -> String {
         let value = if self.result_channel {
@@ -271,6 +316,9 @@ impl HostOp {
             asynchronous,
             result_channel: false,
             global: false,
+            receiver_method: None,
+            receiver_property: false,
+            defaults: Vec::new(),
             capability: capability.map(str::to_owned),
             handler: Rc::new(handler),
         }
@@ -298,6 +346,32 @@ impl Hosts {
         for ty in op.args.iter().chain(std::iter::once(&op.result)) {
             ty.validate(&mut BTreeSet::new(), 0)?;
         }
+        if op.defaults.len() > op.args.len() {
+            return Err("too many host default arguments".into());
+        }
+        for (ty, value) in op.args[op.args.len() - op.defaults.len()..]
+            .iter()
+            .zip(&op.defaults)
+        {
+            if !ty.accepts(value) || default_source(value).is_none() {
+                return Err("invalid host default argument".into());
+            }
+        }
+        if op.receiver_property && op.receiver_method.is_none() {
+            return Err("host property needs a receiver".into());
+        }
+        if let Some((owner, method)) = &op.receiver_method
+            && (!identifier(method)
+                || op.args.first() != Some(&HostType::Handle(owner.clone()))
+                || (op.receiver_property && (op.args.len() != 1 || op.asynchronous))
+                || op.defaults.len() == op.args.len()
+                || self
+                    .operations
+                    .values()
+                    .any(|old| old.receiver_method.as_ref() == op.receiver_method.as_ref()))
+        {
+            return Err("invalid or duplicate host receiver method".into());
+        }
         self.operations.insert(op.name.clone(), op);
         Ok(())
     }
@@ -312,7 +386,7 @@ impl Hosts {
     pub(crate) fn call(
         &self,
         name: &str,
-        args: Vec<HostValue>,
+        mut args: Vec<HostValue>,
         context: &HostContext,
     ) -> Result<(HostReply, HostType, bool, bool)> {
         let op = self.operation(name)?;
@@ -321,9 +395,21 @@ impl Hosts {
         {
             return Err(format!("permission denied: {cap}"));
         }
-        if args.len() != op.args.len() || !op.args.iter().zip(&args).all(|(t, v)| t.accepts(v)) {
+        // Closure invocation fills omitted parameter cells with unit. Defaults
+        // cannot be unit, so only the optional trailing cells are removed here.
+        while args.len() > op.args.len() - op.defaults.len()
+            && matches!(args.last(), Some(HostValue::Unit))
+        {
+            args.pop();
+        }
+        if args.len() < op.args.len() - op.defaults.len()
+            || args.len() > op.args.len()
+            || !op.args.iter().zip(&args).all(|(t, v)| t.accepts(v))
+        {
             return Err(format!("invalid arguments for host operation {name}"));
         }
+        let omitted = op.args.len() - args.len();
+        args.extend_from_slice(&op.defaults[op.defaults.len() - omitted..]);
         let args = op
             .args
             .iter()
@@ -347,6 +433,14 @@ impl Hosts {
     pub fn globals(&self) -> impl Iterator<Item = &HostOp> {
         self.operations.values().filter(|op| op.global)
     }
+    pub fn methods(&self) -> impl Iterator<Item = &HostOp> {
+        self.operations
+            .values()
+            .filter(|op| op.receiver_method.is_some() && !op.receiver_property)
+    }
+    pub fn properties(&self) -> impl Iterator<Item = &HostOp> {
+        self.operations.values().filter(|op| op.receiver_property)
+    }
     /// The compiler's imported module signatures come from the same registry as dispatch.
     pub fn declarations(&self) -> String {
         let mut handles = BTreeSet::new();
@@ -362,13 +456,7 @@ impl Hosts {
             .map(|name| format!("export opaque type {name};\n"))
             .collect::<String>();
         for op in self.operations.values() {
-            let args = op
-                .args
-                .iter()
-                .enumerate()
-                .map(|(i, t)| format!("arg{i}: {}", t.source()))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let args = op.parameters_source(0);
             // Host failures are Result data or VM protocol faults, never language
             // Throw. A total declaration expresses that without a fake body.
             source.push_str(&format!(
@@ -377,6 +465,44 @@ impl Hosts {
                 op.output_source()
             ));
         }
+        for op in self.methods() {
+            let (owner, method) = op.receiver_method.as_ref().expect("host method");
+            // Receiver declarations are metadata, never executed. The compiler
+            // dispatches their checked call sites directly to this host op.
+            source.push_str(&format!(
+                "fn (self {owner}) {method}({}) {} {{}}\n",
+                op.parameters_source(1),
+                op.output_source()
+            ));
+        }
         source
     }
+}
+fn default_source(value: &HostValue) -> Option<String> {
+    Some(match value {
+        HostValue::Bool(value) => value.to_string(),
+        HostValue::Number(value) if value.is_finite() => value.to_string(),
+        HostValue::String(value) => serde_json::to_string(value).ok()?,
+        HostValue::Record(fields) => format!(
+            "{{{}}}",
+            fields
+                .iter()
+                .map(|(name, value)| Some(format!(
+                    "{}: {}",
+                    serde_json::to_string(name).ok()?,
+                    default_source(value)?
+                )))
+                .collect::<Option<Vec<_>>>()?
+                .join(", ")
+        ),
+        HostValue::List(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(default_source)
+                .collect::<Option<Vec<_>>>()?
+                .join(", ")
+        ),
+        _ => return None,
+    })
 }

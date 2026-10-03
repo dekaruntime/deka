@@ -327,12 +327,6 @@ fn load_modules(
     )?;
     Ok(loaded)
 }
-/// One module lowered into the shared entry function. Returns the module's
-/// export-name → slot map. `forward` holds this module's cycle-closing
-/// imports (local → (exported name, target)); in harvest mode
-/// (`mark_checked = false`) those alias a placeholder local so body lowering
-/// resolves, in the real pass they alias the exporter's slot and their reads
-/// become checked loads (deka#1206).
 fn native_globals<'a>(
     hosts: &Hosts,
     host_exports: &deka_syntax::ModuleExports<'a>,
@@ -371,7 +365,13 @@ fn native_globals<'a>(
     globals
 }
 
-#[allow(clippy::too_many_arguments)]
+/// One module lowered into the shared entry function. Returns the module's
+/// export-name → slot map. `forward` holds this module's cycle-closing
+/// imports (local → (exported name, target)); in harvest mode
+/// (`mark_checked = false`) those alias a placeholder local so body lowering
+/// resolves, in the real pass they alias the exporter's slot and their reads
+/// become checked loads (deka#1206).
+#[allow(clippy::too_many_arguments)] // Independent module graph contexts belong to one lowering pass.
 fn lower_module<'a>(
     path: &std::path::Path,
     ast: &deka_syntax::ast::Program<'a>,
@@ -419,8 +419,12 @@ fn lower_module<'a>(
         }
     }
     let globals = native_globals(hosts, host_exports);
-    let checked = deka_syntax::typeck::check_program_with_imports_and_globals(
-        ast, source, &imports, &globals,
+    let checked = deka_syntax::typeck::check_program_with_native_declarations(
+        ast,
+        source,
+        &imports,
+        &globals,
+        Some(host_exports),
     );
     diagnostics(&checked.errors).map_err(|e| format!("{}: {e}", path.display()))?;
     entry.names.clear();
@@ -439,6 +443,13 @@ fn lower_module<'a>(
     lower.hosts.clear();
     for op in hosts.globals() {
         lower.hosts.insert(op.name.clone(), op.name.clone());
+    }
+    for op in hosts.methods() {
+        let (owner, method) = op.receiver_method.as_ref().expect("host method");
+        lower.hosts.insert(
+            deka_syntax::ast::mangle_method_name(method, owner),
+            op.name.clone(),
+        );
     }
     lower.declared.clear();
     lower.newtypes.clear();
@@ -492,6 +503,11 @@ fn lower_module<'a>(
             };
             (*p as usize, predicate)
         })
+        .collect();
+    lower.native_property_calls = checked
+        .native_property_calls
+        .iter()
+        .map(|(site, op)| (*site as usize, (*op).to_owned()))
         .collect();
     lower.type_of_calls = checked.type_of_calls.iter().map(|p| *p as usize).collect();
     lower.signature_calls = checked
@@ -763,7 +779,24 @@ fn compile_modules(
     let host_parse = deka_syntax::parse(&declarations, &arena);
     diagnostics(&host_parse.errors)?;
     let host_ast = host_parse.program.ok_or("missing host declarations")?;
-    let host_exports = deka_syntax::collect_module_exports(&host_ast, &arena);
+    let mut host_exports = deka_syntax::collect_module_exports(&host_ast, &arena);
+    for op in hosts.properties() {
+        let (_, property) = op.receiver_method.as_ref().expect("host property");
+        let (operation, ty) = host_exports
+            .values
+            .get_key_value(op.name.as_str())
+            .expect("host declaration");
+        let deka_syntax::typeck::Type::Function { params, ret, .. } = ty else {
+            return Err("host property declaration is not callable".into());
+        };
+        let deka_syntax::typeck::Type::Opaque { identity, .. } = params[0] else {
+            return Err("host property needs an opaque receiver".into());
+        };
+        host_exports.native_properties.insert(
+            (identity, arena.alloc_str(property)),
+            (*operation, *ret.clone()),
+        );
+    }
     // Parse every module up front so import checks resolve across a cycle.
     let mut asts = HashMap::new();
     let mut module_exports = HashMap::new();
@@ -921,11 +954,12 @@ fn compile_modules(
                     imports.insert(*source, imported);
                 }
             }
-            deka_syntax::typeck::refresh_module_export_values_with_globals(
+            deka_syntax::typeck::refresh_module_export_values_with_native_declarations(
                 asts[path],
                 &imports,
-                &globals,
                 &mut exports,
+                &globals,
+                Some(&host_exports),
             );
             module_exports.insert(path.clone(), exports);
         }
@@ -1126,6 +1160,7 @@ fn compile_modules(
         enums: BTreeMap::new(),
         method_decls: BTreeMap::new(),
         struct_embeds: BTreeMap::new(),
+        native_property_calls: Default::default(),
         type_of_calls: Default::default(),
         exception_forms: HashMap::new(),
         exception_sources: Default::default(),
@@ -1441,6 +1476,7 @@ struct Lower<'a> {
     struct_embeds: BTreeMap<String, Vec<String>>,
     /// The host registry supplies the output sink and its wire signature.
     console_outputs: std::collections::BTreeSet<&'static str>,
+    native_property_calls: HashMap<usize, String>,
     type_of_calls: std::collections::BTreeSet<usize>,
     exception_forms: HashMap<usize, ExceptionEmit>,
     exception_sources: std::collections::BTreeSet<usize>,
@@ -2798,7 +2834,14 @@ impl<'a> Lower<'a> {
                     && let Some((mangled, embed_path)) =
                         self.method_calls.get(&(e as *const Expr as usize)).cloned()
                 {
-                    c.emit_load(&mangled)?;
+                    let host_method = self
+                        .hosts
+                        .get(&mangled)
+                        .filter(|_| !c.names.contains_key(&mangled))
+                        .cloned();
+                    if host_method.is_none() {
+                        c.emit_load(&mangled)?;
+                    }
                     self.expr(object, c)?;
                     for step in &embed_path {
                         c.emit(Op::FieldOrSelf(step.clone()));
@@ -2806,7 +2849,14 @@ impl<'a> Lower<'a> {
                     for arg in *args {
                         self.expr(arg, c)?;
                     }
-                    c.emit(Op::Call(1 + args.len()));
+                    if let Some(operation) = host_method {
+                        c.emit(Op::Host {
+                            operation,
+                            arguments: 1 + args.len(),
+                        });
+                    } else {
+                        c.emit(Op::Call(1 + args.len()));
+                    }
                     return Ok(());
                 }
                 if let Expr::FieldAccess {
@@ -3072,6 +3122,18 @@ impl<'a> Lower<'a> {
                 self.struct_value(name, &supplied, c)?;
             }
             Expr::FieldAccess { object, field, .. } => {
+                if let Some(operation) = self
+                    .native_property_calls
+                    .get(&(e as *const Expr as usize))
+                    .cloned()
+                {
+                    self.expr(object, c)?;
+                    c.emit(Op::Host {
+                        operation,
+                        arguments: 1,
+                    });
+                    return Ok(());
+                }
                 // A checked namespace case shares construction with constructor syntax.
                 if let Expr::Identifier { name, .. } = object
                     && !c.names.contains_key(*name)

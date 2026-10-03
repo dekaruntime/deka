@@ -122,6 +122,7 @@ pub(crate) fn hosts() -> Result<Hosts> {
     ))?;
     deka_vm::time::register(&mut hosts)?;
     deka_vm::timers::register(&mut hosts)?;
+    deka_vm::text_codec::register(&mut hosts)?;
     Ok(hosts)
 }
 pub(crate) fn compile(source: &Source) -> Result<Payload> {

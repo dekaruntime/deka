@@ -2087,6 +2087,7 @@ dependencies = [
  "deka_native_ui",
  "deka_syntax",
  "deno_core",
+ "encoding_rs",
  "serde",
  "serde_json",
  "tempfile",
