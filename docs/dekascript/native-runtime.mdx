@@ -397,3 +397,5 @@ for a first download.
 
 Package commands accept `--directory <project>` to select a project explicitly;
 otherwise they use the current directory.
+
+Package archives are checked before promotion: JavaScript, WASM, Rust source/artifacts, native executables, shared libraries and native object/archive files are refused with the offending path. WASM and native binary signatures are checked even when the file is renamed. DekaScript source, metadata and ordinary assets remain supported.

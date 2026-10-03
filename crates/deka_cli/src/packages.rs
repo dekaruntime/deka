@@ -146,6 +146,68 @@ fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
     bytes.push(b'\n');
     Ok(bytes)
 }
+fn check_package_file(path: &Path, reader: &mut impl Read) -> Result<()> {
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let filename = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let executable_extension = matches!(
+        extension.as_str(),
+        "js" | "mjs"
+            | "cjs"
+            | "wasm"
+            | "exe"
+            | "dll"
+            | "so"
+            | "dylib"
+            | "node"
+            | "o"
+            | "obj"
+            | "a"
+            | "lib"
+            | "rs"
+            | "rlib"
+            | "rmeta"
+    ) || filename.split_once(".so.").is_some_and(|(_, version)| {
+        !version.is_empty() && version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+    });
+    let mut prefix = Vec::new();
+    reader
+        .take(8)
+        .read_to_end(&mut prefix)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let executable_format = prefix.starts_with(b"\0asm")
+        || prefix.starts_with(b"\x7fELF")
+        || prefix.starts_with(b"MZ")
+        || prefix.starts_with(b"!<arch>\n")
+        || prefix.starts_with(b"!<thin>\n")
+        || [
+            [0xfe, 0xed, 0xfa, 0xce],
+            [0xce, 0xfa, 0xed, 0xfe],
+            [0xfe, 0xed, 0xfa, 0xcf],
+            [0xcf, 0xfa, 0xed, 0xfe],
+            [0xca, 0xfe, 0xba, 0xbe],
+            [0xbe, 0xba, 0xfe, 0xca],
+            [0xca, 0xfe, 0xba, 0xbf],
+            [0xbf, 0xba, 0xfe, 0xca],
+        ]
+        .iter()
+        .any(|magic| prefix.starts_with(magic));
+    if executable_extension || executable_format {
+        return Err(format!(
+            "package is not DekaScript only: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn extract(bytes: &[u8], destination: &Path) -> Result<()> {
     let mut archive = tar::Archive::new(GzDecoder::new(bytes));
     let mut seen = BTreeSet::new();
@@ -163,6 +225,9 @@ fn extract(bytes: &[u8], destination: &Path) -> Result<()> {
             return Err(format!("invalid package archive path {}", path.display()));
         }
         if path.components().any(|c| matches!(c, Component::Normal(n) if n == ".git" || n.to_string_lossy().starts_with("._"))) {
+            if entry.header().entry_type().is_file() {
+                check_package_file(&path, &mut entry)?;
+            }
             continue;
         }
         if path.components().any(|c| matches!(c, Component::Normal(n) if n == "ds_modules" || n == "php_modules" || n == "node_modules")) {
@@ -192,6 +257,11 @@ fn extract(bytes: &[u8], destination: &Path) -> Result<()> {
                 "package archive path escapes destination: {}",
                 path.display()
             ));
+        }
+        if kind.is_file() {
+            let mut file = fs::File::open(destination.join(&path))
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            check_package_file(&path, &mut file)?;
         }
     }
     Ok(())
@@ -595,15 +665,18 @@ mod tests {
         assert!(error.starts_with("fixture server I/O:"), "{error}");
     }
     fn tarball(name: &str, version: &str, entry: &str) -> Vec<u8> {
-        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        let mut tar = tar::Builder::new(encoder);
-        for (path, bytes) in [
+        archive_files([
             (
                 "deka.json",
                 encode(&json!({"name": name, "version": version, "entry": "index.ds"})).unwrap(),
             ),
             ("index.ds", entry.as_bytes().to_vec()),
-        ] {
+        ])
+    }
+    fn archive_files(files: impl IntoIterator<Item = (&'static str, Vec<u8>)>) -> Vec<u8> {
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut tar = tar::Builder::new(encoder);
+        for (path, bytes) in files {
             let mut header = tar::Header::new_gnu();
             header.set_size(bytes.len() as u64);
             header.set_mode(0o644);
@@ -613,6 +686,126 @@ mod tests {
         }
         tar.into_inner().unwrap().finish().unwrap()
     }
+
+    #[test]
+    fn real_commands_refuse_executable_files_and_preserve_live_packages() {
+        let fixture = Fixture::new(responses(
+            "demo",
+            tarball("@deka/demo", "1.2.3", "export const answer = 42;"),
+        ));
+        let project = project();
+        assert_eq!(
+            fixture
+                .command(project.path(), &["add", "@deka/demo@1.2.3"])
+                .0,
+            std::process::ExitCode::SUCCESS
+        );
+        let manifest = fs::read(project.path().join("deka.json")).unwrap();
+        let lock = fs::read(project.path().join("deka.lock")).unwrap();
+        let entry = project.path().join("ds_modules/@deka/demo/index.ds");
+        let source = fs::read(&entry).unwrap();
+        for (path, bytes) in [
+            ("nested/legacy.js", b"export const answer = 0;".as_slice()),
+            ("nested/legacy.MJS", b"export const answer = 0;".as_slice()),
+            ("legacy.cjs", b"module.exports = {};".as_slice()),
+            ("src/legacy.rs", b"fn main() {}".as_slice()),
+            ("engine.wasm", b"\0asm\x01\0\0\0".as_slice()),
+            ("native/plugin.so.1", b"native".as_slice()),
+            ("native/plugin.dll", b"native".as_slice()),
+            ("native/plugin.dylib", b"native".as_slice()),
+            ("assets/renamed.dat", b"\x7fELFbinary".as_slice()),
+            ("assets/macos.dat", b"\xcf\xfa\xed\xfebinary".as_slice()),
+            ("assets/windows.dat", b"MZbinary".as_slice()),
+            ("assets/wasm.dat", b"\0asm\x01\0\0\0".as_slice()),
+            ("assets/archive.dat", b"!<arch>\nbinary".as_slice()),
+            (".git/hidden.js", b"bad".as_slice()),
+        ] {
+            let archive = archive_files([
+                (
+                    "deka.json",
+                    encode(&json!({"name":"@deka/demo","version":"2.0.0","entry":"index.ds"}))
+                        .unwrap(),
+                ),
+                ("index.ds", b"export const answer = 99;".to_vec()),
+                (path, bytes.to_vec()),
+            ]);
+            fixture.responses.lock().unwrap().extend([
+                (
+                    "/api/registry/demo.json".into(),
+                    br#"{"versions":["1.2.3","2.0.0"]}"#.to_vec(),
+                ),
+                ("/demo/2.0.0/demo-2.0.0.tgz".into(), archive.clone()),
+            ]);
+            let (code, _, error) = fixture.command(project.path(), &["add", "@deka/demo@2.0.0"]);
+            assert_eq!(code, std::process::ExitCode::from(1), "{path}: {error}");
+            assert!(
+                error.contains(&format!("not DekaScript only: {path}")),
+                "{error}"
+            );
+            assert_eq!(fs::read(&entry).unwrap(), source);
+            assert_eq!(
+                fs::read(project.path().join("deka.json")).unwrap(),
+                manifest
+            );
+            assert_eq!(fs::read(project.path().join("deka.lock")).unwrap(), lock);
+            let mut replay: Lock = serde_json::from_slice(&lock).unwrap();
+            let pin = replay.packages.get_mut("@deka/demo").unwrap();
+            pin.0 = "2.0.0".into();
+            pin.1 = format!("{}/demo/2.0.0/demo-2.0.0.tgz", fixture.url);
+            pin.3 = format!("{:x}", Sha256::digest(&archive));
+            let replay = encode(&replay).unwrap();
+            fs::write(project.path().join("deka.lock"), &replay).unwrap();
+            let (code, _, error) = fixture.command(project.path(), &["install"]);
+            assert_eq!(code, std::process::ExitCode::from(1), "{path}: {error}");
+            assert!(
+                error.contains(&format!("not DekaScript only: {path}")),
+                "{error}"
+            );
+            assert_eq!(fs::read(&entry).unwrap(), source);
+            assert_eq!(fs::read(project.path().join("deka.lock")).unwrap(), replay);
+            fs::write(project.path().join("deka.lock"), &lock).unwrap();
+        }
+    }
+
+    #[test]
+    fn source_packages_keep_non_executable_assets_on_add_and_install() {
+        let archive = archive_files([
+            (
+                "deka.json",
+                encode(&json!({"name":"@deka/demo","version":"1.2.3","entry":"index.ds"})).unwrap(),
+            ),
+            ("index.ds", b"export const answer = 42;".to_vec()),
+            ("assets/data.json", br#"{"hello":"world"}"#.to_vec()),
+            ("assets/icon.png", b"\x89PNG\r\n\x1a\n".to_vec()),
+        ]);
+        let fixture = Fixture::new(responses("demo", archive));
+        let project = project();
+        assert_eq!(
+            fixture
+                .command(project.path(), &["add", "@deka/demo@1.2.3"])
+                .0,
+            std::process::ExitCode::SUCCESS
+        );
+        fs::remove_dir_all(project.path().join("ds_modules")).unwrap();
+        assert_eq!(
+            fixture.command(project.path(), &["install"]).0,
+            std::process::ExitCode::SUCCESS
+        );
+        assert_eq!(
+            fs::read(
+                project
+                    .path()
+                    .join("ds_modules/@deka/demo/assets/data.json")
+            )
+            .unwrap(),
+            br#"{"hello":"world"}"#
+        );
+        assert_eq!(
+            fs::read(project.path().join("ds_modules/@deka/demo/assets/icon.png")).unwrap(),
+            b"\x89PNG\r\n\x1a\n"
+        );
+    }
+
     fn responses(name: &str, archive: Vec<u8>) -> BTreeMap<String, Vec<u8>> {
         BTreeMap::from([
             (
