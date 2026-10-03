@@ -58,7 +58,7 @@ base64 = "0.22"
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
 axum = "0.7"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 sha2 = "0.10"
 tar = "0.4"
 tokio = { workspace = true }

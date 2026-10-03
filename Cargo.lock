@@ -757,7 +757,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
- "sha1",
+ "sha1 0.10.7",
  "sync_wrapper",
  "tokio",
  "tokio-tungstenite",
@@ -1504,7 +1504,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
- "tungstenite",
+ "tungstenite 0.30.0",
  "wasm_cli",
 ]
 
@@ -1940,6 +1940,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "corpus_gate"
+version = "0.60.1"
+dependencies = [
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "cosmic-text"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2301,7 +2309,7 @@ checksum = "5c297a1c74b71ae29df00c3e22dd9534821d60eb9af5a0192823fa2acea70c2a"
 name = "dcore"
 version = "0.60.1"
 dependencies = [
- "deka-cli-core",
+ "deka-cli-core 0.5.0",
 ]
 
 [[package]]
@@ -2325,7 +2333,7 @@ name = "deka-build"
 version = "0.60.1"
 dependencies = [
  "compiler",
- "deka-cli-core",
+ "deka-cli-core 0.5.0",
  "deka-modules",
  "pool",
  "runtime",
@@ -2341,7 +2349,7 @@ name = "deka-cache"
 version = "0.60.1"
 dependencies = [
  "compiler",
- "deka-cli-core",
+ "deka-cli-core 0.5.0",
  "run",
  "serde",
  "serde_json",
@@ -2358,10 +2366,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "959a3a6061fd69200fa3e0653f51dd985a12948e4a55c83c36ba9756b61cb208"
 
 [[package]]
+name = "deka-cli-core"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcba4cb8985749b6d549d25ee1d82351683297e8b1e15b34921920658fe477db"
+
+[[package]]
 name = "deka-db"
 version = "0.60.1"
 dependencies = [
- "deka-cli-core",
+ "deka-cli-core 0.5.0",
  "postgres",
  "rusqlite",
  "serde",
@@ -2373,7 +2387,7 @@ dependencies = [
 name = "deka-deploy"
 version = "0.60.1"
 dependencies = [
- "deka-cli-core",
+ "deka-cli-core 0.5.0",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2397,7 +2411,7 @@ name = "deka-registry"
 version = "0.60.1"
 dependencies = [
  "anyhow",
- "deka-cli-core",
+ "deka-cli-core 0.5.0",
  "deka-modules",
  "reqwest",
  "serde",
@@ -2411,7 +2425,7 @@ dependencies = [
 name = "deka-task"
 version = "0.60.1"
 dependencies = [
- "deka-cli-core",
+ "deka-cli-core 0.5.0",
  "deno_task_shell",
  "glob",
  "serde_json",
@@ -2424,7 +2438,7 @@ dependencies = [
 name = "deka-test"
 version = "0.60.1"
 dependencies = [
- "deka-cli-core",
+ "deka-cli-core 0.5.0",
  "deka-modules",
  "deka_host",
  "serde_json",
@@ -2462,6 +2476,7 @@ dependencies = [
 name = "deka_cli"
 version = "0.60.1"
 dependencies = [
+ "deka-cli-core 0.6.0",
  "deka_executable",
  "deka_native_ui",
  "deka_vm",
@@ -2594,6 +2609,7 @@ dependencies = [
  "deno_core",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -3066,7 +3082,7 @@ dependencies = [
  "rsa",
  "sec1 0.7.3",
  "serde",
- "sha1",
+ "sha1 0.10.7",
  "sha2 0.10.9",
  "sha3",
  "sm3",
@@ -4257,7 +4273,7 @@ dependencies = [
  "hyper-util",
  "pin-project",
  "rand 0.8.5",
- "sha1",
+ "sha1 0.10.7",
  "simdutf8",
  "thiserror 1.0.69",
  "tokio",
@@ -6815,9 +6831,9 @@ dependencies = [
 
 [[package]]
 name = "mach2"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
+checksum = "b0d28e293f2b8c9d2b2d1c0193bd3c1cbdc0d2cf396888dc01162f7cf9d6c3f3"
 
 [[package]]
 name = "malloc_buf"
@@ -7172,7 +7188,7 @@ dependencies = [
  "saturating",
  "serde",
  "serde_json",
- "sha1",
+ "sha1 0.10.7",
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "uuid",
@@ -7214,11 +7230,11 @@ dependencies = [
 
 [[package]]
 name = "nanoid"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ffa00dec017b5b1a8b7cf5e2c008bfda1aa7e0697ac1508b491fdf2622fb4d8"
+checksum = "8628de41fe064cc3f0cf07f3d299ee3e73521adaff72278731d5c8cae3797873"
 dependencies = [
- "rand 0.8.5",
+ "rand 0.9.5",
 ]
 
 [[package]]
@@ -7929,7 +7945,7 @@ dependencies = [
  "hmac 0.12.1",
  "lazy_static",
  "rc2",
- "sha1",
+ "sha1 0.10.7",
  "yasna 0.5.2",
 ]
 
@@ -8473,7 +8489,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.21.7",
- "deka-cli-core",
+ "deka-cli-core 0.5.0",
  "deka-modules",
  "deka-registry",
  "deka_host",
@@ -8571,7 +8587,7 @@ dependencies = [
  "deno_core",
  "deno_error",
  "libc",
- "mach2 0.6.0",
+ "mach2 0.7.0",
  "nanoid",
  "num_cpus",
  "permissions",
@@ -10253,7 +10269,7 @@ dependencies = [
  "axum",
  "compiler",
  "ctrlc",
- "deka-cli-core",
+ "deka-cli-core 0.5.0",
  "flate2",
  "libc",
  "pm",
@@ -10494,6 +10510,17 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
+]
+
+[[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -11614,7 +11641,7 @@ dependencies = [
  "once_cell",
  "rustc-hash 2.1.3",
  "serde",
- "sha1",
+ "sha1 0.10.7",
  "string_enum",
  "swc_atoms",
  "swc_common 17.0.1",
@@ -11638,7 +11665,7 @@ dependencies = [
  "once_cell",
  "rustc-hash 2.1.3",
  "serde",
- "sha1",
+ "sha1 0.10.7",
  "string_enum",
  "swc_atoms",
  "swc_common 18.0.1",
@@ -12483,7 +12510,7 @@ dependencies = [
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
- "tungstenite",
+ "tungstenite 0.24.0",
  "webpki-roots 0.26.11",
 ]
 
@@ -12780,9 +12807,25 @@ dependencies = [
  "rand 0.8.5",
  "rustls",
  "rustls-pki-types",
- "sha1",
+ "sha1 0.10.7",
  "thiserror 1.0.69",
  "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.10.2",
+ "sha1 0.11.0",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -272,3 +272,45 @@ fn default_slot_does_not_silently_ignore_named_or_fallback_content() {
         );
     }
 }
+
+#[test]
+fn component_props_carry_structs_enums_and_interface_values() {
+    let source = r##"
+interface Speaker { fn speak() string; }
+struct Dog {}
+struct Cat {}
+fn (d Dog) speak() string { return "woof"; }
+fn (c Cat) speak() string { return "meow"; }
+fn pick(dog: boolean) Speaker {
+    if (dog) { return Dog {}; }
+    return Cat {};
+}
+struct Person { name: string; }
+fn (p Person) greet() string { return "Hello, " + p.name; }
+enum Status { Ready, Busy }
+interface PetProps { pet: Speaker; owner: Person; status: Status }
+fn Pet(props: PetProps) {
+    return <div><p>{props.pet.speak()}</p><p>{props.owner.greet()}</p><p>{props.status.name}</p></div>;
+}
+struct Tag { title: string; }
+fn (t Tag) label() string { return "#" + t.title; }
+fn Badge(props: Tag) { return <p>{props.label()}</p>; }
+export fn App() {
+    let dog = true;
+    return (<view><Pet pet={pick(dog)} owner={Person { name: "Deka" }} status={dog ? Status.Ready : Status.Busy} />
+        <Badge title={dog ? "dog" : "cat"} />
+        <button onClick={fn() { dog = dog == false; }}>Swap</button></view>);
+}"##;
+    let mut session =
+        ui::UiSession::new(compiler::compile_entry(source, &Hosts::default(), "App").unwrap())
+            .unwrap();
+    assert_eq!(
+        texts(session.tree()),
+        ["woof", "Hello, Deka", "Ready", "#dog", "Swap"]
+    );
+    session.click(0).unwrap();
+    assert_eq!(
+        texts(session.tree()),
+        ["meow", "Hello, Deka", "Busy", "#cat", "Swap"]
+    );
+}

@@ -406,6 +406,13 @@ pub struct MethodTarget<'a> {
     pub embed_path: Vec<&'a str>,
 }
 
+/// The free-function name a receiver-method call rewrites to. The typechecker
+/// records it at the call site and every backend names the lowered
+/// declaration with it, so the spelling lives in exactly one place.
+pub fn mangle_method_name(method: &str, receiver: &str) -> String {
+    format!("{method}${receiver}")
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct EnumCase<'a> {
     pub name: &'a str,

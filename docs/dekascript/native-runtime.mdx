@@ -82,6 +82,8 @@ This displays the title and detail in the reusable card. Attribute order does
 not matter. The checker reports missing, unknown and wrongly typed props before
 execution. Parameterless components also work as tags. Relative file imports
 can provide components in native apps; the browser tour still accepts one source file.
+A prop can carry any value, including struct values, enum cases and interface
+values, and a struct type can serve as the props type in place of an interface.
 
 Nested markup supplies child content. Prefer `<slot />` to project it, including
 when no content is supplied. To read `props.children` explicitly, declare its type

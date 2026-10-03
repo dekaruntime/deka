@@ -1,5 +1,5 @@
 //! DSC is linked as a library; no JS emission or compiler subprocess.
-use crate::{Function, Hosts, Literal, Op, Program, Result};
+use crate::{Function, Hosts, ListMut, Literal, Op, Program, Result};
 use deka_syntax::{Diagnostic, Severity, ast::*};
 use std::collections::{BTreeMap, HashMap};
 
@@ -12,12 +12,21 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
         &[(std::path::PathBuf::from("<source>"), source.to_owned())],
         hosts,
         Some(entry_name),
+        &Project {
+            root: None,
+            dependencies: BTreeMap::new(),
+            lock: BTreeMap::new(),
+        },
     )
 }
 /// Compile a source file and its relative modules, once each, in dependency order.
-/// Cycles and external packages fail explicitly; no compiler process is launched.
+/// Import cycles load with JavaScript module semantics (deka#1206): a module
+/// already being loaded is not loaded again, and reading one of its exports
+/// before it finishes initializing is a named error, not a silent value.
+/// Self-imports and external packages fail explicitly.
 pub fn compile_file(path: &std::path::Path, hosts: &Hosts, entry: Option<&str>) -> Result<Program> {
-    compile_modules(&load_modules(path)?, hosts, entry)
+    let project = Project::load(path)?;
+    compile_modules(&load_modules(path, &project)?, hosts, entry, &project)
 }
 /// Watch dependencies even while an imported file is absent or being edited.
 /// Compilation still fails closed; this list only controls development reload.
@@ -34,7 +43,19 @@ pub fn source_files(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
         let parsed = deka_syntax::parse(&source, &arena);
         if let Some(ast) = parsed.program {
             for stmt in ast.statements {
-                if let Stmt::Import { source, .. } = stmt
+                let source = match stmt {
+                    Stmt::Import { source, .. } => Some(*source),
+                    Stmt::Export {
+                        decl:
+                            ExportDecl::NamedGroup {
+                                source: Some(source),
+                                ..
+                            },
+                        ..
+                    } => Some(*source),
+                    _ => None,
+                };
+                if let Some(source) = source
                     && (source.starts_with("./") || source.starts_with("../"))
                     && let Some(parent) = path.parent()
                 {
@@ -72,18 +93,167 @@ pub fn test_entries(path: &std::path::Path) -> Result<Vec<String>> {
 fn host_module(source: &str) -> bool {
     matches!(source, "vm:host" | "io" | "test")
 }
-fn module_path(parent: &std::path::Path, source: &str) -> Result<std::path::PathBuf> {
-    if !source.starts_with("./") && !source.starts_with("../") {
-        return Err(format!(
-            "unsupported module: {source}; use a relative .ds/.dsx path or a built-in module"
-        ));
-    }
-    let path = parent.parent().ok_or("module has no parent")?.join(source);
-    std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()))
+
+/// The project a compile resolves packages against: the nearest ancestor of
+/// the entry module with a `deka.json`, its declared dependency pins, and
+/// the lock's exact pins (deka#1212). Consumption only — nothing here
+/// touches the network. A program that imports no package needs no
+/// `deka.json`: `root` is `None` then, and only resolving a bare specifier
+/// reports the missing manifest.
+pub struct Project {
+    root: Option<std::path::PathBuf>,
+    dependencies: BTreeMap<String, String>,
+    lock: BTreeMap<String, String>,
 }
-fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, String)>> {
+
+impl Project {
+    fn load(entry: &std::path::Path) -> Result<Project> {
+        let mut directory = std::fs::canonicalize(entry)
+            .map_err(|e| format!("{}: {e}", entry.display()))?
+            .parent()
+            .ok_or("module has no parent")?
+            .to_path_buf();
+        let root = loop {
+            if directory.join("deka.json").exists() {
+                break directory;
+            }
+            if !directory.pop() {
+                return Ok(Project {
+                    root: None,
+                    dependencies: BTreeMap::new(),
+                    lock: BTreeMap::new(),
+                });
+            }
+        };
+        let manifest: serde_json::Value = std::fs::read_to_string(root.join("deka.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_str(&bytes).ok())
+            .ok_or_else(|| format!("{}: invalid deka.json", root.display()))?;
+        let dependencies = manifest
+            .get("dependencies")
+            .and_then(|d| d.as_object())
+            .map(|deps| {
+                deps.iter()
+                    .filter_map(|(name, pin)| Some((name.clone(), pin.as_str()?.to_owned())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let lock = std::fs::read_to_string(root.join("deka.lock"))
+            .ok()
+            .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
+            .and_then(|lock| lock.get("packages")?.as_object().cloned())
+            .map(|packages| {
+                packages
+                    .iter()
+                    .filter_map(|(name, entry)| {
+                        // Lock entries are [version, tarball, deps, sha256].
+                        let version = entry.as_array()?.first()?.as_str()?;
+                        Some((name.clone(), version.to_owned()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Project {
+            root: Some(root),
+            dependencies,
+            lock,
+        })
+    }
+
+    /// Resolve a bare specifier to a package file: `name` (or
+    /// `@scope/name`) plus an optional subpath. Every failure names the
+    /// package and the cause.
+    fn package_path(&self, source: &str) -> Result<std::path::PathBuf> {
+        let segments: Vec<&str> = source.split('/').collect();
+        let (name, subpath) = if source.starts_with('@') {
+            if segments.len() < 2 {
+                return Err(format!("invalid package specifier: {source}"));
+            }
+            (
+                format!("{}/{}", segments[0], segments[1]),
+                &segments[2.min(segments.len())..],
+            )
+        } else {
+            (segments[0].to_owned(), &segments[1.min(segments.len())..])
+        };
+        let Some(root) = &self.root else {
+            return Err(format!(
+                "package {name} cannot be resolved: deka.json not found in this directory or any parent"
+            ));
+        };
+        let Some(declared) = self.dependencies.get(&name) else {
+            return Err(format!(
+                "package {name} is not declared in deka.json dependencies"
+            ));
+        };
+        let directory = root.join("ds_modules").join(&name);
+        if !directory.is_dir() {
+            return Err(format!(
+                "package {name} is not installed (ds_modules/{name} is missing)"
+            ));
+        };
+        let entry = if subpath.is_empty() {
+            let manifest_entry = std::fs::read_to_string(directory.join("deka.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
+                .and_then(|manifest| manifest.get("entry")?.as_str().map(str::to_owned));
+            let entry = manifest_entry.unwrap_or_else(|| "index.ds".into());
+            // Version agreement is checked once per package root resolution:
+            // deka.json declares, deka.lock pins, ds_modules provides.
+            let installed = std::fs::read_to_string(directory.join("deka.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_str::<serde_json::Value>(&bytes).ok())
+                .and_then(|manifest| manifest.get("version")?.as_str().map(str::to_owned));
+            if let Some(installed) = installed {
+                if installed != *declared {
+                    return Err(format!(
+                        "package {name} version mismatch: deka.json expects {declared}, ds_modules has {installed}"
+                    ));
+                }
+                if let Some(pin) = self.lock.get(&name)
+                    && *pin != installed
+                {
+                    return Err(format!(
+                        "package {name} version mismatch: deka.lock pins {pin}, ds_modules has {installed}"
+                    ));
+                }
+            }
+            directory.join(entry)
+        } else {
+            directory.join(subpath.join("/"))
+        };
+        if !entry.exists() {
+            return Err(format!(
+                "package {name} has no entry file ({})",
+                entry.display()
+            ));
+        }
+        std::fs::canonicalize(&entry).map_err(|e| format!("{}: {e}", entry.display()))
+    }
+}
+
+fn module_path(
+    parent: &std::path::Path,
+    source: &str,
+    project: &Project,
+) -> Result<std::path::PathBuf> {
+    if source.starts_with("./") || source.starts_with("../") {
+        let path = parent.parent().ok_or("module has no parent")?.join(source);
+        return std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()));
+    }
+    project.package_path(source)
+}
+/// Modules in dependency order. A module already being loaded is not loaded
+/// again (import cycles load, deka#1206); reads of exports that initialize
+/// later than the importer become checked loads during lowering, computed
+/// from the loaded order in `compile_modules`. Self-imports are refused.
+fn load_modules(
+    path: &std::path::Path,
+    project: &Project,
+) -> Result<Vec<(std::path::PathBuf, String)>> {
     fn visit(
         path: std::path::PathBuf,
+        project: &Project,
         visiting: &mut std::collections::BTreeSet<std::path::PathBuf>,
         loaded: &mut Vec<(std::path::PathBuf, String)>,
     ) -> Result<()> {
@@ -91,7 +261,7 @@ fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, Strin
             return Ok(());
         }
         if !visiting.insert(path.clone()) {
-            return Err(format!("cyclic module import: {}", path.display()));
+            return Ok(());
         }
         let source =
             std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -99,10 +269,27 @@ fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, Strin
         let parsed = deka_syntax::parse(&source, &arena);
         diagnostics(&parsed.errors).map_err(|e| format!("{}: {e}", path.display()))?;
         for stmt in parsed.program.ok_or("missing source program")?.statements {
-            if let Stmt::Import { source, .. } = stmt
-                && !host_module(source)
-            {
-                visit(module_path(&path, source)?, visiting, loaded)?;
+            let source = match stmt {
+                Stmt::Import { source, .. } if !host_module(source) => Some(*source),
+                // `export { x } from "./y.ds"` is a load edge like an import.
+                Stmt::Export {
+                    decl:
+                        ExportDecl::NamedGroup {
+                            source: Some(source),
+                            ..
+                        },
+                    ..
+                } => Some(*source),
+                _ => None,
+            };
+            if let Some(source) = source {
+                let target = module_path(&path, source, project)?;
+                if target == path {
+                    return Err(format!("cyclic module import: {}", path.display()));
+                }
+                if !visiting.contains(&target) {
+                    visit(target, project, visiting, loaded)?;
+                }
             }
         }
         visiting.remove(&path);
@@ -111,16 +298,288 @@ fn load_modules(path: &std::path::Path) -> Result<Vec<(std::path::PathBuf, Strin
     }
     let mut loaded = vec![];
     visit(
-        std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?,
+        std::fs::canonicalize(path).map_err(|e| e.to_string())?,
+        project,
         &mut Default::default(),
         &mut loaded,
     )?;
     Ok(loaded)
 }
+/// One module lowered into the shared entry function. Returns the module's
+/// export-name → slot map. `forward` holds this module's cycle-closing
+/// imports (local → (exported name, target)); in harvest mode
+/// (`mark_checked = false`) those alias a placeholder local so body lowering
+/// resolves, in the real pass they alias the exporter's slot and their reads
+/// become checked loads (deka#1206).
+#[allow(clippy::too_many_arguments)]
+fn lower_module<'a>(
+    path: &std::path::Path,
+    ast: &deka_syntax::ast::Program<'a>,
+    source: &str,
+    hosts: &Hosts,
+    host_exports: &deka_syntax::ModuleExports<'_>,
+    module_exports: &HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'_>>,
+    bindings: &HashMap<std::path::PathBuf, BTreeMap<String, usize>>,
+    project: &Project,
+    forward: Option<&BTreeMap<String, (String, std::path::PathBuf)>>,
+    mark_checked: bool,
+    // Harvest mode only: barrel entries whose target has not been harvested
+    // yet are pushed here (exported name, original name, target) instead of
+    // erroring, and resolved once every member is done.
+    deferred: Option<&mut Vec<(String, String, std::path::PathBuf)>>,
+    entry: &mut Context,
+    lower: &mut Lower<'a>,
+) -> Result<BTreeMap<String, usize>> {
+    let mut deferred = deferred;
+    let mut imports = HashMap::new();
+    for stmt in ast.statements {
+        let source = match stmt {
+            Stmt::Import { source, .. } => Some(*source),
+            // The checker resolves re-exported types through the same map.
+            Stmt::Export {
+                decl:
+                    ExportDecl::NamedGroup {
+                        source: Some(source),
+                        ..
+                    },
+                ..
+            } => Some(*source),
+            _ => None,
+        };
+        if let Some(source) = source {
+            let exports = if host_module(source) {
+                host_exports
+            } else {
+                module_exports
+                    .get(&module_path(path, source, project)?)
+                    .ok_or("module was not loaded")?
+            };
+            imports.insert(source, exports);
+        }
+    }
+    let checked = deka_syntax::check_program_with_imports(ast, source, &imports);
+    diagnostics(&checked.errors).map_err(|e| format!("{}: {e}", path.display()))?;
+    entry.names.clear();
+    entry.checked.clear();
+    lower.hosts.clear();
+    lower.declared.clear();
+    lower.newtypes.clear();
+    lower.structs.clear();
+    lower.enums.clear();
+    lower.method_decls.clear();
+    lower.struct_embeds.clear();
+    // Static method dispatch: the typechecker recorded each receiver-method
+    // call site with the free function it rewrites to (and the embed path to
+    // the declaring receiver). Keyed by expression address, like the
+    // typechecker's own table.
+    lower.method_calls = checked
+        .method_calls
+        .iter()
+        .map(|(ptr, target)| {
+            (
+                *ptr as usize,
+                (
+                    target.mangled.clone(),
+                    target.embed_path.iter().map(|s| (*s).to_string()).collect(),
+                ),
+            )
+        })
+        .collect();
+    for stmt in ast.statements {
+        if let Stmt::Newtype { name, .. } = stmt {
+            lower.newtypes.insert((*name).into());
+        }
+        if let Stmt::Struct {
+            name,
+            fields,
+            embeds,
+            ..
+        } = stmt
+        {
+            lower.structs.insert(
+                (*name).into(),
+                fields
+                    .iter()
+                    .map(|f| (f.name.to_string(), f.default_value.as_ref(), f.optional))
+                    .collect(),
+            );
+            lower.struct_embeds.insert(
+                (*name).into(),
+                embeds.iter().map(|e| e.name.to_string()).collect(),
+            );
+        }
+        let declared = match stmt {
+            Stmt::Const { name, .. } | Stmt::Let { name, .. } | Stmt::Function { name, .. } => {
+                Some(*name)
+            }
+            Stmt::Export {
+                decl: ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. },
+                ..
+            } => Some(*name),
+            _ => None,
+        };
+        if let Some(name) = declared {
+            lower.declared.insert(name.into());
+        }
+        if let Stmt::ReceiverMethod {
+            name,
+            receiver_type,
+            ..
+        } = stmt
+        {
+            let mangled = deka_syntax::mangle_method_name(name, receiver_type);
+            lower.declared.insert(mangled.clone());
+            lower
+                .method_decls
+                .entry((*receiver_type).into())
+                .or_default()
+                .push(((*name).into(), mangled));
+        }
+        if let Stmt::Enum { name, cases, .. } = stmt {
+            lower.enums.insert(
+                (*name).into(),
+                cases
+                    .iter()
+                    .map(|case| (case.name.to_string(), case.payload.is_some()))
+                    .collect(),
+            );
+            for case in *cases {
+                lower.declared.insert(format!("{}${}", name, case.name));
+            }
+        }
+    }
+    for stmt in ast.statements {
+        if let Stmt::Import {
+            source, specifiers, ..
+        } = stmt
+        {
+            for spec in *specifiers {
+                if spec.is_type_only {
+                    // Type-only imports resolve for the checker (which rejects
+                    // value uses) and erase here: no slot, no host lookup.
+                    continue;
+                }
+                if host_module(source) {
+                    hosts.operation(spec.imported)?;
+                    lower.hosts.insert(spec.local.into(), spec.imported.into());
+                    continue;
+                }
+                let target = module_path(path, source, project)?;
+                if let Some((imported, origin)) =
+                    forward.and_then(|f| f.get(spec.local).map(|f| (&f.0, &f.1)))
+                {
+                    debug_assert_eq!(imported.as_str(), spec.imported);
+                    // Reserve a local in both passes so the harvest and real
+                    // allocation sequences stay identical.
+                    entry.bind(spec.local);
+                    if mark_checked {
+                        // The slot comes from the module the import names
+                        // (a barrel re-exports it); the error names the
+                        // origin whose assignment fills it.
+                        let slot = bindings
+                            .get(&target)
+                            .and_then(|b| b.get(spec.imported))
+                            .ok_or("missing module export")?;
+                        entry.names.insert(spec.local.into(), *slot);
+                        entry.checked.insert(
+                            spec.local.into(),
+                            format!(
+                                "export `{}` of `{}` is not initialized yet (import cycle with `{}`)",
+                                spec.imported,
+                                origin.display(),
+                                path.display()
+                            ),
+                        );
+                    }
+                } else {
+                    let slot = bindings
+                        .get(&target)
+                        .and_then(|b| b.get(spec.imported))
+                        .ok_or("missing module export")?;
+                    entry.names.insert(spec.local.into(), *slot);
+                }
+            }
+        }
+    }
+    let mut exported = BTreeMap::new();
+    // Receiver methods hoist: a method call may precede the declaration
+    // (methods are type-level; values are not), so every method lowers before
+    // any other statement. Enum declarations hoist with them: their interned
+    // payload-free cases bind before any use. A body referencing a module
+    // value declared later is a forward-reference error.
+    for stmt in ast.statements {
+        if matches!(stmt, Stmt::ReceiverMethod { .. } | Stmt::Enum { .. }) {
+            lower.statement(stmt, entry)?;
+        }
+    }
+    for stmt in ast.statements {
+        if matches!(stmt, Stmt::ReceiverMethod { .. } | Stmt::Enum { .. }) {
+            continue;
+        }
+        lower.statement(stmt, entry)?;
+        if let Stmt::Export { decl, .. } = stmt {
+            match decl {
+                ExportDecl::Function {
+                    name, is_default, ..
+                } => {
+                    exported.insert(
+                        if *is_default { "default" } else { name }.to_string(),
+                        entry.slot(name)?,
+                    );
+                }
+                ExportDecl::Const { name, .. } => {
+                    exported.insert((*name).to_string(), entry.slot(name)?);
+                }
+                ExportDecl::NamedGroup { names, source } => match source {
+                    // `export { x } from "./y.ds"`: the barrel aliases the
+                    // target's slot — no copy, so timing behaves as if the
+                    // consumer imported from the origin directly (deka#1210).
+                    Some(source) => {
+                        let target = module_path(path, source, project)?;
+                        for name in *names {
+                            let external = name.alias.unwrap_or(name.name);
+                            let slot = bindings.get(&target).and_then(|b| b.get(name.name));
+                            match (slot, deferred.as_deref_mut()) {
+                                (Some(slot), _) => {
+                                    exported.insert(external.to_string(), *slot);
+                                }
+                                (None, Some(pending)) => {
+                                    pending.push((
+                                        external.to_string(),
+                                        name.name.to_string(),
+                                        target.clone(),
+                                    ));
+                                }
+                                (None, None) => return Err("missing module export".into()),
+                            }
+                        }
+                    }
+                    // `export { a, b as c }`: re-export local values;
+                    // type-only names erase (the checker tracks them).
+                    None => {
+                        for name in *names {
+                            if let Ok(slot) = entry.slot(name.name) {
+                                exported.insert(name.alias.unwrap_or(name.name).into(), slot);
+                            }
+                        }
+                    }
+                },
+                _ => {
+                    return Err(
+                        "native module exports currently support functions and constants".into(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(exported)
+}
+
 fn compile_modules(
     modules: &[(std::path::PathBuf, String)],
     hosts: &Hosts,
     entry_name: Option<&str>,
+    project: &Project,
 ) -> Result<Program> {
     let arena = bumpalo::Bump::new();
     let declarations = hosts.declarations();
@@ -128,88 +587,345 @@ fn compile_modules(
     diagnostics(&host_parse.errors)?;
     let host_ast = host_parse.program.ok_or("missing host declarations")?;
     let host_exports = deka_syntax::collect_module_exports(&host_ast, &arena);
+    // Parse every module up front so import checks resolve across a cycle.
+    let mut asts = HashMap::new();
     let mut module_exports = HashMap::new();
+    for (path, source) in modules {
+        let parsed = deka_syntax::parse(source, &arena);
+        diagnostics(&parsed.errors)?;
+        let ast: &deka_syntax::ast::Program<'_> =
+            arena.alloc(parsed.program.ok_or("missing source program")?);
+        module_exports.insert(
+            path.clone(),
+            deka_syntax::collect_module_exports(ast, &arena),
+        );
+        asts.insert(path.clone(), ast);
+    }
+    // The module graph: importer → (local, exported name, target) for value
+    // imports, and barrel → (exported name, original name, target) for
+    // `export { x } from` re-exports.
+    let mut edges: HashMap<std::path::PathBuf, Vec<(String, String, std::path::PathBuf)>> =
+        HashMap::new();
+    let mut barrels: HashMap<std::path::PathBuf, Vec<(String, String, std::path::PathBuf)>> =
+        HashMap::new();
+    for (path, _source) in modules {
+        for stmt in asts[path].statements {
+            match stmt {
+                Stmt::Import {
+                    source, specifiers, ..
+                } if !host_module(source) => {
+                    let target = module_path(path, source, project)?;
+                    for spec in *specifiers {
+                        edges.entry(path.clone()).or_default().push((
+                            spec.local.into(),
+                            spec.imported.into(),
+                            target.clone(),
+                        ));
+                    }
+                }
+                Stmt::Export {
+                    decl:
+                        ExportDecl::NamedGroup {
+                            names,
+                            source: Some(source),
+                        },
+                    ..
+                } => {
+                    let target = module_path(path, source, project)?;
+                    for name in *names {
+                        barrels.entry(path.clone()).or_default().push((
+                            name.alias.unwrap_or(name.name).into(),
+                            name.name.into(),
+                            target.clone(),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    // Flatten re-export chains so the checker resolves names through
+    // barrels without deka_syntax changes: copy the origin's export entries
+    // under the barrel's external names. Barrel cycles (re-export-only
+    // loops) are skipped here and load through the runtime machinery.
+    fn augment_reexports(
+        module: &std::path::Path,
+        barrels: &HashMap<std::path::PathBuf, Vec<(String, String, std::path::PathBuf)>>,
+        module_exports: &mut HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'_>>,
+        visiting: &mut Vec<std::path::PathBuf>,
+    ) {
+        if visiting.contains(&module.to_path_buf()) {
+            return;
+        }
+        visiting.push(module.to_path_buf());
+        let Some(entries) = barrels.get(module).cloned() else {
+            visiting.pop();
+            return;
+        };
+        for (external, original, target) in entries {
+            augment_reexports(&target, barrels, module_exports, visiting);
+            let Some(source) = module_exports.get(&target).cloned() else {
+                continue;
+            };
+            let Some(exports) = module_exports.get_mut(module) else {
+                continue;
+            };
+            if let Some(ty) = source.values.get(original.as_str()) {
+                exports
+                    .values
+                    .insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+            }
+            if let Some(info) = source.structs.get(original.as_str()) {
+                exports
+                    .structs
+                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+            }
+            if let Some(info) = source.enums.get(original.as_str()) {
+                exports
+                    .enums
+                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+            }
+            if let Some(ty) = source.aliases.get(original.as_str()) {
+                exports
+                    .aliases
+                    .insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+            }
+            if let Some(ty) = source.opaques.get(original.as_str()) {
+                exports
+                    .opaques
+                    .insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+            }
+            if let Some(info) = source.newtypes.get(original.as_str()) {
+                exports
+                    .newtypes
+                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+            }
+            if let Some(info) = source.interfaces.get(original.as_str()) {
+                exports
+                    .interfaces
+                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+            }
+            if let Some(tree) = source.build_fragments.get(original.as_str()) {
+                exports
+                    .build_fragments
+                    .insert(Box::leak(external.clone().into_boxed_str()), tree.clone());
+            }
+            if source.interactive_components.contains(original.as_str()) {
+                exports
+                    .interactive_components
+                    .insert(Box::leak(external.clone().into_boxed_str()));
+            }
+            if external == "default" {
+                exports.default_export_declared_name = Some(Box::leak(original.into_boxed_str()));
+            }
+        }
+        visiting.pop();
+    }
+    for (path, _source) in modules {
+        augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new());
+    }
+
+    // A module is a cycle member when it can reach itself through the graph
+    // (following value imports and barrel re-exports alike).
+    let mut members: std::collections::BTreeSet<std::path::PathBuf> = Default::default();
+    for (path, _source) in modules {
+        let mut seen: std::collections::BTreeSet<std::path::PathBuf> = Default::default();
+        let mut queue = vec![path.clone()];
+        while let Some(module) = queue.pop() {
+            let targets = edges
+                .get(&module)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, _, target)| target)
+                .chain(
+                    barrels
+                        .get(&module)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(_, _, target)| target),
+                );
+            for target in targets {
+                if target == *path {
+                    members.insert(path.clone());
+                }
+                if seen.insert(target.clone()) {
+                    queue.push(target);
+                }
+            }
+        }
+    }
+    // The module that actually initializes an exported name: follows barrel
+    // chains to the origin, so checked reads and sentinel marking key on the
+    // module whose assignment fills the slot. A barrel cycle resolves to its
+    // latest-initializing member, which only ever makes reads *more* checked.
+    let resolve_origin = |module: &std::path::Path,
+                          name: &str,
+                          position: &HashMap<std::path::PathBuf, usize>|
+     -> std::path::PathBuf {
+        let mut current = (module.to_path_buf(), name.to_string());
+        let mut visited = vec![current.0.clone()];
+        loop {
+            let hop = barrels
+                .get(&current.0)
+                .and_then(|entries| {
+                    entries
+                        .iter()
+                        .find(|(exported, _, _)| *exported == current.1)
+                })
+                .map(|(_, original, target)| (target.clone(), original.clone()));
+            let Some(next) = hop else {
+                return current.0;
+            };
+            if visited.contains(&next.0) {
+                return visited
+                    .into_iter()
+                    .max_by_key(|module| position[module])
+                    .unwrap_or(current.0);
+            }
+            visited.push(next.0.clone());
+            current = next;
+        }
+    };
+    // An import whose origin initializes after the importer (later in loaded
+    // order) is a forward import: its reads become checked loads.
+    let position: HashMap<std::path::PathBuf, usize> = modules
+        .iter()
+        .enumerate()
+        .map(|(i, (path, _))| (path.clone(), i))
+        .collect();
+    let mut forward: HashMap<std::path::PathBuf, BTreeMap<String, (String, std::path::PathBuf)>> =
+        HashMap::new();
+    for (module, specifiers) in &edges {
+        for (local, imported, target) in specifiers {
+            let origin = resolve_origin(target, imported, &position);
+            if position[&origin] > position[module] {
+                forward
+                    .entry(module.clone())
+                    .or_default()
+                    .insert(local.clone(), (imported.clone(), origin));
+            }
+        }
+    }
     let mut bindings: HashMap<std::path::PathBuf, BTreeMap<String, usize>> = HashMap::new();
     let mut lower = Lower {
         functions: vec![],
         hosts: BTreeMap::new(),
+        declared: std::collections::BTreeSet::new(),
+        newtypes: std::collections::BTreeSet::new(),
+        structs: BTreeMap::new(),
+        method_calls: HashMap::new(),
+        enums: BTreeMap::new(),
+        method_decls: BTreeMap::new(),
+        struct_embeds: BTreeMap::new(),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
     let mut last_async = false;
     let mut top_async = false;
+    let mut harvested: HashMap<std::path::PathBuf, BTreeMap<String, usize>> = HashMap::new();
     for (path, source) in modules {
-        let parsed = deka_syntax::parse(source, &arena);
-        diagnostics(&parsed.errors)?;
-        let ast = arena.alloc(parsed.program.ok_or("missing source program")?);
-        let mut imports = HashMap::new();
-        for stmt in ast.statements {
-            if let Stmt::Import { source, .. } = stmt {
-                let exports = if host_module(source) {
-                    &host_exports
-                } else {
-                    module_exports
-                        .get(&module_path(path, source)?)
-                        .ok_or("module was not loaded")?
-                };
-                imports.insert(*source, exports);
+        if harvested.is_empty() && members.contains(path) {
+            // Pre-lower every cycle member into a scratch entry to learn its
+            // export slots, then roll back. The real pass follows the same
+            // allocation sequence (verified below), so the slots line up and
+            // forward imports resolve before the exporter's code runs.
+            let snapshot = entry.clone();
+            let functions_len = lower.functions.len();
+            // Members harvested earlier in this pass resolve for later ones.
+            let mut scratch_bindings = bindings.clone();
+            let mut deferred_all: HashMap<
+                std::path::PathBuf,
+                Vec<(String, String, std::path::PathBuf)>,
+            > = HashMap::new();
+            for (member, member_source) in modules {
+                if !members.contains(member) {
+                    continue;
+                }
+                let mut deferred = vec![];
+                let exported = lower_module(
+                    member,
+                    asts[member],
+                    member_source,
+                    hosts,
+                    &host_exports,
+                    &module_exports,
+                    &scratch_bindings,
+                    project,
+                    forward.get(member),
+                    false,
+                    Some(&mut deferred),
+                    &mut entry,
+                    &mut lower,
+                )?;
+                deferred_all.insert(member.clone(), deferred);
+                harvested.insert(member.clone(), exported.clone());
+                scratch_bindings.insert(member.clone(), exported);
             }
-        }
-        diagnostics(&deka_syntax::check_program_with_imports(ast, source, &imports).errors)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        entry.names.clear();
-        lower.hosts.clear();
-        for stmt in ast.statements {
-            if let Stmt::Import {
-                source, specifiers, ..
-            } = stmt
-            {
-                for spec in *specifiers {
-                    if spec.is_type_only {
-                        return Err("type-only imports are not supported by the native VM".into());
-                    }
-                    if host_module(source) {
-                        hosts.operation(spec.imported)?;
-                        lower.hosts.insert(spec.local.into(), spec.imported.into());
-                    } else {
-                        let slot = bindings
-                            .get(&module_path(path, source)?)
-                            .and_then(|b| b.get(spec.imported))
-                            .ok_or("missing module export")?;
-                        entry.names.insert(spec.local.into(), *slot);
+            // Second harvest pass: barrel entries whose target was still
+            // pending now resolve against the completed member exports.
+            for (member, pending) in &deferred_all {
+                for (external, original, target) in pending {
+                    let slot = *scratch_bindings
+                        .get(target)
+                        .and_then(|b| b.get(original))
+                        .ok_or("missing module export")?;
+                    harvested
+                        .get_mut(member)
+                        .expect("member harvested")
+                        .insert(external.clone(), slot);
+                    scratch_bindings
+                        .get_mut(member)
+                        .expect("member harvested")
+                        .insert(external.clone(), slot);
+                }
+            }
+            entry = snapshot;
+            lower.functions.truncate(functions_len);
+            // Sentinels cover only slots whose origin is a cycle member: a
+            // member barrel re-exporting an already-initialized non-member
+            // must not be clobbered.
+            let mut sentinel_slots: std::collections::BTreeSet<usize> = Default::default();
+            for (member, exported) in &harvested {
+                for (name, slot) in exported {
+                    if members.contains(&resolve_origin(member, name, &position)) {
+                        sentinel_slots.insert(*slot);
                     }
                 }
             }
-        }
-        let mut exported = BTreeMap::new();
-        for stmt in ast.statements {
-            lower.statement(stmt, &mut entry)?;
-            if let Stmt::Export { decl, .. } = stmt {
-                match decl {
-                    ExportDecl::Function {
-                        name, is_default, ..
-                    } => {
-                        exported.insert(
-                            if *is_default { "default" } else { name }.to_string(),
-                            entry.slot(name)?,
-                        );
-                    }
-                    ExportDecl::Const { name, .. } => {
-                        exported.insert((*name).to_string(), entry.slot(name)?);
-                    }
-                    _ => {
-                        return Err(
-                            "native module exports currently support functions and constants"
-                                .into(),
-                        );
-                    }
-                }
+            for slot in sentinel_slots {
+                entry.emit(Op::Const(Literal::Uninitialized));
+                entry.emit(Op::Store(slot));
+            }
+            for (member, exported) in &harvested {
+                bindings.insert(member.clone(), exported.clone());
             }
         }
-        module_exports.insert(
-            path.clone(),
-            deka_syntax::collect_module_exports(ast, &arena),
-        );
+        let ast = asts[path];
+        let exported = lower_module(
+            path,
+            ast,
+            source,
+            hosts,
+            &host_exports,
+            &module_exports,
+            &bindings,
+            project,
+            forward.get(path),
+            true,
+            None,
+            &mut entry,
+            &mut lower,
+        )?;
+        if let Some(expected) = harvested.get(path)
+            && *expected != exported
+        {
+            return Err(format!(
+                "import-cycle slot drift while lowering {}",
+                path.display()
+            ));
+        }
         bindings.insert(path.clone(), exported);
         top_async |= ast.has_top_level_await;
         if let Some(name) = entry_name {
@@ -262,10 +978,22 @@ fn diagnostics(items: &[Diagnostic]) -> Result<()> {
         Err(errors.join("\n"))
     }
 }
+/// Patch lists for one enclosing loop: jumps emitted by `break` and
+/// `continue` inside its body, resolved when the loop is fully lowered.
+#[derive(Clone, Default)]
+struct LoopTargets {
+    breaks: Vec<usize>,
+    continues: Vec<usize>,
+}
+#[derive(Clone)]
 struct Context {
     function: Function,
     names: BTreeMap<String, usize>,
-    loop_depth: usize,
+    /// Names whose reads must check for the `Uninitialized` sentinel at
+    /// runtime: imports across a cycle-closing edge, mapped to the error
+    /// naming the export and both files (deka#1206).
+    checked: BTreeMap<String, String>,
+    loops: Vec<LoopTargets>,
 }
 impl Context {
     fn new(name: &str, asynchronous: bool) -> Self {
@@ -279,14 +1007,27 @@ impl Context {
                 code: vec![],
             },
             names: BTreeMap::new(),
-            loop_depth: 0,
+            checked: BTreeMap::new(),
+            loops: vec![],
         }
     }
     fn bind(&mut self, name: &str) -> usize {
         let i = self.function.locals;
         self.function.locals += 1;
         self.names.insert(name.into(), i);
+        // A fresh binding shadows any cycle-checked import of the same name.
+        self.checked.remove(name);
         i
+    }
+    fn emit_load(&mut self, name: &str) -> Result<()> {
+        let slot = self.slot(name)?;
+        if let Some(message) = self.checked.get(name) {
+            let message = message.clone();
+            self.emit(Op::LoadChecked { slot, message });
+        } else {
+            self.emit(Op::Load(slot));
+        }
+        Ok(())
     }
     fn slot(&self, name: &str) -> Result<usize> {
         self.names.get(name).copied().ok_or_else(|| {
@@ -300,60 +1041,191 @@ impl Context {
     }
     fn patch(&mut self, at: usize) {
         let end = self.function.code.len();
+        self.patch_to(at, end);
+    }
+    fn patch_to(&mut self, at: usize, target: usize) {
         match &mut self.function.code[at] {
-            Op::Jump(i) | Op::JumpIfFalse(i) => *i = end,
+            Op::Jump(i) | Op::JumpIfFalse(i) | Op::JumpIfUnit(i) => *i = target,
             _ => unreachable!(),
         }
     }
+    /// Resolve a loop's `continue` jumps to its step and its `break` jumps to
+    /// just after it, then pop it off the loop stack.
+    fn finish_loop(&mut self, continue_target: usize) {
+        let targets = self.loops.pop().unwrap();
+        for at in &targets.continues {
+            self.patch_to(*at, continue_target);
+        }
+        let end = self.function.code.len();
+        for at in &targets.breaks {
+            self.patch_to(*at, end);
+        }
+    }
 }
-struct Lower {
+/// What a lowered closure runs: a statement body (falling off the end
+/// returns unit) or a single returned expression.
+enum ClosureBody<'s, 'a> {
+    Block(&'s [Stmt<'a>]),
+    Value(&'s Expr<'a>),
+}
+/// A struct declaration's fields in declaration order: name, default
+/// expression, and whether the field is optional.
+type StructFields<'a> = Vec<(String, Option<&'a Expr<'a>>, bool)>;
+struct Lower<'a> {
     functions: Vec<Function>,
     hosts: BTreeMap<String, String>,
+    /// Top-level names declared anywhere in the current module. A call to one
+    /// of these before its declaration is a forward reference; a call to any
+    /// other unbound name is an unknown built-in.
+    declared: std::collections::BTreeSet<String>,
+    /// Newtype names declared in the current module. A call to one is a
+    /// constructor; at run time the newtype is its payload, so the call is
+    /// the identity.
+    newtypes: std::collections::BTreeSet<String>,
+    /// Struct declarations in the current module. A struct value is a record;
+    /// the declaration only matters when a literal omits fields.
+    structs: BTreeMap<String, StructFields<'a>>,
+    /// Receiver-method call sites in the current module, keyed by expression
+    /// address: the free function the call rewrites to and the embed path to
+    /// the declaring receiver. Recorded by the typechecker.
+    method_calls: HashMap<usize, (String, Vec<String>)>,
+    /// Enum declarations in the current module: case names in declaration
+    /// order with which carry a payload. A variant is a record
+    /// `{name, index[, value]}`; payload-free cases are interned one record
+    /// per declaration, hoisted with the receiver methods.
+    enums: BTreeMap<String, Vec<(String, bool)>>,
+    /// Methods declared in the current module per receiver type: method key
+    /// and mangled free-function name. Struct literals attach them to the
+    /// record under `$<key>` so an interface-typed call finds them at run
+    /// time.
+    method_decls: BTreeMap<String, Vec<(String, String)>>,
+    /// Embedded struct names per struct declaration, for promoted-method
+    /// attachment.
+    struct_embeds: BTreeMap<String, Vec<String>>,
 }
-impl Lower {
-    fn scoped(&mut self, body: &[Stmt<'_>], c: &mut Context) -> Result<()> {
+impl<'a> Lower<'a> {
+    /// Every method visible on a value of `type_name`: its own plus those
+    /// promoted through embedded structs, as (method key, mangled name).
+    fn methods_for(&self, type_name: &str, seen: &mut Vec<String>) -> Vec<(String, String)> {
+        if seen.iter().any(|s| s == type_name) {
+            return vec![];
+        }
+        seen.push(type_name.into());
+        let mut out = self
+            .method_decls
+            .get(type_name)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(embeds) = self.struct_embeds.get(type_name).cloned() {
+            for embed in embeds {
+                out.extend(self.methods_for(&embed, seen));
+            }
+        }
+        out
+    }
+    /// Attach a struct value's methods to the record on the stack under
+    /// `$<key>`, so an interface-typed `MethodCall` finds them at run time.
+    fn attach_methods(&self, type_name: &str, c: &mut Context) -> Result<()> {
+        for (key, mangled) in self.methods_for(type_name, &mut vec![]) {
+            c.emit_load(&mangled)?;
+            c.emit(Op::Record(vec![format!("${key}")]));
+            c.emit(Op::RecordExtend);
+        }
+        Ok(())
+    }
+    fn scoped(&mut self, body: &[Stmt<'a>], c: &mut Context) -> Result<()> {
         let outer = c.names.clone();
+        let outer_checked = c.checked.clone();
         for s in body {
             self.statement(s, c)?;
         }
         c.names = outer;
+        c.checked = outer_checked;
         Ok(())
     }
     fn function(
         &mut self,
         name: &str,
-        params: &[Param<'_>],
-        body: &[Stmt<'_>],
+        params: &[Param<'a>],
+        body: &[Stmt<'a>],
         asynchronous: bool,
         outer: &mut Context,
     ) -> Result<()> {
-        if outer.loop_depth > 0 {
-            return Err("closures inside loops are not supported by this VM slice".into());
-        }
+        self.closure(name, params, ClosureBody::Block(body), asynchronous, outer)
+    }
+    /// A synchronous zero-parameter closure returning `value`: markup
+    /// bindings, component prop getters and dynamic UI attributes. The
+    /// expression is lowered in place, never copied, because the typechecker
+    /// keys receiver-method call sites by expression address.
+    fn thunk(&mut self, name: &str, value: &Expr<'a>, outer: &mut Context) -> Result<()> {
+        self.closure(name, &[], ClosureBody::Value(value), false, outer)
+    }
+    fn closure(
+        &mut self,
+        name: &str,
+        params: &[Param<'a>],
+        body: ClosureBody<'_, 'a>,
+        asynchronous: bool,
+        outer: &mut Context,
+    ) -> Result<()> {
         let mut c = Context::new(name, asynchronous);
         let mut captures = vec![];
         for (name, slot) in &outer.names {
             c.bind(name);
             captures.push(*slot);
         }
+        // Reads of cycle-checked imports stay checked inside closures, so a
+        // function called while the cycle is still initializing errors by
+        // name instead of reading the sentinel.
+        c.checked = outer.checked.clone();
         c.function.captures = captures.len();
         c.function.parameters = params.len();
+        let mut tuple_params = vec![];
+        let mut defaults = vec![];
         for p in params {
-            if p.default_value.is_some() {
-                return Err("default parameters are unsupported".into());
+            let slot = match &p.binding {
+                ParamBinding::Identifier(name) => c.bind(name),
+                ParamBinding::Tuple(names) => {
+                    let slot = c.bind(&format!("<tuple param {}>", c.function.locals));
+                    tuple_params.push((slot, *names));
+                    slot
+                }
+            };
+            if let Some(default) = &p.default_value {
+                defaults.push((slot, default));
             }
-            c.bind(
-                p.binding
-                    .identifier()
-                    .ok_or("tuple parameters are unsupported")?,
-            );
+        }
+        // Defaults run first: an omitted argument arrives as unit and the
+        // prologue fills it before any destructuring reads the slot.
+        for (slot, default) in defaults {
+            c.emit(Op::Load(slot));
+            let fill = c.emit(Op::JumpIfUnit(0));
+            let done = c.emit(Op::Jump(0));
+            c.patch(fill);
+            self.expr(default, &mut c)?;
+            c.emit(Op::Store(slot));
+            c.patch(done);
+        }
+        for (slot, names) in tuple_params {
+            for (i, name) in names.iter().enumerate() {
+                c.emit(Op::Load(slot));
+                c.emit(Op::Const(Literal::Number(i as f64)));
+                c.emit(Op::Index);
+                let local = c.bind(name);
+                c.emit(Op::Store(local));
+            }
         }
         let index = self.functions.len();
         self.functions.push(c.function.clone());
-        for s in body {
-            self.statement(s, &mut c)?;
+        match body {
+            ClosureBody::Block(body) => {
+                for s in body {
+                    self.statement(s, &mut c)?;
+                }
+                c.emit(Op::Const(Literal::Unit));
+            }
+            ClosureBody::Value(value) => self.expr(value, &mut c)?,
         }
-        c.emit(Op::Const(Literal::Unit));
         c.emit(Op::Return);
         self.functions[index] = c.function;
         outer.emit(Op::Closure {
@@ -365,26 +1237,71 @@ impl Lower {
     fn named_function(
         &mut self,
         name: &str,
-        params: &[Param<'_>],
-        types: &[TypeParam<'_>],
-        body: &[Stmt<'_>],
+        params: &[Param<'a>],
+        _types: &[TypeParam<'a>],
+        body: &[Stmt<'a>],
         asynchronous: bool,
         c: &mut Context,
     ) -> Result<()> {
-        if !types.is_empty() {
-            return Err("generic functions unsupported in VM experiment".into());
-        }
+        // Type parameters erase: one copy of the code serves every
+        // instantiation.
         let slot = c.bind(name);
         self.function(name, params, body, asynchronous, c)?;
         c.emit(Op::Store(slot));
         Ok(())
     }
-    fn statement(&mut self, s: &Stmt<'_>, c: &mut Context) -> Result<()> {
+    /// APS 30 pipe: `a |> f` calls `f(a)`, `a |> f(b)` calls `f(a, b)`, and a
+    /// `_` in the argument list marks the slot the left side fills.
+    fn pipe(&mut self, left: &Expr<'a>, right: &Expr<'a>, c: &mut Context) -> Result<()> {
+        let value = c.bind(&format!("<pipe value {}>", c.function.locals));
+        self.expr(left, c)?;
+        c.emit(Op::Store(value));
+        if let Expr::Call { callee, args, .. } = right {
+            // Explicit type arguments erase.
+            let has_hole = args
+                .iter()
+                .any(|a| matches!(a, Expr::Identifier { name: "_", .. }));
+            self.expr(callee, c)?;
+            let mut argc = args.len();
+            if !has_hole {
+                c.emit(Op::Load(value));
+                argc += 1;
+            }
+            for arg in *args {
+                if matches!(arg, Expr::Identifier { name: "_", .. }) {
+                    c.emit(Op::Load(value));
+                } else {
+                    self.expr(arg, c)?;
+                }
+            }
+            c.emit(Op::Call(argc));
+        } else {
+            self.expr(right, c)?;
+            c.emit(Op::Load(value));
+            c.emit(Op::Call(1));
+        }
+        Ok(())
+    }
+    fn statement(&mut self, s: &Stmt<'a>, c: &mut Context) -> Result<()> {
         match s {
-            Stmt::Import { .. }
-            | Stmt::Empty { .. }
+            Stmt::Import { .. } | Stmt::Empty { .. } => {}
+            // Types are erased at run time: an alias is the same value, a
+            // newtype is the same value the typechecker keeps apart, and an
+            // opaque name has no construction surface. A struct declaration is
+            // a record shape; literals consult it for defaults (see the
+            // pre-scan in lower_module), the declaration itself emits
+            // nothing.
+            Stmt::TypeAlias { .. }
+            | Stmt::Newtype { .. }
+            | Stmt::Opaque { .. }
             | Stmt::Interface { .. }
-            | Stmt::TypeAlias { .. } => {}
+            | Stmt::Struct { .. } => {}
+            // Export groups lower no code; the export-collection pass either
+            // erases them (type-only names) or rejects them (deka#1210).
+            Stmt::Export {
+                decl: ExportDecl::NamedGroup { .. },
+                ..
+            } => {}
             Stmt::Const { name, value, .. }
             | Stmt::Let { name, value, .. }
             | Stmt::Export {
@@ -393,6 +1310,12 @@ impl Lower {
             } => {
                 self.expr(value, c)?;
                 let slot = c.bind(name);
+                // A declaration inside a loop runs once per iteration; give it
+                // a fresh cell each time so a closure created this turn keeps
+                // this turn's value instead of aliasing the next turn's.
+                if !c.loops.is_empty() {
+                    c.emit(Op::Rebind(slot));
+                }
                 c.emit(Op::Store(slot));
             }
             Stmt::Function {
@@ -450,7 +1373,6 @@ impl Lower {
                 ..
             } => {
                 let outer = c.names.clone();
-                c.loop_depth += 1;
                 if let Some(init) = init {
                     match init {
                         ForInit::Const { name, value } | ForInit::Let { name, value } => {
@@ -471,15 +1393,128 @@ impl Lower {
                     c.emit(Op::Const(Literal::Bool(true)));
                 }
                 let end = c.emit(Op::JumpIfFalse(0));
+                c.loops.push(LoopTargets::default());
                 self.scoped(body, c)?;
+                let step_start = c.function.code.len();
                 if let Some(step) = step {
                     self.expr(step, c)?;
                     c.emit(Op::Pop);
                 }
                 c.emit(Op::Jump(start));
                 c.patch(end);
+                c.finish_loop(step_start);
                 c.names = outer;
-                c.loop_depth -= 1;
+            }
+            Stmt::ForOf {
+                name,
+                iterable,
+                body,
+                ..
+            } => {
+                let outer = c.names.clone();
+                let list = c.bind(&format!("<for-of list {}>", c.function.locals));
+                let index = c.bind(&format!("<for-of index {}>", c.function.locals));
+                self.expr(iterable, c)?;
+                c.emit(Op::Store(list));
+                c.emit(Op::Const(Literal::Number(0.)));
+                c.emit(Op::Store(index));
+                let start = c.function.code.len();
+                c.emit(Op::Load(index));
+                c.emit(Op::Load(list));
+                c.emit(Op::Field("length".into()));
+                c.emit(Op::Less);
+                let end = c.emit(Op::JumpIfFalse(0));
+                c.loops.push(LoopTargets::default());
+                let item = c.bind(name);
+                c.emit(Op::Rebind(item));
+                c.emit(Op::Load(list));
+                c.emit(Op::Load(index));
+                c.emit(Op::Index);
+                c.emit(Op::Store(item));
+                self.scoped(body, c)?;
+                let step_start = c.function.code.len();
+                c.emit(Op::Load(index));
+                c.emit(Op::Const(Literal::Number(1.)));
+                c.emit(Op::Add);
+                c.emit(Op::Store(index));
+                c.emit(Op::Jump(start));
+                c.patch(end);
+                c.finish_loop(step_start);
+                c.names = outer;
+            }
+            Stmt::TupleBinding { names, value, .. } => {
+                let temp = c.bind(&format!("<destructure {}>", c.function.locals));
+                self.expr(value, c)?;
+                c.emit(Op::Store(temp));
+                for (i, name) in names.iter().enumerate() {
+                    c.emit(Op::Load(temp));
+                    c.emit(Op::Const(Literal::Number(i as f64)));
+                    c.emit(Op::Index);
+                    let slot = c.bind(name);
+                    if !c.loops.is_empty() {
+                        c.emit(Op::Rebind(slot));
+                    }
+                    c.emit(Op::Store(slot));
+                }
+            }
+            Stmt::Break { .. } => {
+                if c.loops.is_empty() {
+                    return Err("break outside a loop".into());
+                }
+                let jump = c.emit(Op::Jump(0));
+                c.loops.last_mut().unwrap().breaks.push(jump);
+            }
+            Stmt::Continue { .. } => {
+                if c.loops.is_empty() {
+                    return Err("continue outside a loop".into());
+                }
+                let jump = c.emit(Op::Jump(0));
+                c.loops.last_mut().unwrap().continues.push(jump);
+            }
+            // A receiver method is a plain function whose first parameter is
+            // the receiver; calls rewrite to it statically (see the
+            // method_calls table filled in lower_module). The receiver is a
+            // handle, so a `mut` method's field writes already land on the
+            // shared value.
+            Stmt::ReceiverMethod {
+                receiver_type,
+                receiver_name,
+                name,
+                type_params,
+                params,
+                body,
+                is_async,
+                span,
+                ..
+            } => {
+                let mangled = deka_syntax::mangle_method_name(name, receiver_type);
+                let mut all = Vec::with_capacity(params.len() + 1);
+                all.push(Param {
+                    binding: ParamBinding::Identifier(receiver_name),
+                    ty: None,
+                    default_value: None,
+                    span: *span,
+                });
+                all.extend(params.iter().cloned());
+                self.named_function(&mangled, &all, type_params, body, *is_async, c)?;
+            }
+            // An enum declaration interns each payload-free case as one
+            // record `{name, index}` bound to `Enum$Case`; payload cases
+            // build their record at each construction site.
+            Stmt::Enum { name, cases, .. } => {
+                for (index, case) in cases.iter().enumerate() {
+                    if case.payload.is_some() {
+                        continue;
+                    }
+                    c.emit(Op::Const(Literal::String(case.name.into())));
+                    c.emit(Op::Const(Literal::Number(index as f64)));
+                    c.emit(Op::Record(vec!["name".into(), "index".into()]));
+                    let slot = c.bind(&format!("{}${}", name, case.name));
+                    if !c.loops.is_empty() {
+                        c.emit(Op::Rebind(slot));
+                    }
+                    c.emit(Op::Store(slot));
+                }
             }
             _ => {
                 return Err(format!(
@@ -491,7 +1526,7 @@ impl Lower {
         }
         Ok(())
     }
-    fn jsx_children(&mut self, values: &[Expr<'_>], c: &mut Context) -> Result<usize> {
+    fn jsx_children(&mut self, values: &[Expr<'a>], c: &mut Context) -> Result<usize> {
         let mut children = 0;
         for child in values {
             match child {
@@ -513,19 +1548,13 @@ impl Lower {
                     c.emit(Op::Const(Literal::String(text)));
                 }
                 Expr::JsxElement { .. } => self.expr(child, c)?,
-                _ => {
-                    let body = [Stmt::Return {
-                        value: Some(child.clone()),
-                        span: child.span(),
-                    }];
-                    self.function("<ui binding>", &[], &body, false, c)?;
-                }
+                _ => self.thunk("<ui binding>", child, c)?,
             }
             children += 1;
         }
         Ok(children)
     }
-    fn expr(&mut self, e: &Expr<'_>, c: &mut Context) -> Result<()> {
+    fn expr(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
         match e {
             Expr::JsxElement { element, .. } => {
                 if element.tag == "slot" {
@@ -538,18 +1567,23 @@ impl Lower {
                     return Ok(());
                 }
                 if element.tag.chars().next().is_some_and(char::is_uppercase) {
-                    c.emit(Op::Load(c.slot(element.tag)?));
+                    // A component imported across an import cycle reads
+                    // through the same checked load as any other binding.
+                    c.emit_load(element.tag)?;
                     let mut names = vec![];
                     for attr in element.attributes {
-                        let value = attr.value.clone().unwrap_or(Expr::Boolean {
-                            value: true,
-                            span: attr.span,
-                        });
-                        let body = [Stmt::Return {
-                            value: Some(value.clone()),
-                            span: value.span(),
-                        }];
-                        self.function("<component prop>", &[], &body, false, c)?;
+                        match &attr.value {
+                            Some(value) => self.thunk("<component prop>", value, c)?,
+                            // A bare attribute means `true`.
+                            None => self.thunk(
+                                "<component prop>",
+                                &Expr::Boolean {
+                                    value: true,
+                                    span: attr.span,
+                                },
+                                c,
+                            )?,
+                        }
                         names.push(attr.name.into());
                     }
                     if !element.children.is_empty() {
@@ -597,11 +1631,7 @@ impl Lower {
                     if matches!(attr.name, "className" | "value" | "placeholder")
                         && !matches!(value, Expr::String { .. })
                     {
-                        let body = [Stmt::Return {
-                            value: Some(value.clone()),
-                            span: value.span(),
-                        }];
-                        self.function("<ui attribute>", &[], &body, false, c)?;
+                        self.thunk("<ui attribute>", value, c)?;
                     } else {
                         self.expr(value, c)?;
                     }
@@ -639,7 +1669,7 @@ impl Lower {
                 c.patch(end);
             }
             Expr::Identifier { name, .. } => {
-                c.emit(Op::Load(c.slot(name)?));
+                c.emit_load(name)?;
             }
             Expr::Paren { expr, .. } => self.expr(expr, c)?,
             Expr::Binary {
@@ -647,33 +1677,80 @@ impl Lower {
             } => {
                 if matches!(
                     op,
-                    BinOp::Assign | BinOp::AddAssign | BinOp::SubAssign | BinOp::MulAssign
+                    BinOp::Assign
+                        | BinOp::AddAssign
+                        | BinOp::SubAssign
+                        | BinOp::MulAssign
+                        | BinOp::DivAssign
+                        | BinOp::ModAssign
                 ) {
-                    let Expr::Identifier { name, .. } = left else {
-                        return Err(
-                            "only binding assignment is supported; collections are immutable"
-                                .into(),
-                        );
-                    };
-                    let slot = c.slot(name)?;
-                    if *op != BinOp::Assign {
-                        c.emit(Op::Load(slot));
+                    match left {
+                        Expr::Identifier { name, .. } => {
+                            let slot = c.slot(name)?;
+                            if *op != BinOp::Assign {
+                                c.emit_load(name)?;
+                            }
+                            self.expr(right, c)?;
+                            match op {
+                                BinOp::AddAssign => {
+                                    c.emit(Op::Add);
+                                }
+                                BinOp::SubAssign => {
+                                    c.emit(Op::Sub);
+                                }
+                                BinOp::MulAssign => {
+                                    c.emit(Op::Mul);
+                                }
+                                BinOp::DivAssign => {
+                                    c.emit(Op::Div);
+                                }
+                                BinOp::ModAssign => {
+                                    c.emit(Op::Mod);
+                                }
+                                _ => {}
+                            }
+                            c.emit(Op::Dup);
+                            c.emit(Op::Store(slot));
+                        }
+                        // Field and element assignment mutate the heap value,
+                        // so every alias observes the change. Const-ness is
+                        // the typechecker's guard; compound assignment stays
+                        // binding-only.
+                        Expr::FieldAccess { object, field, .. } if *op == BinOp::Assign => {
+                            self.expr(object, c)?;
+                            self.expr(right, c)?;
+                            c.emit(Op::FieldSet((*field).into()));
+                        }
+                        Expr::IndexAccess { object, index, .. } if *op == BinOp::Assign => {
+                            self.expr(object, c)?;
+                            self.expr(index, c)?;
+                            self.expr(right, c)?;
+                            c.emit(Op::IndexSet);
+                        }
+                        _ => {
+                            return Err(
+                                "only binding, field and element assignment are supported".into()
+                            );
+                        }
                     }
+                } else if *op == BinOp::And {
+                    self.expr(left, c)?;
+                    let short = c.emit(Op::JumpIfFalse(0));
                     self.expr(right, c)?;
-                    match op {
-                        BinOp::AddAssign => {
-                            c.emit(Op::Add);
-                        }
-                        BinOp::SubAssign => {
-                            c.emit(Op::Sub);
-                        }
-                        BinOp::MulAssign => {
-                            c.emit(Op::Mul);
-                        }
-                        _ => {}
-                    }
-                    c.emit(Op::Dup);
-                    c.emit(Op::Store(slot));
+                    let end = c.emit(Op::Jump(0));
+                    c.patch(short);
+                    c.emit(Op::Const(Literal::Bool(false)));
+                    c.patch(end);
+                } else if *op == BinOp::Or {
+                    self.expr(left, c)?;
+                    let try_right = c.emit(Op::JumpIfFalse(0));
+                    c.emit(Op::Const(Literal::Bool(true)));
+                    let end = c.emit(Op::Jump(0));
+                    c.patch(try_right);
+                    self.expr(right, c)?;
+                    c.patch(end);
+                } else if *op == BinOp::Pipe {
+                    self.pipe(left, right, c)?;
                 } else {
                     self.expr(left, c)?;
                     self.expr(right, c)?;
@@ -682,20 +1759,43 @@ impl Lower {
                         BinOp::Sub => Op::Sub,
                         BinOp::Mul => Op::Mul,
                         BinOp::Div => Op::Div,
+                        BinOp::Mod => Op::Mod,
                         BinOp::Lt => Op::Less,
+                        BinOp::Le => Op::LessEq,
+                        BinOp::Gt => Op::Greater,
+                        BinOp::Ge => Op::GreaterEq,
                         BinOp::Eq => Op::Equal,
+                        BinOp::Ne => Op::NotEqual,
+                        BinOp::BitAnd => Op::BitAnd,
+                        BinOp::BitOr => Op::BitOr,
+                        BinOp::BitXor => Op::BitXor,
+                        BinOp::Shl => Op::Shl,
+                        BinOp::Shr => Op::Shr,
                         _ => return Err(format!("operator {op:?} unsupported")),
                     });
                 }
             }
-            Expr::Call {
-                callee,
-                args,
-                type_args,
-                ..
-            } => {
-                if !type_args.is_empty() {
-                    return Err("explicit type arguments unsupported".into());
+            Expr::Call { callee, args, .. } => {
+                // Explicit type arguments erase; the typechecker has already
+                // verified them.
+                // A recorded receiver-method call rewrites to its free
+                // function: `r.move()` is `move$Mover(r.Mover)` — the embed
+                // path walks from the receiver value to the record the
+                // method was declared on.
+                if let Expr::FieldAccess { object, .. } = callee
+                    && let Some((mangled, embed_path)) =
+                        self.method_calls.get(&(e as *const Expr as usize)).cloned()
+                {
+                    c.emit_load(&mangled)?;
+                    self.expr(object, c)?;
+                    for step in &embed_path {
+                        c.emit(Op::FieldOrSelf(step.clone()));
+                    }
+                    for arg in *args {
+                        self.expr(arg, c)?;
+                    }
+                    c.emit(Op::Call(1 + args.len()));
+                    return Ok(());
                 }
                 if let Expr::FieldAccess {
                     object,
@@ -709,6 +1809,33 @@ impl Lower {
                     self.expr(object, c)?;
                     self.expr(index, c)?;
                     c.emit(Op::ListHas);
+                    return Ok(());
+                }
+                // Mutating list built-ins lower to one in-place op each; the
+                // typechecker has already confined them to `let` lists.
+                if let Expr::FieldAccess { object, field, .. } = callee
+                    && let Some(kind) = match *field {
+                        "push" => Some((ListMut::Push, 1)),
+                        "pop" => Some((ListMut::Pop, 0)),
+                        "shift" => Some((ListMut::Shift, 0)),
+                        "unshift" => Some((ListMut::Unshift, 1)),
+                        "splice" => Some((ListMut::Splice, 2)),
+                        "sort" => Some((ListMut::Sort, 0)),
+                        "reverse" => Some((ListMut::Reverse, 0)),
+                        "fill" => Some((ListMut::Fill, 2)),
+                        "copyWithin" => Some((ListMut::CopyWithin, 2)),
+                        _ => None,
+                    }
+                {
+                    let (kind, arity) = kind;
+                    if args.len() != arity {
+                        return Err(format!("{field} takes {arity} argument(s)"));
+                    }
+                    self.expr(object, c)?;
+                    for arg in *args {
+                        self.expr(arg, c)?;
+                    }
+                    c.emit(Op::ListMut(kind));
                     return Ok(());
                 }
                 if let Expr::FieldAccess {
@@ -770,15 +1897,54 @@ impl Lower {
                     c.emit(Op::Load(result));
                     return Ok(());
                 }
-                let host = if let Expr::Identifier { name, .. } = callee {
-                    if !c.names.contains_key(*name) {
-                        self.hosts.get(*name).cloned()
-                    } else {
-                        None
-                    }
+                let unbound = if let Expr::Identifier { name, .. } = callee {
+                    (!c.names.contains_key(*name)).then_some(*name)
                 } else {
                     None
                 };
+                if let Some(name) = unbound {
+                    if self.newtypes.contains(name) {
+                        let [arg] = *args else {
+                            return Err(format!("{name} takes exactly one argument"));
+                        };
+                        self.expr(arg, c)?;
+                        return Ok(());
+                    }
+                    if self.structs.contains_key(name) {
+                        // The struct name called as a constructor takes the
+                        // record whole: `Person({name: "Ada"})`.
+                        let [arg] = *args else {
+                            return Err(format!("{name} takes exactly one record argument"));
+                        };
+                        self.expr(arg, c)?;
+                        self.attach_methods(name, c)?;
+                        return Ok(());
+                    }
+                    if name == "unboxNumber" {
+                        let [arg] = *args else {
+                            return Err("unboxNumber takes exactly one argument".into());
+                        };
+                        // The newtype is its payload at run time, so the
+                        // unbox is the identity.
+                        self.expr(arg, c)?;
+                        return Ok(());
+                    }
+                    let conversion = match name {
+                        "string" => Some(Op::ToString),
+                        "toNumber" => Some(Op::ToNumber),
+                        "panic" => Some(Op::Panic),
+                        _ => None,
+                    };
+                    if let Some(op) = conversion {
+                        let [arg] = *args else {
+                            return Err(format!("{name} takes exactly one argument"));
+                        };
+                        self.expr(arg, c)?;
+                        c.emit(op);
+                        return Ok(());
+                    }
+                }
+                let host = unbound.and_then(|name| self.hosts.get(name).cloned());
                 if let Some(operation) = host {
                     for arg in *args {
                         self.expr(arg, c)?;
@@ -788,6 +1954,29 @@ impl Lower {
                         arguments: args.len(),
                     });
                 } else {
+                    if let Some(name) = unbound {
+                        if self.declared.contains(name) {
+                            return Err(format!(
+                                "binding {name} is unavailable here; forward references are unsupported"
+                            ));
+                        }
+                        return Err(format!("unknown built-in {name}"));
+                    }
+                    // A member call the typechecker did not resolve
+                    // statically dispatches at run time: an interface-typed
+                    // receiver finds its attached `$method`, a record field
+                    // holding a function is called plainly.
+                    if let Expr::FieldAccess { object, field, .. } = callee {
+                        self.expr(object, c)?;
+                        for arg in *args {
+                            self.expr(arg, c)?;
+                        }
+                        c.emit(Op::MethodCall {
+                            name: (*field).into(),
+                            argc: args.len(),
+                        });
+                        return Ok(());
+                    }
                     self.expr(callee, c)?;
                     for arg in *args {
                         self.expr(arg, c)?;
@@ -806,27 +1995,183 @@ impl Lower {
                 c.emit(Op::Await);
             }
             Expr::Array { elements, .. } => {
-                for e in *elements {
-                    self.expr(e, c)?;
+                if elements.iter().any(|e| matches!(e, Expr::Spread { .. })) {
+                    c.emit(Op::List(0));
+                    for e in *elements {
+                        match e {
+                            Expr::Spread { expr, .. } => {
+                                self.expr(expr, c)?;
+                                c.emit(Op::ListExtend);
+                            }
+                            _ => {
+                                self.expr(e, c)?;
+                                c.emit(Op::ListAppend);
+                            }
+                        }
+                    }
+                } else {
+                    for e in *elements {
+                        self.expr(e, c)?;
+                    }
+                    c.emit(Op::List(elements.len()));
                 }
-                c.emit(Op::List(elements.len()));
             }
             Expr::Object { fields, .. } => {
+                if fields.iter().any(|f| f.key.is_empty()) {
+                    c.emit(Op::Record(vec![]));
+                    for f in *fields {
+                        self.expr(&f.value, c)?;
+                        if f.key.is_empty() {
+                            c.emit(Op::RecordExtend);
+                        } else {
+                            c.emit(Op::Record(vec![f.key.to_string()]));
+                            c.emit(Op::RecordExtend);
+                        }
+                    }
+                } else {
+                    let mut names = vec![];
+                    for f in *fields {
+                        self.expr(&f.value, c)?;
+                        names.push(f.key.to_string());
+                    }
+                    c.emit(Op::Record(names));
+                }
+            }
+            Expr::StructLiteral { name, fields, .. } => {
+                // A struct value is a record. Fields the literal gives come in
+                // written order; declared fields it omits are filled from
+                // their defaults (optional fields stay absent).
+                let declared = self.structs.get(*name).cloned().unwrap_or_default();
                 let mut names = vec![];
                 for f in *fields {
                     self.expr(&f.value, c)?;
-                    names.push(f.key.to_string());
+                    names.push(f.name.to_string());
+                }
+                for (field, default, optional) in declared {
+                    if optional || names.contains(&field) {
+                        continue;
+                    }
+                    if let Some(default) = default {
+                        self.expr(default, c)?;
+                        names.push(field);
+                    }
                 }
                 c.emit(Op::Record(names));
+                self.attach_methods(name, c)?;
             }
             Expr::FieldAccess { object, field, .. } => {
+                // Enum namespace access: `Color.Red` where `Color` names an
+                // enum loads the interned case record.
+                if let Expr::Identifier { name, .. } = object
+                    && !c.names.contains_key(*name)
+                    && let Some(cases) = self.enums.get(*name)
+                {
+                    let mangled = format!("{}${}", name, field);
+                    let Some((_, has_payload)) = cases.iter().find(|(case, _)| case == field)
+                    else {
+                        return Err(format!("case `{field}` not found in enum `{name}`"));
+                    };
+                    if *has_payload {
+                        return Err(format!(
+                            "case `{field}` of enum `{name}` carries a payload; construct it with `{name}.{field}(value)`"
+                        ));
+                    }
+                    c.emit_load(&mangled)?;
+                    return Ok(());
+                }
                 self.expr(object, c)?;
                 c.emit(Op::Field((*field).into()));
+            }
+            Expr::EnumConstructor {
+                enum_name,
+                case_name,
+                payload,
+                span,
+                ..
+            } => {
+                let Some(cases) = self.enums.get(*enum_name).cloned() else {
+                    return Err(format!(
+                        "{}:{}: enum `{enum_name}` is not declared in this module (Option and Result land with note 05)",
+                        span.start.line, span.start.column
+                    ));
+                };
+                let Some((index, has_payload)) = cases
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (case, _))| case == case_name)
+                    .map(|(i, (_, p))| (i, *p))
+                else {
+                    return Err(format!(
+                        "case `{case_name}` not found in enum `{enum_name}`"
+                    ));
+                };
+                match (payload, has_payload) {
+                    (None, false) => {
+                        c.emit_load(&format!("{}${}", enum_name, case_name))?;
+                    }
+                    (Some(value), true) => {
+                        c.emit(Op::Const(Literal::String((*case_name).into())));
+                        c.emit(Op::Const(Literal::Number(index as f64)));
+                        self.expr(value, c)?;
+                        c.emit(Op::Record(vec![
+                            "name".into(),
+                            "index".into(),
+                            "value".into(),
+                        ]));
+                    }
+                    (None, true) => {
+                        return Err(format!(
+                            "case `{case_name}` of enum `{enum_name}` needs its payload"
+                        ));
+                    }
+                    (Some(_), false) => {
+                        return Err(format!(
+                            "case `{case_name}` of enum `{enum_name}` carries no payload"
+                        ));
+                    }
+                }
             }
             Expr::IndexAccess { object, index, .. } => {
                 self.expr(object, c)?;
                 self.expr(index, c)?;
                 c.emit(Op::Index);
+            }
+            Expr::Unary { op, operand, .. } => {
+                self.expr(operand, c)?;
+                match op {
+                    UnOp::Neg => {
+                        c.emit(Op::Neg);
+                    }
+                    UnOp::Not => {
+                        c.emit(Op::Not);
+                    }
+                    UnOp::Plus => {}
+                }
+            }
+            Expr::TemplateLiteral { parts, .. } => {
+                // Each ${…} part becomes text the way string() does it.
+                let mut count = 0;
+                for part in *parts {
+                    match part {
+                        TemplatePart::Text(text) => {
+                            // The lexer keeps `\${` verbatim (the old JS
+                            // emitter leaned on JavaScript's escape); the VM
+                            // consumes the text, so it unescapes here.
+                            c.emit(Op::Const(Literal::String(text.replace("\\${", "${"))));
+                        }
+                        TemplatePart::Expr(expr) => {
+                            self.expr(expr, c)?;
+                            c.emit(Op::ToString);
+                        }
+                    }
+                    if count > 0 {
+                        c.emit(Op::Add);
+                    }
+                    count += 1;
+                }
+                if count == 0 {
+                    c.emit(Op::Const(Literal::String("".into())));
+                }
             }
             _ => {
                 return Err(format!(

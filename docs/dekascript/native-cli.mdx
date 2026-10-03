@@ -52,9 +52,18 @@ to invoke a named function use `--entry main` or set `entryFunction` alongside
 
 Relative imports use explicit `.ds` or `.dsx` paths. Exported constants and
 functions are initialized once, in dependency order, with private bindings
-isolated by module. Cyclic imports and unsupported external packages produce
-compilation errors. The native source backend currently implements a restricted
-language subset; the CLI does not promise the legacy JS/Node/React ecosystem.
+isolated by module. Import cycles load with JavaScript module semantics: a
+module already being loaded is not loaded again, calls across the cycle work
+once both files have loaded, and reading an export that is not set yet at load
+time fails with an error naming the export and both files. A file importing
+itself is a compilation error. Bare specifiers resolve packages from
+`ds_modules/`: `name` to `ds_modules/name/`, `@scope/name` to
+`ds_modules/@scope/name/`, rooted at the nearest ancestor with a `deka.json`.
+The project's `dependencies` must declare the package and `deka.lock` pins its
+exact version; an undeclared, uninstalled, entry-less or version-mismatched
+package is a named compilation error. Packages are DekaScript only. The
+native source backend currently implements a restricted language subset; the
+CLI does not promise the legacy JS/Node/React ecosystem.
 
 ## Application tests
 
@@ -78,3 +87,11 @@ added without introducing a second language runtime.
 unsupported source forms fail before you build an application. Use `--exercise N`
 on desktop `run` or a compiled executable to invoke its first click handler N
 times without opening a window in CI.
+
+## Command line
+
+Every command goes through one registry: `deka --help` lists the surface,
+`deka <command> --help` shows a command's own flags, and exit codes are
+decided in one place — `0` on success, `1` on a runtime failure, and `2` on a
+usage error (an unknown command or flag, or a missing flag value, with a
+did-you-mean suggestion when one is close).

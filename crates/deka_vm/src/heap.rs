@@ -11,6 +11,7 @@ pub(crate) struct Handle {
 #[derive(Clone, Debug)]
 pub(crate) enum Value {
     Unit,
+    Uninitialized,
     Number(f64),
     Bool(bool),
     String(String),
@@ -30,6 +31,7 @@ impl From<Literal> for Value {
     fn from(v: Literal) -> Self {
         match v {
             Literal::Unit => Self::Unit,
+            Literal::Uninitialized => Self::Uninitialized,
             Literal::Number(n) => Self::Number(n),
             Literal::Bool(b) => Self::Bool(b),
             Literal::String(s) => Self::String(s),
@@ -79,6 +81,13 @@ impl Heap {
             .get(h.index)
             .filter(|s| s.generation == h.generation)
             .and_then(|s| s.value.as_ref())
+            .ok_or_else(|| "stale heap handle".into())
+    }
+    pub fn get_mut(&mut self, h: Handle) -> Result<&mut Value> {
+        self.slots
+            .get_mut(h.index)
+            .filter(|s| s.generation == h.generation)
+            .and_then(|s| s.value.as_mut())
             .ok_or_else(|| "stale heap handle".into())
     }
     pub fn replace(&mut self, h: Handle, value: Value) -> Result<()> {

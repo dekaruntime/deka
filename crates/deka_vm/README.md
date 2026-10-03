@@ -111,8 +111,12 @@ closures, explicit scalar parameters, imported host calls, async functions and
 assignment, selected arithmetic/comparison, blocks, `if`, and C-style `for`.
 Exactly one zero-argument `main` entry is invoked after module initialization.
 
-Unsupported source forms fail compilation. Relative acyclic modules support
-function/constant exports. External package graphs, generics, enums/match, exceptions/try/catch, collection methods,
+Unsupported source forms fail compilation. Relative modules support
+function/constant exports, and import cycles load with JavaScript module
+semantics (run-time calls across a cycle work; a load-time read of an
+export that is not set yet is a named error). Bare specifiers consume
+DekaScript-only packages from `ds_modules/` per `deka.json` and `deka.lock`
+(installing them is separate tooling). Self-imports, generics, enums/match, exceptions/try/catch, collection methods,
 struct methods, default/tuple parameters, most operators and closures inside
 loops. Forward references not already bound during lowering are rejected, even
 where the current checker permits them. Source-level host failures currently

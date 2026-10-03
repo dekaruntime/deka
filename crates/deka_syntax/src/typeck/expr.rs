@@ -3702,6 +3702,15 @@ impl<'a> Checker<'a> {
                 }
                 Type::Named { name: "number" }
             }
+            BitAnd | BitOr | BitXor | Shl | Shr => {
+                if !matches!(left_type, Type::Infer) {
+                    self.expect_number(&left_type, left.span());
+                }
+                if !matches!(right_type, Type::Infer) {
+                    self.expect_number(&right_type, right.span());
+                }
+                Type::Named { name: "number" }
+            }
             Eq | Ne | Lt | Le | Gt | Ge => {
                 if left_type.is_error() || right_type.is_error() {
                     return Type::Named { name: "boolean" };
@@ -4526,6 +4535,18 @@ impl<'a> Checker<'a> {
             );
         }
 
+        // Static dispatch for prototype-less backends: record the call so it
+        // can rewrite to the free function `method$DeclaringType`, following
+        // the embed path to the receiver that declares the method.
+        let declaring_type = embed_path.last().copied().unwrap_or(receiver_type);
+        self.method_calls.insert(
+            call_expr as *const ast::Expr<'a>,
+            ast::MethodTarget {
+                mangled: ast::mangle_method_name(method_name, declaring_type),
+                embed_path: embed_path.clone(),
+            },
+        );
+
         self.check_method_call_args(method_name, receiver_type, &info, args, span)
             .into()
     }
@@ -4888,7 +4909,7 @@ impl<'a> Checker<'a> {
 
         // Primitives cannot carry a prototype, so the emitter rewrites this
         // call to a module-local free function named `method$receiver`.
-        let mangled = format!("{method_name}${receiver_name}");
+        let mangled = ast::mangle_method_name(method_name, receiver_name);
         self.method_calls.insert(
             call_expr as *const ast::Expr<'a>,
             ast::MethodTarget {
