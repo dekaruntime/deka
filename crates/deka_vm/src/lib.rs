@@ -7,6 +7,8 @@ pub use callback::{HostCallback, HostContext, HostJob};
 pub mod compiler;
 #[cfg(feature = "host")]
 pub mod demo;
+#[cfg(feature = "host")]
+pub mod fetch;
 mod heap;
 mod host;
 pub mod http_headers;

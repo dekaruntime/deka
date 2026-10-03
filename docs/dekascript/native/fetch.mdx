@@ -1,0 +1,62 @@
+# Native fetch
+
+`fetch(url: string)` performs a GET request through Rust and reqwest on the VM's
+Tokio event loop. It returns `Promise<Result<Response, string>>`. The response
+uses the same Rust-owned object, headers and buffered body readers as the
+[Response global](./response).
+
+```ds
+async fn loadTitle(url: string) Promise<string> {
+    const response = unwrap(await fetch(url)) or { return "Network failed"; }
+    if (!response.ok) { return "HTTP " + string(response.status); }
+    const title = unwrap(await response.json<string>()) or { return "Invalid JSON"; }
+    return title
+}
+```
+
+For a JSON response containing `"Deka"`, `loadTitle(url)` returns `Deka`.
+Use a record or struct schema for structured responses, following the existing
+[typed JSON rules](./json). No dynamic JavaScript object is created.
+
+A 404 or 500 response is still `Ok(response)` with `ok=false`. Invalid URLs,
+connection failures, redirect failures and truncated or oversized bodies produce
+`Err(error)`. Parsing an invalid body also produces `Err`; it does not enter a
+`catch` block.
+
+```ds
+async fn loadPair(first: string, second: string) Promise<string> {
+    const requests = [fetch(first), fetch(second)]
+    const responses = await Promise.all(requests)
+    const a = responses.has(0) ? match responses[0] {
+        Ok(response) => "HTTP " + string(response.status),
+        Err(error) => error,
+    } : "Missing first response"
+    const b = responses.has(1) ? match responses[1] {
+        Ok(response) => "HTTP " + string(response.status),
+        Err(error) => error,
+    } : "Missing second response"
+    return a + "; " + b
+}
+```
+
+Both requests run concurrently. `Promise.all` preserves input order and retains
+each Result, including a failed request. An async `onClick` can await these same
+calls and assign the resulting data to captured `let` state. The desktop I/O
+reactor wakes the VM through the window's turn/wake interface when work completes.
+
+This first surface accepts absolute HTTP/HTTPS URL strings with no embedded
+credentials. It normalizes the URL through the same engine as Request and removes
+the fragment before transport. Request initialization, Request-valued arguments
+and AbortController/AbortSignal are separate surfaces.
+
+Redirects retain the old Rust transport's ten-request bound and revalidate each
+URL's scheme and credentials. `response.url` reports the final URL. Network
+`statusText` is empty because reqwest does not expose the server's original
+reason phrase. Duplicate headers and cookies retain the Headers storage rules;
+body bytes are preserved until a reader consumes them.
+
+The buffered response limit is 16 MiB, inherited from the earlier Rust HTTP
+transport and now enforced while receiving data, including chunked responses.
+There is no implicit proxy configuration from environment variables. Dropping or
+cancelling the VM releases pending host futures and their active requests.
+Individual request aborts and timeouts belong to AbortController/AbortSignal.
