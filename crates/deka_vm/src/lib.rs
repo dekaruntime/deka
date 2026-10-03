@@ -9,6 +9,8 @@ pub mod compiler;
 pub mod demo;
 mod heap;
 mod host;
+mod json;
+pub use json::{JsonField, JsonShape};
 mod machine;
 #[cfg(feature = "compiler")]
 pub mod package;

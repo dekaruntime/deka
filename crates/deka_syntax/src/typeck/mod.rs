@@ -39,7 +39,7 @@ mod stmt;
 mod tuples_tests;
 mod types;
 
-pub use descriptor::{DescriptorField, DescriptorTree, JsonCall, JsonOperation, StaticTypeCall};
+pub use descriptor::{DescriptorField, DescriptorTree, JsonCall, JsonDescriptor, JsonOperation, StaticTypeCall};
 pub use hooks::{AMBIENT_REACT_BUILTINS, MemoKind, MemoSite};
 pub use types::{
     ArrayAccess, NewtypeSide, NumberMath, OperatorRewrite, Type, UnionMemberTest, UnwrapKind,
