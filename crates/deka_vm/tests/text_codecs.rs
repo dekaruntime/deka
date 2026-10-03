@@ -259,7 +259,8 @@ async fn main() Promise<string> {
     const values = await all([encoded("hi"), encoded("🙂")]);
     const winner = await race([encoded("one"), encoded("two")]);
     const second = values.has(1) ? values[1] : encoder().encode("missing");
-    return charset() + ":" + decoded(d, second) + ":" + decoded(d, winner);
+    const text = unwrap(JSON.parse<string>(JSON.stringify(decoded(d, second)))) or { return "json failed"; };
+    return charset() + ":" + text + ":" + decoded(d, winner);
 }"#,
     )
     .unwrap();
