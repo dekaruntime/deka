@@ -18,13 +18,23 @@ pub struct WireNode {
     pub children: Vec<WireNode>,
 }
 impl WireNode {
-    pub fn into_node(self, id: String) -> Result<Node> {
+    pub(crate) fn style(&self) -> Result<deka_native_ui::Style> {
         let mut style = if self.text.is_some() {
             deka_native_ui::Style::default()
         } else {
-            deka_native_ir::element_style(&self.tag)?
+            // Inputs use the platform editor; their presentation container is
+            // a div, while the retained store keeps the original input kind.
+            deka_native_ir::element_style(if self.tag == "input" {
+                "div"
+            } else {
+                &self.tag
+            })?
         };
         deka_native_ir::apply_classes(&mut style, &self.classes)?;
+        Ok(style)
+    }
+    pub fn into_node(self, id: String) -> Result<Node> {
+        let style = self.style()?;
         let children = self
             .children
             .into_iter()
@@ -102,9 +112,13 @@ impl UiSession {
         Ok(())
     }
 }
-// Preserve existing node allocations when positional structure is unchanged.
-// Stable keyed reconciliation is a separate feature, not implied by this adapter.
+// Preserve matching presentation allocations; lasting identity belongs to the
+// component's Rust tree store, not to these renderer snapshots.
 fn reconcile(current: &mut Node, next: Node) {
+    if current.id != next.id {
+        *current = next;
+        return;
+    }
     current.style = next.style;
     current.text = next.text;
     current.on_click = next.on_click;
