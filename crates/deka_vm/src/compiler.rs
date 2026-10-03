@@ -1,5 +1,6 @@
 //! DSC is linked as a library; no JS emission or compiler subprocess.
 use crate::{Function, Hosts, ListMut, Literal, Op, Program, PromiseJoin, Result};
+pub use deka_syntax::console::STDERR_OPERATION as CONSOLE_ERROR_OPERATION;
 use deka_syntax::{Diagnostic, Severity, ast::*, typeck::ExceptionEmit};
 use std::collections::{BTreeMap, HashMap};
 
@@ -1078,12 +1079,17 @@ fn compile_modules(
         pattern_types: HashMap::new(),
         signature_calls: HashMap::new(),
         newtype_results: HashMap::new(),
-        console_output: hosts.operation("echo").is_ok_and(|op| {
-            op.args == [crate::HostType::String]
-                && op.result == crate::HostType::Unit
-                && !op.asynchronous
-                && !op.result_channel
-        }),
+        console_outputs: ["echo", CONSOLE_ERROR_OPERATION]
+            .into_iter()
+            .filter(|name| {
+                hosts.operation(name).is_ok_and(|op| {
+                    op.args == [crate::HostType::String]
+                        && op.result == crate::HostType::Unit
+                        && !op.asynchronous
+                        && !op.result_channel
+                })
+            })
+            .collect(),
     };
     let mut entry = Context::new("<entry>", false);
     lower.functions.push(entry.function.clone());
@@ -1376,7 +1382,7 @@ struct Lower<'a> {
     /// attachment.
     struct_embeds: BTreeMap<String, Vec<String>>,
     /// The host registry supplies the output sink and its wire signature.
-    console_output: bool,
+    console_outputs: std::collections::BTreeSet<&'static str>,
     type_of_calls: std::collections::BTreeSet<usize>,
     exception_forms: HashMap<usize, ExceptionEmit>,
     exception_sources: std::collections::BTreeSet<usize>,
@@ -2679,12 +2685,12 @@ impl<'a> Lower<'a> {
                         return Ok(());
                     }
                 }
-                // console.log is the first output primitive used by the
-                // corpus. The checker already guards its printable arguments;
+                // Console output methods share a typed catalog.
+                // The checker already guards their printable arguments;
                 // all formatting happens in the shared VM ToString operation.
                 if let Expr::FieldAccess {
                     object,
-                    field: "log",
+                    field: method,
                     ..
                 } = callee
                     && matches!(
@@ -2695,12 +2701,12 @@ impl<'a> Lower<'a> {
                         }
                     )
                     && !c.names.contains_key("console")
+                    && let Some(operation) = deka_syntax::console::output_operation(method)
                 {
-                    if !self.console_output {
-                        return Err(
-                            "console.log requires a registered echo(string) output operation"
-                                .into(),
-                        );
+                    if !self.console_outputs.contains(operation) {
+                        return Err(format!(
+                            "console.{method} requires a registered {operation}(string) output operation"
+                        ));
                     }
                     c.emit(Op::Const(Literal::String(String::new())));
                     for (i, arg) in args.iter().enumerate() {
@@ -2713,7 +2719,7 @@ impl<'a> Lower<'a> {
                         c.emit(Op::Add);
                     }
                     c.emit(Op::Host {
-                        operation: "echo".into(),
+                        operation: operation.into(),
                         arguments: 1,
                     });
                     return Ok(());

@@ -203,4 +203,44 @@ mod tests {
         );
         assert!(!browser.pointer(900., 900.).unwrap());
     }
+    #[test]
+    fn browser_frames_preserve_retained_identity_and_new_nodes_do_not_reuse_it() {
+        let source = r#"export fn App() {
+            let visible = true;
+            return (<view><button onClick={fn() {visible = visible == false;}}>Toggle</button>
+                {visible ? <p>Hello</p> : None}</view>);
+        }"#;
+        let mut browser = NativePreview::new();
+        browser.compile(source, false).unwrap();
+        let initial = snapshot(&mut browser);
+        let button_id = browser.scene.targets[0].id.clone();
+        let old_text_id = browser
+            .scene
+            .nodes
+            .iter()
+            .find(|node| node.text.as_deref() == Some("Hello"))
+            .unwrap()
+            .id
+            .clone();
+        for time in 0..30 {
+            assert_eq!(
+                normalize(snapshot(&mut browser)),
+                normalize(initial.clone())
+            );
+            browser.frame_at(560., 300., 1., time as f64 * 16., true);
+        }
+        for _ in 0..2 {
+            let target = browser.scene.targets[0].rect;
+            assert!(browser.pointer(target.x + 2., target.y + 2.).unwrap());
+            snapshot(&mut browser);
+            assert_eq!(browser.scene.targets[0].id, button_id);
+        }
+        let shown = browser
+            .scene
+            .nodes
+            .iter()
+            .find(|node| node.text.as_deref() == Some("Hello"))
+            .unwrap();
+        assert_ne!(shown.id, old_text_id);
+    }
 }

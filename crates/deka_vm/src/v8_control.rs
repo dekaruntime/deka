@@ -6,20 +6,26 @@ use std::cell::RefCell;
 pub struct V8App {
     js: RefCell<deno_core::JsRuntime>,
     tree: RefCell<Node>,
+    nodes: RefCell<crate::component::tree::Tree>,
 }
 impl V8App {
     pub fn new() -> Result<Self> {
         let mut js = deno_core::JsRuntime::new(Default::default());
         js.execute_script("counter.js", include_str!("../examples/counter-control.js"))
             .map_err(|e| e.to_string())?;
-        let tree = read_tree(&mut js)?;
+        let mut nodes = crate::component::tree::Tree::default();
+        let tree = read_tree(&mut js, &mut nodes)?;
         Ok(Self {
             js: RefCell::new(js),
             tree: RefCell::new(tree),
+            nodes: RefCell::new(nodes),
         })
     }
 }
-fn read_tree(js: &mut deno_core::JsRuntime) -> Result<Node> {
+fn read_tree(
+    js: &mut deno_core::JsRuntime,
+    nodes: &mut crate::component::tree::Tree,
+) -> Result<Node> {
     let result = js
         .execute_script("snapshot.js", "JSON.stringify(snapshot())")
         .map_err(|e| e.to_string())?;
@@ -27,7 +33,7 @@ fn read_tree(js: &mut deno_core::JsRuntime) -> Result<Node> {
     let value = deno_core::v8::Local::new(scope, result);
     let json = value.to_rust_string_lossy(scope);
     let wire: WireNode = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    wire.into_node("root".into())
+    nodes.update(wire)
 }
 impl Application for V8App {
     fn initial_state(&self) -> Vec<f64> {
@@ -41,7 +47,7 @@ impl Application for V8App {
         let result = js
             .execute_script("event.js", format!("click({handler})"))
             .map_err(|e| e.to_string())
-            .and_then(|_| read_tree(&mut js));
+            .and_then(|_| read_tree(&mut js, &mut self.nodes.borrow_mut()));
         match result {
             Ok(tree) => *self.tree.borrow_mut() = tree,
             Err(e) => eprintln!("V8 control error: {e}"),

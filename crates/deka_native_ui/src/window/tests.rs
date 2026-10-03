@@ -124,6 +124,52 @@ mod gpu {
         assert_pixel(&shot, 176, 22, WHITE);
     }
 
+    /// Frame one is drawn straight into the window layer's own drawable,
+    /// before the window is shown (wgpu would not hand out a surface texture
+    /// yet). That drawable, wrapped for wgpu, must take the frame in the
+    /// layer's size and channel order.
+    #[test]
+    fn frame_one_draws_into_the_layers_own_drawable() {
+        let layer = objc2_quartz_core::CAMetalLayer::new();
+        let mut gpu = Gpu::new().expect("a GPU");
+        // SAFETY: `layer` is a live CAMetalLayer that outlives `surface`
+        // (dropped first, below).
+        let surface = unsafe {
+            gpu.instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
+                    objc2::rc::Retained::as_ptr(&layer).cast_mut().cast(),
+                ))
+        }
+        .expect("a surface on the layer");
+        let format = gpu.adopt(&surface).expect("a format the renderer draws");
+        let config = wgpu::SurfaceConfiguration {
+            // COPY_SRC only so the test can read the drawable back.
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            format,
+            width: 200,
+            height: 160,
+            present_mode: wgpu::PresentMode::AutoVsync,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::Auto,
+        };
+        surface.configure(&gpu.device, &config);
+        let (drawable, texture) = gpu
+            .layer_texture(&surface, &config)
+            .expect("the layer's next drawable");
+        let view = texture.create_view(&Default::default());
+        gpu.draw(&sample(), 2., &view, 200, 160).expect("frame one");
+        let shot = gpu.read_back(&texture).expect("the drawable read back");
+        assert_eq!((shot.width, shot.height), (200, 160));
+        assert_pixel(&shot, 2, 2, [255, 255, 255, 255]);
+        assert_pixel(&shot, 40, 40, [255, 0, 0, 255]);
+        assert_pixel(&shot, 100, 40, [127, 127, 255, 255]);
+        assert_pixel(&shot, 171, 22, [0, 200, 0, 255]);
+        gpu.present_drawable(&drawable).expect("presented");
+        drop(surface);
+    }
+
     #[test]
     fn upscaled_images_are_filtered_up_to_their_edges() {
         // Black, white, white, black, drawn 4x wider (8 logical px at 2x). Bilinear
