@@ -1,6 +1,6 @@
 //! Small real host adapter. This is not a replacement for Deka's production catalog.
 use crate::*;
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{cell::RefCell, rc::Rc};
 pub type Output = Rc<RefCell<Vec<String>>>;
 pub fn hosts() -> Result<(Hosts, Output)> {
     let output = Output::default();
@@ -43,13 +43,13 @@ pub fn hosts() -> Result<(Hosts, Output)> {
             let [HostValue::Number(ms), HostValue::String(value)] = args.as_slice() else {
                 unreachable!()
             };
-            if !ms.is_finite() || *ms < 0. || *ms > 60_000. {
-                return HostReply::Ready(Err("delay must be 0..60000 milliseconds".into()));
-            }
-            let duration = Duration::from_secs_f64(ms / 1000.);
+            let timer = match crate::time::sleep(*ms) {
+                Ok(future) => future,
+                Err(error) => return HostReply::Ready(Err(error)),
+            };
             let value = value.clone();
             HostReply::Pending(Box::pin(async move {
-                tokio::time::sleep(duration).await;
+                timer.await?;
                 Ok(HostValue::String(value))
             }))
         },
