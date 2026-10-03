@@ -368,6 +368,32 @@ fn lower_module<'a>(
     lower.enums.clear();
     lower.method_decls.clear();
     lower.struct_embeds.clear();
+    lower.enum_patterns = checked
+        .enum_case_patterns
+        .iter()
+        .map(|(p, name)| (*p as usize, (*name).into()))
+        .collect();
+    lower.pattern_types = checked
+        .union_type_patterns
+        .iter()
+        .map(|(p, test)| {
+            use deka_syntax::typeck::UnionMemberTest::*;
+            let predicate = match test {
+                Primitive("void") => Ok(Op::MatchType(crate::TypeDescriptor::new("none", "None"))),
+                Primitive(kind) => Ok(Op::MatchType(crate::TypeDescriptor::new(kind, kind))),
+                Struct(name) => Ok(Op::MatchType(crate::TypeDescriptor::new("struct", name))),
+                Enum(name) => Ok(Op::MatchType(crate::TypeDescriptor::new("enum", name))),
+                EnumCase(name) => Ok(Op::MatchEnum {
+                    name: Some((*name).into()),
+                    case: String::new(),
+                }),
+                Bytes | ErrorClass(_) => {
+                    Err("this host type pattern is not supported by the native VM".into())
+                }
+            };
+            (*p as usize, predicate)
+        })
+        .collect();
     lower.type_of_calls = checked.type_of_calls.iter().map(|p| *p as usize).collect();
     lower.signature_calls = checked
         .signature_calls
@@ -839,6 +865,8 @@ fn compile_modules(
         method_decls: BTreeMap::new(),
         struct_embeds: BTreeMap::new(),
         type_of_calls: Default::default(),
+        enum_patterns: HashMap::new(),
+        pattern_types: HashMap::new(),
         signature_calls: HashMap::new(),
         newtype_results: HashMap::new(),
         console_output: hosts.operation("echo").is_ok_and(|op| {
@@ -1132,6 +1160,8 @@ struct Lower<'a> {
     /// The host registry supplies the output sink and its wire signature.
     console_output: bool,
     type_of_calls: std::collections::BTreeSet<usize>,
+    enum_patterns: HashMap<usize, String>,
+    pattern_types: HashMap<usize, Result<Op>>,
     signature_calls: HashMap<usize, crate::TypeDescriptor>,
     newtype_results: HashMap<usize, String>,
 }
@@ -1398,6 +1428,162 @@ impl<'a> Lower<'a> {
             c.emit(Op::Load(value));
             c.emit(Op::Call(1));
         }
+        Ok(())
+    }
+    fn pattern_bind(&self, name: &str, value: usize, c: &mut Context) {
+        c.emit(Op::Load(value));
+        let slot = c.bind(name);
+        if !c.loops.is_empty() {
+            c.emit(Op::Rebind(slot));
+        }
+        c.emit(Op::Store(slot));
+    }
+    /// Every refutable step jumps to the next arm. A payload is only read
+    /// after its outer constructor matches; failed nested tests leave no
+    /// operand-stack residue and the arm's names cannot escape its scope.
+    fn pattern(
+        &mut self,
+        p: &Pattern<'a>,
+        value: usize,
+        c: &mut Context,
+        failed: &mut Vec<usize>,
+    ) -> Result<()> {
+        match p {
+            Pattern::Wildcard { .. } => {}
+            Pattern::Identifier { name, .. } => {
+                if let Some(case) = self.enum_patterns.get(&(p as *const Pattern as usize)) {
+                    c.emit(Op::Load(value));
+                    c.emit(Op::MatchEnum {
+                        name: None,
+                        case: case.clone(),
+                    });
+                    failed.push(c.emit(Op::JumpIfFalse(0)));
+                } else {
+                    self.pattern_bind(name, value, c);
+                }
+            }
+            Pattern::Literal { expr, .. } => {
+                c.emit(Op::Load(value));
+                self.expr(expr, c)?;
+                c.emit(Op::MatchEqual);
+                failed.push(c.emit(Op::JumpIfFalse(0)));
+            }
+            Pattern::Constructor { name, payload, .. } => {
+                let mut predicate = match self.pattern_types.get(&(p as *const Pattern as usize)) {
+                    Some(predicate) => predicate.clone()?,
+                    None => Op::MatchEnum {
+                        name: None,
+                        case: (*name).into(),
+                    },
+                };
+                if let Op::MatchEnum { case, .. } = &mut predicate {
+                    *case = (*name).into();
+                }
+                let extracts_payload = matches!(predicate, Op::MatchEnum { .. });
+                c.emit(Op::Load(value));
+                c.emit(predicate);
+                failed.push(c.emit(Op::JumpIfFalse(0)));
+                if let Some(p) = payload {
+                    let inner = if extracts_payload {
+                        c.emit(Op::Load(value));
+                        c.emit(Op::Field("value".into()));
+                        let inner = c.bind(&format!("<pattern payload {}>", c.function.locals));
+                        c.emit(Op::Store(inner));
+                        inner
+                    } else {
+                        value
+                    };
+                    self.pattern(p, inner, c, failed)?;
+                }
+            }
+            Pattern::Or { alternatives, .. } => {
+                let mut matched = vec![];
+                for (i, alternative) in alternatives.iter().enumerate() {
+                    let mut next = vec![];
+                    self.pattern(alternative, value, c, &mut next)?;
+                    if i + 1 == alternatives.len() {
+                        failed.extend(next);
+                    } else {
+                        matched.push(c.emit(Op::Jump(0)));
+                        for jump in next {
+                            c.patch(jump);
+                        }
+                    }
+                }
+                for jump in matched {
+                    c.patch(jump);
+                }
+            }
+            Pattern::Tuple { elements, .. } => {
+                c.emit(Op::Load(value));
+                c.emit(Op::MatchTuple(elements.len()));
+                failed.push(c.emit(Op::JumpIfFalse(0)));
+                for (i, p) in elements.iter().enumerate() {
+                    c.emit(Op::Load(value));
+                    c.emit(Op::Const(Literal::Number(i as f64)));
+                    c.emit(Op::Index);
+                    let inner = c.bind(&format!("<pattern item {}>", c.function.locals));
+                    c.emit(Op::Store(inner));
+                    self.pattern(p, inner, c, failed)?;
+                }
+            }
+            Pattern::Struct { name, fields, .. } => {
+                c.emit(Op::Load(value));
+                c.emit(Op::MatchType(crate::TypeDescriptor::new("struct", name)));
+                failed.push(c.emit(Op::JumpIfFalse(0)));
+                for field in *fields {
+                    c.emit(Op::Load(value));
+                    c.emit(Op::Field(field.name.into()));
+                    let inner = c.bind(&format!("<pattern field {}>", c.function.locals));
+                    c.emit(Op::Store(inner));
+                    self.pattern(&field.pattern, inner, c, failed)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    fn match_value(
+        &mut self,
+        scrutinee: &Expr<'a>,
+        arms: &[MatchArm<'a>],
+        c: &mut Context,
+    ) -> Result<()> {
+        let outer = c.names.clone();
+        let outer_checked = c.checked.clone();
+        self.expr(scrutinee, c)?;
+        let value = c.bind(&format!("<match value {}>", c.function.locals));
+        c.emit(Op::Store(value));
+        let mut done = vec![];
+        for arm in arms {
+            c.names = outer.clone();
+            c.checked = outer_checked.clone();
+            let mut next = vec![];
+            self.pattern(&arm.pattern, value, c, &mut next)?;
+            if let Some(guard) = &arm.guard {
+                self.expr(guard, c)?;
+                next.push(c.emit(Op::JumpIfFalse(0)));
+            }
+            self.expr(&arm.body, c)?;
+            if arm.bodyless {
+                // The checker marks a bodyless forwarding arm as never: it
+                // returns its reconstructed failure from the enclosing function.
+                c.emit(Op::Return);
+            } else {
+                done.push(c.emit(Op::Jump(0)));
+            }
+            for jump in next {
+                c.patch(jump);
+            }
+        }
+        // The checker proves coverage. Retain a fail-closed fallback for
+        // malformed bytecode or host values that violate their declared type.
+        c.emit(Op::Const(Literal::String("non-exhaustive match".into())));
+        c.emit(Op::Panic);
+        for jump in done {
+            c.patch(jump);
+        }
+        c.names = outer;
+        c.checked = outer_checked;
         Ok(())
     }
     fn statement(&mut self, s: &Stmt<'a>, c: &mut Context) -> Result<()> {
@@ -1773,6 +1959,9 @@ impl<'a> Lower<'a> {
                 c.emit(Op::Const(Literal::Bool(*value)));
             }
             Expr::None { .. } => self.enum_constructor("Option", "None", None, c)?,
+            Expr::Match {
+                scrutinee, arms, ..
+            } => self.match_value(scrutinee, arms, c)?,
             Expr::Ternary {
                 condition,
                 then_branch,

@@ -2,6 +2,7 @@ async-async-argument-type-mismatch-fail
 async-async-assign-to-await-fail
 async-async-await-in-default-param
 async-async-await-in-if-condition
+async-async-await-in-match
 async-async-await-in-object-literal-fail
 async-async-await-later
 async-async-await-non-promise-fail
@@ -136,6 +137,8 @@ data-types-embed-same-struct-twice-fail
 data-types-embedding-method-ambiguity-fail
 data-types-enum-duplicate-case-fail
 data-types-enum-duplicate-payload-type-fail
+data-types-enum-payload-match
+data-types-enum-payload-unqualified-match-fail
 data-types-gettype-arity-fail
 data-types-gettype-basic
 data-types-gettype-descriptors-interned
@@ -147,6 +150,7 @@ data-types-index-non-numeric-fail
 data-types-json-unrepresentable-field-fail
 data-types-let-array-mutating-builtins
 data-types-let-object-property-assignment
+data-types-match-nested-option-exhaustive
 data-types-match-nested-option-missing-fail
 data-types-match-result-missing-err-fail
 data-types-nested-object-missing-comma-fail
@@ -158,6 +162,8 @@ data-types-object-literals
 data-types-object-missing-comma-fail
 data-types-object-shorthand-rejected
 data-types-object-spread
+data-types-option-field-explicit
+data-types-option-none-literal
 data-types-primitive-extension-builtin-property-fail
 data-types-primitive-extension-shadow-builtin
 data-types-primitive-extension-wrong-receiver-fail
@@ -175,6 +181,7 @@ data-types-struct-method-missing-receiver-fail
 data-types-struct-method-mutation-fail
 data-types-struct-method-order-runtime
 data-types-struct-missing-field-fail
+data-types-struct-optional-field
 data-types-type-name-reserved-fail
 diagnostics-option-bodyless
 diagnostics-option-nested
@@ -213,10 +220,13 @@ error-globals-new-date-fail
 error-globals-null-property-access-fail
 error-globals-object-assign-frozen-fail
 error-globals-object-field-reassign-fail
+error-globals-option-some-none-match
 error-globals-option-unwrap-fail
 error-globals-panic-runtime-fail
 error-globals-process-bare-fail
 error-globals-reassign-const-fail
+error-globals-result-err-case
+error-globals-result-match-fail
 error-globals-result-unwrap-err-fail
 error-globals-string-index-assign-fail
 error-globals-type-mismatch-fail
@@ -225,6 +235,8 @@ error-globals-undefined-global-fail
 error-globals-undefined-property-access-fail
 exceptions-arm-call-not-return
 exceptions-await-dangling
+exceptions-bodyless-ok
+exceptions-bodyless-result
 exceptions-bodyless-user-enum
 exceptions-call-as-argument
 exceptions-capture-bodyless-wrong-return
@@ -245,6 +257,9 @@ exceptions-no-implicit-coercion
 exceptions-no-stored-throw
 exceptions-non-exhaustive
 exceptions-receiver-call-consumption
+exceptions-result-nested-async
+exceptions-result-nested-bodyless
+exceptions-result-nested-lazy
 flow-control-await-in-sync-loop-fail
 flow-control-break-in-if-fail
 flow-control-break-inside-match-arm-fail
@@ -278,11 +293,16 @@ flow-control-if-unclosed-block-fail
 flow-control-if-without-else
 flow-control-match-arm-block-fail
 flow-control-match-arm-missing-arrow-fail
+flow-control-match-enum
+flow-control-match-enum-unqualified-cases
 flow-control-match-enum-unqualified-exhaustive-fail
 flow-control-match-enum-unqualified-payload-fail
 flow-control-match-guard-unsupported-fail
 flow-control-match-missing-arm-fail
 flow-control-match-missing-subject-fail
+flow-control-match-nested
+flow-control-match-option-default
+flow-control-match-or-pattern
 flow-control-match-or-pattern-binding-fail
 flow-control-match-or-pattern-exhaustive-fail
 flow-control-match-return-type-mismatch-fail
@@ -309,6 +329,7 @@ formatter-interface-multiline
 formatter-invalid-optional-parameter
 formatter-jsx-attribute-braces
 formatter-labeled-break-rejected
+formatter-match-expression-multiline
 formatter-method-receiver-spacing
 formatter-mismatched-parentheses
 formatter-missing-enum-body-braces
@@ -316,6 +337,7 @@ formatter-missing-operand
 formatter-missing-parameter-types
 formatter-missing-semicolon-struct-field
 formatter-operator-spacing-chained
+formatter-option-match-spacing
 formatter-optional-chaining-rejected
 formatter-php-concatenation-rejected
 formatter-regex-literal-rejected
@@ -396,12 +418,15 @@ functions-wrong-arity-fail
 generics-arithmetic-on-type-param-fail
 generics-compare-type-params-fail
 generics-field-on-type-param-fail
+generics-generic-enum-box
 generics-generic-interface-bound
 generics-generic-receiver-bound-call-site-fail
+generics-generic-receiver-bounded
 generics-generic-receiver-method
 generics-generic-receiver-method-wrong-arg-fail
 generics-generic-receiver-unbounded-member-fail
 generics-generic-struct-signal
+generics-generic-union-bound-narrowing
 generics-index-type-param-fail
 generics-interface-bound-call-site-fail
 generics-interface-bound-member-not-declared-fail
@@ -482,6 +507,8 @@ interfaces-interface-mut-method-pass
 interfaces-interface-mut-on-immutable-fail
 interfaces-interface-object-missing-required-with-optional-fail
 interfaces-interface-object-wrong-field-name-fail
+interfaces-interface-option-field-match
+interfaces-interface-optional-field-isset
 interfaces-interface-optional-field-type-mismatch-fail
 interfaces-interface-primitive-as-interface-fail
 interfaces-interface-readonly-field-assign-fail
@@ -494,6 +521,7 @@ interfaces-interface-satisfied
 interfaces-interface-struct-extra-fields
 interfaces-interface-unknown-field-access-fail
 interfaces-interface-unknown-field-type-fail
+interfaces-interface-with-enum-field
 interfaces-interface-with-type-argument-fail
 interfaces-interface-with-visibility-modifier-fail
 modules-collection-element-inferred-export
@@ -539,6 +567,7 @@ parser-in-operator-rejected
 parser-instanceof-rejected
 parser-invalid-object-literal-colon
 parser-invalid-type-annotation-colon
+parser-match-wildcard-arm
 parser-missing-closing-brace
 parser-missing-closing-brace-block
 parser-missing-semicolon
@@ -582,6 +611,7 @@ types-bytes-param-rejects-string
 types-bytes-unknown-member
 types-const-type-annotation-rejected
 types-empty-interface-rejected
+types-enum-payload-match-runtime-error
 types-extra-field-in-struct-literal
 types-fn-param-missing-type
 types-function-reference-no-annotation
@@ -591,12 +621,14 @@ types-interface-field-wrong-type
 types-interface-object-literal-satisfied
 types-interface-return-type-mismatch
 types-let-type-annotation
+types-match-enum-exhaustive
 types-match-non-exhaustive-enum
 types-missing-arguments
 types-missing-required-struct-field
 types-missing-return-empty-body
 types-missing-return-fallthrough
 types-missing-return-one-branch
+types-nested-constructor-pattern
 types-nested-generic-array
 types-nested-generic-option
 types-nested-generic-return
@@ -620,9 +652,12 @@ types-newtype-receiver-method-param
 types-newtype-string
 types-number-returned-as-string
 types-object-literal-for-struct-return
+types-option-parameter-match
+types-optional-field-present
 types-primitive-to-number
 types-primitive-widen-string
 types-primitive-widen-string-fail
+types-recursive-struct-option
 types-return-after-if
 types-return-type-unknown
 types-string-arg-to-number-param
@@ -641,6 +676,7 @@ types-union-fail-member-access
 types-union-fail-missing-arm
 types-union-fail-overlap
 types-union-fail-unnarrowed-assign
+types-union-pass
 types-unknown-type-annotation
 types-void-declared-no-return
 unsafe-unsafe-catch-rejected-fail
