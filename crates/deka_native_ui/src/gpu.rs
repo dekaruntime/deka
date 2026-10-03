@@ -5,11 +5,13 @@ use std::{
     collections::HashMap,
     rc::Rc,
     sync::Arc,
+    task::{Wake, Waker},
     time::{Duration, Instant},
 };
 
 struct View<A: NativeApplication> {
     host: Host<A>,
+    wake: async_channel::Sender<()>,
     clock: Instant,
     reduced_motion: bool,
     focus: FocusHandle,
@@ -17,6 +19,30 @@ struct View<A: NativeApplication> {
     renderer: Rc<crate::scene::Renderer>,
     scene: Rc<RefCell<Scene>>,
     images: Rc<RefCell<HashMap<String, Arc<RenderImage>>>>,
+}
+struct WindowWake(async_channel::Sender<()>);
+impl Wake for WindowWake {
+    fn wake(self: Arc<Self>) {
+        let _ = self.0.try_send(());
+    }
+}
+impl<A: NativeApplication> Drop for View<A> {
+    fn drop(&mut self) {
+        self.wake.close();
+    }
+}
+async fn yield_turn() {
+    let mut yielded = false;
+    std::future::poll_fn(|cx| {
+        if yielded {
+            std::task::Poll::Ready(())
+        } else {
+            yielded = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    })
+    .await
 }
 impl<A: NativeApplication> Render for View<A> {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -132,6 +158,29 @@ pub fn run<A: NativeApplication>(app: A) {
             },
             |_, cx| {
                 cx.new(|cx| {
+                    let (wake, ready) = async_channel::bounded(1);
+                    app.set_waker(&Waker::from(Arc::new(WindowWake(wake.clone()))));
+                    cx.spawn(async move |view, cx| {
+                        while ready.recv().await.is_ok() {
+                            if view
+                                .update(cx, |view: &mut View<A>, cx| {
+                                    if view.host.run_turn(4096) {
+                                        cx.notify();
+                                    }
+                                    if view.host.has_ready_work() {
+                                        let _ = view.wake.try_send(());
+                                    }
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                            // A busy VM always returns to the foreground executor
+                            // between finite turns, allowing window work to run.
+                            yield_turn().await;
+                        }
+                    })
+                    .detach();
                     if live {
                         cx.spawn(async move |view, cx| {
                             loop {
@@ -154,6 +203,7 @@ pub fn run<A: NativeApplication>(app: A) {
                     }
                     View {
                         host: Host::new(app),
+                        wake,
                         clock: Instant::now(),
                         reduced_motion,
                         focus: cx.focus_handle(),

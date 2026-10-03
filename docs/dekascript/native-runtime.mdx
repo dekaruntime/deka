@@ -52,6 +52,44 @@ Browser text editing, asynchronous UI event scheduling, app module loading and
 accessibility semantics are still integration work. Native host-specific input
 and worker callbacks do not imply those features are available in the browser.
 
+## Async desktop handlers
+
+Desktop event handlers can be `async fn` literals. Pending work survives after a
+handler returns, including work launched by a synchronous handler. Captured
+`let` state updates the view when that work completes.
+
+```tsx
+import { sleep } from "time";
+
+export fn App() {
+    let message = "Ready";
+    return (
+        <view>
+            <p>{message}</p>
+            <button onClick={async fn() {
+                message = "Waiting";
+                await sleep(500);
+                message = "Done";
+            }}>Start</button>
+        </view>
+    );
+}
+```
+
+Start shows Waiting, then Done after the timer completes. Timer and network I/O
+run through Tokio's reactor; VM instructions stay on the window thread. The
+window advances finite VM turns and resumes pending operations on their wake.
+A busy handler yields between turns. Closing the window drops its pending VM
+work and Rust futures. Successful source reloads replace the old VM and its work.
+
+Rust embedders use `Vm::set_waker`, `Vm::has_ready_work`, and
+`Vm::run_turn(context, budget)`. A turn reports progress and instructions consumed;
+a zero budget is rejected. The native `Application` adapter exposes the same
+wake/ready/turn contract without window-backend types. Initialization and render
+bindings remain synchronous, so bindings must be finite and free of asynchronous
+work. Browser hosts still need their own async scheduling and host-operation
+integration; desktop I/O does not automatically become available in WASM.
+
 ## Reusable component tags
 
 A component is a function returning a view. Use an uppercase tag to compose it,

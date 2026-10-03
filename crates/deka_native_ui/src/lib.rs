@@ -20,6 +20,15 @@ pub trait Application: 'static {
     fn initial_state(&self) -> Vec<f64>;
     fn render(&self, state: &[f64]) -> Node;
     fn event(&self, handler: usize, state: &mut [f64]);
+    /// Backend-independent application scheduling. Backends supply a wake and
+    /// drive finite turns; applications keep their task ownership internally.
+    fn set_waker(&self, _waker: &std::task::Waker) {}
+    fn has_ready_work(&self) -> bool {
+        false
+    }
+    fn run_turn(&self, _budget: usize) -> bool {
+        false
+    }
     fn poll_reload(&mut self) -> Reload {
         Reload::Unchanged
     }
@@ -41,6 +50,15 @@ impl<A: Application> Host<A> {
     }
     pub fn click(&mut self, handler: usize) {
         self.app.event(handler, &mut self.state);
+    }
+    pub fn set_waker(&self, waker: &std::task::Waker) {
+        self.app.set_waker(waker);
+    }
+    pub fn has_ready_work(&self) -> bool {
+        self.app.has_ready_work()
+    }
+    pub fn run_turn(&self, budget: usize) -> bool {
+        self.app.run_turn(budget)
     }
     pub fn refresh(&mut self) -> bool {
         match self.app.poll_reload() {

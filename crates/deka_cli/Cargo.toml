@@ -15,7 +15,7 @@ deka_vm = { path = "../deka_vm", features = ["compiler", "host", "ui"] }
 deka_native_ui = { path = "../deka_native_ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "time", "net"] }
+tokio = { version = "1", features = ["rt", "time", "net", "sync"] }
 tempfile = "3.23"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
 flate2 = "1"

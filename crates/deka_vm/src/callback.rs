@@ -150,8 +150,13 @@ impl HostContext {
     pub(crate) fn set_waker(&self, waker: &Waker) {
         self.0.borrow_mut().waker = Some(waker.clone());
     }
-    pub(crate) fn take(&self) -> VecDeque<Command> {
-        std::mem::take(&mut self.0.borrow_mut().queue)
+    pub(crate) fn take(&self, limit: usize) -> VecDeque<Command> {
+        let mut state = self.0.borrow_mut();
+        let count = limit.min(state.queue.len());
+        state.queue.drain(..count).collect()
+    }
+    pub(crate) fn has_commands(&self) -> bool {
+        !self.0.borrow().queue.is_empty()
     }
     pub(crate) fn callback(&self, handle: Handle) -> HostCallback {
         let callback = HostCallback(Rc::new(Callback {

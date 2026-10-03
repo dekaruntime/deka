@@ -2575,6 +2575,7 @@ dependencies = [
 name = "deka_native_ui"
 version = "0.60.1"
 dependencies = [
+ "async-channel 2.5.0",
  "deka_native_ir",
  "fontique",
  "gpui",

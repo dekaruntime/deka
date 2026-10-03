@@ -7,12 +7,13 @@ publish = false
 
 [features]
 default = []
-gpu = ["dep:gpui", "dep:image"]
+gpu = ["dep:gpui", "dep:image", "dep:async-channel"]
 world-audio = ["gpu", "dep:rodio"]
 program = ["deka_native_ir/program"]
 runtime-shaders = ["gpu", "gpui/runtime_shaders"]
 
 [dependencies]
+async-channel = { version = "=2.5.0", optional = true }
 deka_native_ir = { path = "../deka_native_ir" }
 gpui = { version = "=0.2.2", optional = true }
 

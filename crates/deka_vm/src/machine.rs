@@ -6,7 +6,8 @@ use crate::{
 use std::{
     collections::BTreeMap,
     rc::Rc,
-    task::{Context, Poll},
+    sync::Arc,
+    task::{Context, Poll, Wake, Waker},
 };
 struct Frame {
     function: usize,
@@ -31,15 +32,17 @@ enum Work {
         result: HostType,
         result_channel: bool,
         job: Option<HostJob>,
+        ready: Arc<crate::turn::ReadyWake>,
     },
 }
 struct Task {
     promise: Handle,
     work: Work,
+    waiting: Option<Handle>,
 }
 enum Step {
     Continue,
-    Blocked,
+    Blocked(Handle),
     Complete(Outcome),
 }
 /// What a call setup produced: a frame to enter or a spawned task's promise.
@@ -59,6 +62,10 @@ pub struct Vm {
     instructions: u64,
     instruction_limit: u64,
     descriptors: BTreeMap<TypeDescriptor, Handle>,
+    wake: Arc<crate::turn::ReadyWake>,
+    turn_cursor: u64,
+    #[cfg(feature = "ui")]
+    events: std::collections::BTreeSet<u64>,
 }
 impl Vm {
     pub fn new(program: Program, hosts: Hosts) -> Result<Self> {
@@ -78,9 +85,14 @@ impl Vm {
             instructions: 0,
             instruction_limit: 10_000_000,
             descriptors: BTreeMap::new(),
+            wake: Arc::new(crate::turn::ReadyWake::default()),
+            turn_cursor: 0,
+            #[cfg(feature = "ui")]
+            events: std::collections::BTreeSet::new(),
         };
         let frame = vm.frame(0, vec![], vec![], None)?;
         vm.root = Some(vm.spawn(Work::Code(vec![frame])));
+        vm.wake.wake_by_ref();
         Ok(vm)
     }
     pub fn stats(&self) -> HeapStats {
@@ -98,6 +110,8 @@ impl Vm {
     pub fn cancel(&mut self) -> Result<()> {
         self.context.close();
         self.tasks.clear();
+        #[cfg(feature = "ui")]
+        self.events.clear();
         self.pins.clear();
         self.descriptors.clear();
         self.root = None;
@@ -128,7 +142,17 @@ impl Vm {
         let promise = self.heap.alloc(Value::Promise(None));
         let id = self.next_task;
         self.next_task += 1;
-        self.tasks.insert(id, Task { promise, work });
+        if let Work::Host { ready, .. } = &work {
+            ready.wake_by_ref();
+        }
+        self.tasks.insert(
+            id,
+            Task {
+                promise,
+                work,
+                waiting: None,
+            },
+        );
         promise
     }
     fn frame(
@@ -271,8 +295,9 @@ impl Vm {
         };
         Ok(self.heap.alloc(value))
     }
-    fn host_commands(&mut self) -> Result<bool> {
-        let commands = self.context.take();
+    fn host_commands(&mut self, remaining: &mut usize) -> Result<bool> {
+        let commands = self.context.take(*remaining);
+        *remaining -= commands.len();
         let progressed = !commands.is_empty();
         for command in commands {
             match command {
@@ -283,6 +308,7 @@ impl Vm {
                             result: HostType::Unit,
                             result_channel: false,
                             job: Some(job),
+                            ready: Arc::new(crate::turn::ReadyWake::default()),
                         });
                     }
                 }
@@ -338,38 +364,130 @@ impl Vm {
             Poll::Pending => Poll::Pending,
         }
     }
-    fn poll_inner(&mut self, cx: &mut Context<'_>, drain_tasks: bool) -> Poll<Result<Handle>> {
-        let Some(root) = self.root else {
-            return Poll::Ready(Err("VM cancelled".into()));
+    /// Register the platform's wake without exposing its event-loop types.
+    pub fn set_waker(&mut self, waker: &Waker) {
+        self.wake.set_parent(waker);
+        self.context.set_waker(&Waker::from(self.wake.clone()));
+        if self.has_ready_work() {
+            waker.wake_by_ref();
+        }
+    }
+    pub fn waker(&self) -> Waker {
+        self.wake.parent()
+    }
+    pub fn has_ready_work(&self) -> bool {
+        self.root.is_some() && (self.wake.is_ready() || self.context.has_commands())
+    }
+    /// Drive persistent work, even after initialization/handlers have returned.
+    /// The lifetime quota belongs to CLI execution; this budget bounds one turn.
+    pub fn run_turn(&mut self, cx: &mut Context<'_>, budget: usize) -> Result<Turn> {
+        if budget == 0 {
+            return Err("turn budget must be positive".into());
+        }
+        if self.root.is_none() {
+            return Err("VM cancelled".into());
+        }
+        self.wake.set_parent(cx.waker());
+        self.wake.clear();
+        let waker = Waker::from(self.wake.clone());
+        self.context.set_waker(&waker);
+        let before = self.instructions;
+        let result = self.drive(&mut Context::from_waker(&waker), budget, None, false);
+        match result {
+            Ok((progressed, deferred)) => {
+                if ((progressed || deferred) && !self.tasks.is_empty())
+                    || self.context.has_commands()
+                {
+                    self.wake.wake_by_ref();
+                }
+                Ok(Turn {
+                    progressed,
+                    instructions: self.instructions - before,
+                })
+            }
+            Err(error) => {
+                self.cancel()?;
+                Err(error)
+            }
+        }
+    }
+    fn drive(
+        &mut self,
+        cx: &mut Context<'_>,
+        budget: usize,
+        only: Option<Handle>,
+        enforce_limit: bool,
+    ) -> Result<(bool, bool)> {
+        let mut remaining = budget;
+        let mut deferred = false;
+        let mut progressed = if only.is_none() {
+            self.host_commands(&mut remaining)?
+        } else {
+            false
         };
-        self.context.set_waker(cx.waker());
-        let mut progressed = self.host_commands()?;
-        let ids: Vec<_> = self.tasks.keys().copied().collect();
+        if only.is_none() {
+            for task in self.tasks.values() {
+                if let Work::Host { ready, .. } = &task.work {
+                    ready.set_parent(cx.waker());
+                }
+            }
+        }
+        let ids: Vec<_> = self
+            .tasks
+            .range(self.turn_cursor..)
+            .chain(self.tasks.range(..self.turn_cursor))
+            .filter(|(_, task)| {
+                only.is_none_or(|root| task.promise == root)
+                    && task.waiting.is_none_or(|promise| {
+                        !matches!(self.heap.get(promise), Ok(Value::Promise(None)))
+                    })
+                    && match &task.work {
+                        Work::Host { ready, .. } => ready.is_ready(),
+                        Work::Code(_) => true,
+                    }
+            })
+            .map(|(id, _)| *id)
+            .collect();
         for id in ids {
-            let mut task = self.tasks.remove(&id).unwrap();
+            if remaining == 0 {
+                deferred = true;
+                break;
+            }
+            let mut task = self.tasks.remove(&id).ok_or("missing scheduled task")?;
+            task.waiting = None;
             let result = match &mut task.work {
                 Work::Host {
                     future,
                     result,
                     result_channel,
+                    ready,
                     ..
-                } => match future.as_mut().poll(cx) {
-                    Poll::Ready(v) => Some(
-                        self.host_result(v, result.clone(), *result_channel)
-                            .map(Outcome::Value),
-                    ),
-                    Poll::Pending => None,
-                },
+                } => {
+                    remaining -= 1;
+                    ready.clear();
+                    let waker = Waker::from(ready.clone());
+                    match future.as_mut().poll(&mut Context::from_waker(&waker)) {
+                        Poll::Ready(v) => Some(
+                            self.host_result(v, result.clone(), *result_channel)
+                                .map(Outcome::Value),
+                        ),
+                        Poll::Pending => None,
+                    }
+                }
                 Work::Code(frames) => {
                     let mut completion = None;
-                    for _ in 0..256 {
+                    for _ in 0..256.min(remaining) {
+                        remaining -= 1;
                         self.instructions += 1;
-                        if self.instructions > self.instruction_limit {
-                            return Poll::Ready(Err("instruction limit exceeded".into()));
+                        if enforce_limit && self.instructions > self.instruction_limit {
+                            return Err("instruction limit exceeded".into());
                         }
                         match self.step(frames) {
                             Ok(Step::Continue) => progressed = true,
-                            Ok(Step::Blocked) => break,
+                            Ok(Step::Blocked(promise)) => {
+                                task.waiting = Some(promise);
+                                break;
+                            }
                             Ok(Step::Complete(value)) => {
                                 completion = Some(Ok(value));
                                 break;
@@ -383,76 +501,81 @@ impl Vm {
                     completion
                 }
             };
+            if only.is_none() {
+                self.turn_cursor = id.saturating_add(1);
+            }
             if let Some(result) = result {
-                // VM faults are fatal even when their task was not awaited.
-                // Language Throw is an Outcome, so it still travels through await.
-                let result = match result {
-                    Ok(value) => Ok(value),
-                    Err(error) => return Poll::Ready(Err(error)),
-                };
-                progressed = true;
-                if let Err(e) = self
-                    .heap
-                    .replace(task.promise, Value::Promise(Some(result)))
+                let result = result?;
+                #[cfg(feature = "ui")]
+                if self.events.remove(&id)
+                    && let Outcome::Thrown(value) = &result
                 {
-                    return Poll::Ready(Err(e));
+                    return Err(format!("uncaught Throw: {}", self.value_text(*value)?));
                 }
+                progressed = true;
+                self.heap
+                    .replace(task.promise, Value::Promise(Some(Ok(result))))?;
             } else {
                 self.tasks.insert(id, task);
             }
         }
-        progressed |= self.host_commands()?;
-        // Collection only occurs at a safepoint, with every suspended frame registered.
-        if let Err(e) = self.collect() {
-            return Poll::Ready(Err(e));
+        if only.is_none() {
+            progressed |= self.host_commands(&mut remaining)?;
         }
+        self.collect()?;
+        Ok((progressed, deferred))
+    }
+    fn root_result(&self) -> Poll<Result<Handle>> {
+        let Some(root) = self.root else {
+            return Poll::Ready(Err("VM cancelled".into()));
+        };
         match self.heap.get(root) {
-            Ok(Value::Promise(Some(Ok(Outcome::Value(_)))))
-                if drain_tasks && !self.tasks.is_empty() =>
-            {
-                if progressed {
-                    cx.waker().wake_by_ref();
-                }
-                Poll::Pending
-            }
             Ok(Value::Promise(Some(Ok(Outcome::Value(h))))) => Poll::Ready(Ok(*h)),
             Ok(Value::Promise(Some(Ok(Outcome::Thrown(h))))) => {
                 Poll::Ready(Err(format!("uncaught Throw: {}", self.value_text(*h)?)))
             }
             Ok(Value::Promise(Some(Err(e)))) => Poll::Ready(Err(e.clone())),
-            Ok(Value::Promise(None)) => {
-                if progressed {
-                    cx.waker().wake_by_ref();
-                }
-                Poll::Pending
-            }
+            Ok(Value::Promise(None)) => Poll::Pending,
             _ => Poll::Ready(Err("invalid entry promise".into())),
+        }
+    }
+    fn poll_inner(&mut self, cx: &mut Context<'_>, drain_tasks: bool) -> Poll<Result<Handle>> {
+        if self.root.is_none() {
+            return Poll::Ready(Err("VM cancelled".into()));
+        }
+        self.context.set_waker(cx.waker());
+        let (progressed, _) = self.drive(cx, usize::MAX, None, true)?;
+        let root = self.root_result();
+        if root.is_pending()
+            || (drain_tasks
+                && matches!(root, Poll::Ready(Ok(_)))
+                && (!self.tasks.is_empty() || self.context.has_commands()))
+        {
+            if progressed {
+                cx.waker().wake_by_ref();
+            }
+            Poll::Pending
+        } else {
+            root
         }
     }
     #[cfg(feature = "ui")]
     pub(crate) fn finish_sync(&mut self) -> Result<Handle> {
-        let mut cx = Context::from_waker(std::task::Waker::noop());
+        let root = self.root.ok_or("VM cancelled")?;
+        let mut cx = Context::from_waker(Waker::noop());
+        let child_start = self.next_task;
         loop {
-            // A synchronous UI invocation reads its own result. Desktop task
-            // lifetime is managed separately from CLI program draining.
-            match self.poll_inner(&mut cx, false) {
-                Poll::Ready(result) => {
-                    self.tasks.clear();
-                    // Leave the result promise rooted until the caller pins or reads it.
-                    return result;
+            // Bindings evaluate only their own frame. Other tasks and host
+            // commands remain owned by the persistent scheduler.
+            let (progressed, _) = self.drive(&mut cx, usize::MAX, Some(root), true)?;
+            if let Poll::Ready(result) = self.root_result() {
+                if self.next_task > child_start || self.context.has_commands() {
+                    self.wake.wake_by_ref();
                 }
-                Poll::Pending => {
-                    if self
-                        .tasks
-                        .values()
-                        .any(|t| matches!(t.work, Work::Host { .. }))
-                    {
-                        self.tasks.clear();
-                        self.root = None;
-                        self.collect()?;
-                        return Err("this UI adapter currently supports synchronous handlers and bindings only".into());
-                    }
-                }
+                return result;
+            }
+            if !progressed {
+                return Err("UI bindings must complete synchronously".into());
             }
         }
     }
@@ -470,7 +593,8 @@ impl Vm {
     }
     #[cfg(feature = "ui")]
     pub(crate) fn invoke_args(&mut self, closure: Handle, args: Vec<Handle>) -> Result<Handle> {
-        // Each GUI event has its own bounded budget; cumulative instructions remain measurable.
+        // Synchronous render queries have a finite quota, independently of
+        // the persistent event scheduler's per-turn budget.
         self.instruction_limit = self.instructions.saturating_add(10_000_000);
         let Value::Closure {
             function,
@@ -481,11 +605,27 @@ impl Vm {
             return Err("UI handler is not a closure".into());
         };
         if self.program.functions[function].asynchronous {
-            return Err("async UI callbacks are not supported yet".into());
+            return Err("UI bindings must complete synchronously".into());
         }
         let frame = self.frame(function, captures, args, slot_children)?;
         self.root = Some(self.spawn(Work::Code(vec![frame])));
         self.finish_sync()
+    }
+    #[cfg(feature = "ui")]
+    pub(crate) fn enqueue_event(&mut self, closure: Handle, args: Vec<Handle>) -> Result<()> {
+        let Value::Closure {
+            function,
+            captures,
+            slot_children,
+        } = self.heap.get(closure)?.clone()
+        else {
+            return Err("UI handler is not a closure".into());
+        };
+        let frame = self.frame(function, captures, args, slot_children)?;
+        self.events.insert(self.next_task);
+        self.spawn(Work::Code(vec![frame]));
+        self.wake.wake_by_ref();
+        Ok(())
     }
     fn raise(&mut self, frames: &mut Vec<Frame>, value: Handle) -> Result<Step> {
         while let Some(frame) = frames.last_mut() {
@@ -866,6 +1006,7 @@ impl Vm {
                     HostReply::Pending(future) => self.spawn(Work::Host {
                         future,
                         job: None,
+                        ready: Arc::new(crate::turn::ReadyWake::default()),
                         result: expected,
                         result_channel,
                     }),
@@ -891,7 +1032,7 @@ impl Vm {
                     Value::Promise(None) => {
                         frame.stack.push(promise);
                         frame.ip -= 1;
-                        return Ok(Step::Blocked);
+                        return Ok(Step::Blocked(promise));
                     }
                     _ => return Err("await requires a promise".into()),
                 }

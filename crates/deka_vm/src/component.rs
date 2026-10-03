@@ -62,8 +62,23 @@ impl Component {
             .into_iter()
             .map(|value| self.vm.alloc_host_value(value))
             .collect::<Result<Vec<_>>>()?;
-        self.vm.invoke_args(handler, args)?;
+        self.vm.enqueue_event(handler, args)?;
+        let waker = self.vm.waker();
+        self.vm
+            .run_turn(&mut std::task::Context::from_waker(&waker), 1024)?;
         Ok(())
+    }
+    pub fn set_waker(&mut self, waker: &std::task::Waker) {
+        self.vm.set_waker(waker);
+    }
+    pub(crate) fn vm_waker(&self) -> std::task::Waker {
+        self.vm.waker()
+    }
+    pub fn has_ready_work(&self) -> bool {
+        self.vm.has_ready_work()
+    }
+    pub fn run_turn(&mut self, cx: &mut std::task::Context<'_>, budget: usize) -> Result<Turn> {
+        self.vm.run_turn(cx, budget)
     }
     pub fn instructions(&self) -> u64 {
         self.vm.instructions()
