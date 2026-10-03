@@ -43,6 +43,20 @@ Legacy CLI and application-test coverage remains under `crates/cli/tests` and
 its tests require the pinned compiler installed by `scripts/ci-install-dsc.sh`.
 The native crate tests above do not have that dependency.
 
+## Language migration corpus gate
+
+The native-runtime workflow also runs the pinned historical corpus while old
+language features are being ported. `tests/corpus-passing.txt` lists programs
+that must keep matching. Negative cases must fail at the expected stage with
+the expected diagnostic text, not merely exit nonzero. The gate supplements
+missing diagnostic guards in the pinned corpus for the eight note-05 cases;
+explicit corpus metadata takes precedence.
+
+`corpus-gate --all` is an inventory command: it exits zero even with unmatched
+cases. Use the listed-case gate for validation and compare inventories when
+adding passing programs. Never count an unsupported feature's failure as the
+intended runtime error of that feature.
+
 ## App developers
 
 `deka test [files...]` and its `--test-name-pattern` / `-t` filter remain part of
