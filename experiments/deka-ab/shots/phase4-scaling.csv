@@ -1,0 +1,22 @@
+# machine,shapes,threads,frame_ms  (iMac i9-10910, 10C/20T, load ~4)
+iMac (Intel i9, 10 cores / 20 threads),1000,1,25.46
+iMac (Intel i9, 10 cores / 20 threads),1000,2,21.91
+iMac (Intel i9, 10 cores / 20 threads),1000,4,20.82
+iMac (Intel i9, 10 cores / 20 threads),1000,8,16.27
+iMac (Intel i9, 10 cores / 20 threads),1000,10,15.17
+iMac (Intel i9, 10 cores / 20 threads),1000,20,14.82
+iMac (Intel i9, 10 cores / 20 threads),10000,1,78.04
+iMac (Intel i9, 10 cores / 20 threads),10000,2,58.21
+iMac (Intel i9, 10 cores / 20 threads),10000,4,46.31
+iMac (Intel i9, 10 cores / 20 threads),10000,8,41.39
+iMac (Intel i9, 10 cores / 20 threads),10000,10,38.31
+iMac (Intel i9, 10 cores / 20 threads),10000,20,37.30
+# bugsy: Apple M1 (4P+4E cores), offscreen, right after a CI job (see report)
+bugsy (Apple M1, 4 performance + 4 efficiency cores),1000,1,15.83
+bugsy (Apple M1, 4 performance + 4 efficiency cores),1000,2,13.03
+bugsy (Apple M1, 4 performance + 4 efficiency cores),1000,4,11.42
+bugsy (Apple M1, 4 performance + 4 efficiency cores),1000,8,9.11
+bugsy (Apple M1, 4 performance + 4 efficiency cores),10000,1,45.44
+bugsy (Apple M1, 4 performance + 4 efficiency cores),10000,2,30.57
+bugsy (Apple M1, 4 performance + 4 efficiency cores),10000,4,22.57
+bugsy (Apple M1, 4 performance + 4 efficiency cores),10000,8,21.89

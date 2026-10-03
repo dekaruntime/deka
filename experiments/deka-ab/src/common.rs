@@ -28,6 +28,10 @@ pub enum App {
     Coverage,
     /// Try the renderer on a device limited to WebGL2 capabilities.
     WebGl2,
+    /// Fork: pixel-compare parallel/cached strips with the stock path.
+    Verify,
+    /// Fork: thread-count scaling and strip-cache benchmark.
+    Scaling,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +67,8 @@ impl Args {
             Some("mem") => App::Mem,
             Some("coverage") => App::Coverage,
             Some("webgl2") => App::WebGl2,
+            Some("verify") => App::Verify,
+            Some("scaling") => App::Scaling,
             _ => App::World,
         };
         Self {

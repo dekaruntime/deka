@@ -48,7 +48,7 @@ arboard = { version = "3.6", optional = true }
 pollster = { version = "0.4", optional = true }
 
 # Backends C and D: vello's sparse-strips renderers.
-vello_gpu = { version = "=0.3.0", default-features = false, features = ["wgpu", "text"], optional = true }
+vello_gpu = { version = "=0.3.0", default-features = false, features = ["wgpu", "text", "multithreading"], optional = true }
 vello_cpu = { version = "=0.3.0", features = ["multithreading"], optional = true }
 softbuffer = { version = "=0.4.8", optional = true }
 skrifa = { version = "0.44", optional = true }
@@ -84,6 +84,10 @@ name = "ab-cpu-wgpu"
 path = "src/bin_cpu_wgpu.rs"
 required-features = ["cpu-wgpu"]
 
+[[example]]
+name = "scaling_chart"
+required-features = ["cpu-backend"]
+
 [profile.release]
 debug = false
 
@@ -94,3 +98,8 @@ opt-level = "s"
 lto = true
 codegen-units = 1
 strip = true
+
+# Phase 4: the forked vello_gpu (parallel strips + strip cache). Upstream
+# sources with the patch applied; see ../vello-gpui/patches/vello_gpu-0.3.0-parallel-strips.diff.
+[patch.crates-io]
+vello_gpu = { path = "../vendor/vello_gpu-0.3.0" }

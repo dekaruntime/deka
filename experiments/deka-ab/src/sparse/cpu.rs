@@ -330,3 +330,61 @@ impl Presenter for CpuWgpuPresenter {
         Some((self.config.width, self.config.height, self.pixmap.data_as_u8_slice().to_vec()))
     }
 }
+
+/// Offscreen: what presenting vello_cpu output through wgpu costs on this
+/// machine (raster, then upload 3200x2000 RGBA + blit + wait), without a window.
+#[cfg(feature = "cpu-wgpu")]
+pub fn upload_bench(frames: usize) {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::METAL, ..wgpu::InstanceDescriptor::new_without_display_handle() });
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else { return };
+    let Ok((device, queue)) = pollster::block_on(adapter.request_device(&Default::default())) else { return };
+    let (w, h) = (3200u32, 2000u32);
+    let (texture, view) = upload_texture(&device, w, h);
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Bgra8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let target_view = target.create_view(&Default::default());
+    let blitter = wgpu::util::TextureBlitter::new(&device, wgpu::TextureFormat::Bgra8Unorm);
+    let mut rc = vello_cpu::RenderContext::new_with(w as u16, h as u16, vello_cpu::RenderSettings::default());
+    let mut res = vello_cpu::Resources::new();
+    let mut pixmap = vello_cpu::Pixmap::new(w as u16, h as u16);
+    println!("[vello_cpu+wgpu bench] adapter {} ({} worker threads)", adapter.get_info().name, vello_cpu::RenderSettings::default().num_threads);
+    for shapes in [1_000usize, 10_000] {
+        let layout = if shapes <= 1_000 { graph::Layout::Force } else { graph::Layout::Laid };
+        let mut g = graph::Graph::new(shapes, 1600., 1000., layout);
+        let (mut raster, mut upload) = (crate::common::Series::default(), crate::common::Series::default());
+        for f in 0..frames + 10 {
+            g.update(f as f64 / 60.);
+            let t0 = Instant::now();
+            rc.reset();
+            encode_graph(&mut rc, &g, 2.0, w as f64, h as f64);
+            rc.flush();
+            rc.render(&mut pixmap, &mut res);
+            let t1 = Instant::now();
+            queue.write_texture(
+                texture.as_image_copy(),
+                pixmap.data_as_u8_slice(),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: None },
+                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            );
+            let mut enc = device.create_command_encoder(&Default::default());
+            blitter.copy(&device, &mut enc, &view, &target_view);
+            queue.submit([enc.finish()]);
+            if let Err(e) = device.poll(wgpu::PollType::wait_indefinitely()) {
+                eprintln!("poll: {e}");
+            }
+            if f >= 10 {
+                raster.push(t1 - t0);
+                upload.push(t1.elapsed());
+            }
+        }
+        println!("[vello_cpu+wgpu bench] canvas {shapes}: raster {}\n                         upload+blit+wait {}", raster.summary(), upload.summary());
+    }
+}

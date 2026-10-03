@@ -321,13 +321,20 @@ impl Nv12Pass {
 }
 
 pub fn write_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).expect("mkdir shots");
+    // Report, never panic: the spike also runs on machines where the build
+    // path does not exist (bugsy).
+    let write = || -> Result<(), String> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+        }
+        let file = std::fs::File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().map_err(|e| e.to_string())?;
+        w.write_image_data(rgba).map_err(|e| e.to_string())
+    };
+    if let Err(e) = write() {
+        eprintln!("png not written: {e}");
     }
-    let file = std::fs::File::create(path).expect("create png");
-    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), width, height);
-    enc.set_color(png::ColorType::Rgba);
-    enc.set_depth(png::BitDepth::Eight);
-    let mut w = enc.write_header().expect("png header");
-    w.write_image_data(rgba).expect("png data");
 }

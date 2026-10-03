@@ -58,6 +58,7 @@ mod vello_cpu_pixmap {
 
 impl HybridPresenter {
     fn render_to(&mut self, view: &wgpu::TextureView, depth: &wgpu::TextureView, w: u32, h: u32) -> Result<(), String> {
+        self.scene.flush();
         let mut encoder = self.device.create_command_encoder(&Default::default());
         self.renderer
             .render(
@@ -119,7 +120,7 @@ impl Presenter for HybridPresenter {
         let depth = vello_gpu::Renderer::create_depth_texture_view(&device, &depth_size);
         times.renderer_ms = t.elapsed().as_secs_f64() * 1000.;
         Ok(Self {
-            scene: vello_gpu::Scene::new(size.width as u16, size.height as u16),
+            scene: new_scene(size.width as u16, size.height as u16),
             window,
             surface,
             config,
@@ -144,7 +145,7 @@ impl Presenter for HybridPresenter {
         if self.use_depth {
             self.depth = vello_gpu::Renderer::create_depth_texture_view(&self.device, &rs);
         }
-        self.scene = vello_gpu::Scene::new(rs.width, rs.height);
+        self.scene = new_scene(rs.width, rs.height);
     }
 
     fn encode_deka(&mut self, deka: &DekaScene, scale: f64) {
@@ -216,6 +217,17 @@ impl Presenter for HybridPresenter {
         }
         Some((w, h, rgba))
     }
+}
+
+/// Scene with the fork's settings from the command line:
+/// `--threads N` (parallel strips) and `--strip-cache`.
+pub fn new_scene(w: u16, h: u16) -> vello_gpu::Scene {
+    let mut scene = vello_gpu::Scene::new(w, h);
+    let args: Vec<String> = std::env::args().collect();
+    let threads = args.iter().position(|a| a == "--threads").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(1);
+    scene.set_parallelism(threads);
+    scene.set_strip_cache(args.iter().any(|a| a == "--strip-cache"));
+    scene
 }
 
 fn readback(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture, w: u32, h: u32) -> Vec<u8> {
@@ -294,7 +306,8 @@ pub fn offscreen(webgl2_limits: bool) {
         view_formats: &[],
     });
     let view = texture.create_view(&Default::default());
-    let render = |scene: &vello_gpu::Scene, renderer: &mut vello_gpu::Renderer, resources: &mut vello_gpu::Resources| {
+    let render = |scene: &mut vello_gpu::Scene, renderer: &mut vello_gpu::Renderer, resources: &mut vello_gpu::Resources| {
+        scene.flush();
         let mut encoder = device.create_command_encoder(&Default::default());
         let r = renderer.render(scene, resources, &device, &queue, &mut encoder, &rs, &view, Some(&depth), &vello_gpu::TextureBindings::new(), vello_gpu::TargetInit::Clear(vello_gpu::ClearSettings::default()));
         queue.submit([encoder.finish()]);
@@ -312,7 +325,7 @@ pub fn offscreen(webgl2_limits: bool) {
     let mut failing = vec![];
     for (name, mix, compose) in BLEND_MODES {
         let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut scene = vello_gpu::Scene::new(w as u16, h as u16);
+            let mut scene = new_scene(w as u16, h as u16);
             let cell = Rect::new(0., 0., 64., 64.);
             scene.push_layer(Some(&cell.to_path(TOLERANCE)), None, None, None, None);
             scene.set_paint(Color::BLACK);
@@ -322,16 +335,16 @@ pub fn offscreen(webgl2_limits: bool) {
             scene.fill_rect(&Rect::new(16., 16., 48., 48.));
             scene.pop_layer();
             scene.pop_layer();
-            render(&scene, &mut renderer, &mut resources)
+            render(&mut scene, &mut renderer, &mut resources)
         }));
         if !matches!(ok, Ok(Ok(()))) {
             failing.push(name);
         }
     }
     println!("[vello_gpu {label}] blend modes that panic or error: {failing:?}");
-    let mut scene = vello_gpu::Scene::new(w as u16, h as u16);
+    let mut scene = new_scene(w as u16, h as u16);
     coverage(&mut scene, &mut resources, &image, &failing);
-    match render(&scene, &mut renderer, &mut resources) {
+    match render(&mut scene, &mut renderer, &mut resources) {
         Ok(()) => {
             let rgba = readback(&device, &queue, &texture, w, h);
             common::write_png(&common::shots_dir().join(format!("coverage-vello_gpu-{label}.png")), w, h, &rgba);
@@ -341,9 +354,9 @@ pub fn offscreen(webgl2_limits: bool) {
     }
     // Filter effects (drop shadow on a path, blurred text).
     let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut scene = vello_gpu::Scene::new(w as u16, h as u16);
+        let mut scene = new_scene(w as u16, h as u16);
         filter_sheet(&mut scene, &mut resources);
-        render(&scene, &mut renderer, &mut resources)
+        render(&mut scene, &mut renderer, &mut resources)
     }));
     match ok {
         Ok(Ok(())) => {
@@ -365,9 +378,9 @@ pub fn offscreen(webgl2_limits: bool) {
         let layout = if shapes <= 1_000 { graph::Layout::Force } else { graph::Layout::Laid };
         let mut g = graph::Graph::new(shapes, w as f64 / 2., h as f64 / 2., layout);
         g.update(0.);
-        let mut scene = vello_gpu::Scene::new(w as u16, h as u16);
+        let mut scene = new_scene(w as u16, h as u16);
         encode_graph(&mut scene, &g, 2.0, w as f64, h as f64);
-        let r = render(&scene, &mut renderer, &mut resources);
+        let r = render(&mut scene, &mut renderer, &mut resources);
         println!("[vello_gpu {label}] canvas {shapes}: {:?}", r.map(|_| "rendered"));
     }
     if let Err(e) = device.poll(wgpu::PollType::wait_indefinitely()) {
@@ -377,5 +390,348 @@ pub fn offscreen(webgl2_limits: bool) {
     println!("[vello_gpu {label}] wgpu validation errors: {}", errs.len());
     for e in errs.iter().take(3) {
         println!("  {}", e.lines().take(4).collect::<Vec<_>>().join(" | "));
+    }
+}
+
+/// Offscreen split of vello_gpu frame cost: scene encode (CPU strip
+/// generation) vs render (schedule, uploads, GPU) for the canvas and world.
+pub fn bench(frames: usize) {
+    let instance = instance();
+    let Ok((_, device, queue)) = new_device(&instance, None, wgpu::Limits::default()) else { return };
+    let (w, h) = (3200u32, 2000u32);
+    let rs = vello_gpu::RenderSize { width: w as u16, height: h as u16 };
+    let (mut renderer, mut resources) = vello_gpu::Renderer::new(&device, &vello_gpu::RenderTargetConfig { format: wgpu::TextureFormat::Rgba8Unorm, width: w as u16, height: h as u16 });
+    let depth = vello_gpu::Renderer::create_depth_texture_view(&device, &rs);
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&Default::default());
+    let mut scene = new_scene(w as u16, h as u16);
+    for shapes in [1_000usize, 10_000] {
+        let layout = if shapes <= 1_000 { graph::Layout::Force } else { graph::Layout::Laid };
+        let mut g = graph::Graph::new(shapes, w as f64 / 2., h as f64 / 2., layout);
+        let (mut enc_t, mut render_t, mut gpu_t) = (crate::common::Series::default(), crate::common::Series::default(), crate::common::Series::default());
+        for f in 0..frames + 10 {
+            g.update(f as f64 / 60.);
+            let t0 = Instant::now();
+            scene.reset();
+            encode_graph(&mut scene, &g, 2.0, w as f64, h as f64);
+            let t1 = Instant::now();
+            scene.flush();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            if let Err(e) = renderer.render(&scene, &mut resources, &device, &queue, &mut encoder, &rs, &view, Some(&depth), &vello_gpu::TextureBindings::new(), vello_gpu::TargetInit::Clear(vello_gpu::ClearSettings::default())) {
+                eprintln!("{e:?}");
+            }
+            queue.submit([encoder.finish()]);
+            let t2 = Instant::now();
+            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+            let t3 = Instant::now();
+            if f >= 10 {
+                enc_t.push(t1 - t0);
+                render_t.push(t2 - t1);
+                gpu_t.push(t3 - t2);
+            }
+        }
+        println!("[vello_gpu bench] canvas {shapes}: scene encode (strips) {}\n                     render() CPU {}\n                     GPU wait {}", enc_t.summary(), render_t.summary(), gpu_t.summary());
+    }
+    // deka's own scenes: the animating world and the static UI.
+    let mut world = World::new();
+    world.start();
+    let ui_host = Host::new(crate::common::UiApp);
+    let deka_renderer = deka_native_ui::scene::Renderer::new();
+    let mut images: HashMap<String, (vello_gpu::ImageId, ImageSource)> = HashMap::new();
+    for name in ["world", "ui"] {
+        let (mut build_t, mut enc_t, mut render_t, mut gpu_t) = Default::default();
+        let (build_t, enc_t, render_t, gpu_t): (&mut crate::common::Series, &mut crate::common::Series, &mut crate::common::Series, &mut crate::common::Series) = (&mut build_t, &mut enc_t, &mut render_t, &mut gpu_t);
+        let mut paths = 0usize;
+        for f in 0..frames + 10 {
+            let t0 = Instant::now();
+            let deka = if name == "world" {
+                world.frame(1600., 1000., f as f64 * 16.7, false)
+            } else {
+                deka_renderer.render_at(&ui_host.render(), 1600., 1000., 2., f as f64 * 16.7, false)
+            };
+            let t1 = Instant::now();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            for g in &deka.images {
+                if !images.contains_key(&g.id)
+                    && let Some(p) = pixmap_of(g)
+                {
+                    let id = renderer.upload_image(&mut resources, &device, &queue, &mut encoder, &p);
+                    images.insert(g.id.clone(), (id, ImageSource::opaque_id_with_transparency_hint(id, true)));
+                }
+            }
+            queue.submit([encoder.finish()]);
+            let sources: HashMap<String, ImageSource> = images.iter().map(|(k, (_, s))| (k.clone(), s.clone())).collect();
+            let t2 = Instant::now();
+            scene.reset();
+            encode_deka(&mut scene, &deka, 2.0, &sources);
+            let t3 = Instant::now();
+            paths = deka.paint.len();
+            scene.flush();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            if let Err(e) = renderer.render(&scene, &mut resources, &device, &queue, &mut encoder, &rs, &view, Some(&depth), &vello_gpu::TextureBindings::new(), vello_gpu::TargetInit::Clear(vello_gpu::ClearSettings::default())) {
+                eprintln!("{e:?}");
+            }
+            queue.submit([encoder.finish()]);
+            let t4 = Instant::now();
+            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+            let t5 = Instant::now();
+            if f >= 10 {
+                build_t.push(t1 - t0);
+                enc_t.push(t3 - t2);
+                render_t.push(t4 - t3);
+                gpu_t.push(t5 - t4);
+                let _ = t2;
+            }
+        }
+        println!("[vello_gpu bench] {name} ({paths} paints): deka scene build {}\n                     scene encode {}\n                     render() CPU {}\n                     GPU wait {}", build_t.summary(), enc_t.summary(), render_t.summary(), gpu_t.summary());
+    }
+}
+
+/// Offscreen GPU context shared by `verify` and `scaling`.
+struct Offscreen {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    renderer: vello_gpu::Renderer,
+    resources: vello_gpu::Resources,
+    depth: wgpu::TextureView,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    images: HashMap<String, ImageSource>,
+    w: u32,
+    h: u32,
+}
+
+impl Offscreen {
+    fn new(w: u32, h: u32) -> Option<Self> {
+        let instance = instance();
+        let (_, device, queue) = new_device(&instance, None, wgpu::Limits::default()).ok()?;
+        let rs = vello_gpu::RenderSize { width: w as u16, height: h as u16 };
+        let (renderer, resources) = vello_gpu::Renderer::new(&device, &vello_gpu::RenderTargetConfig { format: wgpu::TextureFormat::Rgba8Unorm, width: w as u16, height: h as u16 });
+        let depth = vello_gpu::Renderer::create_depth_texture_view(&device, &rs);
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        Some(Self { device, queue, renderer, resources, depth, texture, view, images: HashMap::new(), w, h })
+    }
+
+    fn upload(&mut self, deka: &DekaScene) {
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        for g in &deka.images {
+            if !self.images.contains_key(&g.id)
+                && let Some(p) = pixmap_of(g)
+            {
+                let id = self.renderer.upload_image(&mut self.resources, &self.device, &self.queue, &mut encoder, &p);
+                self.images.insert(g.id.clone(), ImageSource::opaque_id_with_transparency_hint(id, true));
+            }
+        }
+        self.queue.submit([encoder.finish()]);
+    }
+
+    /// Flush, render, and return (render() CPU time, GPU wait time).
+    fn render(&mut self, scene: &mut vello_gpu::Scene) -> (Duration, Duration) {
+        scene.flush();
+        let t0 = Instant::now();
+        let rs = vello_gpu::RenderSize { width: self.w as u16, height: self.h as u16 };
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        if let Err(e) = self.renderer.render(scene, &mut self.resources, &self.device, &self.queue, &mut encoder, &rs, &self.view, Some(&self.depth), &vello_gpu::TextureBindings::new(), vello_gpu::TargetInit::Clear(vello_gpu::ClearSettings::default())) {
+            eprintln!("render: {e}");
+        }
+        self.queue.submit([encoder.finish()]);
+        let t1 = Instant::now();
+        if let Err(e) = self.device.poll(wgpu::PollType::wait_indefinitely()) {
+            eprintln!("poll: {e}");
+        }
+        (t1 - t0, t1.elapsed())
+    }
+
+    fn pixels(&self) -> Vec<u8> {
+        readback(&self.device, &self.queue, &self.texture, self.w, self.h)
+    }
+}
+
+/// The scenes the fork must reproduce exactly.
+const VERIFY_SCENES: [&str; 5] = ["coverage", "canvas-1k", "canvas-10k", "world", "ui"];
+
+fn encode_named(off: &mut Offscreen, scene: &mut vello_gpu::Scene, name: &str, t: f64) {
+    scene.reset();
+    match name {
+        "coverage" => {
+            // Upload once: a fresh atlas slot per render changes edge filtering
+            // of the rotated image (2 pixels differ even between two stock renders).
+            if !off.images.contains_key("coverage") {
+                let mut encoder = off.device.create_command_encoder(&Default::default());
+                if let Some(p) = pixmap_of(&coverage_image()) {
+                    let id = off.renderer.upload_image(&mut off.resources, &off.device, &off.queue, &mut encoder, &p);
+                    off.images.insert("coverage".into(), ImageSource::opaque_id_with_transparency_hint(id, false));
+                }
+                off.queue.submit([encoder.finish()]);
+            }
+            if let Some(image) = off.images.get("coverage").cloned() {
+                coverage(scene, &mut off.resources, &image, &[]);
+            }
+        }
+        "canvas-1k" | "canvas-10k" => {
+            let shapes = if name == "canvas-1k" { 1_000 } else { 10_000 };
+            let layout = if shapes <= 1_000 { graph::Layout::Force } else { graph::Layout::Laid };
+            let mut g = graph::Graph::new(shapes, off.w as f64 / 2., off.h as f64 / 2., layout);
+            // A few physics steps so the force layout is not at its start state.
+            for i in 0..30 {
+                g.update(t + i as f64 / 60.);
+            }
+            encode_graph(scene, &g, 2.0, off.w as f64, off.h as f64);
+        }
+        _ => {
+            let deka = if name == "world" {
+                let mut world = World::new();
+                world.start();
+                world.frame(off.w as f32 / 2., off.h as f32 / 2., t * 1000., false)
+            } else {
+                deka_native_ui::scene::Renderer::new().render_at(&Host::new(crate::common::UiApp).render(), off.w as f32 / 2., off.h as f32 / 2., 2., t * 1000., false)
+            };
+            off.upload(&deka);
+            encode_deka(scene, &deka, 2.0, &off.images);
+        }
+    }
+}
+
+/// Pixel-compare the fork's parallel and cached strips against the stock
+/// (eager, single-threaded) path for every scene. Exits non-zero on mismatch.
+pub fn verify() -> bool {
+    let Some(mut off) = Offscreen::new(3200, 2000) else { return false };
+    let configs: [(&str, usize, bool); 8] = [("eager (stock path)", 1, false), ("eager again (control)", 1, false), ("2 threads", 2, false), ("4 threads", 4, false), ("8 threads", 8, false), ("20 threads", 20, false), ("cache, 1 thread", 1, true), ("cache, 8 threads", 8, true)];
+    let mut all_ok = true;
+    for name in VERIFY_SCENES {
+        let mut reference: Option<Vec<u8>> = None;
+        for (label, threads, cache) in configs {
+            let mut scene = vello_gpu::Scene::new(off.w as u16, off.h as u16);
+            scene.set_parallelism(threads);
+            scene.set_strip_cache(cache);
+            if cache {
+                // Frame 1 fills the cache; frame 2 (compared) reuses it.
+                encode_named(&mut off, &mut scene, name, 0.5);
+                off.render(&mut scene);
+                let _ = scene.take_strip_cache_stats();
+            }
+            encode_named(&mut off, &mut scene, name, 0.5);
+            off.render(&mut scene);
+            let stats = scene.take_strip_cache_stats();
+            let px = off.pixels();
+            match &reference {
+                None => {
+                    common::write_png(&common::shots_dir().join(format!("verify-{name}.png")), off.w, off.h, &px);
+                    reference = Some(px);
+                    println!("[verify] {name:10} {label:20} reference");
+                }
+                Some(r) => {
+                    let differing = r.chunks_exact(4).zip(px.chunks_exact(4)).filter(|(a, b)| a != b).count();
+                    let ok = differing == 0 && r.len() == px.len();
+                    all_ok &= ok;
+                    let cache_note = if cache { format!(" (cache hits {}, misses {})", stats.0, stats.1) } else { String::new() };
+                    println!("[verify] {name:10} {label:20} {}{cache_note}", if ok { "IDENTICAL".to_owned() } else { format!("DIFFERS in {differing} pixels") });
+                }
+            }
+        }
+    }
+    println!("[verify] {}", if all_ok { "all scenes byte-identical" } else { "MISMATCH" });
+    // Former panics (fork turns them into skipped draws / warnings).
+    let survived = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut scene = vello_gpu::Scene::new(off.w as u16, off.h as u16);
+        scene.set_paint(Brush::Image(ImageBrush { image: pixmap_source(&coverage_image()), sampler: ImageSampler::default() }));
+        scene.fill_rect(&Rect::new(10., 10., 74., 74.));
+        let mask = vello_gpu::Mask::new_alpha(&vello_gpu::Pixmap::new(64, 64));
+        scene.push_layer(None, None, None, Some(mask), None);
+        scene.set_paint(Color::BLACK);
+        scene.fill_rect(&Rect::new(0., 0., 10., 10.));
+        scene.pop_layer();
+        off.render(&mut scene);
+    }))
+    .is_ok();
+    println!("[verify] pixmap image source + mask layer: {}", if survived { "no panic (draw skipped / mask ignored, warnings logged)" } else { "PANICKED" });
+    all_ok && survived
+}
+
+/// Scaling curve: per thread count, canvas 1k and 10k frame costs; then the
+/// strip cache on deka's world (animating) and UI (static).
+pub fn scaling(frames: usize, counts: &[usize]) {
+    let Some(mut off) = Offscreen::new(3200, 2000) else { return };
+    println!("[scaling] cores: {} physical, {} logical", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0) / 2, std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0));
+    for name in ["canvas-1k", "canvas-10k"] {
+        let shapes = if name == "canvas-1k" { 1_000 } else { 10_000 };
+        let layout = if shapes <= 1_000 { graph::Layout::Force } else { graph::Layout::Laid };
+        for &threads in counts {
+            let mut g = graph::Graph::new(shapes, 1600., 1000., layout);
+            let mut scene = vello_gpu::Scene::new(3200, 2000);
+            scene.set_parallelism(threads);
+            let (mut enc, mut cpu, mut gpu, mut total) = (crate::common::Series::default(), crate::common::Series::default(), crate::common::Series::default(), crate::common::Series::default());
+            let u0 = crate::common::usage();
+            let t_start = Instant::now();
+            for f in 0..frames + 10 {
+                g.update(f as f64 / 60.);
+                let t0 = Instant::now();
+                scene.reset();
+                encode_graph(&mut scene, &g, 2.0, 3200., 2000.);
+                scene.flush();
+                let t1 = Instant::now();
+                let (c, gw) = off.render(&mut scene);
+                if f >= 10 {
+                    enc.push(t1 - t0);
+                    cpu.push(c);
+                    gpu.push(gw);
+                    total.push(t0.elapsed());
+                }
+            }
+            let u1 = crate::common::usage();
+            let wall = t_start.elapsed().as_secs_f64();
+            let [gen_ns, merge_ns, record_ns] = scene.take_flush_timing();
+            let per = |ns: u64| ns as f64 / 1e6 / (frames + 10) as f64;
+            println!(
+                "[scaling] {name:10} threads {threads:2}: strips {:6.2} ms (parallel gen {:5.2}, merge {:4.2}, record {:4.2}) | render() {:5.2} | GPU {:5.2} | frame {:6.2} ms -> {:5.1} fps offscreen | CPU {:5.1}% of a core",
+                enc.mean(), per(gen_ns), per(merge_ns), per(record_ns), cpu.mean(), gpu.mean(), total.mean(), 1000. / total.mean(),
+                (u1.cpu_ns - u0.cpu_ns) as f64 / 1e9 / wall * 100.
+            );
+        }
+    }
+    for name in ["world", "ui"] {
+        for cache in [false, true] {
+            let mut scene = vello_gpu::Scene::new(3200, 2000);
+            scene.set_strip_cache(cache);
+            let mut enc = crate::common::Series::default();
+            let mut world = World::new();
+            world.start();
+            let ui_renderer = deka_native_ui::scene::Renderer::new();
+            let host = Host::new(crate::common::UiApp);
+            for f in 0..frames + 10 {
+                let deka = if name == "world" { world.frame(1600., 1000., f as f64 * 16.7, false) } else { ui_renderer.render_at(&host.render(), 1600., 1000., 2., f as f64 * 16.7, false) };
+                off.upload(&deka);
+                let t0 = Instant::now();
+                scene.reset();
+                encode_deka(&mut scene, &deka, 2.0, &off.images);
+                scene.flush();
+                let t1 = Instant::now();
+                off.render(&mut scene);
+                if f >= 10 {
+                    enc.push(t1 - t0);
+                }
+            }
+            let (hits, misses, entries) = scene.take_strip_cache_stats();
+            println!("[scaling] {name:5} strip cache {:3}: scene encode+strips {} (hits {hits}, misses {misses}, entries {entries})", if cache { "on" } else { "off" }, enc.summary());
+        }
     }
 }
