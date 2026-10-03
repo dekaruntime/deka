@@ -1,6 +1,7 @@
 //! PHPX-derived Rust bytecode VM shared by native Deka and browser previews.
 mod bytecode;
 mod callback;
+pub mod text_codec;
 pub use callback::{HostCallback, HostContext, HostJob};
 #[cfg(feature = "compiler")]
 pub mod compiler;

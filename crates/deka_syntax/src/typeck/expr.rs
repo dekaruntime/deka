@@ -854,7 +854,7 @@ impl<'a> Checker<'a> {
                 object,
                 field,
                 span,
-            } => self.check_field_access(object, field, *span),
+            } => self.check_field_access(expr, object, field, *span),
             ast::Expr::StructLiteral { name, fields, span } => {
                 self.check_struct_literal(name, fields, *span)
             }
@@ -1775,12 +1775,19 @@ impl<'a> Checker<'a> {
 
     fn check_field_access(
         &mut self,
+        expr: &ast::Expr<'a>,
         object: &ast::Expr<'a>,
         field: &'a str,
         span: ast::Span,
     ) -> Type<'a> {
         let object_type = self.check_expr(object);
-        if let Type::Opaque { name, .. } = &object_type {
+        if let Type::Opaque { name, identity } = &object_type {
+            if let Some((operation, ty)) = self.native_properties.get(&(*identity, field)).cloned()
+            {
+                self.native_property_calls
+                    .insert(expr as *const ast::Expr<'a>, operation);
+                return ty;
+            }
             self.error_span(
                 span,
                 format!("cannot access field `{field}` on opaque type `{name}`"),
@@ -3996,6 +4003,17 @@ impl<'a> Checker<'a> {
                     }
                     ast::Expr::FieldAccess { object, field, .. } => {
                         let object_type = self.check_expr(object);
+                        let is_native_property = matches!(
+                            &object_type,
+                            Type::Opaque { identity, .. }
+                                if self.native_properties.contains_key(&(*identity, field))
+                        );
+                        if is_native_property {
+                            self.error_span(
+                                span,
+                                format!("cannot assign to read-only host property `{field}`"),
+                            );
+                        }
                         let field_mutable = self.field_is_mutable(&object_type, field);
                         if !self.is_mutable_expr(object) && !field_mutable {
                             self.error_at_expr(left, self.immutable_field_message(object, field));
@@ -4282,7 +4300,28 @@ impl<'a> Checker<'a> {
         }
 
         let object_type = self.check_expr(object);
-        if let Type::Opaque { name, .. } = &object_type {
+        if let Type::Opaque { name, identity } = &object_type {
+            if let Some(info) = self
+                .native_receiver_methods
+                .get(&(*identity, method_name))
+                .cloned()
+            {
+                if !type_args.is_empty() {
+                    self.error_span(
+                        span,
+                        format!("method `{method_name}` does not accept type arguments"),
+                    );
+                    return Some(Type::Error);
+                }
+                self.method_calls.insert(
+                    call_expr as *const ast::Expr<'a>,
+                    ast::MethodTarget {
+                        mangled: ast::mangle_method_name(method_name, name),
+                        embed_path: Vec::new(),
+                    },
+                );
+                return Some(self.check_method_call_args(method_name, name, &info, args, span));
+            }
             if let Some(ty) =
                 self.check_primitive_extension_call(call_expr, name, method_name, args, span)
             {
@@ -5042,7 +5081,13 @@ impl<'a> Checker<'a> {
     ) -> Type<'a> {
         let expected_params: Vec<Type<'a>> = info.param_types.clone();
 
-        if expected_params.len() != args.len() {
+        let optional = info
+            .params
+            .iter()
+            .rev()
+            .take_while(|param| param.default_value.is_some())
+            .count();
+        if args.len() < expected_params.len() - optional || args.len() > expected_params.len() {
             self.error_span(
                 span,
                 format!(
@@ -5186,7 +5231,7 @@ impl<'a> Checker<'a> {
         span: ast::Span,
     ) -> Type<'a> {
         if let ast::Expr::Identifier { name, .. } = callee {
-            if self.opaques.contains_key(name) {
+            if self.opaques.contains_key(name) && self.lookup_var(name).is_none() {
                 self.error_span(
                     span,
                     format!(
