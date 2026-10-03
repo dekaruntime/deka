@@ -596,7 +596,9 @@ impl<'a> Checker<'a> {
         else {
             return None;
         };
-        if !matches!(object, ast::Expr::Identifier { name: "console", .. }) {
+        if !matches!(object, ast::Expr::Identifier { name: "console", .. })
+            || self.lookup_var("console").is_some()
+        {
             return None;
         }
         let method = *method;
@@ -610,8 +612,10 @@ impl<'a> Checker<'a> {
 
         match method {
             // `(...values: Printable[]) void`
-            "log" | "info" | "debug" | "warn" | "error" | "dirxml" | "trace" | "group"
-            | "groupCollapsed" => {
+            method
+                if crate::console::output_operation(method).is_some()
+                    || matches!(method, "dirxml" | "trace" | "group" | "groupCollapsed") =>
+            {
                 for arg in args.iter() {
                     self.check_printable_arg(method, arg);
                 }
