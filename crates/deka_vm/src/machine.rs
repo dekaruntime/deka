@@ -2002,8 +2002,14 @@ fn promise_add_text(value: Value) -> Result<String> {
 }
 /// How `string(x)` turns a number into text; string+number concat uses the
 /// same conversion, as the note-03 decision requires.
-fn number_text(n: f64) -> String {
-    format!("{n}")
+pub(crate) fn number_text(n: f64) -> String {
+    if n == f64::INFINITY {
+        "Infinity".into()
+    } else if n == f64::NEG_INFINITY {
+        "-Infinity".into()
+    } else {
+        format!("{n}")
+    }
 }
 fn arguments(frame: &mut Frame, count: usize) -> Result<Vec<Handle>> {
     // Do not reserve an untrusted bytecode operand's claimed size.

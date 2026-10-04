@@ -282,20 +282,20 @@ pub(super) fn primitive_member<'a>(
         // rewrites every call to a `Math.*` expression (`number_math_calls`);
         // verbatim passthrough would be a runtime lie since JS numbers have
         // no such methods.
-        ("number", "max" | "min") => PrimitiveMember::BuiltinMethod(fn1(&number_ty, &number_ty)),
-        ("number", "pow") => PrimitiveMember::BuiltinMethod(fn1(
-            &number_ty,
-            &Type::Option {
-                inner: Box::new(number_ty.clone()),
-            },
-        )),
-        ("number", field) if NUMBER_MATH_TOTAL.contains(&field) => {
-            PrimitiveMember::BuiltinMethod(fn0(number_ty))
-        }
-        ("number", field) if NUMBER_MATH_PARTIAL.contains(&field) => {
-            PrimitiveMember::BuiltinMethod(fn0(Type::Option {
-                inner: Box::new(number_ty),
-            }))
+        ("number", field) if crate::math_catalog::method(field).is_some() => {
+            let method = crate::math_catalog::method(field).expect("catalog math method");
+            let output = if method.partial {
+                Type::Option {
+                    inner: Box::new(number_ty.clone()),
+                }
+            } else {
+                number_ty.clone()
+            };
+            PrimitiveMember::BuiltinMethod(if method.arguments == 0 {
+                fn0(output)
+            } else {
+                fn1(&number_ty, &output)
+            })
         }
         ("Array", "length") => PrimitiveMember::Property(number_ty),
         ("Array", "includes") => {
@@ -424,33 +424,20 @@ pub(super) fn primitive_member<'a>(
 /// total: `Math.sin(Infinity)` and friends answer `NaN` (deka#594 review),
 /// so they live in `NUMBER_MATH_PARTIAL`. `max`/`min` are handled
 /// separately because they take one argument.
-pub(super) const NUMBER_MATH_TOTAL: &[&str] = &[
-    "abs", "ceil", "floor", "round", "trunc", "sign", "cbrt", "exp", "atan", "sinh", "cosh", "tanh",
-];
-
-/// Partial `Math` functions: some inputs make JavaScript produce `NaN`, so
-/// the method returns `Option<number>` and the emitted wrapper rewrites
-/// `NaN` to `None`. `sin`/`cos`/`tan` are partial because the non-finite
-/// inputs (`Math.sin(Infinity)` → `NaN`) are ordinary reachable `number`s
-/// in DekaScript (`1.0/0.0`); classifying them as total would type a NaN
-/// result as `number` — the exact "type that claims something false" defect
-/// rfd#13 exists to close. `pow` is handled separately because it takes one
-/// argument.
-pub(super) const NUMBER_MATH_PARTIAL: &[&str] = &[
-    "sqrt", "log", "log2", "log10", "asin", "acos", "acosh", "atanh", "sin", "cos", "tan",
-];
+#[cfg(test)]
+pub(super) use crate::math_catalog::{NUMBER_MATH_PARTIAL, NUMBER_MATH_TOTAL};
 
 /// Classify a builtin `Math`-backed method on `number` for the emitter
 /// (deka#378 step 2). Must stay in sync with the `("number", …)` arms of
 /// `primitive_member`.
 pub(super) fn number_math_kind(method: &str) -> Option<super::types::NumberMath> {
-    if NUMBER_MATH_TOTAL.contains(&method) || matches!(method, "max" | "min") {
-        Some(super::types::NumberMath::Total)
-    } else if NUMBER_MATH_PARTIAL.contains(&method) || method == "pow" {
-        Some(super::types::NumberMath::Partial)
-    } else {
-        None
-    }
+    crate::math_catalog::method(method).map(|method| {
+        if method.partial {
+            super::types::NumberMath::Partial
+        } else {
+            super::types::NumberMath::Total
+        }
+    })
 }
 
 impl<'a> Checker<'a> {
