@@ -32,3 +32,5 @@ pub use typeck::{
 pub mod console;
 pub mod deka_catalog;
 pub mod visit;
+
+pub mod native_brand;

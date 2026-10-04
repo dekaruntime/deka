@@ -409,7 +409,7 @@ fn lower_module<'a>(
     ast: &deka_syntax::ast::Program<'a>,
     source: &str,
     hosts: &Hosts,
-    host_exports: &deka_syntax::ModuleExports<'_>,
+    host_exports: &deka_syntax::ModuleExports<'a>,
     arena: &'a bumpalo::Bump,
     module_exports: &HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'a>>,
     struct_identities: &HashMap<std::path::PathBuf, BTreeMap<String, String>>,
@@ -510,6 +510,29 @@ fn lower_module<'a>(
     lower.imported_structs.clear();
     lower.struct_identities = struct_identities[path].clone();
     lower.enums.clear();
+    lower.enum_brands.clear();
+    for (name, info) in &host_exports.enums {
+        lower.enums.insert(
+            (*name).into(),
+            info.cases
+                .iter()
+                .map(|case| (case.name.into(), case.payload.is_some()))
+                .collect(),
+        );
+        lower.enum_brands.insert((*name).into(), (*name).into());
+    }
+    for (name, info) in &host_exports.structs {
+        lower.structs.insert(
+            (*name).into(),
+            info.fields
+                .iter()
+                .map(|f| (f.name.to_owned(), f.default_value.as_ref(), f.optional))
+                .collect(),
+        );
+        lower
+            .struct_identities
+            .insert((*name).into(), (*name).into());
+    }
     lower.method_decls.clear();
     lower.struct_embeds.clear();
     lower.exception_forms = checked
@@ -683,11 +706,55 @@ fn lower_module<'a>(
                         entry.emit(Op::Store(slot));
                         continue;
                     }
+                    let target = module_path(path, source, project)?;
+                    if let Some(deka_syntax::ast::Type::Named { name: brand, .. }) =
+                        module_exports[&target].aliases.get(spec.imported)
+                    {
+                        if let Some(info) = module_exports[&target].enums.get(spec.imported) {
+                            lower.enums.insert(
+                                spec.local.into(),
+                                info.cases
+                                    .iter()
+                                    .map(|case| (case.name.into(), case.payload.is_some()))
+                                    .collect(),
+                            );
+                            lower.enum_brands.insert(spec.local.into(), (*brand).into());
+                            continue;
+                        }
+                        if let Some(info) = module_exports[&target].structs.get(spec.imported) {
+                            lower.structs.insert(
+                                spec.local.into(),
+                                info.fields
+                                    .iter()
+                                    .map(|f| (f.name.into(), f.default_value.as_ref(), f.optional))
+                                    .collect(),
+                            );
+                            lower
+                                .struct_identities
+                                .insert(spec.local.into(), (*brand).into());
+                            continue;
+                        }
+                    }
                     let operation = builtins::operation(source, spec.imported, hosts)?;
                     lower.hosts.insert(spec.local.into(), operation);
                     continue;
                 }
                 let target = module_path(path, source, project)?;
+                if let Some(info) = module_exports[&target].enums.get(spec.imported) {
+                    lower.enums.insert(
+                        spec.local.into(),
+                        info.cases
+                            .iter()
+                            .map(|case| (case.name.into(), case.payload.is_some()))
+                            .collect(),
+                    );
+                    let brand = match module_exports[&target].aliases.get(spec.imported) {
+                        Some(deka_syntax::ast::Type::Named { name, .. }) => *name,
+                        _ => spec.imported,
+                    };
+                    lower.enum_brands.insert(spec.local.into(), brand.into());
+                    continue;
+                }
                 if let Some(info) = module_exports[&target].structs.get(spec.imported) {
                     lower.imported_structs.insert(spec.local.to_owned());
                     lower.struct_identities.insert(
@@ -785,7 +852,13 @@ fn lower_module<'a>(
                     // target's slot — no copy, so timing behaves as if the
                     // consumer imported from the origin directly (deka#1210).
                     Some(source) if host_module(source) => {
+                        let target = module_path(path, source, project)?;
                         for name in *names {
+                            if module_exports[&target].structs.contains_key(name.name)
+                                || module_exports[&target].enums.contains_key(name.name)
+                            {
+                                continue;
+                            }
                             if let Some(value) = builtins::constant(source, name.name) {
                                 entry.emit(Op::Const(value));
                             } else {
@@ -1108,6 +1181,20 @@ fn compile_modules(
             .keys()
             .map(|path| (path.clone(), BTreeMap::new()))
             .collect();
+    for (path, exports) in &module_exports {
+        if builtins::is_path(path) {
+            for (name, alias) in &exports.aliases {
+                if exports.structs.contains_key(name)
+                    && let deka_syntax::ast::Type::Named { name: brand, .. } = alias
+                {
+                    struct_identities
+                        .get_mut(path)
+                        .expect("builtin identity map")
+                        .insert((*name).into(), (*brand).into());
+                }
+            }
+        }
+    }
     for (i, (path, _)) in modules.iter().enumerate() {
         let mut names = BTreeMap::new();
         for stmt in asts[path].statements {
@@ -1254,6 +1341,7 @@ fn compile_modules(
         imported_structs: Default::default(),
         method_calls: HashMap::new(),
         enums: BTreeMap::new(),
+        enum_brands: BTreeMap::new(),
         method_decls: BTreeMap::new(),
         struct_embeds: BTreeMap::new(),
         native_property_calls: Default::default(),
@@ -1568,6 +1656,7 @@ struct Lower<'a> {
     /// `{name, index[, value]}`; payload-free cases are interned one record
     /// per declaration, hoisted with the receiver methods.
     enums: BTreeMap<String, Vec<(String, bool)>>,
+    enum_brands: BTreeMap<String, String>,
     /// Methods declared in the current module per receiver type: method key
     /// and mangled free-function name. Struct literals attach them to the
     /// record under `$<key>` so an interface-typed call finds them at run
@@ -1626,13 +1715,17 @@ impl<'a> Lower<'a> {
         }
         if let Some(value) = payload {
             self.expr(value, c)?;
-        } else if self.enums.contains_key(name) {
+        } else if self.enums.contains_key(name) && !self.enum_brands.contains_key(name) {
             // Payload-free declared cases remain interned at their declaration.
             c.emit_load(&format!("{name}${case}"))?;
             return Ok(());
         }
         c.emit(Op::Enum {
-            name: name.into(),
+            name: self
+                .enum_brands
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.into()),
             case: case.into(),
             index,
             payload: *has_payload,
@@ -3119,6 +3212,16 @@ impl<'a> Lower<'a> {
                     c.emit(Op::Load(result));
                     return Ok(());
                 }
+                if let Expr::FieldAccess {
+                    object: Expr::Identifier { name, .. },
+                    field,
+                    ..
+                } = callee
+                    && self.enums.contains_key(*name)
+                {
+                    self.enum_constructor(name, field, args.first(), c)?;
+                    return Ok(());
+                }
                 let unbound = if let Expr::Identifier { name, .. } = callee {
                     (!c.names.contains_key(*name)).then_some(*name)
                 } else {
@@ -3403,5 +3506,5 @@ fn descriptor_summary(tree: &deka_syntax::typeck::DescriptorTree<'_>) -> crate::
                 .join(" | "),
         ),
     };
-    crate::TypeDescriptor::new(kind, &name)
+    crate::TypeDescriptor::new(kind, crate::host::public_native_name(&name))
 }

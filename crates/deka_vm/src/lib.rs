@@ -60,3 +60,6 @@ pub mod url;
 
 #[cfg(feature = "host")]
 pub mod http_request;
+
+#[path = "../../deka_syntax/src/native_brand.rs"]
+mod native_brand;
