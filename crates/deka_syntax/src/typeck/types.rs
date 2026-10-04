@@ -406,7 +406,10 @@ impl fmt::Display for Type<'_> {
                 f,
                 "{{ url: string, dirname: string, filename: string, main: boolean, resolve: fn(string) string }}"
             ),
-            Type::Named { name } => write!(f, "{name}"),
+            Type::Named { name } => {
+                let public = crate::native_brand::public_name(name);
+                if public == *name { write!(f, "{name}") } else { write!(f, "native {public}") }
+            },
             Type::Option { inner } => write!(f, "Option<{inner}>"),
             Type::Function {
                 params,
@@ -428,7 +431,7 @@ impl fmt::Display for Type<'_> {
             }
             Type::Generic { base, args } => {
                 let base = if *base == "OpenContext" { "Context" } else { base };
-                write!(f, "{base}<")?;
+                write!(f, "{}<", crate::native_brand::public_name(base))?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -437,7 +440,10 @@ impl fmt::Display for Type<'_> {
                 }
                 write!(f, ">")
             }
-            Type::Struct { name } => write!(f, "{name}"),
+            Type::Struct { name } => {
+                let public = crate::native_brand::public_name(name);
+                if public == *name { write!(f, "{name}") } else { write!(f, "native {public}") }
+            },
             Type::Tuple { elements } => write!(
                 f,
                 "[{}]",
