@@ -2082,6 +2082,8 @@ dependencies = [
 name = "deka_vm"
 version = "0.60.2"
 dependencies = [
+ "aes-gcm",
+ "bcrypt",
  "blake3",
  "bumpalo",
  "deka_native_ir",
@@ -2090,6 +2092,7 @@ dependencies = [
  "deno_core",
  "encoding_rs",
  "getrandom 0.2.17",
+ "hmac 0.12.1",
  "reqwest",
  "serde",
  "serde_json",

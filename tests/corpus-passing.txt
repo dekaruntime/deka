@@ -728,3 +728,6 @@ unsafe-unsafe-catch-rejected-fail
 unsafe-unsafe-err-message-rejected-fail
 unsafe-unsafe-error-is-jserror-fail
 unsafe-unsafe-typed-result-mismatch-fail
+
+# Native crypto exports; pinned sources run unchanged.
+crypto-random-bytes-rejects-zero

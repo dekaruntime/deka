@@ -1,6 +1,7 @@
 //! Corpus gate library (deka#1214): enumerate testsuite-corpus cases,
 //! materialize fixtures exactly like the corpus runner, execute `deka run`,
 //! and evaluate the outcome against each case's expectation.
+mod native_crypto_fixture;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -341,7 +342,8 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
         && std::iter::once(case.source.as_str())
             .chain(case.files.iter().map(|(_, source)| source.as_str()))
             .all(native_json_source);
-    let native_fixture = native_json || native_bytes_fixture(case);
+    let native_fixture =
+        native_json || native_bytes_fixture(case) || native_crypto_fixture::accepts(case);
     if !case.packages.is_empty() && !native_fixture {
         return Err(format!(
             "{} declares packages {:?}; the gate is offline and cannot install them",
