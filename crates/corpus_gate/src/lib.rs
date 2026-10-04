@@ -15,6 +15,9 @@ const RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 // Fill only absent guards; explicit corpus metadata remains authoritative.
 fn native_diagnostic(slug: &str) -> Option<&'static str> {
     Some(match slug {
+        "basics-redeclare-let-as-const-fail"
+        | "basics-redeclare-const-fail"
+        | "functions-duplicate-module-const-in-body-fail" => "duplicate binding `x` in this scope",
         "data-types-array-find-undefined-access-fail" => {
             "cannot access field `length` on type `Option<number>`"
         }
@@ -144,6 +147,7 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
         .get("expectedDiagnosticContains")
         .and_then(|s| s.as_str())
         .map(str::to_owned);
+    let missing_message = expected_diagnostic_contains.is_none();
     let deka_json = metadata.get("dekaJson").filter(|d| d.is_object()).cloned();
     let packages: Vec<String> = metadata
         .get("packages")
@@ -186,7 +190,7 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
             None
         }
     });
-    Some(Case {
+    let mut case = Case {
         slug,
         status,
         stage,
@@ -197,7 +201,34 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
         expected_diagnostic_contains,
         deka_json,
         packages,
-    })
+    };
+    if missing_message && native_duplicate_binding_fixture(&case) {
+        case.stage = Stage::Typecheck;
+    }
+    Some(case)
+}
+
+// These original negative controls predate native checking. Their intended
+// duplicate-declaration failure is now caught before execution; only the exact
+// source/metadata combination is migrated, never the source or expected result.
+fn native_duplicate_binding_fixture(case: &Case) -> bool {
+    let source = match case.slug.as_str() {
+        "basics-redeclare-let-as-const-fail" => "let x = 1\nconst x = 2\n",
+        "basics-redeclare-const-fail" => {
+            "import { echo } from \"io\"\nconst x = 1\nconst x = 2\necho(string(x))\n"
+        }
+        "functions-duplicate-module-const-in-body-fail" => {
+            "import { echo } from \"io\"\nconst x = 1\nconst x = 2\nfn read() number {\n  return x\n}\necho(string(read()))\n"
+        }
+        _ => return false,
+    };
+    case.status == Status::Fail
+        && case.stage == Stage::Run
+        && case.source == source
+        && case.expected_stdout.is_none()
+        && case.deka_json.is_none()
+        && case.packages.is_empty()
+        && case.files.is_empty()
 }
 
 /// Every native-runnable case in the corpus, in deterministic order.
@@ -722,6 +753,60 @@ mod tests {
             parse_native_diagnostics("[security] ignored\ntype mismatch at 3:1\n"),
             vec!["type mismatch at 3:1".to_string()]
         );
+    }
+
+    #[test]
+    fn original_duplicate_binding_fixture_requires_the_named_check_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = dir.path().join("basics/redeclare_const_fail");
+        std::fs::create_dir_all(&fixture).unwrap();
+        let entry = fixture.join("test.fail.ds");
+        let metadata = fixture.join("test.json");
+        std::fs::write(
+            &entry,
+            "import { echo } from \"io\"\nconst x = 1\nconst x = 2\necho(string(x))\n",
+        )
+        .unwrap();
+        std::fs::write(&metadata, r#"{"stage":"run"}"#).unwrap();
+        let load = || load_cases(dir.path()).pop().unwrap();
+        let original = load();
+        assert_eq!(original.stage, Stage::Typecheck);
+        assert!(
+            evaluate(
+                &original,
+                &run(false, "", "duplicate binding `x` in this scope", true)
+            )
+            .is_empty()
+        );
+        assert!(
+            !evaluate(
+                &original,
+                &run(
+                    false,
+                    "",
+                    "expression is unsupported by VM experiment",
+                    true
+                )
+            )
+            .is_empty()
+        );
+        assert!(!evaluate(&original, &run(true, "2\n", "", false)).is_empty());
+        std::fs::write(&entry, "const x = 1; const x = 2;").unwrap();
+        assert_eq!(load().stage, Stage::Run);
+        std::fs::write(&entry, &original.source).unwrap();
+        std::fs::write(
+            &metadata,
+            r#"{"stage":"run","expectedDiagnosticContains":"explicit replacement"}"#,
+        )
+        .unwrap();
+        let explicit = load();
+        assert_eq!(explicit.stage, Stage::Run);
+        assert_eq!(
+            explicit.expected_diagnostic_contains.as_deref(),
+            Some("explicit replacement")
+        );
+        std::fs::write(&metadata, r#"{"stage":"run","packages":["custom"]}"#).unwrap();
+        assert_eq!(load().stage, Stage::Run);
     }
 
     #[test]

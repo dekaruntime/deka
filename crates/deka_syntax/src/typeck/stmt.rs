@@ -1269,6 +1269,8 @@ impl<'a> Checker<'a> {
                 for (i, name) in names.iter().enumerate() {
                     if names[..i].contains(name) {
                         self.error_span(*span, format!("duplicate tuple binding `{name}`; use a distinct name for each position"));
+                    } else {
+                        self.reject_duplicate_binding(name, *span);
                     }
                     let ty = elements.get(i).cloned().unwrap_or(Type::Error);
                     let class = self.classify_initializer(value, &ty);
@@ -1337,7 +1339,7 @@ impl<'a> Checker<'a> {
             }
             ast::Stmt::Export { decl, span } => match decl {
                 ast::ExportDecl::Const { name, ty, value } => {
-                    self.check_binding(name, ty.as_ref(), value, false, value.span());
+                    self.check_binding(name, ty.as_ref(), value, false, *span);
                     if ty.is_none()
                         && self
                             .scopes
@@ -1661,6 +1663,7 @@ impl<'a> Checker<'a> {
         alternative: &ast::UnwrapAlternative<'a>,
         span: ast::Span,
     ) {
+        self.reject_duplicate_binding(name, span);
         let scrutinee_type = self.check_expr(scrutinee);
 
         // `unwrap` is about a value that might be absent, and DekaScript has
@@ -1788,6 +1791,20 @@ impl<'a> Checker<'a> {
         self.check_match_exhaustiveness(span, scrutinee_type, &coverage);
     }
 
+    /// Module seeds are not declarations. The first source declaration activates
+    /// its seed; only a later declaration in that same value scope is a duplicate.
+    fn reject_duplicate_binding(&mut self, name: &'a str, span: ast::Span) {
+        let pending_seed = self.scopes.len() == 1 && self.pending_module_bindings.contains(name);
+        if !pending_seed
+            && self
+                .scopes
+                .last()
+                .is_some_and(|scope| scope.contains_key(name))
+        {
+            self.error_span(span, format!("duplicate binding `{name}` in this scope"));
+        }
+    }
+
     fn check_binding(
         &mut self,
         name: &'a str,
@@ -1796,6 +1813,7 @@ impl<'a> Checker<'a> {
         mutable: bool,
         span: ast::Span,
     ) {
+        self.reject_duplicate_binding(name, span);
         if let ast::Expr::Build { body, .. } = value {
             return self.check_dev_binding(name, ty, body, mutable, value, span);
         }

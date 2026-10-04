@@ -1,0 +1,45 @@
+---
+title: "Bindings and lexical scopes"
+---
+
+A value name may be declared once in a scope. Use assignment to update a `let`;
+use a separate nested block to shadow a name. Repeating a declaration does not
+replace its earlier value or change its mutability.
+
+```ts
+let count = 1;
+count = count + 1;
+```
+
+Declaring another binding in that same scope is a check error:
+
+```ts
+let count = 1;
+const count = 2;
+```
+
+```text
+[check] app.ds
+[check] 2:1: duplicate binding `count` in this scope
+```
+
+The rule also covers names bound by tuple destructuring and `unwrap ... or`
+bindings. A function parameter is already a value binding in its body scope.
+Both `deka check` and `deka run` refuse duplicates before any source effects run.
+
+Nested blocks retain ordinary shadowing:
+
+```ts
+import { echo } from "io";
+
+const label = "outer";
+{
+    const label = "inner";
+    echo(label);
+}
+echo(label);
+```
+
+This prints `inner`, then `outer`. Function-body type inference can still read
+module binding types before the module's initializers are checked. Those internal
+type seeds are not additional authored declarations.
