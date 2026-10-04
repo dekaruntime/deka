@@ -7,6 +7,7 @@ pub mod bridge;
 pub mod canonicalize;
 pub mod diagnostics;
 pub mod lexer;
+pub mod math_catalog;
 pub mod parse;
 pub mod scope;
 pub mod typeck;

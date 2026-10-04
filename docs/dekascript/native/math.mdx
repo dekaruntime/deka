@@ -1,0 +1,40 @@
+# Math
+
+The closed `math` module provides `PI` as an immutable number. Named imports,
+aliases and re-exports work; `@deka/math` also resolves to the same module.
+There is no ambient `Math` object, and `PI` is a value rather than a function.
+
+Number methods perform arithmetic in Rust. Total methods return `number`:
+`abs`, `ceil`, `floor`, `round`, `trunc`, `sign`, `cbrt`, `exp`, `atan`, `sinh`,
+`cosh`, `tanh`, `max(other)` and `min(other)`.
+
+Partial methods return `Option<number>`: `sqrt`, `log`, `log2`, `log10`, `asin`,
+`acos`, `acosh`, `atanh`, `sin`, `cos`, `tan` and `pow(exponent)`. A result that
+would be NaN becomes `None`; finite results and infinities are `Some(number)`.
+Match or unwrap these values explicitly when you need a plain number.
+
+```ds
+import { echo } from "io"
+import { PI } from "math"
+
+fn main() {
+    echo(string(PI))
+    echo(string((3.7).floor()))
+    echo(string((16).sqrt()))
+    echo(string((-1).sqrt()))
+}
+```
+
+```text
+3.141592653589793
+3
+Some(4)
+None
+```
+
+`round` chooses the higher integer on an exact tie: `(-1.5).round()` is `-1`.
+Signed zero is preserved where the existing number contract requires it.
+User-defined receiver methods take precedence over the built-in methods.
+
+The checker and native host registry consume one math signature catalog. Built
+executables retain the same Rust arithmetic without source files or a compiler.
