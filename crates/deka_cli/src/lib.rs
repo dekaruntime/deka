@@ -127,6 +127,7 @@ pub(crate) fn hosts() -> Result<Hosts> {
     deka_vm::http_response::register(&mut hosts)?;
     deka_vm::abort::register(&mut hosts)?;
     deka_vm::crypto::register(&mut hosts)?;
+    deka_vm::builtin_crypto::register(&mut hosts)?;
     deka_vm::fetch::register(&mut hosts)?;
     deka_vm::blob::register(&mut hosts)?;
     Ok(hosts)

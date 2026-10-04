@@ -1,6 +1,8 @@
 //! PHPX-derived Rust bytecode VM shared by native Deka and browser previews.
 #[cfg(feature = "host")]
 pub mod abort;
+#[cfg(feature = "host")]
+pub mod builtin_crypto;
 mod bytecode;
 mod callback;
 #[cfg(feature = "host")]
