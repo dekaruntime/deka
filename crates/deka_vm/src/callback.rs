@@ -1,11 +1,13 @@
 //! Host work enters its owning VM through a queue, never by re-entering it.
-use crate::{HostFuture, HostValue, Result, heap::Handle};
+use crate::{HostFuture, HostType, HostValue, Result, heap::Handle};
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, VecDeque},
     fmt,
+    future::Future,
+    pin::Pin,
     rc::{Rc, Weak},
-    task::Waker,
+    task::{Context, Poll, Waker},
 };
 
 struct State {
@@ -37,7 +39,58 @@ struct Callback {
 /// A rooted language callback. Clones retain it; dropping the last clone
 /// releases its root at the next VM collection.
 #[derive(Clone)]
-pub struct HostCallback(Rc<Callback>);
+pub struct HostCallback(Rc<Callback>, Option<Rc<Signature>>);
+struct Signature {
+    args: Vec<HostType>,
+    result: HostType,
+    result_channel: bool,
+}
+struct CompletionState {
+    result: Option<Result<HostValue>>,
+    waker: Option<Waker>,
+}
+/// Owned by queued/running work; dropping it resolves an abandoned invocation.
+pub(crate) struct Completion {
+    state: Rc<RefCell<CompletionState>>,
+    pub(crate) result: HostType,
+    pub(crate) result_channel: bool,
+}
+impl Completion {
+    pub(crate) fn resolve(self, result: Result<HostValue>) {
+        self.finish(result);
+    }
+    fn finish(&self, result: Result<HostValue>) {
+        let waker = {
+            let mut state = self.state.borrow_mut();
+            if state.result.is_some() {
+                return;
+            }
+            state.result = Some(result);
+            state.waker.take()
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+}
+impl Drop for Completion {
+    fn drop(&mut self) {
+        self.finish(Err("VM cancelled".into()));
+    }
+}
+struct CompletionFuture(Rc<RefCell<CompletionState>>);
+impl Future for CompletionFuture {
+    type Output = Result<HostValue>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut state = self.0.borrow_mut();
+        if let Some(result) = state.result.take() {
+            Poll::Ready(result)
+        } else {
+            state.waker = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+}
 impl fmt::Debug for HostCallback {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("HostCallback")
@@ -51,17 +104,77 @@ impl PartialEq for HostCallback {
 impl HostCallback {
     /// Enqueue a call for the next VM turn. This never executes DekaScript.
     pub fn call(&self, args: Vec<HostValue>) -> Result<()> {
-        self.enqueue(args, None)
+        self.enqueue(args, None, None)
     }
+    #[cfg(feature = "host")]
     pub(crate) fn call_for(&self, job: &HostJob) -> Result<()> {
-        self.enqueue(vec![], Some(job.clone()))
+        self.enqueue(vec![], Some(job.clone()), None)
     }
-    fn enqueue(&self, args: Vec<HostValue>, job: Option<HostJob>) -> Result<()> {
+    pub(crate) fn with_signature(
+        mut self,
+        args: Vec<HostType>,
+        result: HostType,
+        result_channel: bool,
+    ) -> Self {
+        self.1 = Some(Rc::new(Signature {
+            args,
+            result,
+            result_channel,
+        }));
+        self
+    }
+    /// Enqueue a typed callback and await its actual return, including its awaits.
+    /// Calling this only queues work; the owning VM drives it in bounded turns.
+    pub fn call_async(&self, args: Vec<HostValue>) -> Result<HostFuture> {
+        let signature = self
+            .1
+            .as_ref()
+            .ok_or("awaitable callback requires a typed signature")?;
+        let state = Rc::new(RefCell::new(CompletionState {
+            result: None,
+            waker: None,
+        }));
+        self.enqueue(
+            args,
+            None,
+            Some(Completion {
+                state: state.clone(),
+                result: signature.result.clone(),
+                result_channel: signature.result_channel,
+            }),
+        )?;
+        Ok(Box::pin(CompletionFuture(state)))
+    }
+    fn enqueue(
+        &self,
+        mut args: Vec<HostValue>,
+        job: Option<HostJob>,
+        completion: Option<Completion>,
+    ) -> Result<()> {
+        if let Some(signature) = &self.1
+            && (args.len() != signature.args.len()
+                || !signature
+                    .args
+                    .iter()
+                    .zip(&args)
+                    .all(|(ty, value)| ty.accepts(value)))
+        {
+            return Err("invalid host callback arguments".into());
+        }
+        if let Some(signature) = &self.1 {
+            args = signature
+                .args
+                .iter()
+                .zip(args)
+                .map(|(ty, value)| ty.normalize(value))
+                .collect();
+        }
         let owner = self.0.owner.upgrade().ok_or("VM cancelled")?;
         HostContext(owner).enqueue(Command::Call {
             callback: self.clone(),
             args,
             job,
+            completion,
         })
     }
     pub(crate) fn handle(&self) -> Handle {
@@ -93,6 +206,7 @@ pub(crate) enum Command {
         callback: HostCallback,
         args: Vec<HostValue>,
         job: Option<HostJob>,
+        completion: Option<Completion>,
     },
 }
 impl HostContext {
@@ -159,10 +273,13 @@ impl HostContext {
         !self.0.borrow().queue.is_empty()
     }
     pub(crate) fn callback(&self, handle: Handle) -> HostCallback {
-        let callback = HostCallback(Rc::new(Callback {
-            handle,
-            owner: Rc::downgrade(&self.0),
-        }));
+        let callback = HostCallback(
+            Rc::new(Callback {
+                handle,
+                owner: Rc::downgrade(&self.0),
+            }),
+            None,
+        );
         self.0
             .borrow_mut()
             .callbacks
