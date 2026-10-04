@@ -166,6 +166,18 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
+    // Note 09 deliberately restores crypto after the pinned corpus removed it.
+    // Migrate only that obsolete absence assertion on its exact original source;
+    // changed source or updated explicit metadata remains authoritative.
+    let expected_diagnostic_contains = if status == Status::Fail
+        && slug == "error-globals-crypto-method-missing-fail"
+        && expected_diagnostic_contains.as_deref() == Some("unknown identifier `crypto`")
+        && source.trim() == "import { echo } from \"io\"\necho(crypto.nonexistent())"
+    {
+        Some("cannot inspect opaque type `Crypto`; call a declared receiver method or summoned function".into())
+    } else {
+        expected_diagnostic_contains
+    };
     let expected_diagnostic_contains = expected_diagnostic_contains.or_else(|| {
         if status == Status::Fail {
             native_diagnostic(&slug).map(str::to_owned)
@@ -582,6 +594,35 @@ mod tests {
             false,
         );
         assert!(evaluate(case, &intended).is_empty());
+    }
+
+    #[test]
+    fn restored_crypto_requires_the_missing_method_error_not_an_absent_global() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = "import { echo } from \"io\"\necho(crypto.nonexistent())\n";
+        let obsolete = r#"{"expectedDiagnosticContains":"unknown identifier `crypto`"}"#;
+        std::fs::write(dir.path().join("test.fail.ds"), original).unwrap();
+        std::fs::write(dir.path().join("test.json"), obsolete).unwrap();
+        let load = || load_case("error_globals", "crypto_method_missing_fail", dir.path()).unwrap();
+        let case = load();
+        assert!(!evaluate(&case, &run(false, "", "unknown identifier `crypto`", false)).is_empty());
+        assert!(evaluate(&case,&run(false,"","cannot inspect opaque type `Crypto`; call a declared receiver method or summoned function",false)).is_empty());
+        assert!(!evaluate(&case, &run(true, "", "", false)).is_empty());
+        std::fs::write(
+            dir.path().join("test.json"),
+            r#"{"expectedDiagnosticContains":"new diagnostic"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            load().expected_diagnostic_contains.as_deref(),
+            Some("new diagnostic")
+        );
+        std::fs::write(dir.path().join("test.json"), obsolete).unwrap();
+        std::fs::write(dir.path().join("test.fail.ds"), "crypto.other()\n").unwrap();
+        assert_eq!(
+            load().expected_diagnostic_contains.as_deref(),
+            Some("unknown identifier `crypto`")
+        );
     }
 
     #[test]

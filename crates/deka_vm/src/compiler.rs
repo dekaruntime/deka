@@ -330,6 +330,7 @@ fn load_modules(
 fn native_globals<'a>(
     hosts: &Hosts,
     host_exports: &deka_syntax::ModuleExports<'a>,
+    arena: &'a bumpalo::Bump,
 ) -> HashMap<&'a str, deka_syntax::typeck::Type<'a>> {
     let mut globals: HashMap<_, _> = hosts
         .globals()
@@ -337,9 +338,35 @@ fn native_globals<'a>(
             host_exports
                 .values
                 .get_key_value(op.name.as_str())
-                .map(|(name, ty)| (*name, ty.clone()))
+                .map(|(_, ty)| {
+                    let ty = if op.global_value.is_some() {
+                        let deka_syntax::typeck::Type::Function { ret, .. } = ty else {
+                            unreachable!("host getter declaration")
+                        };
+                        *ret.clone()
+                    } else {
+                        ty.clone()
+                    };
+                    (&*arena.alloc_str(op.global_name()), ty)
+                })
         })
         .collect();
+    for op in hosts.namespaces() {
+        let (namespace, field) = op.namespace.as_ref().expect("host namespace");
+        let name: &str = arena.alloc_str(namespace);
+        let ty = host_exports
+            .values
+            .get(op.name.as_str())
+            .expect("host declaration")
+            .clone();
+        let deka_syntax::typeck::Type::Object { fields } = globals
+            .entry(name)
+            .or_insert_with(|| deka_syntax::typeck::Type::Object { fields: vec![] })
+        else {
+            unreachable!("validated namespace/global collision");
+        };
+        fields.push((arena.alloc_str(field), ty));
+    }
     let fields = PromiseJoin::ALL
         .into_iter()
         .map(|kind| {
@@ -378,6 +405,7 @@ fn lower_module<'a>(
     source: &str,
     hosts: &Hosts,
     host_exports: &deka_syntax::ModuleExports<'_>,
+    arena: &'a bumpalo::Bump,
     module_exports: &HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'a>>,
     struct_identities: &HashMap<std::path::PathBuf, BTreeMap<String, String>>,
     bindings: &HashMap<std::path::PathBuf, BTreeMap<String, usize>>,
@@ -418,7 +446,7 @@ fn lower_module<'a>(
             imports.insert(source, exports);
         }
     }
-    let globals = native_globals(hosts, host_exports);
+    let globals = native_globals(hosts, host_exports, arena);
     let checked = deka_syntax::typeck::check_program_with_native_declarations(
         ast,
         source,
@@ -444,9 +472,29 @@ fn lower_module<'a>(
             )
         })
         .collect();
+    lower.optional_field_reads = checked
+        .exception_forms
+        .option_values
+        .iter()
+        .map(|expr| *expr as usize)
+        .collect();
     lower.hosts.clear();
+    lower.host_values.clear();
+    lower.host_namespaces.clear();
+    for op in hosts.namespaces() {
+        let (namespace, field) = op.namespace.as_ref().expect("host namespace");
+        lower
+            .host_namespaces
+            .entry(namespace.clone())
+            .or_default()
+            .push((field.clone(), op.name.clone()));
+    }
     for op in hosts.globals() {
-        lower.hosts.insert(op.name.clone(), op.name.clone());
+        if let Some(name) = &op.global_value {
+            lower.host_values.insert(name.clone(), op.name.clone());
+        } else {
+            lower.hosts.insert(op.name.clone(), op.name.clone());
+        }
     }
     for op in hosts.methods() {
         let (owner, method) = op.receiver_method.as_ref().expect("host method");
@@ -955,7 +1003,7 @@ fn compile_modules(
         augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new());
     }
 
-    let globals = native_globals(hosts, &host_exports);
+    let globals = native_globals(hosts, &host_exports, &arena);
     for _ in 0..=modules.len() {
         let before: Vec<_> = modules
             .iter()
@@ -1170,6 +1218,9 @@ fn compile_modules(
     let mut lower = Lower {
         functions: vec![],
         hosts: BTreeMap::new(),
+        host_namespaces: BTreeMap::new(),
+        host_values: BTreeMap::new(),
+        optional_field_reads: Default::default(),
         host_arities: hosts.declarations_names_and_arities(),
         declared: std::collections::BTreeSet::new(),
         newtypes: std::collections::BTreeSet::new(),
@@ -1234,6 +1285,7 @@ fn compile_modules(
                     member_source,
                     hosts,
                     &host_exports,
+                    &arena,
                     &module_exports,
                     &struct_identities,
                     &scratch_bindings,
@@ -1294,6 +1346,7 @@ fn compile_modules(
             source,
             hosts,
             &host_exports,
+            &arena,
             &module_exports,
             &struct_identities,
             &bindings,
@@ -1463,6 +1516,9 @@ type StructFields<'a> = Vec<(String, Option<&'a Expr<'a>>, bool)>;
 struct Lower<'a> {
     functions: Vec<Function>,
     hosts: BTreeMap<String, String>,
+    host_namespaces: BTreeMap<String, Vec<(String, String)>>,
+    host_values: BTreeMap<String, String>,
+    optional_field_reads: std::collections::HashSet<usize>,
     host_arities: BTreeMap<String, usize>,
     /// Top-level names declared anywhere in the current module. A call to one
     /// of these before its declaration is a forward reference; a call to any
@@ -2471,6 +2527,32 @@ impl<'a> Lower<'a> {
         c.patch(done);
         Ok(())
     }
+    fn host_closure(&mut self, operation: &str, c: &mut Context) -> Result<()> {
+        let argc = *self
+            .host_arities
+            .get(operation)
+            .ok_or("unknown host signature")?;
+        let mut code = (0..argc).map(Op::Load).collect::<Vec<_>>();
+        code.push(Op::Host {
+            operation: operation.into(),
+            arguments: argc,
+        });
+        code.push(Op::Return);
+        let function = self.functions.len();
+        self.functions.push(Function {
+            name: operation.into(),
+            parameters: argc,
+            captures: 0,
+            locals: argc,
+            asynchronous: false,
+            code,
+        });
+        c.emit(Op::Closure {
+            function,
+            captures: vec![],
+        });
+        Ok(())
+    }
     fn expr(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
         match self
             .exception_forms
@@ -2652,33 +2734,30 @@ impl<'a> Lower<'a> {
                         .collect(),
                 ));
             }
+            Expr::Identifier { name, .. }
+                if !c.names.contains_key(*name) && self.host_values.contains_key(*name) =>
+            {
+                c.emit(Op::Host {
+                    operation: self.host_values[*name].clone(),
+                    arguments: 0,
+                });
+            }
+            Expr::Identifier { name, .. }
+                if !c.names.contains_key(*name) && self.host_namespaces.contains_key(*name) =>
+            {
+                let fields = self.host_namespaces[*name].clone();
+                for (_, operation) in &fields {
+                    self.host_closure(operation, c)?;
+                }
+                c.emit(Op::Record(
+                    fields.into_iter().map(|(field, _)| field).collect(),
+                ));
+            }
             Expr::Identifier { name, .. } => {
                 if !c.names.contains_key(*name)
                     && let Some(operation) = self.hosts.get(*name)
                 {
-                    let argc = *self
-                        .host_arities
-                        .get(operation)
-                        .ok_or("unknown host signature")?;
-                    let mut code = (0..argc).map(Op::Load).collect::<Vec<_>>();
-                    code.push(Op::Host {
-                        operation: operation.clone(),
-                        arguments: argc,
-                    });
-                    code.push(Op::Return);
-                    let function = self.functions.len();
-                    self.functions.push(Function {
-                        name: operation.clone(),
-                        parameters: argc,
-                        captures: 0,
-                        locals: argc,
-                        asynchronous: false,
-                        code,
-                    });
-                    c.emit(Op::Closure {
-                        function,
-                        captures: vec![],
-                    });
+                    self.host_closure(&operation.clone(), c)?;
                 } else {
                     c.emit_load(name)?;
                 }
@@ -3163,7 +3242,16 @@ impl<'a> Lower<'a> {
                     return Ok(());
                 }
                 self.expr(object, c)?;
-                c.emit(Op::Field((*field).into()));
+                c.emit(
+                    if self
+                        .optional_field_reads
+                        .contains(&(e as *const Expr as usize))
+                    {
+                        Op::OptionalField((*field).into())
+                    } else {
+                        Op::Field((*field).into())
+                    },
+                );
             }
             Expr::EnumConstructor {
                 enum_name,

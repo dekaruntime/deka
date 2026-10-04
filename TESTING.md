@@ -61,7 +61,11 @@ language features are being ported. `tests/corpus-passing.txt` lists programs
 that must keep matching. Negative cases must fail at the expected stage with
 the expected diagnostic text, not merely exit nonzero. The gate supplements
 missing diagnostic guards in the pinned corpus for the eight note-05 cases;
-explicit corpus metadata takes precedence.
+explicit corpus metadata takes precedence. The one deliberately retired rule
+that ambient `crypto` is unavailable is migrated only for its unchanged pinned
+negative fixture and exact old diagnostic: it must now reject an undeclared
+Crypto method. An absent global is a regression; changed source or updated
+explicit metadata still takes precedence.
 
 `corpus-gate --all` is an inventory command: it exits zero even with unmatched
 cases. Use the listed-case gate for validation and compare inventories when

@@ -1,6 +1,10 @@
 //! PHPX-derived Rust bytecode VM shared by native Deka and browser previews.
+#[cfg(feature = "host")]
+pub mod abort;
 mod bytecode;
 mod callback;
+#[cfg(feature = "host")]
+pub mod crypto;
 pub mod text_codec;
 pub use callback::{HostCallback, HostContext, HostJob};
 #[cfg(feature = "host")]
