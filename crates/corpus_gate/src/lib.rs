@@ -317,6 +317,31 @@ fn native_json_source(source: &str) -> bool {
     })
 }
 
+// These pinned fixtures only need the native clock. Exact original source
+// and metadata are required; execution and stdout comparisons remain mandatory.
+fn native_time_fixture(case: &Case) -> bool {
+    let source = match case.slug.as_str() {
+        "time-now-after-epoch" => {
+            "import { echo } from \"io\"\nimport { now } from \"time\"\necho(string(now() > 1577836800000))\n"
+        }
+        "time-now-is-number" => {
+            "import { echo } from \"io\"\nimport { now } from \"time\"\necho(string(now() > 0))\n"
+        }
+        "time-two-nows" => {
+            "import { echo } from \"io\"\nimport { now } from \"time\"\nconst a = now()\nconst b = now()\necho(string(b >= a))\n"
+        }
+        _ => return false,
+    };
+    case.status == Status::Pass
+        && case.stage == Stage::Run
+        && case.source == source
+        && case.packages == ["time"]
+        && case.files.is_empty()
+        && case.deka_json.is_none()
+        && case.expected_stdout.as_deref() == Some("true\n")
+        && case.expected_diagnostic_contains.is_none()
+}
+
 pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, String> {
     // The pinned JSON corpus predates native typed JSON and still names its
     // old package. These fixtures now run against the built-in language path;
@@ -326,7 +351,8 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
         && std::iter::once(case.source.as_str())
             .chain(case.files.iter().map(|(_, source)| source.as_str()))
             .all(native_json_source);
-    if !case.packages.is_empty() && !native_json {
+    let native_time = native_time_fixture(case);
+    if !case.packages.is_empty() && !native_json && !native_time {
         return Err(format!(
             "{} declares packages {:?}; the gate is offline and cannot install them",
             case.slug, case.packages
@@ -338,7 +364,9 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     std::fs::write(directory.join("deka.lock"), DEFAULT_DEKA_LOCK).unwrap();
     let deka_json = match &case.deka_json {
         Some(value) => format!("{}\n", serde_json::to_string_pretty(value).unwrap()),
-        None if !case.packages.is_empty() && !native_json => PACKAGE_DEKA_JSON.to_string(),
+        None if !case.packages.is_empty() && !native_json && !native_time => {
+            PACKAGE_DEKA_JSON.to_string()
+        }
         None => DEFAULT_DEKA_JSON.to_string(),
     };
     std::fs::write(directory.join("deka.json"), deka_json).unwrap();
@@ -520,6 +548,46 @@ mod tests {
             transpile_failed,
             diagnostics: if ok { Vec::new() } else { vec!["boom".into()] },
         }
+    }
+
+    #[test]
+    fn time_migration_is_exact_and_never_waives_execution_or_output() {
+        let mut fixture = case(Status::Pass, Stage::Run);
+        fixture.slug = "time-now-is-number".into();
+        fixture.source =
+            "import { echo } from \"io\"\nimport { now } from \"time\"\necho(string(now() > 0))\n"
+                .into();
+        fixture.expected_stdout = Some("true\n".into());
+        fixture.packages = vec!["time".into()];
+        assert!(native_time_fixture(&fixture));
+        assert!(!evaluate(&fixture, &run(false, "", "unknown now", true)).is_empty());
+        assert!(!evaluate(&fixture, &run(true, "false\n", "", false)).is_empty());
+        fixture.source.push_str("// changed");
+        assert!(!native_time_fixture(&fixture));
+        fixture.source.truncate(fixture.source.len() - 10);
+        fixture.packages.push("another-package".into());
+        assert!(!native_time_fixture(&fixture));
+        fixture.packages.pop();
+        fixture.deka_json = Some(serde_json::json!({}));
+        assert!(!native_time_fixture(&fixture));
+        fixture.deka_json = None;
+        fixture.files.push(("other.ds".into(), "".into()));
+        assert!(!native_time_fixture(&fixture));
+        fixture.files.clear();
+        fixture.status = Status::Fail;
+        assert!(!native_time_fixture(&fixture));
+        fixture.status = Status::Pass;
+        fixture.stage = Stage::Typecheck;
+        assert!(!native_time_fixture(&fixture));
+        fixture.stage = Stage::Run;
+        fixture.expected_stdout = Some("different\n".into());
+        assert!(!native_time_fixture(&fixture));
+        fixture.expected_stdout = Some("true\n".into());
+        fixture.expected_diagnostic_contains = Some("error".into());
+        assert!(!native_time_fixture(&fixture));
+        fixture.expected_diagnostic_contains = None;
+        fixture.slug = "time-sleep-ms-one".into();
+        assert!(!native_time_fixture(&fixture));
     }
 
     #[test]
