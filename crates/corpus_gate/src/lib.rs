@@ -359,6 +359,33 @@ fn native_bytes_fixture(case: &Case) -> bool {
         && case.deka_json.is_none()
 }
 
+// Only these unchanged canonical client calls bypass obsolete package metadata.
+// Every other legacy HTTP program remains gated; source and stdout still execute.
+fn native_http_fixture(case: &Case) -> bool {
+    case.status == Status::Pass
+        && case.stage == Stage::Run
+        && case.packages == ["http", "tcp", "tls"]
+        && case.files.is_empty()
+        && case.expected_stdout.as_deref() == Some("err\n")
+        && case.expected_diagnostic_contains.is_none()
+        && match case.slug.as_str() {
+            "http-invalid-url" => {
+                case.source
+                    == "import { echo } from \"io\"\nimport { get } from \"http\"\necho(match (get(\"not a url\")) {\n  Ok(v) => \"ok\",\n  Err(e) => \"err\",\n})\n"
+                    && case.deka_json.is_none()
+            }
+            "http-get-refused" => {
+                case.source
+                    == "import { echo } from \"io\"\nimport { get } from \"http\"\necho(match (get(\"http://127.0.0.1:1/\")) {\n  Ok(v) => \"ok\",\n  Err(e) => \"err\",\n})\n"
+                    && case.deka_json.as_ref()
+                        == Some(
+                            &serde_json::json!({"name": "conformance-fixture", "security": {"allow": {"read": ["./"], "write": [".cache", "php_modules"], "net": ["127.0.0.1:1"]}, "prompt": false}}),
+                        )
+            }
+            _ => false,
+        }
+}
+
 pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, String> {
     // The pinned JSON corpus predates native typed JSON and still names its
     // old package. These fixtures now run against the built-in language path;
@@ -371,6 +398,7 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     let native_fixture = native_json
         || native_bytes_fixture(case)
         || native_time_fixture(case)
+        || native_http_fixture(case)
         || native_fs::matches(case);
     if !case.packages.is_empty() && !native_fixture {
         return Err(format!(
@@ -551,6 +579,30 @@ mod tests {
             transpile_failed,
             diagnostics: if ok { Vec::new() } else { vec!["boom".into()] },
         }
+    }
+
+    #[test]
+    fn http_metadata_migration_rejects_source_output_package_and_config_changes() {
+        let mut fixture = case(Status::Pass, Stage::Run);
+        fixture.slug = "http-invalid-url".into();
+        fixture.packages = vec!["http".into(), "tcp".into(), "tls".into()];
+        fixture.source="import { echo } from \"io\"\nimport { get } from \"http\"\necho(match (get(\"not a url\")) {\n  Ok(v) => \"ok\",\n  Err(e) => \"err\",\n})\n".into();
+        fixture.expected_stdout = Some("err\n".into());
+        assert!(native_http_fixture(&fixture));
+        fixture.source.push(' ');
+        assert!(!native_http_fixture(&fixture));
+        fixture.source="import { echo } from \"io\"\nimport { get } from \"http\"\necho(match (get(\"not a url\")) {\n  Ok(v) => \"ok\",\n  Err(e) => \"err\",\n})\n".into();
+        fixture.expected_stdout = Some("ok\n".into());
+        assert!(!native_http_fixture(&fixture));
+        fixture.expected_stdout = Some("err\n".into());
+        fixture.packages.push("remote".into());
+        assert!(!native_http_fixture(&fixture));
+        fixture.packages.pop();
+        fixture.deka_json = Some(serde_json::json!({"other":true}));
+        assert!(!native_http_fixture(&fixture));
+        fixture.deka_json = None;
+        fixture.expected_diagnostic_contains = Some("oops".into());
+        assert!(!native_http_fixture(&fixture));
     }
 
     fn legacy_bytes_case() -> Case {

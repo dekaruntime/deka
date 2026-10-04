@@ -5,53 +5,31 @@ use crate::http_response::ResponseObject;
 use crate::{HostOp, HostReply, HostType, HostValue, Hosts, Result};
 use reqwest::{Client, Url};
 
-// Preserve the old Rust transport's buffered limits, without buffering beyond
-// the cap before checking it. Streaming is a separate host surface.
-const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
-const MAX_REDIRECTS: usize = 10;
-
 fn transport_url(input: &str) -> Result<Url> {
     let request = RequestObject::new(input)?;
     let mut url = Url::parse(request.url()).map_err(|error| error.to_string())?;
-    validate_url(&url)?;
+    crate::http_transport::validate_url(&url)?;
     url.set_fragment(None);
     Ok(url)
 }
-fn validate_url(url: &Url) -> Result<()> {
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err("fetch supports only http and https URLs".into());
-    }
-    if !url.username().is_empty() || url.password().is_some_and(|password| !password.is_empty()) {
-        return Err("request URL must not contain credentials".into());
-    }
-    Ok(())
-}
-fn client() -> Result<Client> {
-    Client::builder()
-        // Product configuration is explicit. Do not consult HTTP_PROXY et al.
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= MAX_REDIRECTS {
-                return attempt.error("too many redirects");
-            }
-            if let Err(error) = validate_url(attempt.url()) {
-                return attempt.error(error);
-            }
-            attempt.follow()
-        }))
-        .build()
-        .map_err(|error| format!("build HTTP client: {error}"))
-}
 async fn get(client: Client, url: Url) -> Result<HostValue> {
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status().as_u16();
-    let url = response.url().to_string();
+    let response = crate::http_transport::request(
+        client,
+        reqwest::Method::GET,
+        url,
+        Default::default(),
+        Vec::new(),
+        crate::http_transport::BodyPolicy {
+            limit: crate::http_transport::FETCH_BODY_LIMIT,
+            reject_chunked: false,
+        },
+        None,
+    )
+    .await?;
+    let status = response.status;
+    let url = response.url;
     let mut headers = HeaderList::default();
-    for (name, value) in response.headers() {
+    for (name, value) in &response.headers {
         // Header byte strings use the same isomorphic Latin-1 mapping as
         // HeaderList::wire_entries; do not round-trip through lossy UTF-8.
         let value = value
@@ -61,33 +39,14 @@ async fn get(client: Client, url: Url) -> Result<HostValue> {
             .collect::<String>();
         headers.append(name.as_str(), &value)?;
     }
-    let body = if matches!(status, 204 | 205 | 304) {
-        None
-    } else {
-        if response
-            .content_length()
-            .is_some_and(|size| size > MAX_BODY_BYTES as u64)
-        {
-            return Err("response body exceeds 16 MiB buffered limit".into());
-        }
-        let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
-            if chunk.len() > MAX_BODY_BYTES - body.len() {
-                return Err("response body exceeds 16 MiB buffered limit".into());
-            }
-            body.try_reserve(chunk.len())
-                .map_err(|_| "response body allocation failed")?;
-            body.extend_from_slice(&chunk);
-        }
-        Some(body)
-    };
+    let body = response.body;
     // reqwest does not expose the original HTTP reason phrase. Leave it empty
     // rather than substituting a canonical phrase the server did not send.
     ResponseObject::from_parts(status, String::new(), url, headers, body)
         .map(ResponseObject::into_host_value)
 }
 pub fn register(hosts: &mut Hosts) -> Result<()> {
-    let client = client()?;
+    let client = crate::http_transport::client(true)?;
     hosts.register(
         HostOp::new(
             "fetch",
