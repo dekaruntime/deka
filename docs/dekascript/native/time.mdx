@@ -1,0 +1,35 @@
+# Time
+
+Import `now` and `sleep` from the built-in `time` module. Neither requires a
+package installation or JavaScript runtime.
+
+- `now()` returns whole milliseconds since the Unix epoch, from the system wall
+  clock. It is a number directly, not a Result. Wall-clock adjustments can make
+  it move backwards; use it for timestamps rather than precise elapsed time.
+- `sleep(ms)` returns `Promise<void>` and suspends the task through Tokio.
+  Other tasks and the window continue running. Await it when ordering matters.
+  The duration must be finite, nonnegative and representable by Rust's timer
+  duration; invalid arguments fail instead of becoming a successful zero delay.
+
+```ds
+import { echo } from "io"
+import { now, sleep } from "time"
+
+async fn main() Promise<void> {
+    echo(string(now() > 1577836800000))
+    await sleep(0)
+    echo("awake")
+}
+```
+
+On a correctly set clock after January 2020, this prints:
+
+```text
+true
+awake
+```
+
+Zero milliseconds is a valid timer. `sleep` uses the same native timer engine
+as existing Deka async code. Rust embedders can supply a deterministic wall
+clock with `builtin_time::register_with_clock` for tests; production uses the
+operating system's clock.
