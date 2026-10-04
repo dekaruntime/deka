@@ -67,6 +67,15 @@ negative fixture and exact old diagnostic: it must now reject an undeclared
 Crypto method. An absent global is a regression; changed source or updated
 explicit metadata still takes precedence.
 
+The unchanged pinned `packages-bytes-from-string-len` fixture names the old
+`bytes` package in its metadata. Its exact source, successful run stage and
+`5` output now run against Rust's built-in bytes module without installation.
+This adapter requires only that package, unchanged source/output and no new
+project metadata or extra files. Compilation, execution and output comparison
+remain mandatory. Other package fixtures and changed metadata fail closed;
+the four old bytes fixtures needing explicit Option/Result handling are not
+added to the passing list.
+
 `corpus-gate --all` is an inventory command: it exits zero even with unmatched
 cases. Use the listed-case gate for validation and compare inventories when
 adding passing programs. Never count an unsupported feature's failure as the

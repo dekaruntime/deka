@@ -4,6 +4,7 @@ pub mod abort;
 #[cfg(feature = "host")]
 pub mod builtin_crypto;
 mod bytecode;
+pub mod bytes;
 mod callback;
 #[cfg(feature = "host")]
 pub mod crypto;
