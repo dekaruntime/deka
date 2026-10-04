@@ -15,6 +15,7 @@ const RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 // Fill only absent guards; explicit corpus metadata remains authoritative.
 fn native_diagnostic(slug: &str) -> Option<&'static str> {
     Some(match slug {
+        "functions-duplicate-parameter-fail" => "duplicate parameter `x`",
         "data-types-array-find-undefined-access-fail" => {
             "cannot access field `length` on type `Option<number>`"
         }
@@ -144,6 +145,7 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
         .get("expectedDiagnosticContains")
         .and_then(|s| s.as_str())
         .map(str::to_owned);
+    let missing_message = expected_diagnostic_contains.is_none();
     let deka_json = metadata.get("dekaJson").filter(|d| d.is_object()).cloned();
     let packages: Vec<String> = metadata
         .get("packages")
@@ -186,7 +188,7 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
             None
         }
     });
-    Some(Case {
+    let mut case = Case {
         slug,
         status,
         stage,
@@ -197,7 +199,24 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
         expected_diagnostic_contains,
         deka_json,
         packages,
-    })
+    };
+    if missing_message && native_duplicate_parameter_fixture(&case) {
+        case.stage = Stage::Typecheck;
+    }
+    Some(case)
+}
+
+// Preserve the original program and expectations. Only its original metadata
+// moves the named duplicate-parameter failure from execution to checking.
+fn native_duplicate_parameter_fixture(case: &Case) -> bool {
+    case.slug == "functions-duplicate-parameter-fail"
+        && case.status == Status::Fail
+        && case.stage == Stage::Run
+        && case.source == "import { echo } from \"io\"\nfn add(x: number, x: number) number {\n  return x + x\n}\necho(string(add(1, 2)))\n"
+        && case.expected_stdout.is_none()
+        && case.deka_json.is_none()
+        && case.packages.is_empty()
+        && case.files.is_empty()
 }
 
 /// Every native-runnable case in the corpus, in deterministic order.
@@ -783,6 +802,51 @@ mod tests {
             load().expected_diagnostic_contains.as_deref(),
             Some("unknown identifier `crypto`")
         );
+    }
+
+    #[test]
+    fn original_duplicate_parameter_requires_the_named_check_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = dir.path().join("functions/duplicate_parameter_fail");
+        std::fs::create_dir_all(&fixture).unwrap();
+        let entry = fixture.join("test.fail.ds");
+        let metadata = fixture.join("test.json");
+        let source = "import { echo } from \"io\"\nfn add(x: number, x: number) number {\n  return x + x\n}\necho(string(add(1, 2)))\n";
+        std::fs::write(&entry, source).unwrap();
+        std::fs::write(&metadata, r#"{"stage":"run"}"#).unwrap();
+        let load = || load_cases(dir.path()).pop().unwrap();
+        let original = load();
+        assert_eq!(original.stage, Stage::Typecheck);
+        assert!(evaluate(&original, &run(false, "", "duplicate parameter `x`", true)).is_empty());
+        assert!(
+            !evaluate(
+                &original,
+                &run(
+                    false,
+                    "",
+                    "expression is unsupported by VM experiment",
+                    true
+                )
+            )
+            .is_empty()
+        );
+        assert!(!evaluate(&original, &run(true, "4\n", "", false)).is_empty());
+        std::fs::write(&entry, "fn add(x: number, x: number) number { return x; }").unwrap();
+        assert_eq!(load().stage, Stage::Run);
+        std::fs::write(&entry, source).unwrap();
+        std::fs::write(
+            &metadata,
+            r#"{"stage":"run","expectedDiagnosticContains":"explicit expectation"}"#,
+        )
+        .unwrap();
+        let explicit = load();
+        assert_eq!(explicit.stage, Stage::Run);
+        assert_eq!(
+            explicit.expected_diagnostic_contains.as_deref(),
+            Some("explicit expectation")
+        );
+        std::fs::write(&metadata, r#"{"stage":"run","packages":["other"]}"#).unwrap();
+        assert_eq!(load().stage, Stage::Run);
     }
 
     #[test]

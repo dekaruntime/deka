@@ -1300,6 +1300,7 @@ impl<'a> Checker<'a> {
         span: ast::Span,
         expected: Option<&Type<'a>>,
     ) -> Type<'a> {
+        self.validate_parameter_names(params);
         let fully_annotated = return_type.is_some() && params.iter().all(|p| p.ty.is_some());
         let (expected_params, expected_ret) = match expected {
             Some(Type::Function {

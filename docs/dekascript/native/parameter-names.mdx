@@ -1,0 +1,33 @@
+---
+title: "Function parameter names"
+---
+
+Each name bound by a function's parameters must be unique. This applies to
+named functions, receiver methods, function literals and arrows, including
+names introduced by tuple parameters.
+
+```ts
+fn add(left: number, right: number) number {
+    return left + right;
+}
+```
+
+Using `x` for both parameters is a check error at the second parameter:
+
+```ts
+fn add(x: number, x: number) number {
+    return x + x;
+}
+```
+
+```text
+duplicate parameter `x`
+```
+
+`deka check` and `deka run` both reject the declaration before source effects
+execute. A tuple parameter cannot introduce a name already bound by another
+parameter, such as `fn add(x: number, [x, y]: [number, number])`.
+
+A parameter may still shadow a name from an outer scope. Repeating a name
+within one tuple parameter retains its existing `duplicate tuple binding`
+diagnostic.

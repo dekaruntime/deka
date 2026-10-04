@@ -1957,6 +1957,21 @@ impl<'a> Checker<'a> {
         self.pending_module_bindings.remove(name);
     }
 
+    /// Names within one tuple retain the tuple diagnostic in `declare_param`;
+    /// this check owns collisions between distinct parameter bindings.
+    pub(super) fn validate_parameter_names(&mut self, params: &[ast::Param<'a>]) {
+        let mut previous = HashSet::new();
+        for param in params {
+            let mut current = HashSet::new();
+            for &name in param.binding.names() {
+                if current.insert(name) && previous.contains(name) {
+                    self.error_span(param.span, format!("duplicate parameter `{name}`"));
+                }
+            }
+            previous.extend(current);
+        }
+    }
+
     pub(super) fn declare_param(&mut self, param: &ast::Param<'a>, ty: &Type<'a>) {
         match &param.binding {
             ast::ParamBinding::Identifier(name) => {
@@ -1998,6 +2013,7 @@ impl<'a> Checker<'a> {
         is_async: bool,
         _span: ast::Span,
     ) {
+        self.validate_parameter_names(params);
         self.index_flow.kill();
         // Use the previously collected signature for parameter types so that
         // errors about missing annotations are reported exactly once.
@@ -2287,6 +2303,7 @@ impl<'a> Checker<'a> {
         is_async: bool,
         _span: ast::Span,
     ) {
+        self.validate_parameter_names(params);
         self.index_flow.kill();
         if receiver_mutable && self.newtypes.contains_key(receiver_type) {
             self.error_span(
