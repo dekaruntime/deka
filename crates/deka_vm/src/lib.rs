@@ -13,6 +13,8 @@ pub use callback::{HostCallback, HostContext, HostJob};
 #[cfg(feature = "host")]
 pub mod blob;
 pub mod builtin_math;
+#[cfg(feature = "host")]
+pub mod builtin_time;
 #[cfg(feature = "compiler")]
 pub mod compiler;
 #[cfg(feature = "host")]
@@ -24,6 +26,10 @@ mod host;
 pub mod http_headers;
 pub mod http_response;
 mod json;
+#[cfg(feature = "host")]
+pub mod jwt;
+#[cfg(any(feature = "compiler", feature = "host"))]
+mod jwt_contract;
 pub use json::{JsonField, JsonShape};
 mod machine;
 #[cfg(feature = "compiler")]

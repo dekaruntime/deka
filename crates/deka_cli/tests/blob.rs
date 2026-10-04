@@ -1,3 +1,5 @@
+#[path = "support/check.rs"]
+mod check;
 use std::process::{Command, Output};
 fn ok(output: Output) -> Vec<u8> {
     assert!(
@@ -26,11 +28,14 @@ fn blob_file_guide_checks_runs_and_survives_source_deletion_and_relocation() {
     {}
     async fn main(){{echo(await excerpt("abcdef"));echo(await namedContents("notes","notes.txt"));}}"#,examples.join("\n"))).unwrap();
     let cli = env!("CARGO_BIN_EXE_deka");
-    ok(Command::new(cli)
-        .args(["check", "main.ds", "--entry", "main"])
-        .current_dir(project.path())
-        .output()
-        .unwrap());
+    check::checked(
+        Command::new(cli)
+            .args(["check", "main.ds", "--entry", "main"])
+            .current_dir(project.path())
+            .output()
+            .unwrap(),
+        "main.ds",
+    );
     let expected = b"bcd:text/plain:3\nnotes.txt:notes:notes:5\n";
     assert_eq!(
         ok(Command::new(cli)

@@ -135,6 +135,46 @@ pub(super) fn exports<'a>(
                     exports.values.insert(arena.alloc_str(name), ty.clone());
                 }
             }
+            if module.name == "json" {
+                for (name, operation) in deka_syntax::typeck::JsonOperation::MODULE_FUNCTIONS {
+                    exports.values.insert(name, operation.module_type());
+                }
+            }
+            if module.name == "jwt" {
+                use crate::jwt_contract::{Claim, Kind, OptionField, SIGN_HOST, VERIFY_HOST};
+                use deka_syntax::typeck::{JwtOperation, Type};
+                let field_type = |kind| Type::Option {
+                    inner: Box::new(Type::Named {
+                        name: match kind {
+                            Kind::Number => "number",
+                            Kind::String => "string",
+                        },
+                    }),
+                };
+                let claims = Type::Object {
+                    fields: Claim::ALL
+                        .iter()
+                        .map(|field| (field.name(), field_type(field.kind())))
+                        .collect(),
+                };
+                let options = Type::Object {
+                    fields: OptionField::ALL
+                        .iter()
+                        .map(|field| (field.name(), field_type(field.kind())))
+                        .collect(),
+                };
+                for (name, operation) in JwtOperation::MODULE_FUNCTIONS {
+                    let host_name = match operation {
+                        JwtOperation::Sign => SIGN_HOST,
+                        JwtOperation::Verify => VERIFY_HOST,
+                    };
+                    if hosts.operation(host_name).is_ok() {
+                        exports
+                            .values
+                            .insert(name, operation.module_type(claims.clone(), options.clone()));
+                    }
+                }
+            }
             if module.name == "math" {
                 exports
                     .values
