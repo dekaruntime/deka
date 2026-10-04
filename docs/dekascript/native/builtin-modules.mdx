@@ -1,0 +1,33 @@
+# Native builtin modules
+
+Bare builtin names resolve before packages. Their functions execute in Rust;
+there are no DekaScript wrappers or JavaScript imports. The compiler obtains
+argument and return types from the same host declarations used by the VM.
+
+```deka
+import { sha256 } from "crypto";
+import { echo } from "io";
+
+const length = match await sha256(TextEncoder().encode("abc")) {
+    Ok(digest) => digest.length,
+    Err(error) => 0
+};
+echo(string(length));
+```
+
+This prints `32`. `sha256` accepts immutable bytes and returns
+`Promise<Result<bytes, string>>`, using the same SHA-256 engine as
+`crypto.subtle.digest`. Import aliases and re-exporting through local modules
+preserve that signature. Operational failures are `Err` values.
+
+The builtin table recognizes `io`, `test`, `json`, `bytes`, `time`, `math`,
+`crypto`, `jwt`, `fs`, `http`, `tcp`, and `tls`. Recognizing a name does not imply
+all its functions are implemented: importing an unavailable function is a
+compile error. Functions belong to their module; importing `sha256` from
+`bytes` fails. Other bare names continue through declared `ds_modules`
+packages. `vm:host` is the explicit embedding host catalog.
+
+Embedding hosts register module operations as `<module>_<export>`; for example,
+`bytes_decode` becomes `decode` in `bytes`. Its `HostOp` is the single declaration
+of both the function signature and Rust dispatch. Internal receiver operations
+starting with `__` are not exported through standard-library modules.

@@ -2993,7 +2993,7 @@ impl<'a> Checker<'a> {
                     .iter()
                     .find(|(n, _)| n == name)
                     .map(|(_, actual_ty)| self.is_assignable(expected_ty, actual_ty))
-                    .unwrap_or(false)
+                    .unwrap_or(matches!(expected_ty, Type::Option { .. }))
             });
         }
         // Hook-typed functions are not plain functions. A plain function is

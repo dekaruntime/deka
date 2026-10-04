@@ -377,7 +377,7 @@ impl Vm {
         if !expected.accepts(&value) {
             return Err("host returned the wrong result type".into());
         }
-        let payload = self.alloc_host_value(value)?;
+        let payload = self.alloc_host_value(expected.normalize(value))?;
         Ok(if result_channel {
             self.enum_value("Result".into(), "Ok".into(), 0, Some(payload))
         } else {
@@ -799,6 +799,7 @@ impl Vm {
             .ok_or("instruction pointer outside function")?
             .clone();
         frame.ip += 1;
+        let optional_field = matches!(&op, Op::OptionalField(_));
         match op {
             Op::Const(v) => {
                 frame.stack.push(self.heap.alloc(v.into()));
@@ -1363,7 +1364,7 @@ impl Vm {
                 }
                 frame.stack.push(self.heap.alloc(Value::Record(fields)));
             }
-            Op::Field(name) => {
+            Op::Field(name) | Op::OptionalField(name) => {
                 let h = pop(frame)?;
                 self.heap.observe(
                     h,
@@ -1389,11 +1390,16 @@ impl Vm {
                         self.heap.alloc(Value::Number(text.chars().count() as f64))
                     }
                     Value::Record(_) => {
-                        let owner = self.field_owner(h, &name)?.ok_or("missing field")?;
-                        let Value::Record(fields) = self.heap.get(owner)? else {
-                            unreachable!()
-                        };
-                        *fields.get(&name).ok_or("missing field")?
+                        if let Some(owner) = self.field_owner(h, &name)? {
+                            let Value::Record(fields) = self.heap.get(owner)? else {
+                                unreachable!()
+                            };
+                            *fields.get(&name).ok_or("missing field")?
+                        } else if optional_field {
+                            self.enum_value("Option".into(), "None".into(), 1, None)
+                        } else {
+                            return Err("missing field".into());
+                        }
                     }
                     _ => return Err("unsupported field access".into()),
                 };

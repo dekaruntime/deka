@@ -61,7 +61,20 @@ language features are being ported. `tests/corpus-passing.txt` lists programs
 that must keep matching. Negative cases must fail at the expected stage with
 the expected diagnostic text, not merely exit nonzero. The gate supplements
 missing diagnostic guards in the pinned corpus for the eight note-05 cases;
-explicit corpus metadata takes precedence.
+explicit corpus metadata takes precedence. The one deliberately retired rule
+that ambient `crypto` is unavailable is migrated only for its unchanged pinned
+negative fixture and exact old diagnostic: it must now reject an undeclared
+Crypto method. An absent global is a regression; changed source or updated
+explicit metadata still takes precedence.
+
+The unchanged pinned `packages-bytes-from-string-len` fixture names the old
+`bytes` package in its metadata. Its exact source, successful run stage and
+`5` output now run against Rust's built-in bytes module without installation.
+This adapter requires only that package, unchanged source/output and no new
+project metadata or extra files. Compilation, execution and output comparison
+remain mandatory. Other package fixtures and changed metadata fail closed;
+the four old bytes fixtures needing explicit Option/Result handling are not
+added to the passing list.
 
 Each staged project first runs `deka check`. A check refusal is a compilation
 failure and the program is never executed. After a successful check, the gate

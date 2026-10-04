@@ -91,19 +91,62 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
     hosts.register(
         HostOp::new(
             "fetch",
-            vec![HostType::String],
+            vec![
+                HostType::String,
+                HostType::Record(
+                    [(
+                        "signal".into(),
+                        HostType::Option(Box::new(HostType::Handle("AbortSignal".into()))),
+                    )]
+                    .into(),
+                ),
+            ],
             HostType::Handle("Response".into()),
             true,
             move |args| {
                 let HostValue::String(input) = &args[0] else {
                     unreachable!("checked fetch URL")
                 };
+                let HostValue::Record(init) = &args[1] else {
+                    unreachable!("checked fetch options")
+                };
+                let signal = match &init["signal"] {
+                    HostValue::Option(None) => None,
+                    HostValue::Option(Some(value)) => {
+                        let HostValue::Handle(handle) = &**value else {
+                            unreachable!("checked fetch signal")
+                        };
+                        let Some(signal) = handle.downcast_ref::<crate::abort::AbortSignalObject>()
+                        else {
+                            return HostReply::Ready(Err("invalid AbortSignal resource".into()));
+                        };
+                        Some(signal.clone())
+                    }
+                    _ => unreachable!("checked fetch signal option"),
+                };
+                if let Some(reason) = signal.as_ref().and_then(|signal| signal.reason()) {
+                    return HostReply::Ready(Err(reason));
+                }
                 match transport_url(input) {
-                    Ok(url) => HostReply::Pending(Box::pin(get(client.clone(), url))),
+                    Ok(url) => {
+                        let request = get(client.clone(), url);
+                        HostReply::Pending(Box::pin(async move {
+                            if let Some(signal) = signal {
+                                tokio::select! {
+                                    biased;
+                                    reason = signal.cancelled() => Err(reason),
+                                    response = request => response,
+                                }
+                            } else {
+                                request.await
+                            }
+                        }))
+                    }
                     Err(error) => HostReply::Ready(Err(error)),
                 }
             },
         )
+        .with_defaults(vec![HostValue::Record(Default::default())])
         .with_global_binding()
         .with_result_channel(),
     )

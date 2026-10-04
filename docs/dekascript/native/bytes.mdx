@@ -1,0 +1,43 @@
+# Binary data
+
+Import the built-in `bytes` module to work with immutable binary data. Text and
+bytes require explicit conversion; arbitrary binary data is never silently
+replaced with Unicode replacement characters.
+
+```ds
+import { echo } from "io"
+import { from_string, to_string, to_hex, slice } from "bytes"
+
+fn main() {
+    const encoded = from_string("hello")
+    echo(to_hex(encoded))
+    const text = unwrap(to_string(slice(encoded, 3))) or { return; }
+    echo(text)
+}
+```
+
+Output:
+
+```text
+68656c6c6f
+lo
+```
+
+| Function | Return type | Behavior |
+| --- | --- | --- |
+| `len(value)` | `number` | Byte length |
+| `get(value, index)` | `Option<number>` | `None` for a fractional, negative or out-of-range index |
+| `slice(value, start, end?)` | `bytes` | Copies a range; negative offsets count from the end; endpoints are clipped and fractional offsets truncate |
+| `concat(left, right)` | `bytes` | Fresh concatenated bytes |
+| `from_array(numbers)` | `Option<bytes>` | Requires whole numbers in `0..=255`; never truncates or wraps |
+| `from_string(text)` | `bytes` | UTF-8 encoding |
+| `to_string(value)` | `Result<string, string>` | Strict UTF-8 decoding; preserves an encoded BOM |
+| `to_hex(value)` | `string` | Lowercase hex |
+| `from_hex(text)` | `Option<bytes>` | Requires an even number of hex digits; accepts uppercase digits |
+| `to_base64(value)` | `string` | Standard padded base64 |
+| `from_base64(text)` | `Option<bytes>` | Requires the standard alphabet and complete padding; no whitespace or unpadded input |
+
+Use `unwrap` or `match` for fallible conversions. Neither `Option<bytes>` nor
+`Result<string, string>` is automatically unwrapped when passed to another function.
+All operations leave their input bytes unchanged. The module is Rust built into
+Deka; it needs no package installation or JavaScript runtime.
