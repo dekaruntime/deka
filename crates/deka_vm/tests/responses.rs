@@ -114,9 +114,9 @@ fn invalid_body_arguments_properties_and_json_types_fail_before_execution() {
     ] {
         assert!(compiler::compile(source, &hosts()).is_err(), "{source}");
     }
-    for ty in ["Option<number>", "Result<number,string>", "number | string"] {
+    for ty in ["Option<Option<number>>", "Array<Option<Option<number>>>"] {
         let error = compiler::compile(&format!("alias T={ty};fn main(){{const r=unwrap(Response(\"x\")) or{{return;}};r.json<T>();}}"), &hosts()).unwrap_err();
-        assert!(error.contains("APS 43 type-mapping decision"), "{error}");
+        assert!(error.contains("directly nested Option"), "{error}");
     }
 }
 
@@ -254,4 +254,22 @@ async fn main() Promise<string> {
             "404;false;Not Found;https://example.test/missing;false;parse error".into()
         )
     );
+}
+
+#[tokio::test]
+async fn response_json_uses_the_same_option_result_and_union_wire_schemas() {
+    assert_eq!(run(r#"
+        alias Maybe=Option<number>;
+        alias Reply=Result<number,string>;
+        alias Choice=number|string;
+        async fn main() Promise<string> {
+            const a=unwrap(Response("7"))or{return "ctor";};
+            const b=unwrap(Response("{\"tag\":\"Err\",\"value\":\"oops\"}"))or{return "ctor";};
+            const c=unwrap(Response("true"))or{return "ctor";};
+            const one=match await a.json<Maybe>(){Ok(Some(n))=>string(n),Ok(None)=>"none",Err(e)=>e};
+            const two=match await b.json<Reply>(){Ok(Err(e))=>e,Ok(Ok(n))=>"bad",Err(e)=>e};
+            const three=match await c.json<Choice>(){Ok(v)=>"bad",Err(e)=>e};
+            return one+":"+two+":"+three;
+        }
+    "#).await,HostValue::String("7:oops:$: JSON union matches no member".into()));
 }

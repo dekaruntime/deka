@@ -29,8 +29,7 @@ initial API requires direct named calls: assigning a generic conversion to a
 variable, returning it or passing it as a function value is a compile error.
 No dynamic untyped JSON values or placeholder runtime functions are created.
 
-Option, Result, other enums, newtypes, unions and optional struct fields remain
-outside this initial module slice; their broader wire-format implementation is
-tracked in dekaruntime/deka#1300. Unsupported
-shapes fail compilation explicitly. See [Native JSON](./json) for the receiver
-forms and data-format details.
+Option, Result, other enums, newtypes and unions also use the shared
+[Native JSON wire formats](./json-wire-formats). Directly nested Option types,
+optional struct fields and unsupported shapes fail compilation explicitly.
+See [Native JSON](./json) for the receiver forms.

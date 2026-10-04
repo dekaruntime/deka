@@ -17,6 +17,16 @@ pub enum JsonShape {
     Record(Vec<JsonField>),
     Tuple(Vec<JsonShape>),
     Array(Box<JsonShape>),
+    Option(Box<JsonShape>),
+    Enum {
+        name: String,
+        cases: Vec<(String, Option<JsonShape>)>,
+    },
+    Newtype {
+        name: String,
+        repr: Box<JsonShape>,
+    },
+    Union(Vec<JsonShape>),
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonField {
@@ -88,6 +98,46 @@ fn encode(heap: &Heap, value: Handle, shape: &JsonShape) -> Result<Json> {
                 [(name.clone(), Json::Object(object))].into_iter().collect(),
             ))
         }
+        (JsonShape::Leaf(kind), Value::Record(record))
+            if kind == "none"
+                && record.enum_name.as_deref() == Some("Option")
+                && enum_case(heap, record)? == "None" =>
+        {
+            Ok(Json::Null)
+        }
+        (JsonShape::Option(inner), Value::Record(record))
+            if record.enum_name.as_deref() == Some("Option") =>
+        {
+            match enum_case(heap, record)? {
+                "None" => Ok(Json::Null),
+                "Some" => encode(heap, enum_payload(record)?, inner),
+                _ => Err("invalid Option case for JSON".into()),
+            }
+        }
+        (JsonShape::Enum { name, cases }, Value::Record(record))
+            if record.enum_name.as_ref() == Some(name) =>
+        {
+            let case_name = enum_case(heap, record)?;
+            let (_, shape) = cases
+                .iter()
+                .find(|(case, _)| case == case_name)
+                .ok_or("invalid enum case for JSON")?;
+            let mut object = Map::new();
+            object.insert("tag".into(), Json::String(case_name.into()));
+            if let Some(shape) = shape {
+                object.insert("value".into(), encode(heap, enum_payload(record)?, shape)?);
+            }
+            Ok(Json::Object(object))
+        }
+        (JsonShape::Newtype { name, repr }, _)
+            if heap.newtype_name(value)? == Some(name.as_str()) =>
+        {
+            encode(heap, value, repr)
+        }
+        (JsonShape::Union(members), _) => members
+            .iter()
+            .find_map(|member| encode(heap, value, member).ok())
+            .ok_or_else(|| "value does not match any checked JSON union member".into()),
         _ => Err("value does not match its checked JSON shape".into()),
     }
 }
@@ -192,6 +242,76 @@ fn decode(
             }
             Ok(heap.alloc(Value::Record(record)))
         }
+        (JsonShape::Leaf(kind), Json::Null) if kind == "none" => {
+            Ok(heap.alloc_enum("Option".into(), "None".into(), 1, None))
+        }
+        (JsonShape::Option(_), Json::Null) => {
+            Ok(heap.alloc_enum("Option".into(), "None".into(), 1, None))
+        }
+        (JsonShape::Option(inner), _) => {
+            let value = decode(heap, json, inner, factories, path)?;
+            Ok(heap.alloc_enum("Option".into(), "Some".into(), 0, Some(value)))
+        }
+        (JsonShape::Enum { name, cases }, Json::Object(object)) => {
+            let case_name = object
+                .get("tag")
+                .and_then(Json::as_str)
+                .ok_or_else(|| format!("{path}: JSON enum tag must be a string"))?;
+            let (index, (_, shape)) = cases
+                .iter()
+                .enumerate()
+                .find(|(_, (case, _))| case == case_name)
+                .ok_or_else(|| format!("{path}: unknown JSON enum tag {case_name}"))?;
+            let value = match shape {
+                Some(shape) => {
+                    let value = object
+                        .get("value")
+                        .ok_or_else(|| format!("{path}: JSON enum payload is missing"))?;
+                    Some(decode(
+                        heap,
+                        value,
+                        shape,
+                        factories,
+                        &format!("{path}.value"),
+                    )?)
+                }
+                None if object.contains_key("value") => {
+                    return Err(format!("{path}: payload-less JSON enum tag has a value"));
+                }
+                None => None,
+            };
+            Ok(heap.alloc_enum(name.clone(), case_name.into(), index, value))
+        }
+        (JsonShape::Newtype { name, repr }, _) => {
+            let value = decode(heap, json, repr, factories, path)?;
+            Ok(heap.alloc_newtype(heap.get(value)?.clone(), name.clone()))
+        }
+        (JsonShape::Union(members), _) => {
+            let mut matches = members
+                .iter()
+                .filter_map(|member| decode(heap, json, member, factories, path).ok());
+            let value = matches
+                .next()
+                .ok_or_else(|| format!("{path}: JSON union matches no member"))?;
+            if matches.next().is_some() {
+                return Err(format!("{path}: JSON union matches more than one member"));
+            }
+            Ok(value)
+        }
         _ => Err(mismatch()),
     }
+}
+
+fn enum_case<'a>(heap: &'a Heap, record: &Record) -> Result<&'a str> {
+    let name = *record.get("name").ok_or("invalid nominal enum label")?;
+    match heap.get(name)? {
+        Value::String(name) => Ok(name),
+        _ => Err("invalid nominal enum label".into()),
+    }
+}
+fn enum_payload(record: &Record) -> Result<Handle> {
+    record
+        .get("value")
+        .copied()
+        .ok_or_else(|| "nominal enum payload is missing".into())
 }

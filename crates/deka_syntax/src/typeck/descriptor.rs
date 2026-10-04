@@ -126,6 +126,9 @@ pub enum JsonDescriptor<'a> {
     Record(Vec<(&'a str, JsonDescriptor<'a>)>),
     Array(Box<JsonDescriptor<'a>>),
     Tuple(Vec<JsonDescriptor<'a>>),
+    Option(Box<JsonDescriptor<'a>>),
+    Union(Vec<JsonDescriptor<'a>>),
+    Result(Box<JsonDescriptor<'a>>, Box<JsonDescriptor<'a>>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
