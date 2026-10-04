@@ -44,6 +44,17 @@ pub struct PackageExport {
     pub name: String,
     pub type_only: bool,
 }
+/// Declared type exports have checker metadata, not ordinary runtime cells.
+/// A same-named value, when present, still needs its actual exported binding.
+fn erased_export(surface: &deka_syntax::ModuleExports<'_>, name: &str) -> bool {
+    !surface.values.contains_key(name)
+        && (surface.interfaces.contains_key(name)
+            || surface.structs.contains_key(name)
+            || surface.enums.contains_key(name)
+            || surface.aliases.contains_key(name)
+            || surface.opaques.contains_key(name)
+            || surface.newtypes.contains_key(name))
+}
 pub fn package_check_inputs(
     path: &std::path::Path,
     name: &str,
@@ -902,7 +913,7 @@ fn lower_module<'a>(
                     Some(source) => {
                         let target = module_path(path, source, project)?;
                         for name in *names {
-                            if module_exports[&target].structs.contains_key(name.name) {
+                            if erased_export(&module_exports[&target], name.name) {
                                 continue;
                             }
                             let external = name.alias.unwrap_or(name.name);
@@ -918,7 +929,16 @@ fn lower_module<'a>(
                                         target.clone(),
                                     ));
                                 }
-                                (None, None) => return Err("missing module export".into()),
+                                (None, None) => {
+                                    return Err(format!(
+                                        "{}: {}:{}: module {} does not export `{}`",
+                                        path.display(),
+                                        name.span.start.line,
+                                        name.span.start.column,
+                                        target.display(),
+                                        name.name
+                                    ));
+                                }
                             }
                         }
                     }
@@ -1563,13 +1583,7 @@ fn compile_modules(
             .collect::<std::collections::BTreeSet<_>>();
         output.extend(names.into_iter().map(|name| PackageExport {
             name: name.to_owned(),
-            type_only: !surface.values.contains_key(name)
-                && (surface.interfaces.contains_key(name)
-                    || surface.structs.contains_key(name)
-                    || surface.enums.contains_key(name)
-                    || surface.aliases.contains_key(name)
-                    || surface.opaques.contains_key(name)
-                    || surface.newtypes.contains_key(name)),
+            type_only: erased_export(surface, name),
         }));
     }
     Ok(program)
