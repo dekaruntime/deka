@@ -1,0 +1,34 @@
+# Formatting DekaScript
+
+The formatter lives in the runtime. It uses Deka's parser and formats `.ds` and
+`.dsx` source with two-space indentation and an 80-character soft line-width
+target. Component tags and `<slot />` use the same printer as other expressions.
+
+Format a file or recursively format DekaScript files in a directory:
+
+```sh
+deka fmt app.dsx
+deka fmt src
+```
+
+Check formatting without changing files. A difference exits with status 1 and
+reports each file that would change:
+
+```sh
+deka fmt src --check
+```
+
+Read a source string from stdin and write the formatted source to stdout:
+
+```sh
+printf 'const count=0\n' | deka fmt --stdin
+```
+
+`--stdin --check` returns status 1 for a difference without writing source to
+stdout. For an npm installation use `npx deka fmt` or a project script.
+
+The printer was moved from the old compiler into Deka; it does not start a
+separate compiler or emit JavaScript. Incomplete or unparseable input is returned
+unchanged, so formatting is safe while editing. Use `deka check` to validate
+source: an unchanged incomplete file passing `fmt --check` is not a claim that
+it is a valid program.

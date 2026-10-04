@@ -10,7 +10,7 @@
 //! Help renders locally: `dcore`'s renderers are pinned to deka-cli-core
 //! 0.5.0 for the legacy V8 CLI (and its curated copy describes that CLI),
 //! so the native CLI renders its own from this registry.
-use crate::{Payload, Source, build, compile, dev, embedded, execute, init, source, tests};
+use crate::{Payload, Source, build, compile, dev, embedded, execute, fmt, init, source, tests};
 use deka_cli_core::registry::{
     Args, CommandError, CommandSpec, Context, ExitStatus, FlagSpec, HandlerResult, ParamKind,
     ParamSpec, Registry, RegistryBuilder,
@@ -108,6 +108,28 @@ fn register_build(registry: &mut Registry) {
     });
 }
 
+fn register_fmt(registry: &mut Registry) {
+    registry.add_command(CommandSpec {
+        name: "fmt",
+        owner: "deka_cli",
+        category: "Core",
+        summary: "format DekaScript files or standard input",
+        aliases: &[],
+        subcommands: &[],
+        handler: fmt::cmd,
+    });
+    registry.add_flag(FlagSpec {
+        name: "--check",
+        aliases: &[],
+        description: "exit non-zero if formatting would change the source",
+    });
+    registry.add_flag(FlagSpec {
+        name: "--stdin",
+        aliases: &[],
+        description: "read source from standard input and write formatted source",
+    });
+}
+
 fn register_test(registry: &mut Registry) {
     registry.add_command(CommandSpec {
         name: "test",
@@ -175,6 +197,7 @@ pub fn register_fns() -> Vec<fn(&mut Registry)> {
         register_dev,
         register_check,
         register_build,
+        register_fmt,
         register_test,
         register_init,
         register_add,
@@ -264,6 +287,7 @@ fn print_global_help(registry: &Registry) {
 fn render_command_help(command: &CommandSpec, owned: Option<&CommandFlags>) -> Vec<String> {
     let arguments = match command.name {
         "test" => "[files or directories]",
+        "fmt" => "[file or directory]",
         "init" => "[directory]",
         _ => "[source.ds | deka.json]",
     };
@@ -526,6 +550,14 @@ pub fn dispatch(registry: &Registry, argv: &[String]) -> ExitCode {
             && args.commands.first().map(String::as_str) != Some("check")
         {
             eprintln!("deka: --as-package requires check");
+            return ExitCode::from(2);
+        }
+        if args.commands.first().is_none_or(|command| command != "fmt")
+            && let Some(flag) = ["--stdin", "--check"]
+                .into_iter()
+                .find(|flag| args.flags.contains_key(*flag))
+        {
+            eprintln!("deka: {flag} requires fmt");
             return ExitCode::from(2);
         }
         if args.commands.is_empty() {
