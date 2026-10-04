@@ -3,6 +3,8 @@ use crate::{Function, Hosts, ListMut, Literal, Op, Program, PromiseJoin, Result}
 pub use deka_syntax::console::STDERR_OPERATION as CONSOLE_ERROR_OPERATION;
 use deka_syntax::{Diagnostic, Severity, ast::*, typeck::ExceptionEmit};
 use std::collections::{BTreeMap, HashMap};
+#[path = "builtin_modules.rs"]
+mod builtins;
 #[path = "json_compiler.rs"]
 mod json_lower;
 
@@ -94,7 +96,7 @@ pub fn test_entries(path: &std::path::Path) -> Result<Vec<String>> {
         .collect())
 }
 fn host_module(source: &str) -> bool {
-    matches!(source, "vm:host" | "io" | "test" | "time")
+    builtins::contains(source)
 }
 
 /// The project a compile resolves packages against: the nearest ancestor of
@@ -263,6 +265,9 @@ fn module_path(
         let path = parent.parent().ok_or("module has no parent")?.join(source);
         return std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()));
     }
+    if host_module(source) {
+        return Ok(builtins::path(source));
+    }
     project.package_path(parent, source)
 }
 /// Modules in dependency order. A module already being loaded is not loaded
@@ -304,7 +309,7 @@ fn load_modules(
                 } => Some(*source),
                 _ => None,
             };
-            if let Some(source) = source {
+            if let Some(source) = source.filter(|source| !host_module(source)) {
                 let target = module_path(&path, source, project)?;
                 if target == path {
                     return Err(format!("cyclic module import: {}", path.display()));
@@ -436,13 +441,9 @@ fn lower_module<'a>(
             _ => None,
         };
         if let Some(source) = source {
-            let exports = if host_module(source) {
-                host_exports
-            } else {
-                module_exports
-                    .get(&module_path(path, source, project)?)
-                    .ok_or("module was not loaded")?
-            };
+            let exports = module_exports
+                .get(&module_path(path, source, project)?)
+                .ok_or("module was not loaded")?;
             imports.insert(source, exports);
         }
     }
@@ -671,8 +672,8 @@ fn lower_module<'a>(
                     continue;
                 }
                 if host_module(source) {
-                    hosts.operation(spec.imported)?;
-                    lower.hosts.insert(spec.local.into(), spec.imported.into());
+                    let operation = builtins::operation(source, spec.imported, hosts)?;
+                    lower.hosts.insert(spec.local.into(), operation);
                     continue;
                 }
                 let target = module_path(path, source, project)?;
@@ -772,6 +773,16 @@ fn lower_module<'a>(
                     // `export { x } from "./y.ds"`: the barrel aliases the
                     // target's slot — no copy, so timing behaves as if the
                     // consumer imported from the origin directly (deka#1210).
+                    Some(source) if host_module(source) => {
+                        for name in *names {
+                            let operation = builtins::operation(source, name.name, hosts)?;
+                            lower.host_closure(&operation, entry)?;
+                            let external = name.alias.unwrap_or(name.name);
+                            let slot = entry.bind(external);
+                            entry.emit(Op::Store(slot));
+                            exported.insert(external.into(), slot);
+                        }
+                    }
                     Some(source) => {
                         let target = module_path(path, source, project)?;
                         for name in *names {
@@ -867,7 +878,7 @@ fn compile_modules(
     }
     // Parse every module up front so import checks resolve across a cycle.
     let mut asts = HashMap::new();
-    let mut module_exports = HashMap::new();
+    let mut module_exports = builtins::exports(hosts, &host_exports, &arena);
     for (path, source) in modules {
         let parsed = deka_syntax::parse(source, &arena);
         diagnostics(&parsed.errors)?;
@@ -1014,11 +1025,7 @@ fn compile_modules(
             let mut imports = HashMap::new();
             for stmt in asts[path].statements {
                 if let Stmt::Import { source, .. } = stmt {
-                    let imported = if host_module(source) {
-                        &host_exports
-                    } else {
-                        &module_exports[&module_path(path, source, project)?]
-                    };
+                    let imported = &module_exports[&module_path(path, source, project)?];
                     imports.insert(*source, imported);
                 }
             }
@@ -1049,11 +1056,7 @@ fn compile_modules(
         let mut imports = HashMap::new();
         for stmt in asts[path].statements {
             if let Stmt::Import { source, .. } = stmt {
-                let exports = if host_module(source) {
-                    &host_exports
-                } else {
-                    &module_exports[&module_path(path, source, project)?]
-                };
+                let exports = &module_exports[&module_path(path, source, project)?];
                 imports.insert(*source, exports);
             }
         }
@@ -1086,7 +1089,10 @@ fn compile_modules(
     // Nominal struct identity follows declarations through aliases and barrels.
     // Module ordinals keep filesystem paths out of serialized applications.
     let mut struct_identities: HashMap<std::path::PathBuf, BTreeMap<String, String>> =
-        HashMap::new();
+        module_exports
+            .keys()
+            .map(|path| (path.clone(), BTreeMap::new()))
+            .collect();
     for (i, (path, _)) in modules.iter().enumerate() {
         let mut names = BTreeMap::new();
         for stmt in asts[path].statements {
@@ -1189,6 +1195,10 @@ fn compile_modules(
                     .into_iter()
                     .max_by_key(|module| position[module])
                     .unwrap_or(current.0);
+            }
+            // Builtin functions are installed in the barrel's own initialization.
+            if builtins::is_path(&next.0) {
+                return current.0;
             }
             visited.push(next.0.clone());
             current = next;
