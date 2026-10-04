@@ -589,6 +589,7 @@ modules-relative-import-side-effect-001
 modules-relative-import-struct-001
 modules-relative-import-subdirectory-001
 option-struct-defaults-required
+packages-bytes-from-string-len
 parser-array-trailing-comma
 parser-arrow-bare-parameter-rejected
 parser-async-arrow-function
@@ -727,3 +728,7 @@ unsafe-unsafe-catch-rejected-fail
 unsafe-unsafe-err-message-rejected-fail
 unsafe-unsafe-error-is-jserror-fail
 unsafe-unsafe-typed-result-mismatch-fail
+
+data-types-number-math-total
+data-types-number-math-option
+error-globals-math-module-pi

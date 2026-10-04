@@ -4,6 +4,7 @@ pub mod abort;
 #[cfg(feature = "host")]
 pub mod builtin_crypto;
 mod bytecode;
+pub mod bytes;
 mod callback;
 #[cfg(feature = "host")]
 pub mod crypto;
@@ -11,6 +12,7 @@ pub mod text_codec;
 pub use callback::{HostCallback, HostContext, HostJob};
 #[cfg(feature = "host")]
 pub mod blob;
+pub mod builtin_math;
 #[cfg(feature = "compiler")]
 pub mod compiler;
 #[cfg(feature = "host")]
