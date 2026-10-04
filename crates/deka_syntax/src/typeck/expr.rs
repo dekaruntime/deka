@@ -5057,7 +5057,7 @@ impl<'a> Checker<'a> {
                 args: vec![target, Type::Named { name: "string" }],
             });
         }
-        if matches!(object_type, Type::Error | Type::None | Type::Never) {
+        if matches!(object_type, Type::Error | Type::Never) {
             return None;
         }
         let shape = match self.json_descriptor(object_type, span) {
@@ -5093,6 +5093,23 @@ impl<'a> Checker<'a> {
                     .iter()
                     .map(|(name, ty)| Ok((*name, self.json_descriptor(ty, span)?)))
                     .collect::<Result<Vec<_>, String>>()?,
+            ),
+            Type::Option { inner } if matches!(inner.as_ref(), Type::Option { .. }) => {
+                return Err("JSON does not support directly nested Option types: null cannot distinguish None from Some(None)".into());
+            }
+            Type::Option { inner } => J::Option(Box::new(self.json_descriptor(inner, span)?)),
+            Type::Union { members } => J::Union(
+                members
+                    .iter()
+                    .map(|member| self.json_descriptor(member, span))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Type::Generic {
+                base: "Result",
+                args,
+            } if args.len() == 2 && !self.enums.contains_key("Result") => J::Result(
+                Box::new(self.json_descriptor(&args[0], span)?),
+                Box::new(self.json_descriptor(&args[1], span)?),
             ),
             Type::Array { elem } => J::Array(Box::new(self.json_descriptor(elem, span)?)),
             Type::Tuple { elements } => J::Tuple(
@@ -5983,6 +6000,9 @@ fn json_shape_error(
                 json_shape_error(&item.ty, Some(item.name))?;
             }
             Ok(())
+        }
+        T::Option { inner } if matches!(inner.as_ref(), T::Option { .. }) => {
+            Err("JSON does not support directly nested Option types: null cannot distinguish None from Some(None)".into())
         }
         T::Newtype { repr, .. } | T::Option { inner: repr } | T::Array { elem: repr } => {
             json_shape_error(repr, field)

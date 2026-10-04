@@ -811,7 +811,9 @@ fn lower_module<'a>(
                             {
                                 continue;
                             }
-                            if module_exports[&target].structs.contains_key(name.name) {
+                            if module_exports[&target].structs.contains_key(name.name)
+                                || module_exports[&target].enums.contains_key(name.name)
+                            {
                                 continue;
                             }
                             let external = name.alias.unwrap_or(name.name);
@@ -1275,7 +1277,7 @@ fn compile_modules(
         pattern_types: HashMap::new(),
         signature_calls: HashMap::new(),
         json_calls: HashMap::new(),
-        json_types: json_lower::JsonTypes::new(&asts, &struct_identities, &edges),
+        json_types: json_lower::JsonTypes::new(&asts, &struct_identities, &edges, &barrels),
         json_factories: Default::default(),
         newtype_results: HashMap::new(),
         console_outputs: ["echo", CONSOLE_ERROR_OPERATION]

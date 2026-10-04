@@ -66,8 +66,8 @@ fn imported_functions_require_checked_shapes_and_cannot_be_function_values() {
             "exactly one type argument",
         ),
         (
-            r#"import {stringify} from "json";fn main(){return stringify(Some(7));}"#,
-            "type-mapping decision",
+            r#"import {parse} from "json";alias Nested=Option<Option<number>>;fn main(){return parse<Nested>("null");}"#,
+            "directly nested Option",
         ),
         (
             r#"import {parse} from "json";fn main(){const decoder=parse;return decoder;}"#,
