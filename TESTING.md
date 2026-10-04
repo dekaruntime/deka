@@ -76,6 +76,15 @@ remain mandatory. Other package fixtures and changed metadata fail closed;
 the four old bytes fixtures needing explicit Option/Result handling are not
 added to the passing list.
 
+Each staged project first runs `deka check`. A check refusal is a compilation
+failure and the program is never executed. After a successful check, the gate
+runs `deka run` and records any failure as a runtime failure, even if it prints
+nothing. Only the program's output is compared with its expected stdout; the
+check command's success message is not part of that output. Both child output
+pipes are drained during each command, so large output cannot fill a pipe and
+turn a finished program into a timeout. Regression tests cover observed phases
+and actual CLI execution, alongside the listed corpus gate.
+
 `corpus-gate --all` is an inventory command: it exits zero even with unmatched
 cases. Use the listed-case gate for validation and compare inventories when
 adding passing programs. Never count an unsupported feature's failure as the

@@ -15,10 +15,10 @@ fn write(dir: &Path, name: &str, content: &str, mode: Option<u32>) {
 }
 
 /// A stand-in for deka: prints "mock-ok" and exits 0 when the entry source
-/// carries the mockpass marker; otherwise reports a run failure on stderr
-/// (with the native runtime's "Run failed:" marker) and exits 1.
+/// carries the mockpass marker; otherwise reports a run failure on stderr.
+/// Checking succeeds independently and never executes the source.
 fn mock_cli(dir: &Path) -> std::path::PathBuf {
-    let script = "#!/bin/sh\nif grep -q mockpass \"$2\" 2>/dev/null; then echo mock-ok; exit 0; fi\necho \"Run failed: mock badness\" >&2; exit 1\n";
+    let script = "#!/bin/sh\nif [ \"$1\" = check ]; then exit 0; fi\nif grep -q mockpass \"$2\" 2>/dev/null; then echo mock-ok; exit 0; fi\necho \"mock badness\" >&2; exit 1\n";
     write(dir, "mock-deka", script, Some(0o755));
     dir.join("mock-deka")
 }
