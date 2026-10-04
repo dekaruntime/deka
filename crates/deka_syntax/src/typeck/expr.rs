@@ -772,6 +772,10 @@ impl<'a> Checker<'a> {
                 }
                 match self.lookup_var(name) {
                     Some(ty) => {
+                        if super::descriptor::JsonOperation::from_module_type(&ty).is_some() {
+                            self.error_span(*span, "native JSON conversions must be called directly; generic intrinsic function values are not supported");
+                            return Type::Error;
+                        }
                         if let Some(builtin) = super::hooks::react_import_name(name) {
                             self.note_hook_builtin_ref(builtin);
                         }
@@ -4315,6 +4319,40 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn check_named_json_conversion(
+        &mut self,
+        call_expr: &ast::Expr<'a>,
+        operation: super::descriptor::JsonOperation,
+        type_args: &'a [ast::Type<'a>],
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        let name = match operation {
+            super::descriptor::JsonOperation::ParseJson => "parse",
+            super::descriptor::JsonOperation::ToJson => "stringify",
+        };
+        let [argument] = args else {
+            self.error_span(span, format!("JSON.{name} expects exactly one argument"));
+            return Some(Type::Error);
+        };
+        let argument_type = self.check_expr(argument);
+        if operation == super::descriptor::JsonOperation::ParseJson
+            && !matches!(argument_type, Type::Named { name: "string" } | Type::Error)
+        {
+            self.error_span(argument.span(), "JSON.parse expects a string");
+            return Some(Type::Error);
+        }
+        self.check_builtin_json(
+            call_expr,
+            &argument_type,
+            operation.receiver_method(),
+            type_args,
+            &[],
+            span,
+            false,
+        )
+    }
+
     fn try_check_method_call(
         &mut self,
         call_expr: &ast::Expr<'a>,
@@ -4338,29 +4376,7 @@ impl<'a> Checker<'a> {
                 self.error_span(span, format!("unknown JSON method `{method_name}`"));
                 return Some(Type::Error);
             };
-            let [argument] = args else {
-                self.error_span(
-                    span,
-                    format!("JSON.{method_name} expects exactly one argument"),
-                );
-                return Some(Type::Error);
-            };
-            let argument_type = self.check_expr(argument);
-            if method_name == "parse"
-                && !matches!(argument_type, Type::Named { name: "string" } | Type::Error)
-            {
-                self.error_span(argument.span(), "JSON.parse expects a string");
-                return Some(Type::Error);
-            }
-            return self.check_builtin_json(
-                call_expr,
-                &argument_type,
-                operation.receiver_method(),
-                type_args,
-                &[],
-                span,
-                false,
-            );
+            return self.check_named_json_conversion(call_expr, operation, type_args, args, span);
         }
 
         // Builtin `Name.type()` on `super` declarations (rfd#41, deka#561
@@ -5396,6 +5412,27 @@ impl<'a> Checker<'a> {
                 );
                 return Type::Error;
             }
+        }
+        let json_operation = match callee {
+            ast::Expr::Identifier {
+                name,
+                span: name_span,
+            } => {
+                let operation = self
+                    .lookup_var(name)
+                    .as_ref()
+                    .and_then(super::descriptor::JsonOperation::from_module_type);
+                if operation.is_some() && self.reject_type_only_value_use(name, *name_span) {
+                    return Type::Error;
+                }
+                operation
+            }
+            _ => None,
+        };
+        if let Some(operation) = json_operation {
+            return self
+                .check_named_json_conversion(expr, operation, type_args, args, span)
+                .unwrap_or(Type::Error);
         }
         // `unwrap(x)` with no `or` block. The parser only claims the name when
         // `or` follows, so a program with its own `unwrap` function is

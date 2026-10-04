@@ -165,13 +165,12 @@ impl<'a> Lower<'a> {
         else {
             return Ok(false);
         };
-        let Expr::Call {
-            callee: Expr::FieldAccess { object, .. },
-            args,
-            ..
-        } = e
-        else {
+        let Expr::Call { callee, args, .. } = e else {
             return Err("checked JSON call has an invalid shape".into());
+        };
+        let object = match callee {
+            Expr::FieldAccess { object, .. } => Some(*object),
+            _ => None,
         };
         let shape = shape?;
         if let Some(operation) = body_operation {
@@ -196,7 +195,7 @@ impl<'a> Lower<'a> {
                 function,
                 captures: vec![],
             });
-            self.expr(object, c)?;
+            self.expr(object.ok_or("checked JSON body call has no receiver")?, c)?;
             c.emit(Op::Host {
                 operation,
                 arguments: 1,
@@ -208,7 +207,7 @@ impl<'a> Lower<'a> {
         let input = if let [argument] = *args {
             argument
         } else {
-            object
+            object.ok_or("checked JSON conversion has no input")?
         };
         self.expr(input, c)?;
         match operation {

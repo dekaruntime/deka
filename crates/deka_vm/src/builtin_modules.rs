@@ -128,6 +128,11 @@ pub(super) fn exports<'a>(
                     exports.values.insert(arena.alloc_str(name), ty.clone());
                 }
             }
+            if module.name == "json" {
+                for (name, operation) in deka_syntax::typeck::JsonOperation::MODULE_FUNCTIONS {
+                    exports.values.insert(name, operation.module_type());
+                }
+            }
             (path(module.name), exports)
         })
         .collect()

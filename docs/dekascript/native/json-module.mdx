@@ -1,0 +1,36 @@
+# Native json module
+
+Import `parse` and `stringify` from `json` for the same checked Rust conversions
+as the `JSON` namespace and `.toJSON()`/`.parseJSON<T>()` receiver forms.
+The compiler generates the concrete schema; parsing returns `Result<T, string>`
+for malformed text and mismatched data shapes, without throwing an Exception.
+
+```ds
+import { parse, stringify } from "json";
+import { echo } from "io";
+
+struct Project { title: string }
+
+const text = stringify(Project { title: "Deka" });
+const title = match parse<Project>(text) {
+    Ok(project) => project.title,
+    Err(message) => "Could not read project: " + message
+};
+echo(title);
+```
+
+This prints `Deka`. Structs retain their existing type-name wrapper in JSON:
+`{"Project":{"title":"Deka"}}`. Imported conversions keep nominal identities
+and receiver methods when parsing structs. Numbers, strings, booleans, arrays,
+tuples, static records and required-field structs are supported.
+
+Import aliases and local re-export barrels preserve these conversions. The
+initial API requires direct named calls: assigning a generic conversion to a
+variable, returning it or passing it as a function value is a compile error.
+No dynamic untyped JSON values or placeholder runtime functions are created.
+
+Option, Result, other enums, newtypes, unions and optional struct fields remain
+outside this initial module slice; their broader wire-format implementation is
+tracked in dekaruntime/deka#1300. Unsupported
+shapes fail compilation explicitly. See [Native JSON](./json) for the receiver
+forms and data-format details.
