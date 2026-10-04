@@ -29,6 +29,11 @@ impl HostHandle {
     pub fn name(&self) -> &str {
         &self.name
     }
+    /// Clone a typed reference to the same host allocation without a proxy.
+    #[cfg(feature = "ui")]
+    pub(crate) fn shared<T: Any>(&self) -> Option<Rc<T>> {
+        self.resource.clone().downcast::<T>().ok()
+    }
     pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
         self.resource.downcast_ref()
     }
@@ -559,12 +564,42 @@ impl HostOp {
         }
     }
 }
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct Hosts {
     operations: BTreeMap<String, HostOp>,
     nominal: BTreeMap<String, HostType>,
 }
+impl Default for Hosts {
+    fn default() -> Self {
+        let hosts = Self {
+            operations: BTreeMap::new(),
+            nominal: BTreeMap::new(),
+        };
+        #[cfg(feature = "ui")]
+        let mut hosts = hosts;
+        #[cfg(feature = "ui")]
+        hosts
+            .bind_view_tree(Rc::new(std::cell::RefCell::new(
+                crate::component::tree::Tree::default(),
+            )))
+            .expect("valid built-in view catalog");
+        hosts
+    }
+}
 impl Hosts {
+    #[cfg(feature = "ui")]
+    pub(crate) fn bind_view_tree(
+        &mut self,
+        tree: Rc<std::cell::RefCell<crate::component::tree::Tree>>,
+    ) -> Result<()> {
+        for op in crate::component::view_operations(tree) {
+            // Rebind the canonical catalog to this app's session. Custom host
+            // schemas cannot replace these already registered operation names.
+            self.operations.remove(&op.name);
+            self.register(op)?;
+        }
+        Ok(())
+    }
     pub fn register(&mut self, op: HostOp) -> Result<()> {
         if op.exception_channel
             && (op.asynchronous

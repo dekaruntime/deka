@@ -179,6 +179,41 @@ mod tests {
         }
     }
     #[test]
+    fn source_view_reads_match_desktop_and_canvas_without_idle_vm_work() {
+        let source = r#"export fn App(){let output="Before";
+            return (<view><p id="message">Live tree</p><p>{output}</p>
+                <button onClick={fn(){output=match(view.getElementById("message")){
+                    Some(node)=>node.textContent,None=>"Missing"};}}>Read</button></view>);} "#;
+        let program = compiler::compile_entry(source, &Hosts::default(), "App").unwrap();
+        let native: serde_json::Value =
+            serde_json::from_str(&ui::snapshot(ui::VmApp::new(program).unwrap(), 1).unwrap())
+                .unwrap();
+        let mut browser = NativePreview::new();
+        browser.compile(source, false).unwrap();
+        snapshot(&mut browser);
+        let target = browser.scene.targets[0].rect;
+        assert!(browser.pointer(target.x + 2., target.y + 2.).unwrap());
+        browser.blur();
+        assert_eq!(normalize(snapshot(&mut browser)), normalize(native));
+        assert_eq!(
+            browser
+                .scene
+                .nodes
+                .iter()
+                .filter(|node| node.text.as_deref() == Some("Live tree"))
+                .count(),
+            2
+        );
+        let instructions = browser.session.as_ref().unwrap().instructions();
+        for time in 0..60 {
+            browser.frame_at(560., 300., 1., time as f64 * 16., true);
+        }
+        assert_eq!(
+            browser.session.as_ref().unwrap().instructions(),
+            instructions
+        );
+    }
+    #[test]
     fn browser_events_patch_only_bindings_affected_by_their_state() {
         let source = r#"export fn App(){let count=0;let noise=0;
             return (<view><p>{count}</p>
