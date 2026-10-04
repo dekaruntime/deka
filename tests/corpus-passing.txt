@@ -746,3 +746,5 @@ http-get-refused
 fs-mkdirs-idempotent
 fs-read-missing
 fs-read-dir-missing
+crypto-sha256-wrong-type
+time-now-no-args

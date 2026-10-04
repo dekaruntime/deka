@@ -1,0 +1,7 @@
+# Native argument failure conformance
+
+The pinned pre-VM corpus names `time` and `crypto` as installable packages. Two unchanged negative fixtures now check the native built-ins offline: `now(1)` rejects excess arguments, and `sha256("abc")` rejects a string where bytes are required.
+
+The gate admits only the exact original source, failing status, compilation stage, single package, absent stdout/config/auxiliary files and recorded diagnostic. Real CLI controls require the primary call diagnostic; a secondary `echo(r)` type error cannot substitute for rejecting the invalid `now` or `sha256` call. It invokes the actual native checker; a runtime fault, successful check, unknown import or unrelated diagnostic cannot satisfy the fixture. Changed source or metadata remains authoritative and fails closed instead of bypassing package installation.
+
+Legacy `sleep_ms` argument fixtures remain excluded. The native module exports `sleep(ms)`; an unknown `sleep_ms` import does not prove its old arity/type contract, and this conformance slice does not introduce that legacy API.

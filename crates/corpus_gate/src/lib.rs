@@ -4,6 +4,7 @@
 mod native_crypto_fixture;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+mod builtin_negative;
 mod native_fs;
 mod process;
 
@@ -432,7 +433,8 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
         || native_time_fixture(case)
         || native_crypto_fixture::accepts(case)
         || native_http_fixture(case)
-        || native_fs::matches(case);
+        || native_fs::matches(case)
+        || builtin_negative::matches(case);
 
     if !case.packages.is_empty() && !native_fixture {
         return Err(format!(
