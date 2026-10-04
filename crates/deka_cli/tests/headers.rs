@@ -1,3 +1,5 @@
+#[path = "support/check.rs"]
+mod check;
 use std::process::{Command, Output};
 
 fn ok(output: Output) -> Vec<u8> {
@@ -35,11 +37,14 @@ fn main() {
     )
     .unwrap();
     let cli = env!("CARGO_BIN_EXE_deka");
-    ok(Command::new(cli)
-        .args(["check", "main.ds", "--entry", "main"])
-        .current_dir(project.path())
-        .output()
-        .unwrap());
+    check::checked(
+        Command::new(cli)
+            .args(["check", "main.ds", "--entry", "main"])
+            .current_dir(project.path())
+            .output()
+            .unwrap(),
+        "main.ds",
+    );
     let expected = b"one, two, three\ninvalid\nmissing\n[[\"x\",\"one, two, three\"]]\n";
     assert_eq!(
         ok(Command::new(cli)

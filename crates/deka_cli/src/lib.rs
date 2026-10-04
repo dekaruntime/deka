@@ -1,5 +1,6 @@
 //! Public native compiler/VM CLI. The legacy V8 CLI remains a separate crate.
 //! Command dispatch lives in [`cli`]; this module holds the implementations.
+mod check_output;
 pub mod cli;
 mod packages;
 
