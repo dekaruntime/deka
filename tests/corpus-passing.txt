@@ -75,6 +75,8 @@ basics-object-shorthand-rejected
 basics-operator-precedence
 basics-option-type-annotation-rejected
 basics-optional-chaining-rejected
+basics-redeclare-const-fail
+basics-redeclare-let-as-const-fail
 basics-strict-equality-null-rejected
 basics-string-concatenation
 basics-template-expression-rejected
@@ -393,6 +395,7 @@ functions-default-param-uses-later-param
 functions-default-parameter
 functions-default-parameter-type-mismatch-fail
 functions-default-parameter-uses-prior-param
+functions-duplicate-module-const-in-body-fail
 functions-exported-const-in-function-body
 functions-factorial-recursion
 functions-function-capture-two-holes-fail
