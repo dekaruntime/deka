@@ -5,6 +5,7 @@ pub mod cli;
 mod fmt;
 mod package_check;
 mod packages;
+mod source_entry;
 
 mod desktop_runtime;
 
@@ -262,13 +263,7 @@ pub(crate) fn tests(paths: &[String], out: &Output, err: &Output) -> Result<()> 
                 .map_err(|e| e.to_string())?;
             entries.sort_by_key(|e| e.path());
             for entry in entries {
-                if matches!(
-                    entry.file_name().to_str(),
-                    Some("node_modules" | "ds_modules" | ".git" | ".target" | "target" | "dist")
-                ) {
-                    continue;
-                }
-                if entry.file_type().map_err(|e| e.to_string())?.is_symlink() {
+                if !source_entry::discoverable(&entry).map_err(|error| error.to_string())? {
                     continue;
                 }
                 discover(&entry.path(), false, out)?;
