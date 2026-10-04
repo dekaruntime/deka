@@ -1939,11 +1939,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka-fmt"
+version = "0.60.2"
+dependencies = [
+ "bumpalo",
+ "deka_syntax",
+]
+
+[[package]]
 name = "deka_cli"
 version = "0.60.2"
 dependencies = [
  "corpus_gate",
  "deka-cli-core 0.6.0",
+ "deka-fmt",
  "deka_executable",
  "deka_native_ui",
  "deka_vm",

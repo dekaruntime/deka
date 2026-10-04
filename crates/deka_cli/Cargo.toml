@@ -10,6 +10,7 @@ desktop = ["deka_vm/gpu", "deka_native_ui/gpu"]
 
 [dependencies]
 deka-cli-core = { version = "0.6.0", default-features = false, features = ["registry"] }
+deka-fmt = { path = "../deka_fmt" }
 deka_executable = { path = "../deka_executable" }
 deka_vm = { path = "../deka_vm", features = ["compiler", "host", "ui"] }
 deka_native_ui = { path = "../deka_native_ui" }

@@ -124,3 +124,19 @@ stage, passing status, stdout, and no extra files/configuration/diagnostic. Each
 case still compiles and runs and must print exactly `true`. Changed fixtures and
 other package dependencies remain authoritative and fail closed offline. Legacy
 `sleep_ms` cases wait for the compatibility decision in dekaruntime/deka#1341.
+
+The native `deka fmt` printer tests run through `./run.sh`. Its actual CLI tests
+assert file writes, check-without-writes, recursive `.ds`/`.dsx` coverage, stdin
+status/output and execution before/after formatting. The corpus CI job runs the
+explicit-root audit after verifying the existing pinned corpus:
+
+```sh
+cargo run --locked --release -p deka-fmt --example audit -- <corpus-directory> crates/deka_fmt/tests/fixtures/tour
+```
+
+The audit requires real sources, reparses every initially parseable file and
+checks second-pass idempotence plus comment preservation. It reports initially
+unparseable files separately and requires them to stay byte-identical. The tour
+fixtures snapshot the 27 active lesson sources from dekaruntime/website main
+(as audited 3 October 2026). This move does not admit the legacy formatter corpus
+category to the VM gate; that is a separate port-note task.
