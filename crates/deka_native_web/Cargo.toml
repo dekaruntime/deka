@@ -9,6 +9,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+deka-fmt = { path = "../deka_fmt" }
 deka_native_ui = { path = "../deka_native_ui" }
 deka_vm = { path = "../deka_vm", features = ["compiler", "ui"] }
 wasm-bindgen = "=0.2.128"

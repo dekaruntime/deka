@@ -63,6 +63,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-unknown-unknown
       - uses: mozilla-actions/sccache-action@v0.0.9
       - run: sccache --show-stats
       - name: Download and verify the corpus
@@ -84,6 +86,17 @@ jobs:
           corpus_dir=$(echo tests/testsuite/*/corpus)
           target/debug/corpus-gate "$corpus_dir" tests/corpus-passing.txt target/debug/deka
           cargo run --locked --release -p deka-fmt --example audit -- "$corpus_dir" crates/deka_fmt/tests/fixtures/tour
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Test the actual browser formatter binding
+        run: |
+          cargo test --locked --release -p deka_native_web --test formatter
+          cargo install --locked wasm-bindgen-cli --version 0.2.128
+          python3 scripts/build-native-web.py --out target/formatter-web
+          corpus_dir=$(echo tests/testsuite/*/corpus)
+          cargo run --locked --release -p deka_native_web --example formatter_cases -- "$corpus_dir" crates/deka_fmt/tests/fixtures/tour > target/formatter-cases.jsonl
+          node crates/deka_native_web/tests/formatter-wasm.mjs target/formatter-web target/formatter-cases.jsonl
   desktop-build:
     runs-on: macos-15
     env:

@@ -5,6 +5,13 @@ use wasm_bindgen::prelude::*;
 mod world;
 pub use world::PortfolioWorld;
 
+/// Format source with the same AST printer used by `deka fmt`.
+/// Incomplete source is returned unchanged; use compilation for validation.
+#[wasm_bindgen]
+pub fn format_ds(source: &str) -> Result<String, String> {
+    deka_fmt::format_ds(source)
+}
+
 #[wasm_bindgen]
 pub struct NativePreview {
     session: Option<UiSession>,
