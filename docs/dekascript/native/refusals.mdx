@@ -1,0 +1,33 @@
+---
+title: "Native compiler refusals"
+---
+
+The native compiler rejects source constructs it cannot execute. A refusal names
+its cause and the source expression's line and column; it does not silently
+translate an unsupported operation to a no-op.
+
+For example, this checked builtin is not implemented in the native VM yet:
+
+```ts
+const value = parseNumber("42");
+```
+
+`deka check app.ds` exits with status 1 and writes:
+
+```text
+[check] app.ds
+[check] 1:15: unknown built-in parseNumber
+```
+
+Unsupported UI primitives name their tag. Unsupported foreign-code constructs
+name the construct, such as an unsafe block or a particular bridge call.
+Nested expressions keep the innermost refusal's position rather than repeating
+positions for each enclosing function or statement.
+
+If lowering fails in an imported module, the diagnostic also names that module's
+file. The native compiler API retains the file, line and column in its error;
+the CLI uses the same stderr format as other check diagnostics.
+
+These are compilation errors. Checking does not run a program, perform network
+requests, or turn operational Result errors and authored Throw exceptions into
+compile errors. See [Checking native programs](./checking) for that distinction.
