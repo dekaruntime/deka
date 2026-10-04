@@ -1295,6 +1295,7 @@ impl Vm {
                     .into_iter()
                     .map(|h| self.to_host(h))
                     .collect::<Result<Vec<_>>>()?;
+                let exception_channel = self.hosts.operation(&operation)?.exception_channel;
                 let (reply, expected, asynchronous, result_channel) =
                     self.hosts.call(&operation, args, &self.context)?;
                 let h = match reply {
@@ -1306,6 +1307,16 @@ impl Vm {
                         result_channel,
                     }),
                     HostReply::Ready(value) => {
+                        if exception_channel && let Err(message) = &value {
+                            let error = self.alloc_host_value(HostValue::Record(
+                                [
+                                    ("name".into(), HostValue::String("Error".into())),
+                                    ("message".into(), HostValue::String(message.clone())),
+                                ]
+                                .into(),
+                            ))?;
+                            return self.raise(frames, error);
+                        }
                         let result = self.host_result(value, expected, result_channel);
                         if asynchronous {
                             let promise = self.heap.alloc(Value::Promise(None));

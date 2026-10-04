@@ -3,11 +3,15 @@
 pub mod abort;
 #[cfg(feature = "host")]
 pub mod builtin_crypto;
+#[cfg(feature = "host")]
+pub mod builtin_http;
 mod bytecode;
 pub mod bytes;
 mod callback;
 #[cfg(feature = "host")]
 pub mod crypto;
+#[cfg(feature = "host")]
+mod http_transport;
 pub mod text_codec;
 pub use callback::{HostCallback, HostContext, HostJob};
 #[cfg(feature = "host")]

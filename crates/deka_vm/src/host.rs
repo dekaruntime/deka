@@ -305,6 +305,8 @@ pub struct HostOp {
     /// Operational failures are Result data. Protocol faults remain
     /// VM errors. The declaration and dispatch share this output contract.
     pub result_channel: bool,
+    /// Synchronous operational failures raise a typed JsError.
+    pub exception_channel: bool,
     pub global: bool,
     /// A zero-argument Rust getter exposed as a typed ambient value.
     pub global_value: Option<String>,
@@ -323,6 +325,11 @@ impl HostOp {
     /// Declare `Result<T, string>` (or `Promise<Result<T, string>>`) output.
     pub fn with_result_channel(mut self) -> Self {
         self.result_channel = true;
+        self
+    }
+    /// Declare synchronous `Exception<T, JsError>`; async channels fail closed.
+    pub fn with_exception_channel(mut self) -> Self {
+        self.exception_channel = true;
         self
     }
     pub fn with_defaults(mut self, defaults: Vec<HostValue>) -> Self {
@@ -365,7 +372,9 @@ impl HostOp {
             .join(", ")
     }
     fn output_source(&self) -> String {
-        let value = if self.result_channel {
+        let value = if self.exception_channel {
+            format!("Exception<{}, JsError>", self.result.source())
+        } else if self.result_channel {
             format!("Result<{}, string>", self.result.source())
         } else {
             self.result.source().to_owned()
@@ -416,6 +425,7 @@ impl HostOp {
             result,
             asynchronous,
             result_channel: false,
+            exception_channel: false,
             global: false,
             global_value: None,
             namespace: None,
@@ -433,6 +443,15 @@ pub struct Hosts {
 }
 impl Hosts {
     pub fn register(&mut self, op: HostOp) -> Result<()> {
+        if op.exception_channel
+            && (op.asynchronous
+                || op.result_channel
+                || op.global_value.is_some()
+                || op.receiver_property
+                || op.json_body)
+        {
+            return Err("Exception host channel requires a synchronous throwing function".into());
+        }
         if op.name.is_empty()
             || !op
                 .name
