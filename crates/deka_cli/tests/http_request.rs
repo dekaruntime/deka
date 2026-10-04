@@ -1,3 +1,5 @@
+#[path = "support/check.rs"]
+mod check;
 use std::{
     path::Path,
     process::{Command, Output},
@@ -36,7 +38,7 @@ console.log(match Request("https://EXAMPLE.com:443/a/../tour#project") { Ok(requ
 console.log(match Request("https://user:pass@example.com") { Ok(request)=>"wrong",Err(error)=>"credentials rejected" });
 "#).unwrap();
     let expected = "GET https://example.com/tour#project Some(\"Deka\")\ncredentials rejected\n";
-    ok(cli(project.path(), &["check", "request.ds"]));
+    check::checked(cli(project.path(), &["check", "request.ds"]), "request.ds");
     assert_eq!(ok(cli(project.path(), &["run", "request.ds"])), expected);
     let output = tempfile::tempdir().unwrap();
     let binary = output.path().join("request-app");
