@@ -12,6 +12,7 @@ pub mod text_codec;
 pub use callback::{HostCallback, HostContext, HostJob};
 #[cfg(feature = "host")]
 pub mod blob;
+pub mod builtin_math;
 #[cfg(feature = "compiler")]
 pub mod compiler;
 #[cfg(feature = "host")]
