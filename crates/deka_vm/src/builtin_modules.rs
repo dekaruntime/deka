@@ -128,6 +128,32 @@ pub(super) fn exports<'a>(
             // declaration pass. Only public value exports vary by module.
             let mut exports = declarations.clone();
             exports.values.clear();
+            exports.structs.clear();
+            exports.enums.clear();
+            for (public, ty) in
+                hosts.nominal_types_for(|operation| module.export(operation).is_some())
+            {
+                let brand = match ty {
+                    crate::HostType::Enum(schema) => schema.brand(),
+                    crate::HostType::Struct(schema) => schema.brand(),
+                    _ => continue,
+                };
+                let public = arena.alloc_str(&public);
+                let brand = arena.alloc_str(&brand);
+                if let Some(info) = declarations.enums.get(brand) {
+                    exports.enums.insert(public, info.clone());
+                }
+                if let Some(info) = declarations.structs.get(brand) {
+                    exports.structs.insert(public, info.clone());
+                }
+                exports.aliases.insert(
+                    public,
+                    deka_syntax::ast::Type::Named {
+                        name: brand,
+                        span: deka_syntax::ast::Span::dummy(),
+                    },
+                );
+            }
             for operation in operations.keys() {
                 if let Some(name) = module.export(operation)
                     && let Some(ty) = declarations.values.get(operation.as_str())

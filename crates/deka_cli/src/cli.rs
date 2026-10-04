@@ -82,6 +82,11 @@ fn register_check(registry: &mut Registry) {
         subcommands: &[],
         handler: cmd_check,
     });
+    registry.add_flag(FlagSpec {
+        name: "--as-package",
+        aliases: &[],
+        description: "check a local package as an installed consumer, without running it",
+    });
     entry_param(registry);
 }
 
@@ -297,9 +302,8 @@ fn print_command_help(registry: &Registry, name: &str) {
 }
 
 fn runtime(result: Result<()>) -> HandlerResult {
-    // Execution failures carry the legacy runtime's "Run failed:" marker so
-    // they read as run-time errors, distinct from compile errors (the corpus
-    // gate stages on it).
+    // Keep the existing human-facing execution prefix. The corpus gate observes
+    // the check/run command boundary instead of classifying this text.
     result
         .map(|()| ExitStatus::SUCCESS)
         .map_err(|error| CommandError::runtime(format!("Run failed: {error}")))
@@ -339,11 +343,47 @@ fn cmd_dev(ctx: &Context) -> HandlerResult {
 }
 
 fn cmd_check(ctx: &Context) -> HandlerResult {
-    let source = source_arg(ctx)?;
-    compile(&source).map_err(CommandError::Runtime)?;
-    ctx.out()
-        .print(format_args!("OK {}\n", source.path.display()));
-    Ok(ExitStatus::SUCCESS)
+    if ctx.args.flags.contains_key("--as-package") {
+        if ctx.args.positionals.len() > 1 || ctx.args.params.contains_key("--entry") {
+            return Err(CommandError::usage(
+                "check --as-package expects one package directory and no --entry",
+            ));
+        }
+        let path = ctx
+            .args
+            .positionals
+            .first()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| ".".into());
+        return match crate::package_check::check(&path) {
+            Ok(()) => {
+                crate::check_output::success(ctx.err(), &path);
+                Ok(ExitStatus::SUCCESS)
+            }
+            Err(error) => {
+                crate::check_output::failure(ctx.err(), Some(&path), &error);
+                Ok(ExitStatus::from_code(1))
+            }
+        };
+    }
+    let source = match source_arg(ctx) {
+        Ok(source) => source,
+        Err(CommandError::Runtime(error)) => {
+            crate::check_output::failure(ctx.err(), None, &error);
+            return Ok(ExitStatus::from_code(1));
+        }
+        Err(error) => return Err(error),
+    };
+    match compile(&source) {
+        Ok(_) => {
+            crate::check_output::success(ctx.err(), &source.path);
+            Ok(ExitStatus::SUCCESS)
+        }
+        Err(error) => {
+            crate::check_output::failure(ctx.err(), Some(&source.path), &error);
+            Ok(ExitStatus::from_code(1))
+        }
+    }
 }
 
 fn cmd_build(ctx: &Context) -> HandlerResult {
@@ -482,6 +522,12 @@ pub fn dispatch(registry: &Registry, argv: &[String]) -> ExitCode {
     let parsed = Args::collect(argv.to_vec(), registry);
     if parsed.errors.is_empty() {
         let args = &parsed.args;
+        if args.flags.contains_key("--as-package")
+            && args.commands.first().map(String::as_str) != Some("check")
+        {
+            eprintln!("deka: --as-package requires check");
+            return ExitCode::from(2);
+        }
         if args.commands.is_empty() {
             if args.flags.contains_key("--version") {
                 print_version();
@@ -609,10 +655,11 @@ mod tests {
             "import { echo } from \"io\";\necho(\"ok\");\n",
         );
         assert_eq!(run(&["check", good.to_str().unwrap()]), ExitCode::SUCCESS);
-        let (code, out, _err) =
+        let (code, out, err) =
             registry().run_captured(&["check".into(), good.to_str().unwrap().into()]);
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.string().starts_with("OK "), "{}", out.string());
+        assert!(out.string().is_empty(), "{}", out.string());
+        assert_eq!(err.string(), format!("[check] {} - ok\n", good.display()));
         let bad = write(dir.path(), "bad.ds", "let broken = ;\n");
         assert_eq!(run(&["check", bad.to_str().unwrap()]), ExitCode::from(1));
     }

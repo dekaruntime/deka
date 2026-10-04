@@ -729,6 +729,15 @@ unsafe-unsafe-err-message-rejected-fail
 unsafe-unsafe-error-is-jserror-fail
 unsafe-unsafe-typed-result-mismatch-fail
 
+time-now-after-epoch
+time-now-is-number
+time-two-nows
 data-types-number-math-total
 data-types-number-math-option
 error-globals-math-module-pi
+
+http-invalid-url
+http-get-refused
+fs-mkdirs-idempotent
+fs-read-missing
+fs-read-dir-missing

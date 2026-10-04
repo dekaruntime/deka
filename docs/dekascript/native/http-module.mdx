@@ -1,0 +1,61 @@
+# Native HTTP module
+
+Import the synchronous client by its bare module name. Rust implements these
+functions in the binary; no package install, JavaScript bridge, or permissions
+configuration is needed.
+
+```ds
+import { parse_url, format_request, get } from "http"
+import { from_string } from "bytes"
+import { echo } from "io"
+
+fn main() {
+    echo(match parse_url("https://example.com/projects") {
+        Ok(value) => value.host,
+        Throw(error) => error.message
+    });
+    echo(format_request("GET", "/projects", "example.com",
+        { content_type: "" }, from_string("")));
+    echo(match get("not a url") {
+        Ok(response) => string(response.status),
+        Err(error) => "network error"
+    });
+}
+```
+
+Run with `deka run main.ds --entry main`, or build a source-free executable with
+`deka build main.ds --entry main --outfile http-app`. For npm installs use your
+project's `npx deka` command.
+
+| Function | Output |
+| --- | --- |
+| `parse_url(url: string)` | `Exception<{scheme: string, host: string, port: number, path: string}, JsError>` |
+| `format_request(method: string, path: string, host: string, headers: {content_type: string}, body: bytes)` | `string` |
+| `request(method: string, url: string, headers: {content_type: string}, body: bytes)` | `Result<ParsedResponse, string>` |
+| `get(url: string)` | `Result<ParsedResponse, string>` |
+| `post(url: string, content_type: string, body: bytes)` | `Result<ParsedResponse, string>` |
+
+`ParsedResponse` is a structural record with `complete: boolean`,
+`error: Option<string>`, `status: number`, and `body: bytes`. A completed response
+has `complete: true` and `error: None`. HTTP error statuses such as 404 are
+successful responses; URL and transport failures are `Err`.
+
+The parser preserves the shipped default `http` scheme, default ports, bracketed
+IPv6 host and path/query behavior. Invalid parsing raises a `JsError` with
+`name` and `message`; consume it with `match ... { Ok(...), Throw(...) }`, or
+inside `try`/`catch`. It does not perform a network request.
+
+The formatter produces an HTTP/1.1 request head, uppercases the method, counts
+body bytes, and emits Content-Type, Host, Content-Length and Connection: close.
+The body is separate. Headers have the checked `content_type` field; arbitrary
+header maps and the old unsafe JS helpers are outside this module's surface.
+
+Requests use the same Rust transport as [fetch](./fetch), with the module's
+canonical no-redirect and no-chunked-response policy, a ten-second deadline and
+a 1 MiB buffered request/response limit. HTTPS uses the same certificate
+validation as fetch. Neither path reads implicit proxy environment variables.
+
+These functions are synchronous: a request occupies its VM turn while a worker
+owns the network runtime. Use asynchronous `fetch()` for responsive UI handlers
+and concurrent requests. The worker avoids nesting a Tokio runtime in the VM's
+existing event loop; it does not turn the source API into a promise.

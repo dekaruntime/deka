@@ -2427,6 +2427,12 @@ impl<'a> Checker<'a> {
                     self.receiver_methods.insert((local, *method), info.clone());
                 }
             }
+            let all_specifiers: Vec<_> = self.program.statements.iter().filter_map(|stmt| {
+                match stmt {
+                    ast::Stmt::Import { source: other, specifiers, .. } if other == source => Some(*specifiers),
+                    _ => None,
+                }
+            }).flatten().cloned().collect();
             for spec in specifiers.iter() {
                 let imported = spec.imported;
                 let local = spec.local;
@@ -2492,7 +2498,7 @@ impl<'a> Checker<'a> {
                 }
 
                 if let Some(ty) = exports.values.get(imported) {
-                    let ty = exceptions::localize_export(ty, specifiers, exports);
+                    let ty = exceptions::localize_export(ty, &all_specifiers, exports);
                     self.intern_imported_context(local, &ty);
                     self.declare_var(local, ty.clone());
                     // A value can carry a private struct type (for example,
@@ -2600,6 +2606,13 @@ impl<'a> Checker<'a> {
         self.context_scopes.push(HashMap::new());
     }
 
+    pub(super) fn canonical_nominal_type(&mut self, name: &'a str, fallback: Type<'a>) -> Type<'a> {
+        match self.aliases.get(name).cloned() {
+            Some(ty @ ast::Type::Named { name, .. }) if crate::native_brand::public_name(name) != name => self.resolve_ast_type(&ty),
+            _ => fallback,
+        }
+    }
+
     fn seed_native_declarations(
         &mut self,
         globals: &HashMap<&'a str, Type<'a>>,
@@ -2607,6 +2620,8 @@ impl<'a> Checker<'a> {
     ) {
         if let Some(declarations) = declarations {
             self.opaques.extend(declarations.opaques.clone());
+            self.structs.extend(declarations.structs.clone());
+            self.enums.extend(declarations.enums.clone());
             self.native_properties
                 .extend(declarations.native_properties.clone());
             self.native_json_bodies

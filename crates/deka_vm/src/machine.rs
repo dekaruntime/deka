@@ -33,6 +33,7 @@ enum Work {
         future: HostFuture,
         result: HostType,
         result_channel: bool,
+        result_error: Option<crate::HostEnumError>,
         job: Option<HostJob>,
         ready: Arc<crate::turn::ReadyWake>,
     },
@@ -352,7 +353,38 @@ impl Vm {
                     _ => return Err("invalid Option case".into()),
                 }
             }
-            // Enums cross through their declared Result channel, not record-shape guessing.
+            Value::Record(record) if record.enum_name.is_some() => {
+                let name = record.enum_name.clone().expect("enum brand");
+                let Value::String(case) = self
+                    .heap
+                    .get(*record.get("name").ok_or("enum has no case")?)?
+                else {
+                    return Err("invalid enum case".into());
+                };
+                HostValue::Enum {
+                    name,
+                    case: case.clone(),
+                    payload: record
+                        .get("value")
+                        .map(|h| self.to_host_inner(*h, ancestors).map(Box::new))
+                        .transpose()?,
+                }
+            }
+            Value::Record(record)
+                if record
+                    .struct_identity
+                    .as_ref()
+                    .is_some_and(|name| name.starts_with("__DekaHost_")) =>
+            {
+                HostValue::Struct {
+                    name: record.struct_identity.clone().expect("struct brand"),
+                    fields: record
+                        .fields
+                        .iter()
+                        .map(|(name, h)| Ok((name.clone(), self.to_host_inner(*h, ancestors)?)))
+                        .collect::<Result<_>>()?,
+                }
+            }
             Value::Record(record) if record.enum_name.is_none() => HostValue::Record(
                 record
                     .fields
@@ -371,11 +403,20 @@ impl Vm {
         value: Result<HostValue>,
         expected: HostType,
         result_channel: bool,
+        result_error: Option<crate::HostEnumError>,
     ) -> Result<Handle> {
         let value = match value {
             Ok(value) => value,
             Err(error) if result_channel => {
-                let payload = self.heap.alloc(Value::String(error));
+                let payload = if let Some(typed) = result_error {
+                    self.alloc_host_value(HostValue::Enum {
+                        name: typed.schema.brand(),
+                        case: typed.case,
+                        payload: Some(Box::new(HostValue::String(error))),
+                    })?
+                } else {
+                    self.heap.alloc(Value::String(error))
+                };
                 return Ok(self.enum_value("Result".into(), "Err".into(), 1, Some(payload)));
             }
             Err(error) => return Err(error),
@@ -398,6 +439,65 @@ impl Vm {
             return Err("host value nesting limit exceeded".into());
         }
         let value = match value {
+            HostValue::Enum {
+                name,
+                case,
+                payload,
+            } => {
+                let HostType::Enum(schema) = self
+                    .hosts
+                    .nominal_type(&name)
+                    .cloned()
+                    .ok_or("unknown host enum brand")?
+                else {
+                    return Err("unknown host enum brand".into());
+                };
+                let index = schema
+                    .cases
+                    .iter()
+                    .position(|(label, _)| label == &case)
+                    .ok_or("invalid host enum case")?;
+                let value = HostValue::Enum {
+                    name: name.clone(),
+                    case: case.clone(),
+                    payload: payload.clone(),
+                };
+                if !HostType::Enum(schema).accepts(&value) {
+                    return Err("invalid host enum payload".into());
+                }
+                let payload = payload
+                    .map(|value| self.alloc_host_value_inner(*value, depth + 1))
+                    .transpose()?;
+                return Ok(self.enum_value(name, case, index, payload));
+            }
+            HostValue::Struct { name, fields } => {
+                let HostType::Struct(schema) = self
+                    .hosts
+                    .nominal_type(&name)
+                    .cloned()
+                    .ok_or("unknown host struct brand")?
+                else {
+                    return Err("unknown host struct brand".into());
+                };
+                if !HostType::Struct(schema.clone()).accepts(&HostValue::Struct {
+                    name: name.clone(),
+                    fields: fields.clone(),
+                }) {
+                    return Err("invalid host struct fields".into());
+                }
+                let fields = fields
+                    .into_iter()
+                    .map(|(name, value)| Ok((name, self.alloc_host_value_inner(value, depth + 1)?)))
+                    .collect::<Result<BTreeMap<_, _>>>()?;
+                Value::Record(crate::heap::Record {
+                    order: fields.keys().cloned().collect(),
+                    fields,
+                    struct_name: Some(schema.name.clone()),
+                    struct_identity: Some(name),
+                    enum_name: None,
+                    embeds: vec![],
+                })
+            }
             HostValue::Option(value) => {
                 return Ok(match value {
                     Some(value) => {
@@ -453,6 +553,7 @@ impl Vm {
                             future,
                             result: HostType::Unit,
                             result_channel: false,
+                            result_error: None,
                             job: Some(job),
                             ready: Arc::new(crate::turn::ReadyWake::default()),
                         });
@@ -630,6 +731,7 @@ impl Vm {
                     future,
                     result,
                     result_channel,
+                    result_error,
                     ready,
                     ..
                 } => {
@@ -638,8 +740,13 @@ impl Vm {
                     let waker = Waker::from(ready.clone());
                     match future.as_mut().poll(&mut Context::from_waker(&waker)) {
                         Poll::Ready(v) => Some(
-                            self.host_result(v, result.clone(), *result_channel)
-                                .map(Outcome::Value),
+                            self.host_result(
+                                v,
+                                result.clone(),
+                                *result_channel,
+                                result_error.clone(),
+                            )
+                            .map(Outcome::Value),
                         ),
                         Poll::Pending => None,
                     }
@@ -1295,7 +1402,8 @@ impl Vm {
                     .into_iter()
                     .map(|h| self.to_host(h))
                     .collect::<Result<Vec<_>>>()?;
-                let (reply, expected, asynchronous, result_channel) =
+                let exception_channel = self.hosts.operation(&operation)?.exception_channel;
+                let (reply, expected, asynchronous, result_channel, result_error) =
                     self.hosts.call(&operation, args, &self.context)?;
                 let h = match reply {
                     HostReply::Pending(future) => self.spawn(Work::Host {
@@ -1304,9 +1412,21 @@ impl Vm {
                         ready: Arc::new(crate::turn::ReadyWake::default()),
                         result: expected,
                         result_channel,
+                        result_error,
                     }),
                     HostReply::Ready(value) => {
-                        let result = self.host_result(value, expected, result_channel);
+                        if exception_channel && let Err(message) = &value {
+                            let error = self.alloc_host_value(HostValue::Record(
+                                [
+                                    ("name".into(), HostValue::String("Error".into())),
+                                    ("message".into(), HostValue::String(message.clone())),
+                                ]
+                                .into(),
+                            ))?;
+                            return self.raise(frames, error);
+                        }
+                        let result =
+                            self.host_result(value, expected, result_channel, result_error);
                         if asynchronous {
                             let promise = self.heap.alloc(Value::Promise(None));
                             self.settle_promise(promise, result.map(Outcome::Value))?;
@@ -1615,7 +1735,7 @@ impl Vm {
                 if let Some(name) = &record.struct_name {
                     TypeDescriptor::new("struct", name)
                 } else if let Some(name) = &record.enum_name {
-                    TypeDescriptor::new("enum", name)
+                    TypeDescriptor::new("enum", crate::host::public_native_name(name))
                 } else {
                     TypeDescriptor::new("object", "Object")
                 }
