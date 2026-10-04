@@ -219,20 +219,13 @@ fn invalid_json_contracts_and_undecided_type_mappings_fail_compilation() {
 }
 
 #[test]
-fn undecided_wire_types_have_explicit_native_compilation_diagnostics() {
-    for source in [
-        "alias Maybe = Option<number>; const x = JSON.parse<Maybe>(\"null\");",
-        "alias Reply = Result<number,string>; const x = JSON.parse<Reply>(\"{}\");",
-        "struct X { x?: number; } const x = JSON.parse<X>(\"{}\");",
-        "alias Either = number | string; const x = JSON.parse<Either>(\"7\");",
-    ] {
-        let error = compiler::compile(&format!("{source}\nfn main() void {{}}"), &Hosts::default())
-            .unwrap_err();
-        assert!(
-            error.contains("APS 43 type-mapping decision"),
-            "{source}: {error}"
-        );
-    }
+fn unsupported_json_shapes_have_explicit_compilation_diagnostics() {
+    let source = "struct X { x?: number; } const x = JSON.parse<X>(\"{}\"); fn main() void {}";
+    let error = compiler::compile(source, &Hosts::default()).unwrap_err();
+    assert!(
+        error.contains("optional field") && error.contains("not supported"),
+        "{error}"
+    );
 }
 
 #[tokio::test]

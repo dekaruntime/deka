@@ -122,6 +122,11 @@ pub enum Op {
     Descriptor(TypeDescriptor),
     /// Convert a checked value using its concrete schema.
     JsonStringify(crate::JsonShape),
+    /// Checked JWT JSON: retain order/top-level struct flattening and push a Result.
+    JwtStringify {
+        shape: crate::JsonShape,
+        error: String,
+    },
     /// Pop a struct method table, then JSON text; push a nominal Result.
     JsonParse(crate::JsonShape),
     /// Convert Result<string,string> from a consumed host body with the same

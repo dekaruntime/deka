@@ -1,0 +1,50 @@
+# Crypto module
+
+The `crypto` module executes in Rust and returns synchronous `Result<T, string>`
+values. Its 17 exports preserve the published module API. This replaces the
+experimental asynchronous `sha256` module wrapper; the separate
+`crypto.subtle.digest` global API remains asynchronous.
+
+```ds
+import { sha256 } from "crypto";
+import { from_string, to_hex } from "bytes";
+import { echo } from "io";
+
+const hashed = match sha256(from_string("abc")) {
+    Ok(value) => to_hex(value),
+    Err(error) => error
+};
+echo(hashed);
+```
+
+`digest(algorithm, bytes)` supports SHA-256, SHA-384, SHA-512, SHA3-256 and
+BLAKE3. `sha256`, `sha384`, `sha512`, `sha3_256` and `blake3` are its named
+forms. Hashes return raw bytes; `bytes.to_hex` formats them.
+
+`hmac(algorithm, key, data)` supports SHA-256/384/512, including HS256/384/512
+algorithm aliases. `hs256`, `hs384` and `hs512` are named forms.
+`secure_compare(a, b)` compares equal-length inputs without an early byte mismatch
+exit; differing lengths return `Ok(false)`.
+
+`aes_256_gcm_encrypt(key, nonce, plaintext, aad)` requires a 32-byte key and
+12-byte nonce. It returns ciphertext with the 16-byte authentication tag appended.
+`aes_256_gcm_decrypt(key, nonce, ciphertext, aad)` authenticates both ciphertext
+and additional data. Authentication failures use the same `aes_decrypt_failed`
+error for wrong keys, tampered ciphertext and wrong additional data. Applications
+must never reuse a nonce with the same key.
+
+`bcrypt_verify(password, hash)` returns `Ok(true)` or `Ok(false)` for valid hashes,
+and `Err` for invalid hashes. Passwords longer than 72 UTF-8 bytes return
+`Ok(false)` rather than accepting a truncated password.
+
+`random_bytes(length)` uses OS entropy and returns immutable bytes;
+`random_hex(length)` formats that many random bytes as lowercase hex.
+Their length must be a finite integer from 1 to 1,048,576.
+`uuid_v4()` uses the same OS entropy and sets the version and variant bits.
+Entropy failure returns `Err`, never empty bytes or a fabricated UUID.
+
+Hash, HMAC, comparison and AES inputs are limited to 16 MiB per input (AES ciphertext allows the appended 16-byte tag).
+Crypto module calls run synchronously in the current VM turn. In particular,
+bcrypt verification cost follows the hash's work factor and can delay that turn;
+background CPU work would need a separate asynchronous API. The global
+`crypto.subtle.digest` already runs through an asynchronous worker.
