@@ -1,0 +1,13 @@
+[package]
+name = "deka_lsp"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+bumpalo = "3.16"
+deka_syntax = { path = "../deka_syntax" }
+deka_vm = { path = "../deka_vm", default-features = false, features = ["compiler", "host"] }
+serde_json.workspace = true
+tokio = { version = "1", features = ["rt", "sync", "time", "io-std", "io-util", "macros"] }
+tower-lsp = "0.20"

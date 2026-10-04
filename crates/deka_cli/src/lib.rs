@@ -3,6 +3,7 @@
 mod check_output;
 pub mod cli;
 mod fmt;
+mod language_server;
 mod package_check;
 mod packages;
 mod source_entry;
@@ -141,9 +142,20 @@ pub(crate) fn hosts() -> Result<Hosts> {
     Ok(hosts)
 }
 pub(crate) fn compile(source: &Source) -> Result<Payload> {
+    compile_with_sources(source, &std::collections::BTreeMap::new())
+}
+fn compile_with_sources(
+    source: &Source,
+    sources: &std::collections::BTreeMap<PathBuf, String>,
+) -> Result<Payload> {
     Ok(Payload {
         version: 1,
-        program: compiler::compile_file(&source.path, &hosts()?, source.entry.as_deref())?,
+        program: compiler::compile_file_with_sources(
+            &source.path,
+            &hosts()?,
+            source.entry.as_deref(),
+            sources,
+        )?,
         desktop: source.desktop,
     })
 }

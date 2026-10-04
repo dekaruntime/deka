@@ -1,0 +1,26 @@
+# Language server
+
+Run `deka lsp --stdio` for an editor using the Language Server Protocol.
+Standard input/output carry only framed JSON-RPC; check progress and ordinary
+program output are never written to this transport. Starting the server does
+not run your source code.
+
+The server is migrated from the former DSC language server. It uses Deka's
+native compiler, production host declarations and module resolver. Diagnostics
+include parsing, types, dependencies and native bytecode lowering, following
+the same acceptance path as `deka check`.
+
+Open `.ds` and `.dsx` buffers override their disk contents throughout the
+dependency graph, including new files that have never been saved. No shadow
+source files are created. Findings carry the affected file's URI and UTF-16
+editor position, including errors in imported buffers. Editing one document
+does not clear errors from another open document.
+
+The migrated features include completion, hover, imported-name definitions,
+references, rename and the `function` to `fn` quick fix. Builtin completion is
+drawn from the native declarations; it does not offer the retired JavaScript
+or React catalog. Background validation is debounced across edits and runs on
+a worker; push and pull diagnostics use the same compiler callback.
+
+Existing editor extensions still need their launch command updated separately.
+This change supplies the server, not extension distribution or DSC archival.

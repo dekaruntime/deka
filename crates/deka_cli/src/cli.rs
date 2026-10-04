@@ -90,6 +90,34 @@ fn register_check(registry: &mut Registry) {
     entry_param(registry);
 }
 
+fn register_lsp(registry: &mut Registry) {
+    registry.add_command(CommandSpec {
+        name: "lsp",
+        owner: "deka_cli",
+        category: "Tooling",
+        summary: "serve native editor validation and navigation over stdio",
+        aliases: &[],
+        subcommands: &[],
+        handler: cmd_lsp,
+    });
+    registry.add_flag(FlagSpec {
+        name: "--stdio",
+        aliases: &[],
+        description: "use the default stdio language-server transport",
+    });
+}
+
+fn cmd_lsp(ctx: &Context) -> HandlerResult {
+    if !ctx.args.positionals.is_empty()
+        || !ctx.args.params.is_empty()
+        || ctx.args.flags.keys().any(|flag| flag != "--stdio")
+    {
+        return Err(CommandError::usage("lsp accepts only --stdio"));
+    }
+    crate::language_server::serve().map_err(CommandError::Runtime)?;
+    Ok(ExitStatus::SUCCESS)
+}
+
 fn register_build(registry: &mut Registry) {
     registry.add_command(CommandSpec {
         name: "build",
@@ -196,6 +224,7 @@ pub fn register_fns() -> Vec<fn(&mut Registry)> {
         register_run,
         register_dev,
         register_check,
+        register_lsp,
         register_build,
         register_fmt,
         register_test,

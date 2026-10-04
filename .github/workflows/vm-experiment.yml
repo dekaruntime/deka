@@ -9,6 +9,7 @@ on:
       - 'crates/deka_native_ui/**'
       - 'crates/deka_vm/**'
       - 'crates/deka_cli/**'
+      - 'crates/deka_lsp/**'
       - 'crates/deka_executable/**'
       - 'crates/deka_native_web/**'
       - 'crates/corpus_gate/**'
@@ -38,7 +39,7 @@ jobs:
       - run: sccache --show-stats
       - name: Check and test the local frontend and runtime
         run: |
-          cargo fmt -p deka-fmt -p deka_native_web -p deka_vm -p deka_native_ir -p deka_native_ui -p deka_cli -p deka_executable --check
+          cargo fmt -p deka-fmt -p deka_native_web -p deka_vm -p deka_native_ir -p deka_native_ui -p deka_cli -p deka_executable -p deka_lsp --check
           cargo check --locked -p deka_vm --all-targets --features compiler,host,ui
           cargo clippy --locked -p deka_vm --all-targets --features compiler,host,ui --no-deps -- -D warnings
           # The desktop window (winit + wgpu + vello_gpu) builds on Linux with no system
@@ -46,6 +47,8 @@ jobs:
           cargo clippy --locked -p deka_native_ui --all-targets --features gpu --no-deps -- -D warnings
           cargo test --locked -p deka_native_ui --features gpu
           ./run.sh
+          cargo test --locked --release -p deka_lsp
+          cargo clippy --locked -p deka_lsp --all-targets --no-deps -- -D warnings
           cargo test --locked --release -p deka_cli --no-default-features
       - name: Compile source and execute without a compiler
         run: |

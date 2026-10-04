@@ -21,6 +21,7 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
             root: None,
             dependencies: BTreeMap::new(),
             lock: BTreeMap::new(),
+            sources: BTreeMap::new(),
         },
         None,
     )
@@ -31,9 +32,182 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
 /// before it finishes initializing is a named error, not a silent value.
 /// Self-imports and external packages fail explicitly.
 pub fn compile_file(path: &std::path::Path, hosts: &Hosts, entry: Option<&str>) -> Result<Program> {
-    let project = Project::load(path)?;
+    compile_file_with_sources(path, hosts, entry, &BTreeMap::new())
+}
+/// Compile the same native graph using open editor buffers ahead of disk.
+/// No modules execute and no shadow files are written.
+pub fn compile_file_with_sources(
+    path: &std::path::Path,
+    hosts: &Hosts,
+    entry: Option<&str>,
+    sources: &BTreeMap<std::path::PathBuf, String>,
+) -> Result<Program> {
+    let project = Project::with_sources(path, sources)?;
     compile_modules(&load_modules(path, &project)?, hosts, entry, &project, None)
 }
+/// Canonical identity for an existing file, or a lexical absolute identity for
+/// a new unsaved file rooted in its nearest existing parent.
+pub fn source_path(path: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(path) = std::fs::canonicalize(path) {
+        return path;
+    }
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
+    let mut tail = Vec::new();
+    let mut existing = absolute.as_path();
+    while let Some(name) = existing.file_name() {
+        if let Ok(mut canonical) = std::fs::canonicalize(existing) {
+            for component in tail.iter().rev() {
+                canonical.push(component);
+            }
+            return canonical;
+        }
+        tail.push(name.to_owned());
+        let Some(parent) = existing.parent() else {
+            break;
+        };
+        existing = parent;
+    }
+    absolute
+}
+#[path = "source_diagnostics.rs"]
+mod source_errors;
+pub use source_errors::{
+    SourceDiagnostic, diagnostic_location, diagnostic_position, source_diagnostics,
+};
+
+/// Owned export metadata for editor navigation. Types come from the same export
+/// collector/catalog used by compilation, never a second editor catalog.
+#[derive(Clone, Debug)]
+pub struct EditorExport {
+    pub name: String,
+    pub detail: String,
+    pub kind: EditorExportKind,
+}
+#[derive(Clone, Copy, Debug)]
+pub enum EditorExportKind {
+    Function,
+    Constant,
+    Struct,
+    Enum,
+    Interface,
+    Type,
+}
+pub struct EditorModule {
+    pub path: Option<std::path::PathBuf>,
+    pub source: Option<String>,
+    pub exports: Vec<EditorExport>,
+}
+fn editor_exports(exports: &deka_syntax::ModuleExports<'_>) -> Vec<EditorExport> {
+    let mut names = BTreeMap::new();
+    for (name, ty) in &exports.values {
+        names.insert(
+            (*name).to_owned(),
+            EditorExport {
+                name: (*name).to_owned(),
+                detail: ty.to_string(),
+                kind: if matches!(ty, deka_syntax::typeck::Type::Function { .. }) {
+                    EditorExportKind::Function
+                } else {
+                    EditorExportKind::Constant
+                },
+            },
+        );
+    }
+    for (table, kind) in [
+        (
+            exports.structs.keys().copied().collect::<Vec<_>>(),
+            EditorExportKind::Struct,
+        ),
+        (
+            exports.enums.keys().copied().collect(),
+            EditorExportKind::Enum,
+        ),
+        (
+            exports.interfaces.keys().copied().collect(),
+            EditorExportKind::Interface,
+        ),
+        (
+            exports
+                .aliases
+                .keys()
+                .chain(exports.newtypes.keys())
+                .chain(exports.opaques.keys())
+                .copied()
+                .collect(),
+            EditorExportKind::Type,
+        ),
+    ] {
+        for name in table {
+            names.entry(name.to_owned()).or_insert(EditorExport {
+                name: name.to_owned(),
+                detail: name.to_owned(),
+                kind,
+            });
+        }
+    }
+    names.into_values().collect()
+}
+pub fn editor_globals(hosts: &Hosts) -> Result<Vec<EditorExport>> {
+    let arena = bumpalo::Bump::new();
+    let exports = native_host_exports(hosts, &arena)?;
+    let globals = native_globals(hosts, &exports, &arena);
+    let surface = deka_syntax::ModuleExports {
+        values: globals,
+        ..Default::default()
+    };
+    Ok(editor_exports(&surface))
+}
+pub fn editor_modules(hosts: &Hosts) -> Result<Vec<String>> {
+    let arena = bumpalo::Bump::new();
+    let exports = native_host_exports(hosts, &arena)?;
+    let mut modules: Vec<_> = builtins::exports(hosts, &exports, &arena)
+        .into_iter()
+        .filter(|(_, surface)| !editor_exports(surface).is_empty())
+        .filter_map(|(path, _)| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .collect();
+    modules.sort();
+    Ok(modules)
+}
+pub fn editor_module(
+    path: &std::path::Path,
+    specifier: &str,
+    hosts: &Hosts,
+    sources: &BTreeMap<std::path::PathBuf, String>,
+) -> Result<EditorModule> {
+    let project = Project::with_sources(path, sources)?;
+    let arena = bumpalo::Bump::new();
+    if host_module(specifier) {
+        let exports = native_host_exports(hosts, &arena)?;
+        let mut modules = builtins::exports(hosts, &exports, &arena);
+        let exports = modules
+            .remove(&builtins::path(specifier))
+            .ok_or("missing native module")?;
+        return Ok(EditorModule {
+            path: None,
+            source: None,
+            exports: editor_exports(&exports),
+        });
+    }
+    let target = module_path(&project.resolve_path(path)?, specifier, &project)?;
+    let source = project.read(&target)?;
+    let ast = deka_syntax::parse_recovering(&source, &arena)
+        .program
+        .ok_or("missing module program")?;
+    let exports = deka_syntax::collect_module_exports(&ast, &arena);
+    Ok(EditorModule {
+        path: Some(target),
+        source: Some(source.clone()),
+        exports: editor_exports(&exports),
+    })
+}
+
 /// Native source graph and public names needed to check a local package through
 /// an installed consumer. Uses the same resolver and export collector as compile.
 pub struct PackageCheckInputs {
@@ -148,15 +322,27 @@ pub struct Project {
     root: Option<std::path::PathBuf>,
     dependencies: BTreeMap<String, String>,
     lock: BTreeMap<String, String>,
+    sources: BTreeMap<std::path::PathBuf, String>,
 }
 
 impl Project {
     fn load(entry: &std::path::Path) -> Result<Project> {
-        let mut directory = std::fs::canonicalize(entry)
-            .map_err(|e| format!("{}: {e}", entry.display()))?
-            .parent()
-            .ok_or("module has no parent")?
-            .to_path_buf();
+        Self::with_sources(entry, &BTreeMap::new())
+    }
+    fn with_sources(
+        entry: &std::path::Path,
+        sources: &BTreeMap<std::path::PathBuf, String>,
+    ) -> Result<Project> {
+        let sources: BTreeMap<_, _> = sources
+            .iter()
+            .map(|(path, text)| (source_path(path), text.clone()))
+            .collect();
+        let path = if sources.contains_key(&source_path(entry)) {
+            source_path(entry)
+        } else {
+            std::fs::canonicalize(entry).map_err(|e| format!("{}: {e}", entry.display()))?
+        };
+        let mut directory = path.parent().ok_or("module has no parent")?.to_path_buf();
         let root = loop {
             if directory.join("deka.json").exists() {
                 break directory;
@@ -166,6 +352,7 @@ impl Project {
                     root: None,
                     dependencies: BTreeMap::new(),
                     lock: BTreeMap::new(),
+                    sources,
                 });
             }
         };
@@ -191,6 +378,20 @@ impl Project {
             root: Some(root),
             dependencies,
             lock,
+            sources,
+        })
+    }
+
+    fn resolve_path(&self, path: &std::path::Path) -> Result<std::path::PathBuf> {
+        let normalized = source_path(path);
+        if self.sources.contains_key(&normalized) {
+            return Ok(normalized);
+        }
+        std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+    fn read(&self, path: &std::path::Path) -> Result<String> {
+        self.sources.get(path).cloned().map(Ok).unwrap_or_else(|| {
+            std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
         })
     }
 
@@ -291,7 +492,7 @@ impl Project {
                 entry.display()
             ));
         }
-        std::fs::canonicalize(&entry).map_err(|e| format!("{}: {e}", entry.display()))
+        self.resolve_path(&entry)
     }
 }
 
@@ -302,7 +503,7 @@ fn module_path(
 ) -> Result<std::path::PathBuf> {
     if source.starts_with("./") || source.starts_with("../") {
         let path = parent.parent().ok_or("module has no parent")?.join(source);
-        return std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()));
+        return project.resolve_path(&path);
     }
     if host_module(source) {
         return Ok(builtins::path(source));
@@ -343,8 +544,7 @@ fn load_modules(
         if !visiting.insert(path.clone()) {
             return Ok(());
         }
-        let source =
-            std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let source = project.read(&path)?;
         let arena = bumpalo::Bump::new();
         let parsed = deka_syntax::parse(&source, &arena);
         diagnostics(&parsed.errors).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -384,7 +584,7 @@ fn load_modules(
     }
     let mut loaded = vec![];
     visit(
-        std::fs::canonicalize(path).map_err(|e| e.to_string())?,
+        project.resolve_path(path)?,
         project,
         &mut Default::default(),
         &mut loaded,
@@ -984,23 +1184,19 @@ fn lower_module<'a>(
     Ok(exported)
 }
 
-fn compile_modules(
-    modules: &[(std::path::PathBuf, String)],
+fn native_host_exports<'a>(
     hosts: &Hosts,
-    entry_name: Option<&str>,
-    project: &Project,
-    package_exports: Option<&mut Vec<PackageExport>>,
-) -> Result<Program> {
-    let arena = bumpalo::Bump::new();
+    arena: &'a bumpalo::Bump,
+) -> Result<deka_syntax::ModuleExports<'a>> {
     let declarations = hosts.declarations()
         + &PromiseJoin::ALL
             .into_iter()
             .map(PromiseJoin::declaration)
             .collect::<String>();
-    let host_parse = deka_syntax::parse(&declarations, &arena);
+    let host_parse = deka_syntax::parse(arena.alloc_str(&declarations), arena);
     diagnostics(&host_parse.errors)?;
-    let host_ast = host_parse.program.ok_or("missing host declarations")?;
-    let mut host_exports = deka_syntax::collect_module_exports(&host_ast, &arena);
+    let host_ast = arena.alloc(host_parse.program.ok_or("missing host declarations")?);
+    let mut host_exports = deka_syntax::collect_module_exports(host_ast, arena);
     for op in hosts.properties() {
         let (_, property) = op.receiver_method.as_ref().expect("host property");
         let (operation, ty) = host_exports
@@ -1034,6 +1230,17 @@ fn compile_modules(
             .native_json_bodies
             .insert((identity, arena.alloc_str(method)), *operation);
     }
+    Ok(host_exports)
+}
+fn compile_modules(
+    modules: &[(std::path::PathBuf, String)],
+    hosts: &Hosts,
+    entry_name: Option<&str>,
+    project: &Project,
+    package_exports: Option<&mut Vec<PackageExport>>,
+) -> Result<Program> {
+    let arena = bumpalo::Bump::new();
+    let host_exports = native_host_exports(hosts, &arena)?;
     // Parse every module up front so import checks resolve across a cycle.
     let mut asts = HashMap::new();
     let mut module_exports = builtins::exports(hosts, &host_exports, &arena);

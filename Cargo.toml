@@ -7,6 +7,7 @@ members = [
     "crates/deka_native_ui",
     "crates/deka_vm",
     "crates/deka_cli",
+    "crates/deka_lsp",
     "crates/deka_executable",
     "crates/deka_native_web",
     "crates/dcore",
