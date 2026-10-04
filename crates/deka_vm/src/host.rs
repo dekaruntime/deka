@@ -422,6 +422,9 @@ pub struct HostOp {
     /// is the receiver; the same schema declares and dispatches the method.
     pub receiver_method: Option<(String, String)>,
     pub receiver_property: bool,
+    /// A total synchronous write to an opaque receiver property. The input
+    /// schema is shared by assignment checking and native dispatch.
+    pub receiver_setter: Option<(String, String)>,
     /// Specialize this async string-body reader with the checked JSON schema.
     pub json_body: bool,
     defaults: Vec<HostValue>,
@@ -459,6 +462,10 @@ impl HostOp {
     pub fn with_receiver_property(mut self, owner: &str, property: &str) -> Self {
         self.receiver_method = Some((owner.into(), property.into()));
         self.receiver_property = true;
+        self
+    }
+    pub fn with_receiver_setter(mut self, owner: &str, property: &str) -> Self {
+        self.receiver_setter = Some((owner.into(), property.into()));
         self
     }
     pub fn with_json_body(mut self) -> Self {
@@ -553,6 +560,7 @@ impl HostOp {
             namespace: None,
             receiver_method: None,
             receiver_property: false,
+            receiver_setter: None,
             json_body: false,
             defaults: Vec::new(),
             handler: Rc::new(handler),
@@ -669,6 +677,56 @@ impl Hosts {
         {
             return Err("invalid or duplicate host receiver method".into());
         }
+        if let Some((owner, property)) = &op.receiver_setter
+            && (!identifier(property)
+                || op.args.len() != 2
+                || op.args.first() != Some(&HostType::Handle(owner.clone()))
+                || op.result != HostType::Unit
+                || op.asynchronous
+                || op.result_channel
+                || op.exception_channel
+                || op.global
+                || op.global_value.is_some()
+                || op.namespace.is_some()
+                || op.receiver_method.is_some()
+                || op.json_body
+                || !op.defaults.is_empty()
+                || self
+                    .operations
+                    .values()
+                    .any(|old| old.receiver_setter == op.receiver_setter))
+        {
+            return Err(
+                "host setter needs an opaque receiver, one value and synchronous total Unit output"
+                    .into(),
+            );
+        }
+        // A getter/setter pair is checked in both registration orders. Methods
+        // and setters cannot claim the same field, and a paired read/write
+        // surface cannot disagree on its value type or channel.
+        for old in self.operations.values() {
+            let pair = if op.receiver_setter.as_ref() == old.receiver_method.as_ref()
+                && op.receiver_setter.is_some()
+            {
+                Some((&op, old))
+            } else if old.receiver_setter.as_ref() == op.receiver_method.as_ref()
+                && old.receiver_setter.is_some()
+            {
+                Some((old, &op))
+            } else {
+                None
+            };
+            if let Some((setter, getter)) = pair
+                && (!getter.receiver_property
+                    || getter.result_channel
+                    || getter.exception_channel
+                    || setter.args.get(1) != Some(&getter.result))
+            {
+                return Err(
+                    "host getter and setter must declare the same total property value type".into(),
+                );
+            }
+        }
         if let Some(error) = &op.result_error {
             if !op.result_channel
                 || !error
@@ -752,6 +810,11 @@ impl Hosts {
     }
     pub fn properties(&self) -> impl Iterator<Item = &HostOp> {
         self.operations.values().filter(|op| op.receiver_property)
+    }
+    pub fn setters(&self) -> impl Iterator<Item = &HostOp> {
+        self.operations
+            .values()
+            .filter(|op| op.receiver_setter.is_some())
     }
     /// The compiler's imported module signatures come from the same registry as dispatch.
     pub fn declarations(&self) -> String {
