@@ -82,6 +82,11 @@ fn register_check(registry: &mut Registry) {
         subcommands: &[],
         handler: cmd_check,
     });
+    registry.add_flag(FlagSpec {
+        name: "--as-package",
+        aliases: &[],
+        description: "check a local package as an installed consumer, without running it",
+    });
     entry_param(registry);
 }
 
@@ -338,6 +343,29 @@ fn cmd_dev(ctx: &Context) -> HandlerResult {
 }
 
 fn cmd_check(ctx: &Context) -> HandlerResult {
+    if ctx.args.flags.contains_key("--as-package") {
+        if ctx.args.positionals.len() > 1 || ctx.args.params.contains_key("--entry") {
+            return Err(CommandError::usage(
+                "check --as-package expects one package directory and no --entry",
+            ));
+        }
+        let path = ctx
+            .args
+            .positionals
+            .first()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| ".".into());
+        return match crate::package_check::check(&path) {
+            Ok(()) => {
+                crate::check_output::success(ctx.err(), &path);
+                Ok(ExitStatus::SUCCESS)
+            }
+            Err(error) => {
+                crate::check_output::failure(ctx.err(), Some(&path), &error);
+                Ok(ExitStatus::from_code(1))
+            }
+        };
+    }
     let source = match source_arg(ctx) {
         Ok(source) => source,
         Err(CommandError::Runtime(error)) => {
@@ -494,6 +522,12 @@ pub fn dispatch(registry: &Registry, argv: &[String]) -> ExitCode {
     let parsed = Args::collect(argv.to_vec(), registry);
     if parsed.errors.is_empty() {
         let args = &parsed.args;
+        if args.flags.contains_key("--as-package")
+            && args.commands.first().map(String::as_str) != Some("check")
+        {
+            eprintln!("deka: --as-package requires check");
+            return ExitCode::from(2);
+        }
         if args.commands.is_empty() {
             if args.flags.contains_key("--version") {
                 print_version();

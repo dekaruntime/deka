@@ -22,6 +22,7 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
             dependencies: BTreeMap::new(),
             lock: BTreeMap::new(),
         },
+        None,
     )
 }
 /// Compile a source file and its relative modules, once each, in dependency order.
@@ -31,8 +32,35 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
 /// Self-imports and external packages fail explicitly.
 pub fn compile_file(path: &std::path::Path, hosts: &Hosts, entry: Option<&str>) -> Result<Program> {
     let project = Project::load(path)?;
-    compile_modules(&load_modules(path, &project)?, hosts, entry, &project)
+    compile_modules(&load_modules(path, &project)?, hosts, entry, &project, None)
 }
+/// Native source graph and public names needed to check a local package through
+/// an installed consumer. Uses the same resolver and export collector as compile.
+pub struct PackageCheckInputs {
+    pub sources: Vec<(std::path::PathBuf, String)>,
+    pub exports: Vec<PackageExport>,
+}
+pub struct PackageExport {
+    pub name: String,
+    pub type_only: bool,
+}
+pub fn package_check_inputs(
+    path: &std::path::Path,
+    name: &str,
+    hosts: &Hosts,
+) -> Result<PackageCheckInputs> {
+    if host_module(name) {
+        return Err(format!(
+            "package {name} resolves to a native builtin, not a ds_modules package"
+        ));
+    }
+    let project = Project::load(path)?;
+    let sources = load_modules(path, &project)?;
+    let mut exports = Vec::new();
+    compile_modules(&sources, hosts, None, &project, Some(&mut exports))?;
+    Ok(PackageCheckInputs { sources, exports })
+}
+
 /// Watch dependencies even while an imported file is absent or being edited.
 /// Compilation still fails closed; this list only controls development reload.
 pub fn source_files(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
@@ -847,6 +875,7 @@ fn compile_modules(
     hosts: &Hosts,
     entry_name: Option<&str>,
     project: &Project,
+    package_exports: Option<&mut Vec<PackageExport>>,
 ) -> Result<Program> {
     let arena = bumpalo::Bump::new();
     let declarations = hosts.declarations()
@@ -1429,6 +1458,32 @@ fn compile_modules(
         functions: lower.functions,
     };
     program.validate()?;
+    if let Some(output) = package_exports {
+        let (path, _) = modules.last().ok_or("missing package entry")?;
+        let surface = &module_exports[path];
+        let names = surface
+            .values
+            .keys()
+            .chain(surface.interfaces.keys())
+            .chain(surface.structs.keys())
+            .chain(surface.enums.keys())
+            .chain(surface.aliases.keys())
+            .chain(surface.opaques.keys())
+            .chain(surface.newtypes.keys())
+            .chain(surface.re_exports.iter())
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        output.extend(names.into_iter().map(|name| PackageExport {
+            name: name.to_owned(),
+            type_only: !surface.values.contains_key(name)
+                && (surface.interfaces.contains_key(name)
+                    || surface.structs.contains_key(name)
+                    || surface.enums.contains_key(name)
+                    || surface.aliases.contains_key(name)
+                    || surface.opaques.contains_key(name)
+                    || surface.newtypes.contains_key(name)),
+        }));
+    }
     Ok(program)
 }
 fn diagnostics(items: &[Diagnostic]) -> Result<()> {

@@ -1,0 +1,43 @@
+---
+title: "Checking an unpublished package"
+---
+
+Run `deka check --as-package .` in a DekaScript package before publishing it.
+For an npm installation, use `npx deka check --as-package .`. To check a package
+from another directory, pass its directory instead of `.`.
+
+```json
+{
+  "name": "@deka/greeting",
+  "version": "1.0.0",
+  "entry": "index.ds"
+}
+```
+
+```ds
+export fn greet(name: string) string {
+    return "Hello, " + name;
+}
+```
+
+A successful check leaves stdout empty and prints `[check] . - ok` on stderr.
+The package's version can be unpublished. Checking uses the source in that
+local directory, not a registry copy.
+
+The command checks the authored module graph, then imports every public named,
+default and barrel export from a temporary installed consumer. Type-only and
+generic type exports count as a public surface too. It uses the same native
+compiler, module resolver and Rust host declarations as normal source checks.
+Neither the package nor the consumer executes.
+
+`entry` defaults to `index.ds`. Dependencies must already be installed in the
+package's `ds_modules`; existing dependency pins in `deka.lock` remain enforced.
+The check does not install, download or publish anything, and does not change
+the source tree, manifest or lockfile. Native builtin names resolve before
+packages, so a package name shadowed by a builtin cannot be validated as an
+installed package.
+
+Missing entries, an empty export surface, invalid source and missing or
+mismatched dependencies exit with status 1 and report the cause on stderr.
+`--entry` selects an execution function for ordinary app checks; it is not
+accepted with `--as-package`.
