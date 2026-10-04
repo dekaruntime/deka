@@ -1,0 +1,18 @@
+---
+title: "Checking native programs"
+---
+
+`deka check app.ds` uses the same source compiler and native declarations as
+`deka run app.ds`. It checks source syntax, types, imports and supported native
+operations without executing the program. A successful check prints `OK`
+followed by the source path.
+
+```sh
+deka check app.ds
+deka run app.ds
+```
+
+Checking does not execute authored `panic` or `Throw`, perform I/O, or prove
+that an external service will succeed. Handle operational errors through
+`Result`; authored exceptions use their checked `Exception` contract. A
+program can pass checking and still report an intended failure when it runs.

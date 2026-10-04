@@ -1942,6 +1942,7 @@ dependencies = [
 name = "deka_cli"
 version = "0.60.2"
 dependencies = [
+ "corpus_gate",
  "deka-cli-core 0.6.0",
  "deka_executable",
  "deka_native_ui",

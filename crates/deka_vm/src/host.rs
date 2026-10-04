@@ -71,6 +71,13 @@ pub enum HostType {
     Bytes,
     Handle(String),
     Callback,
+    /// A synchronous or asynchronous language callback with a single checked
+    /// argument/return contract. Result failures are data, not thrown values.
+    TypedCallback {
+        args: Vec<HostType>,
+        result: Box<HostType>,
+        result_channel: bool,
+    },
 }
 impl HostType {
     pub fn accepts(&self, value: &HostValue) -> bool {
@@ -81,7 +88,8 @@ impl HostType {
             | (Self::String, HostValue::String(_))
             | (Self::Strings, HostValue::Strings(_))
             | (Self::Bytes, HostValue::Bytes(_))
-            | (Self::Callback, HostValue::Callback(_)) => true,
+            | (Self::Callback, HostValue::Callback(_))
+            | (Self::TypedCallback { .. }, HostValue::Callback(_)) => true,
             (Self::Strings, HostValue::List(items)) => {
                 items.iter().all(|v| Self::String.accepts(v))
             }
@@ -112,6 +120,23 @@ impl HostType {
             Self::Strings => "Array<string>".into(),
             Self::Bytes => "bytes".into(),
             Self::Callback => "(fn() void) | (fn() Promise<void>)".into(),
+            Self::TypedCallback {
+                args,
+                result,
+                result_channel,
+            } => {
+                let parameters = args
+                    .iter()
+                    .map(HostType::source)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let output = if *result_channel {
+                    format!("Result<{}, string>", result.source())
+                } else {
+                    result.source()
+                };
+                format!("(fn({parameters}) {output}) | (fn({parameters}) Promise<{output}>)")
+            }
             Self::Option(item) => format!("Option<{}>", item.source()),
             Self::Tuple(items) => format!(
                 "[{}]",
@@ -143,6 +168,11 @@ impl HostType {
                     if !identifier(name) {
                         return Err("invalid host record field name".into());
                     }
+                    ty.validate(handles, depth + 1)?;
+                }
+            }
+            Self::TypedCallback { args, result, .. } => {
+                for ty in args.iter().chain(std::iter::once(result.as_ref())) {
                     ty.validate(handles, depth + 1)?;
                 }
             }
@@ -187,6 +217,18 @@ impl HostType {
     // Preserve the legacy Strings Rust API while all VM lists use one recursive wire path.
     pub(crate) fn normalize(&self, value: HostValue) -> HostValue {
         match (self, value) {
+            (
+                Self::TypedCallback {
+                    args,
+                    result,
+                    result_channel,
+                },
+                HostValue::Callback(callback),
+            ) => HostValue::Callback(callback.with_signature(
+                args.clone(),
+                *result.clone(),
+                *result_channel,
+            )),
             (Self::Strings, HostValue::List(items)) => HostValue::Strings(
                 items
                     .into_iter()
