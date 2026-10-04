@@ -309,6 +309,20 @@ fn module_path(
     }
     project.package_path(parent, source)
 }
+/// Stamp a refusal once at the statement that produced it. The graph stamps
+/// only resolution failures on its own edges; recursive module errors already
+/// carry the dependency's source and must pass through unchanged.
+fn source_refusal(source_file: &str, span: Span, error: String) -> String {
+    if error.starts_with(&format!("{source_file}: ")) {
+        error
+    } else {
+        format!(
+            "{source_file}: {}:{}: {error}",
+            span.start.line, span.start.column
+        )
+    }
+}
+
 /// Modules in dependency order. A module already being loaded is not loaded
 /// again (import cycles load, deka#1206); reads of exports that initialize
 /// later than the importer become checked loads during lowering, computed
@@ -349,9 +363,15 @@ fn load_modules(
                 _ => None,
             };
             if let Some(source) = source.filter(|source| !host_module(source)) {
-                let target = module_path(&path, source, project)?;
+                let target = module_path(&path, source, project).map_err(|error| {
+                    source_refusal(&path.display().to_string(), stmt.span(), error)
+                })?;
                 if target == path {
-                    return Err(format!("cyclic module import: {}", path.display()));
+                    return Err(source_refusal(
+                        &path.display().to_string(),
+                        stmt.span(),
+                        format!("cyclic module import: {}", path.display()),
+                    ));
                 }
                 if !visiting.contains(&target) {
                     visit(target, project, visiting, loaded)?;
@@ -1756,14 +1776,7 @@ struct Lower<'a> {
 impl<'a> Lower<'a> {
     /// Recursive lowering keeps the innermost refusal and its module once.
     fn refusal(&self, span: Span, error: String) -> String {
-        if error.starts_with(&format!("{}: ", self.source_file)) {
-            error
-        } else {
-            format!(
-                "{}: {}:{}: {error}",
-                self.source_file, span.start.line, span.start.column
-            )
-        }
+        source_refusal(&self.source_file, span, error)
     }
     /// Prelude cases have the same ordered schema and bytecode as declared enums.
     fn enum_cases(&self, name: &str) -> Option<Vec<(String, bool)>> {
