@@ -30,6 +30,7 @@ async-async-recursive-wrong-return-fail
 async-async-return-await-wrong-type-fail
 async-async-return-missing-value-fail
 async-async-return-promise-of-promise
+async-async-return-promise-unwraps
 async-async-return-value
 async-async-return-wrong-value-type-fail
 async-async-struct-method-runtime-fail
