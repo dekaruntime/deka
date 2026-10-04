@@ -155,3 +155,116 @@ fn formatter_flags_require_the_formatter_command() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("requires fmt"));
     }
 }
+
+#[cfg(unix)]
+fn bounded_directory_cli(args: &[&str], directory: &std::path::Path) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_deka"))
+        .args(args)
+        .current_dir(directory)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match child.try_wait().unwrap() {
+            Some(_) => return child.wait_with_output().unwrap(),
+            None if std::time::Instant::now() >= deadline => {
+                // Only terminate the child this test started, then reap it.
+                child.kill().unwrap();
+                let output = child.wait_with_output().unwrap();
+                panic!("directory formatting did not terminate: {output:?}");
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn directory_format_preserves_vendor_build_and_symlink_targets() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("app.ds"), "const answer=7\n").unwrap();
+    fs::create_dir(dir.path().join("src")).unwrap();
+    fs::write(dir.path().join("src/widget.dsx"), "const widget=8\n").unwrap();
+    let vendor_source = "const vendor=1\n";
+    let folders = [
+        "node_modules",
+        "ds_modules",
+        ".git",
+        ".target",
+        "target",
+        "dist",
+    ];
+    let mut untouched = Vec::new();
+    for parent in [dir.path().to_path_buf(), dir.path().join("src")] {
+        for folder in folders {
+            let path = parent.join(folder).join("pkg");
+            fs::create_dir_all(&path).unwrap();
+            let source = path.join("vendor.ds");
+            fs::write(&source, vendor_source).unwrap();
+            untouched.push(source);
+        }
+    }
+    let linked_file = outside.path().join("external.ds");
+    fs::write(&linked_file, vendor_source).unwrap();
+    symlink(&linked_file, dir.path().join("linked.ds")).unwrap();
+    fs::create_dir(outside.path().join("package")).unwrap();
+    let linked_folder_file = outside.path().join("package/external.dsx");
+    fs::write(&linked_folder_file, vendor_source).unwrap();
+    symlink(
+        outside.path().join("package"),
+        dir.path().join("linked-package"),
+    )
+    .unwrap();
+    untouched.extend([linked_file, linked_folder_file]);
+
+    let output = bounded_directory_cli(&["fmt", "."], dir.path());
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("app.ds")).unwrap(),
+        "const answer = 7\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("src/widget.dsx")).unwrap(),
+        "const widget = 8\n"
+    );
+    for path in untouched {
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            vendor_source,
+            "recursive formatting modified excluded source {}",
+            path.display()
+        );
+    }
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("visited 2 DekaScript file(s) under . (2 reformatted)"),
+        "{output:?}"
+    );
+    let output = bounded_directory_cli(&["fmt", ".", "--check"], dir.path());
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+#[cfg(unix)]
+fn directory_format_terminates_at_a_symlink_cycle() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("nested")).unwrap();
+    fs::write(dir.path().join("app.ds"), "const answer=7\n").unwrap();
+    symlink(dir.path(), dir.path().join("nested/back-to-root")).unwrap();
+    let output = bounded_directory_cli(&["fmt", "."], dir.path());
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("app.ds")).unwrap(),
+        "const answer = 7\n"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("visited 1 DekaScript file(s) under . (1 reformatted)"),
+        "{output:?}"
+    );
+}
