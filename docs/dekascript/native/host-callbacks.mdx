@@ -1,0 +1,40 @@
+---
+title: "Typed native callbacks"
+---
+
+Rust integrations can retain a DekaScript function, pass it typed values and
+await its return without re-entering the VM. This is the callback bridge used
+when a native service needs completion acknowledgement, such as processing a
+stream chunk. The stream classes themselves are a separate API.
+
+Declare a callback in the same host catalog that supplies the checker's types:
+
+```rust
+HostType::TypedCallback {
+    args: vec![HostType::Bytes, HostType::Number],
+    result: Box::new(HostType::String),
+    result_channel: true,
+}
+```
+
+This accepts `fn(bytes, number) Result<string, string>` or
+`fn(bytes, number) Promise<Result<string, string>>`. Wrong argument and return
+types fail source checking. Rust then calls
+`callback.call_async(vec![HostValue::Bytes(chunk), HostValue::Number(index)])`.
+The returned host future resolves only after the function and its awaits finish;
+it also follows a promise returned by a non-async function. `Ok(value)` crosses
+as the owned host value, while `Err(message)` crosses as the error channel.
+The same schema checks arguments sent by Rust and the eventual returned value.
+
+Calls enter the owning VM's queue. They never execute DekaScript on the Rust
+call stack or block the window thread. The VM retains the callback's captures
+and suspended arguments during collection and drives the work with its normal
+turn budget. Other tasks continue if one callback returns `Err`.
+
+Cancelling or dropping the VM resolves pending invocation futures with
+`VM cancelled` and releases their language roots. Dropping only the returned
+future does not cancel the callback: once queued, that work belongs to the VM.
+A callback's uncaught `Throw` or VM fault still fails the VM and releases
+its other work; it cannot be hidden behind a successful entry return. Ordinary
+language `try` still handles throws within the callback. Untyped legacy timer callbacks retain their existing fire-and-forget
+`call` behavior; `call_async` requires an explicit typed signature.
