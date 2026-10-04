@@ -124,6 +124,7 @@ pub(crate) fn hosts() -> Result<Hosts> {
     deka_vm::timers::register(&mut hosts)?;
     deka_vm::text_codec::register(&mut hosts)?;
     deka_vm::bytes::register(&mut hosts)?;
+    deka_vm::builtin_fs::register(&mut hosts)?;
     deka_vm::url::register(&mut hosts)?;
     deka_vm::http_headers::register(&mut hosts)?;
     deka_vm::http_request::register(&mut hosts)?;
