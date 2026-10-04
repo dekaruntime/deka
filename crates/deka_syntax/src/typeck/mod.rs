@@ -2622,9 +2622,6 @@ impl<'a> Checker<'a> {
             self.opaques.extend(declarations.opaques.clone());
             self.structs.extend(declarations.structs.clone());
             self.enums.extend(declarations.enums.clone());
-            for (name, info) in &declarations.enums {
-                for case in info.cases { self.case_to_enum.entry(case.name).or_insert(name); }
-            }
             self.native_properties
                 .extend(declarations.native_properties.clone());
             self.native_json_bodies
