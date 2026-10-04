@@ -5,6 +5,7 @@ mod native_crypto_fixture;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 mod formatter;
+mod native_diagnostics;
 mod native_fs;
 mod process;
 
@@ -301,26 +302,7 @@ pub struct RunResult {
 }
 
 fn parse_native_diagnostics(stderr: &str) -> Vec<String> {
-    let mut diagnostics = Vec::new();
-    for line in stderr.lines() {
-        if let Some((_, message)) = line.split_once('^') {
-            let message = message.trim();
-            if !message.is_empty() {
-                diagnostics.push(message.to_string());
-            }
-        }
-    }
-    if diagnostics.is_empty() {
-        if let Some(first) = stderr.lines().map(str::trim).find(|line| {
-            !line.is_empty()
-                && !line.starts_with('[')
-                && !line.starts_with("Validation")
-                && !line.starts_with('❌')
-        }) {
-            diagnostics.push(first.to_string());
-        }
-    }
-    diagnostics
+    native_diagnostics::parse(stderr)
 }
 
 fn native_json_source(source: &str) -> bool {
