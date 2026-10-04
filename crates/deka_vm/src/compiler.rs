@@ -945,12 +945,17 @@ fn lower_module<'a>(
                     Some(source) if host_module(source) => {
                         let target = module_path(path, source, project)?;
                         for name in *names {
-                            if module_exports[&target].values.get(name.name).is_some_and(|ty| {
-                                deka_syntax::typeck::JsonOperation::from_module_type(ty).is_some()
-                                    || deka_syntax::typeck::JwtOperation::from_module_type(ty).is_some()
-                            }) || module_exports[&target].structs.contains_key(name.name)
+                            if module_exports[&target]
+                                .values
+                                .get(name.name)
+                                .is_some_and(|ty| {
+                                    deka_syntax::typeck::JsonOperation::from_module_type(ty)
+                                        .is_some()
+                                        || deka_syntax::typeck::JwtOperation::from_module_type(ty)
+                                            .is_some()
+                                })
+                                || module_exports[&target].structs.contains_key(name.name)
                                 || module_exports[&target].enums.contains_key(name.name)
-
                             {
                                 continue;
                             }
@@ -969,11 +974,17 @@ fn lower_module<'a>(
                     Some(source) => {
                         let target = module_path(path, source, project)?;
                         for name in *names {
-                            if module_exports[&target].values.get(name.name).is_some_and(|ty| {
-                                deka_syntax::typeck::JsonOperation::from_module_type(ty).is_some()
-                                    || deka_syntax::typeck::JwtOperation::from_module_type(ty).is_some()
-                            }) || erased_export(&module_exports[&target], name.name) {
-
+                            if module_exports[&target]
+                                .values
+                                .get(name.name)
+                                .is_some_and(|ty| {
+                                    deka_syntax::typeck::JsonOperation::from_module_type(ty)
+                                        .is_some()
+                                        || deka_syntax::typeck::JwtOperation::from_module_type(ty)
+                                            .is_some()
+                                })
+                                || erased_export(&module_exports[&target], name.name)
+                            {
                                 continue;
                             }
                             let external = name.alias.unwrap_or(name.name);
