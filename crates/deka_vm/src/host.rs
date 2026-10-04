@@ -94,9 +94,11 @@ impl HostType {
             }
             (Self::List(item), HostValue::List(items)) => items.iter().all(|v| item.accepts(v)),
             (Self::List(item), HostValue::Strings(_)) => **item == Self::String,
-            (Self::Record(fields), HostValue::Record(values)) => fields
-                .iter()
-                .all(|(name, ty)| values.get(name).is_some_and(|v| ty.accepts(v))),
+            (Self::Record(fields), HostValue::Record(values)) => fields.iter().all(|(name, ty)| {
+                values
+                    .get(name)
+                    .map_or(matches!(ty, Self::Option(_)), |v| ty.accepts(v))
+            }),
             (Self::Handle(name), HostValue::Handle(handle)) => name == handle.name(),
             _ => false,
         }
@@ -183,7 +185,7 @@ impl HostType {
         Ok(())
     }
     // Preserve the legacy Strings Rust API while all VM lists use one recursive wire path.
-    fn normalize(&self, value: HostValue) -> HostValue {
+    pub(crate) fn normalize(&self, value: HostValue) -> HostValue {
         match (self, value) {
             (Self::Strings, HostValue::List(items)) => HostValue::Strings(
                 items
@@ -212,18 +214,27 @@ impl HostType {
             (Self::List(_), HostValue::Strings(items)) => {
                 HostValue::List(items.into_iter().map(HostValue::String).collect())
             }
-            (Self::Record(fields), HostValue::Record(values)) => HostValue::Record(
-                values
-                    .into_iter()
-                    .map(|(name, value)| {
-                        let value = match fields.get(&name) {
-                            Some(ty) => ty.normalize(value),
-                            None => value,
-                        };
-                        (name, value)
-                    })
-                    .collect(),
-            ),
+            (Self::Record(fields), HostValue::Record(mut values)) => {
+                for (name, ty) in fields {
+                    if matches!(ty, Self::Option(_)) {
+                        values
+                            .entry(name.clone())
+                            .or_insert(HostValue::Option(None));
+                    }
+                }
+                HostValue::Record(
+                    values
+                        .into_iter()
+                        .map(|(name, value)| {
+                            let value = match fields.get(&name) {
+                                Some(ty) => ty.normalize(value),
+                                None => value,
+                            };
+                            (name, value)
+                        })
+                        .collect(),
+                )
+            }
             (_, value) => value,
         }
     }
@@ -253,6 +264,10 @@ pub struct HostOp {
     /// VM errors. The declaration and dispatch share this output contract.
     pub result_channel: bool,
     pub global: bool,
+    /// A zero-argument Rust getter exposed as a typed ambient value.
+    pub global_value: Option<String>,
+    /// A typed static function exposed as a field of a global namespace.
+    pub namespace: Option<(String, String)>,
     /// A declared method on an opaque Rust-owned receiver. Its first argument
     /// is the receiver; the same schema declares and dispatches the method.
     pub receiver_method: Option<(String, String)>,
@@ -334,6 +349,18 @@ impl HostOp {
         self.global = true;
         self
     }
+    pub fn with_global_value_binding(mut self, name: &str) -> Self {
+        self.global = true;
+        self.global_value = Some(name.into());
+        self
+    }
+    pub fn global_name(&self) -> &str {
+        self.global_value.as_deref().unwrap_or(&self.name)
+    }
+    pub fn with_namespace_binding(mut self, namespace: &str, field: &str) -> Self {
+        self.namespace = Some((namespace.into(), field.into()));
+        self
+    }
     pub fn with_context(
         name: &str,
         args: Vec<HostType>,
@@ -348,6 +375,8 @@ impl HostOp {
             asynchronous,
             result_channel: false,
             global: false,
+            global_value: None,
+            namespace: None,
             receiver_method: None,
             receiver_property: false,
             json_body: false,
@@ -373,6 +402,47 @@ impl Hosts {
         }
         if self.operations.contains_key(&op.name) {
             return Err("duplicate host operation".into());
+        }
+        if op.global_value.as_ref().is_some_and(|name| {
+            !identifier(name)
+                || !op.global
+                || !op.args.is_empty()
+                || op.asynchronous
+                || op.result_channel
+                || !matches!(op.result, HostType::Handle(_))
+                || op.receiver_method.is_some()
+        }) {
+            return Err("ambient host value needs a synchronous opaque getter".into());
+        }
+        if op.global
+            && self
+                .operations
+                .values()
+                .any(|old| old.global && old.global_name() == op.global_name())
+        {
+            return Err("duplicate ambient host name".into());
+        }
+        if let Some((namespace, field)) = &op.namespace
+            && (!identifier(namespace)
+                || !identifier(field)
+                || op.global
+                || op.receiver_method.is_some()
+                || namespace == "Promise"
+                || self.operations.values().any(|old| {
+                    old.namespace.as_ref() == op.namespace.as_ref()
+                        || (old.global && old.global_name() == namespace)
+                }))
+        {
+            return Err("invalid or duplicate host namespace binding".into());
+        }
+        if op.global
+            && self.operations.values().any(|old| {
+                old.namespace
+                    .as_ref()
+                    .is_some_and(|(namespace, _)| namespace == op.global_name())
+            })
+        {
+            return Err("host global conflicts with a namespace".into());
         }
         for ty in op.args.iter().chain(std::iter::once(&op.result)) {
             ty.validate(&mut BTreeSet::new(), 0)?;
@@ -466,6 +536,9 @@ impl Hosts {
     }
     pub fn globals(&self) -> impl Iterator<Item = &HostOp> {
         self.operations.values().filter(|op| op.global)
+    }
+    pub fn namespaces(&self) -> impl Iterator<Item = &HostOp> {
+        self.operations.values().filter(|op| op.namespace.is_some())
     }
     pub fn methods(&self) -> impl Iterator<Item = &HostOp> {
         self.operations
