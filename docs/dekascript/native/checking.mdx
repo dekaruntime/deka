@@ -4,13 +4,23 @@ title: "Checking native programs"
 
 `deka check app.ds` uses the same source compiler and native declarations as
 `deka run app.ds`. It checks source syntax, types, imports and supported native
-operations without executing the program. A successful check prints `OK`
-followed by the source path.
+operations without executing the program. Progress and diagnostics go to stderr;
+stdout stays empty. A successful check prints `[check] app.ds - ok`.
 
 ```sh
 deka check app.ds
 deka run app.ds
 ```
+
+Errors retain their line, column and message:
+
+```text
+[check] app.ds
+[check] 2:6: expected argument type `string`, found type `number`
+```
+
+An error in an imported module names that source file before its diagnostic.
+Check refusals exit with status 1; invalid command arguments exit with status 2.
 
 Checking does not execute authored `panic` or `Throw`, perform I/O, or prove
 that an external service will succeed. Handle operational errors through

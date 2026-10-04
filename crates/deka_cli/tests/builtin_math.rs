@@ -1,3 +1,5 @@
+#[path = "support/check.rs"]
+mod check;
 use std::process::{Command, Output};
 fn ok(output: Output) -> Vec<u8> {
     assert!(
@@ -25,11 +27,14 @@ fn math_guide_checks_runs_builds_and_survives_source_deletion() {
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join("main.ds"), example).unwrap();
     let cli = env!("CARGO_BIN_EXE_deka");
-    ok(Command::new(cli)
-        .args(["check", "main.ds", "--entry", "main"])
-        .current_dir(project.path())
-        .output()
-        .unwrap());
+    check::checked(
+        Command::new(cli)
+            .args(["check", "main.ds", "--entry", "main"])
+            .current_dir(project.path())
+            .output()
+            .unwrap(),
+        "main.ds",
+    );
     let expected = b"3.141592653589793\n3\nSome(4)\nNone\n";
     assert_eq!(
         ok(Command::new(cli)

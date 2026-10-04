@@ -1,3 +1,5 @@
+#[path = "support/check.rs"]
+mod check;
 use std::process::{Command, Output};
 fn ok(output: Output) -> Vec<u8> {
     assert!(
@@ -28,11 +30,14 @@ fn crypto_guide_checks_runs_and_survives_source_deletion_and_relocation() {
         echo(match await crypto.subtle.digest("md5",TextEncoder().encode("abc")){{Ok(hash)=>"bad",Err(error)=>error}});
     }}"#,examples.join("\n"))).unwrap();
     let cli = env!("CARGO_BIN_EXE_deka");
-    ok(Command::new(cli)
-        .args(["check", "main.ds", "--entry", "main"])
-        .current_dir(project.path())
-        .output()
-        .unwrap());
+    check::checked(
+        Command::new(cli)
+            .args(["check", "main.ds", "--entry", "main"])
+            .current_dir(project.path())
+            .output()
+            .unwrap(),
+        "main.ds",
+    );
     let expected = b"32:186\n36:3:abc\nunknown digest algorithm 'md5'\n";
     assert_eq!(
         ok(Command::new(cli)
