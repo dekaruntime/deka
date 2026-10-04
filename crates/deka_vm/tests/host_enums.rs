@@ -387,3 +387,24 @@ async fn builtin_nominal_exports_follow_operation_catalog_without_type_name_list
         .is_err()
     );
 }
+
+#[tokio::test]
+async fn registered_native_cases_do_not_reserve_authored_enum_labels() {
+    assert_eq!(run(r#"enum Status { Failed(string), Ready }
+        fn main() string { return match Status.Failed("own") { Failed(s) => s, Ready => "ready" }; }"#).await.unwrap(), HostValue::String("own".into()));
+    assert_eq!(
+        run(r#"import { read } from "fs"
+        enum Status { Failed(string), Ready }
+        fn main() string {
+            const own=match Status.Failed("own") { Failed(s)=>s, Ready=>"ready" };
+            const native=match read() { Ok(v)=>v, Err(e)=>match e {
+                Failed(s)=>s, PermissionDenied(p)=>p.target,
+                UnsupportedHost=>"host", InvalidPayload=>"payload"
+            }};
+            return own+":"+native;
+        }"#)
+        .await
+        .unwrap(),
+        HostValue::String("own:missing".into())
+    );
+}

@@ -7,3 +7,5 @@ A host enum uses the VM's ordinary enum constructor and match machinery. It reta
 An operation with `with_enum_result_channel(schema, "Failed")` returns `Result<T, ErrorEnum>` (or `Promise<Result<T, ErrorEnum>>`). A Rust operational error becomes that declared string-payload case inside `Err`. Invalid enum labels, incorrect payloads and conflicting schemas are protocol errors, not operational errors. Existing string error channels continue to return `Result<T, string>`.
 
 Asynchronous operations keep the same result type after `await`. An I/O error remains a `Result`; it does not become a language `Throw`.
+
+Registering a host enum does not reserve its case names in unrelated source code. A pattern on a known native enum is resolved against that value’s declaration, so a returned error can be matched without separately importing its type. Authored enums retain their existing case-name rules.

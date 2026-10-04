@@ -3490,8 +3490,17 @@ impl<'a> Checker<'a> {
             }
         }
 
-        // User-defined enum cases.
-        let enum_name = match self.case_to_enum.get(name).copied() {
+        // Native cases belong to the known scrutinee type, not the global case
+        // namespace. Merely registering a host enum must not reserve its labels.
+        let native_enum = match scrutinee_type {
+            Type::Named { name: owner }
+                if crate::native_brand::public_name(owner) != *owner
+                    && self.enums.get(owner).is_some_and(|info| {
+                        info.cases.iter().any(|case| case.name == name)
+                    }) => Some(*owner),
+            _ => None,
+        };
+        let enum_name = match native_enum.or_else(|| self.case_to_enum.get(name).copied()) {
             Some(n) => n,
             None => {
                 self.error_span(span, format!("unknown constructor `{name}`"));
