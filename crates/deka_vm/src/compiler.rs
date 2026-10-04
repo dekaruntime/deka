@@ -453,6 +453,7 @@ fn lower_module<'a>(
     lower: &mut Lower<'a>,
 ) -> Result<BTreeMap<String, usize>> {
     let mut deferred = deferred;
+    lower.source_file = path.display().to_string();
     let mut imports = HashMap::new();
     for stmt in ast.statements {
         let source = match stmt {
@@ -1357,6 +1358,7 @@ fn compile_modules(
     }
     let mut bindings: HashMap<std::path::PathBuf, BTreeMap<String, usize>> = HashMap::new();
     let mut lower = Lower {
+        source_file: String::new(),
         functions: vec![],
         hosts: BTreeMap::new(),
         host_namespaces: BTreeMap::new(),
@@ -1683,6 +1685,7 @@ enum ClosureBody<'s, 'a> {
 /// expression, and whether the field is optional.
 type StructFields<'a> = Vec<(String, Option<&'a Expr<'a>>, bool)>;
 struct Lower<'a> {
+    source_file: String,
     functions: Vec<Function>,
     hosts: BTreeMap<String, String>,
     host_namespaces: BTreeMap<String, Vec<(String, String)>>,
@@ -1737,6 +1740,17 @@ struct Lower<'a> {
     newtype_results: HashMap<usize, String>,
 }
 impl<'a> Lower<'a> {
+    /// Recursive lowering keeps the innermost refusal and its module once.
+    fn refusal(&self, span: Span, error: String) -> String {
+        if error.starts_with(&format!("{}: ", self.source_file)) {
+            error
+        } else {
+            format!(
+                "{}: {}:{}: {error}",
+                self.source_file, span.start.line, span.start.column
+            )
+        }
+    }
     /// Prelude cases have the same ordered schema and bytecode as declared enums.
     fn enum_cases(&self, name: &str) -> Option<Vec<(String, bool)>> {
         self.enums.get(name).cloned().or_else(|| {
@@ -2295,6 +2309,10 @@ impl<'a> Lower<'a> {
         Ok(())
     }
     fn statement(&mut self, s: &Stmt<'a>, c: &mut Context) -> Result<()> {
+        self.statement_inner(s, c)
+            .map_err(|error| self.refusal(s.span(), error))
+    }
+    fn statement_inner(&mut self, s: &Stmt<'a>, c: &mut Context) -> Result<()> {
         match s {
             Stmt::Import { .. } | Stmt::Empty { .. } => {}
             // Types are erased at run time: an alias is the same value, a
@@ -2594,12 +2612,20 @@ impl<'a> Lower<'a> {
                     c.emit(Op::Store(slot));
                 }
             }
-            _ => {
-                return Err(format!(
-                    "{}:{}: statement is unsupported by VM experiment",
-                    s.span().start.line,
-                    s.span().start.column
-                ));
+            Stmt::Summon { .. } => {
+                return Err(
+                    "summoned foreign declarations are not supported by the native VM".into(),
+                );
+            }
+            Stmt::BridgeDecl { .. } => {
+                return Err(
+                    "ambient bridge declarations are not supported by the native VM".into(),
+                );
+            }
+            Stmt::Export { .. } => {
+                return Err(
+                    "ambient export declarations are not supported by the native VM".into(),
+                );
             }
         }
         Ok(())
@@ -2729,6 +2755,10 @@ impl<'a> Lower<'a> {
         Ok(())
     }
     fn expr(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
+        self.expr_inner(e, c)
+            .map_err(|error| self.refusal(e.span(), error))
+    }
+    fn expr_inner(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
         match self
             .exception_forms
             .get(&(e as *const Expr as usize))
@@ -3512,12 +3542,33 @@ impl<'a> Lower<'a> {
                     c.emit(Op::Const(Literal::String("".into())));
                 }
             }
-            _ => {
+            Expr::BigInt { .. } => {
+                return Err("bigint literals are not supported by the native VM".into());
+            }
+            Expr::Unsafe { .. } => {
+                return Err("unsafe blocks are not supported by the native VM".into());
+            }
+            Expr::Build { .. } => {
+                return Err("build blocks are not supported by the native VM".into());
+            }
+            Expr::Bridge { kind, action, .. } => {
                 return Err(format!(
-                    "{}:{}: expression is unsupported by VM experiment",
-                    e.span().start.line,
-                    e.span().start.column
+                    "bridge call {kind}.{action} is not supported by the native VM"
                 ));
+            }
+            Expr::ImportMeta { .. } => {
+                return Err("import.meta is not supported by the native VM".into());
+            }
+            Expr::JsxFragment { .. } => {
+                return Err("standalone JSX fragments are not supported by the native VM".into());
+            }
+            Expr::JsxText { .. } => {
+                return Err("standalone JSX text is not supported by the native VM".into());
+            }
+            Expr::Spread { .. } => {
+                return Err(
+                    "standalone spread expressions are not supported by the native VM".into(),
+                );
             }
         }
         if let Some(name) = self.newtype_results.get(&(e as *const Expr as usize)) {
