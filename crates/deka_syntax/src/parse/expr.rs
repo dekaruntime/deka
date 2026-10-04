@@ -936,8 +936,18 @@ impl<'a> Parser<'a> {
         while i < self.tokens.len() {
             match self.tokens[i].kind {
                 TokenKind::Lt => depth += 1,
-                TokenKind::Gt => {
-                    depth = depth.saturating_sub(1);
+                TokenKind::Gt | TokenKind::Shr => {
+                    // Nested types share the lexer's `>>` token. Count both
+                    // closers without changing expression shift tokens.
+                    let closers = if self.tokens[i].kind == TokenKind::Shr {
+                        2
+                    } else {
+                        1
+                    };
+                    if closers > depth {
+                        return false;
+                    }
+                    depth -= closers;
                     if depth == 0 {
                         return i + 1 < self.tokens.len()
                             && self.tokens[i + 1].kind == TokenKind::LParen;

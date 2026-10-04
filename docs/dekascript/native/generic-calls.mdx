@@ -1,0 +1,43 @@
+# Generic calls with nested types
+
+Explicit call type arguments can contain nested types without spaces between
+closing `>` characters. This works for declared functions, namespace calls
+and receiver methods; no intermediate type alias is required.
+
+```ds
+import {assert} from "test";
+
+fn identity<T>(value: T) T { return value; }
+fn main() {
+    const parsed = JSON.parse<Array<Array<number>>>("[[7,8]]");
+    const rows = unwrap(parsed) or { assert(false); return; };
+    const row = rows.has(0) ? rows[0] : [0];
+    const value = row.has(1) ? row[1] : 0;
+    assert(value == 8);
+    console.log(value);
+    const nested = identity<Array<Array<number>>>([[9]]);
+    const encoded = JSON.stringify(nested);
+    assert(encoded == "[[9]]");
+    console.log(encoded);
+    const receiver = unwrap("[1,2]".parseJSON<Array<number>>()) or { assert(false); return; };
+    const last = receiver.has(1) ? receiver[1] : 0;
+    assert(last == 2);
+    console.log(last);
+    assert((1 < (8 >> 1)) == true);
+}
+```
+
+Output:
+
+```text
+8
+[[9]]
+2
+```
+
+The same arguments and return values are checked as for any generic call.
+`JSON.parse<T>` and `parseJSON<T>` still return `Result<T, string>`; an invalid
+JSON value is an `Err`. Array indexing still requires a bounds check.
+
+In expressions, `>>` remains the right-shift operator. For example,
+`1 < 8 >> (1)` compares `1` with `4`; it does not open a generic call.

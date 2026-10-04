@@ -114,3 +114,13 @@ compiled-executable smoke tests to succeed. It then writes a `validation.json`
 for that exact commit. Promotion still rejects missing evidence, mismatched
 commits and non-green results. Nothing in corpus retirement automatically
 promotes or publishes a release.
+
+### Native time fixture migration
+
+The pinned corpus predates the native `time` module. Only `time-now-after-epoch`,
+`time-now-is-number`, and `time-two-nows` migrate their obsolete `packages: [time]`
+metadata to the built-in clock. The adapter requires exact original source, run
+stage, passing status, stdout, and no extra files/configuration/diagnostic. Each
+case still compiles and runs and must print exactly `true`. Changed fixtures and
+other package dependencies remain authoritative and fail closed offline. Legacy
+`sleep_ms` cases wait for the compatibility decision in dekaruntime/deka#1341.
