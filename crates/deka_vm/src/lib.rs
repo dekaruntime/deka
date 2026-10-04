@@ -13,6 +13,8 @@ pub use callback::{HostCallback, HostContext, HostJob};
 #[cfg(feature = "host")]
 pub mod blob;
 pub mod builtin_math;
+#[cfg(feature = "host")]
+pub mod builtin_time;
 #[cfg(feature = "compiler")]
 pub mod compiler;
 #[cfg(feature = "host")]

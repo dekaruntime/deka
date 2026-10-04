@@ -502,6 +502,7 @@ invalid input is an argument fault. Zero duration is valid. The same operation
 is included in built executables, without a separate DSC or JavaScript runtime.
 This does not yet enable async window handlers or browser-hosted timers.
 
+See the [time module guide](./native/time) for native epoch timestamps and the shared Tokio timer.
 See the [math guide](./native/math) for PI and typed native number methods.
 
 ## Awaited host failures
@@ -657,3 +658,5 @@ See [Native JSON](./native/json) for typed parsing and serialization.
 See [Crypto module](./native/crypto-module) for Rust-backed hashes, authentication, encryption and randomness.
 
 - [Native JSON wire formats](./native/json-wire-formats)
+
+See [Nested generic calls](./native/generic-calls) for explicit call type arguments such as `JSON.parse<Array<number>>(text)`.
