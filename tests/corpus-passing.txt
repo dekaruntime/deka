@@ -732,6 +732,8 @@ unsafe-unsafe-err-message-rejected-fail
 unsafe-unsafe-error-is-jserror-fail
 unsafe-unsafe-typed-result-mismatch-fail
 
+# Native crypto exports; pinned sources run unchanged.
+crypto-random-bytes-rejects-zero
 time-now-after-epoch
 time-now-is-number
 time-two-nows

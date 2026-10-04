@@ -126,6 +126,9 @@ pub enum JsonDescriptor<'a> {
     Record(Vec<(&'a str, JsonDescriptor<'a>)>),
     Array(Box<JsonDescriptor<'a>>),
     Tuple(Vec<JsonDescriptor<'a>>),
+    Option(Box<JsonDescriptor<'a>>),
+    Union(Vec<JsonDescriptor<'a>>),
+    Result(Box<JsonDescriptor<'a>>, Box<JsonDescriptor<'a>>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,13 +137,38 @@ pub enum JsonOperation {
     ParseJson,
 }
 impl JsonOperation {
-    /// Global names specialize through the same checked receiver operation.
-    pub fn namespace_method(name: &str) -> Option<Self> {
-        match name {
-            "parse" => Some(Self::ParseJson),
-            "stringify" => Some(Self::ToJson),
+    /// Both native module exports and the namespace share these operations.
+    pub const MODULE_FUNCTIONS: &'static [(&'static str, Self)] =
+        &[("parse", Self::ParseJson), ("stringify", Self::ToJson)];
+    /// An intrinsic binding has no runtime function value: its checked call
+    /// specializes a concrete data shape through `check_builtin_json`.
+    pub fn module_type<'a>(self) -> super::Type<'a> {
+        super::Type::Generic {
+            base: match self {
+                Self::ParseJson => "$NativeJsonParse",
+                Self::ToJson => "$NativeJsonStringify",
+            },
+            args: vec![],
+        }
+    }
+    pub fn from_module_type(ty: &super::Type<'_>) -> Option<Self> {
+        match ty {
+            super::Type::Generic {
+                base: "$NativeJsonParse",
+                ..
+            } => Some(Self::ParseJson),
+            super::Type::Generic {
+                base: "$NativeJsonStringify",
+                ..
+            } => Some(Self::ToJson),
             _ => None,
         }
+    }
+    /// Global names specialize through the same checked receiver operation.
+    pub fn namespace_method(name: &str) -> Option<Self> {
+        Self::MODULE_FUNCTIONS
+            .iter()
+            .find_map(|(export, operation)| (*export == name).then_some(*operation))
     }
     pub fn receiver_method(self) -> &'static str {
         match self {
