@@ -38,6 +38,206 @@ pub(crate) fn stringify(heap: &Heap, value: Handle, shape: &JsonShape) -> Result
     serde_json::to_string(&encode(heap, value, shape)?).map_err(|e| e.to_string())
 }
 
+pub(crate) const JWT_MAX_INPUT: usize = 16 * 1024 * 1024;
+
+/// JWT preserves caller property order without changing ordinary JSON's wire
+/// format. Validation is exactly the shared encode path; this view only chooses
+/// object order and removes the explicitly checked top-level struct wrapper.
+pub(crate) fn jwt_stringify(heap: &Heap, value: Handle, shape: &JsonShape) -> Result<String> {
+    let checked = encode(heap, value, shape)?;
+    struct Bounded(Vec<u8>);
+    impl std::io::Write for Bounded {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            if data.len() > JWT_MAX_INPUT - self.0.len() {
+                return Err(std::io::Error::other("JWT input too large"));
+            }
+            self.0.extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut out = Bounded(Vec::new());
+    serde_json::to_writer(
+        &mut out,
+        &Ordered {
+            heap,
+            value,
+            shape,
+            checked: &checked,
+            flatten: true,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    String::from_utf8(out.0).map_err(|e| e.to_string())
+}
+struct Ordered<'a> {
+    heap: &'a Heap,
+    value: Handle,
+    shape: &'a JsonShape,
+    checked: &'a Json,
+    flatten: bool,
+}
+impl Serialize for Ordered<'_> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::{Error, SerializeMap, SerializeSeq};
+        let value = self.heap.get(self.value).map_err(S::Error::custom)?;
+        match (self.shape, value) {
+            (JsonShape::Struct { name, .. }, _) if !self.flatten => {
+                let _inner = self
+                    .checked
+                    .get(name)
+                    .ok_or_else(|| S::Error::custom("checked JSON struct wrapper is missing"))?;
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry(
+                    name,
+                    &Ordered {
+                        flatten: true,
+                        ..*self
+                    },
+                )?;
+                map.end()
+            }
+            (
+                JsonShape::Record(fields) | JsonShape::Struct { fields, .. },
+                Value::Record(record),
+            ) => {
+                let object = match self.shape {
+                    JsonShape::Struct { name, .. } => self.checked.get(name).ok_or_else(|| {
+                        S::Error::custom("checked JSON struct wrapper is missing")
+                    })?,
+                    _ => self.checked,
+                };
+                let index: std::collections::BTreeMap<_, _> = fields
+                    .iter()
+                    .map(|field| (field.name.as_str(), &field.shape))
+                    .collect();
+                let mut seen = std::collections::BTreeSet::new();
+                let mut map = serializer.serialize_map(Some(fields.len()))?;
+                for name in record
+                    .order
+                    .iter()
+                    .map(String::as_str)
+                    .chain(fields.iter().map(|f| f.name.as_str()))
+                {
+                    let Some(shape) = index.get(name) else {
+                        continue;
+                    };
+                    if !seen.insert(name) {
+                        continue;
+                    }
+                    let value = *record
+                        .get(name)
+                        .ok_or_else(|| S::Error::custom("checked JSON field is missing"))?;
+                    let checked = object
+                        .get(name)
+                        .ok_or_else(|| S::Error::custom("checked JSON property is missing"))?;
+                    map.serialize_entry(
+                        name,
+                        &Ordered {
+                            heap: self.heap,
+                            value,
+                            shape,
+                            checked,
+                            flatten: false,
+                        },
+                    )?;
+                }
+                map.end()
+            }
+            (JsonShape::Array(shape), Value::List(items)) => {
+                let mut seq = serializer.serialize_seq(Some(items.len()))?;
+                for (value, checked) in items.iter().zip(
+                    self.checked
+                        .as_array()
+                        .ok_or_else(|| S::Error::custom("checked JSON array is missing"))?,
+                ) {
+                    seq.serialize_element(&Ordered {
+                        heap: self.heap,
+                        value: *value,
+                        shape,
+                        checked,
+                        flatten: false,
+                    })?;
+                }
+                seq.end()
+            }
+            (JsonShape::Tuple(shapes), Value::List(items)) => {
+                let mut seq = serializer.serialize_seq(Some(items.len()))?;
+                for ((value, shape), checked) in items.iter().zip(shapes).zip(
+                    self.checked
+                        .as_array()
+                        .ok_or_else(|| S::Error::custom("checked JSON tuple is missing"))?,
+                ) {
+                    seq.serialize_element(&Ordered {
+                        heap: self.heap,
+                        value: *value,
+                        shape,
+                        checked,
+                        flatten: false,
+                    })?;
+                }
+                seq.end()
+            }
+            (JsonShape::Option(shape), Value::Record(record))
+                if enum_case(self.heap, record).map_err(S::Error::custom)? == "Some" =>
+            {
+                Ordered {
+                    value: enum_payload(record).map_err(S::Error::custom)?,
+                    shape,
+                    flatten: false,
+                    ..*self
+                }
+                .serialize(serializer)
+            }
+            (JsonShape::Enum { cases, .. }, Value::Record(record)) => {
+                let case = enum_case(self.heap, record).map_err(S::Error::custom)?;
+                let shape = cases
+                    .iter()
+                    .find(|(name, _)| name == case)
+                    .and_then(|(_, shape)| shape.as_ref());
+                let mut map =
+                    serializer.serialize_map(Some(if shape.is_some() { 2 } else { 1 }))?;
+                map.serialize_entry("tag", case)?;
+                if let Some(shape) = shape {
+                    let checked = self
+                        .checked
+                        .get("value")
+                        .ok_or_else(|| S::Error::custom("checked JSON enum payload is missing"))?;
+                    map.serialize_entry(
+                        "value",
+                        &Ordered {
+                            heap: self.heap,
+                            value: enum_payload(record).map_err(S::Error::custom)?,
+                            shape,
+                            checked,
+                            flatten: false,
+                        },
+                    )?;
+                }
+                map.end()
+            }
+            (JsonShape::Newtype { repr, .. }, _) => Ordered {
+                shape: repr,
+                ..*self
+            }
+            .serialize(serializer),
+            (JsonShape::Union(members), _) => {
+                let shape = members
+                    .iter()
+                    .find(|shape| encode(self.heap, self.value, shape).is_ok())
+                    .ok_or_else(|| S::Error::custom("checked JSON union member is missing"))?;
+                Ordered { shape, ..*self }.serialize(serializer)
+            }
+            _ => self.checked.serialize(serializer),
+        }
+    }
+}
+
 fn encode(heap: &Heap, value: Handle, shape: &JsonShape) -> Result<Json> {
     match (shape, heap.get(value)?) {
         (JsonShape::Leaf(kind), Value::Number(n)) if kind == "number" => {

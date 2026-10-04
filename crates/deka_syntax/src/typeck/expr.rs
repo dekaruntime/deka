@@ -759,6 +759,10 @@ impl<'a> Checker<'a> {
                 }
                 match self.lookup_var(name) {
                     Some(ty) => {
+                        if super::JwtOperation::from_module_type(&ty).is_some() {
+                            self.error_span(*span, "native JWT conversions must be called directly; intrinsic function values are not supported");
+                            return Type::Error;
+                        }
                         if super::descriptor::JsonOperation::from_module_type(&ty).is_some() {
                             self.error_span(*span, "native JSON conversions must be called directly; generic intrinsic function values are not supported");
                             return Type::Error;
@@ -5068,7 +5072,7 @@ impl<'a> Checker<'a> {
         Some(Type::Named { name: "string" })
     }
 
-    fn json_descriptor(
+    pub(super) fn json_descriptor(
         &mut self,
         ty: &Type<'a>,
         span: ast::Span,
@@ -5415,6 +5419,14 @@ impl<'a> Checker<'a> {
                     ),
                 );
                 return Type::Error;
+            }
+        }
+        if let ast::Expr::Identifier { name, span: name_span } = callee {
+            if let Some(marker) = self.lookup_var(name).filter(|ty| super::JwtOperation::from_module_type(ty).is_some()) {
+                if self.reject_type_only_value_use(name, *name_span) {
+                    return Type::Error;
+                }
+                return self.check_jwt_call(expr, &marker, type_args, args, span);
             }
         }
         let json_operation = match callee {

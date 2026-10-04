@@ -26,6 +26,10 @@ mod host;
 pub mod http_headers;
 pub mod http_response;
 mod json;
+#[cfg(feature = "host")]
+pub mod jwt;
+#[cfg(any(feature = "compiler", feature = "host"))]
+mod jwt_contract;
 pub use json::{JsonField, JsonShape};
 mod machine;
 #[cfg(feature = "compiler")]

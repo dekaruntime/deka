@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, HashMap};
 mod builtins;
 #[path = "json_compiler.rs"]
 mod json_lower;
+#[path = "jwt_compiler.rs"]
+mod jwt_lower;
 
 pub fn compile(source: &str, hosts: &Hosts) -> Result<Program> {
     compile_entry(source, hosts, "main")
@@ -459,6 +461,23 @@ fn lower_module<'a>(
     entry.names.clear();
     entry.checked.clear();
     lower.import_json_factories(path, entry);
+    lower.jwt_calls = checked
+        .jwt_calls
+        .iter()
+        .map(|(p, call)| {
+            (
+                *p as usize,
+                jwt_lower::Call {
+                    operation: call.operation,
+                    payload: lower.json_types.shape(&call.payload, path),
+                    options: call
+                        .options
+                        .as_ref()
+                        .map(|shape| lower.json_types.shape(shape, path)),
+                },
+            )
+        })
+        .collect();
     lower.json_calls = checked
         .json_calls
         .iter()
@@ -680,7 +699,10 @@ fn lower_module<'a>(
                 if module_exports[&target]
                     .values
                     .get(spec.imported)
-                    .and_then(deka_syntax::typeck::JsonOperation::from_module_type)
+                    .filter(|ty| {
+                        deka_syntax::typeck::JsonOperation::from_module_type(ty).is_some()
+                            || deka_syntax::typeck::JwtOperation::from_module_type(ty).is_some()
+                    })
                     .is_some()
                 {
                     continue;
@@ -798,7 +820,12 @@ fn lower_module<'a>(
                             if module_exports[&builtins::path(source)]
                                 .values
                                 .get(name.name)
-                                .and_then(deka_syntax::typeck::JsonOperation::from_module_type)
+                                .filter(|ty| {
+                                    deka_syntax::typeck::JsonOperation::from_module_type(ty)
+                                        .is_some()
+                                        || deka_syntax::typeck::JwtOperation::from_module_type(ty)
+                                            .is_some()
+                                })
                                 .is_some()
                             {
                                 continue;
@@ -821,7 +848,12 @@ fn lower_module<'a>(
                             if module_exports[&target]
                                 .values
                                 .get(name.name)
-                                .and_then(deka_syntax::typeck::JsonOperation::from_module_type)
+                                .filter(|ty| {
+                                    deka_syntax::typeck::JsonOperation::from_module_type(ty)
+                                        .is_some()
+                                        || deka_syntax::typeck::JwtOperation::from_module_type(ty)
+                                            .is_some()
+                                })
                                 .is_some()
                             {
                                 continue;
@@ -1293,6 +1325,7 @@ fn compile_modules(
         pattern_types: HashMap::new(),
         signature_calls: HashMap::new(),
         json_calls: HashMap::new(),
+        jwt_calls: HashMap::new(),
         json_types: json_lower::JsonTypes::new(&asts, &struct_identities, &edges, &barrels),
         json_factories: Default::default(),
         newtype_results: HashMap::new(),
@@ -1615,6 +1648,7 @@ struct Lower<'a> {
     pattern_types: HashMap<usize, Result<Op>>,
     signature_calls: HashMap<usize, crate::TypeDescriptor>,
     json_calls: HashMap<usize, json_lower::Call>,
+    jwt_calls: HashMap<usize, jwt_lower::Call>,
     json_types: json_lower::JsonTypes,
     json_factories: BTreeMap<String, (std::path::PathBuf, usize)>,
     newtype_results: HashMap<usize, String>,
@@ -2921,6 +2955,9 @@ impl<'a> Lower<'a> {
                 }
             }
             Expr::Call { callee, args, .. } => {
+                if self.jwt_call(e, c)? {
+                    return Ok(());
+                }
                 if self.json_call(e, c)? {
                     return Ok(());
                 }
