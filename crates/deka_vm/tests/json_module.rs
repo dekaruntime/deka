@@ -110,7 +110,7 @@ async fn json_intrinsics_and_erased_type_exports_share_one_barrel() {
     let main = dir.path().join("main.ds");
     std::fs::write(
         &types,
-        "export interface Named { name: string; } export alias Label = string;",
+        "interface Named { name: string; } alias Label = string; export {Named, Label};",
     )
     .unwrap();
     std::fs::write(
@@ -121,7 +121,8 @@ async fn json_intrinsics_and_erased_type_exports_share_one_barrel() {
     .unwrap();
     std::fs::write(
         &main,
-        r#"import {decode, encode, Named, Label} from "./codec.ds";
+        r#"import {decode, encode} from "./codec.ds";
+        import type {Named, Label} from "./codec.ds";
         alias Payload = {name: Label};
         fn display(value: Named) string { return value.name; }
         fn main() string {
