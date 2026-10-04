@@ -3,6 +3,7 @@
 //! and evaluate the outcome against each case's expectation.
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+mod formatter;
 mod native_fs;
 mod process;
 
@@ -417,11 +418,27 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     };
     std::fs::write(directory.join("deka.json"), deka_json).unwrap();
 
-    let checked = process::execute(deka, "check", &entry, &directory, &case.slug)?;
+    if case.slug.starts_with("formatter-") {
+        let before = execute_program(deka, &entry, &directory, &case.slug)?;
+        formatter::format_project(deka, case, &entry, &directory)?;
+        let after = execute_program(deka, &entry, &directory, &case.slug)?;
+        formatter::preserves_execution(&case.slug, &before, &after)?;
+        return Ok(after);
+    }
+    execute_program(deka, &entry, &directory, &case.slug)
+}
+
+fn execute_program(
+    deka: &Path,
+    entry: &str,
+    directory: &Path,
+    slug: &str,
+) -> Result<RunResult, String> {
+    let checked = process::execute(deka, "check", entry, directory, slug)?;
     if !checked.status.success() {
         return Ok(command_result(checked, true));
     }
-    let output = process::execute(deka, "run", &entry, &directory, &case.slug)?;
+    let output = process::execute(deka, "run", entry, directory, slug)?;
     Ok(command_result(output, false))
 }
 
