@@ -1459,6 +1459,7 @@ version = "0.60.2"
 dependencies = [
  "bumpalo",
  "deka_syntax",
+ "deka_vm",
  "serde_json",
  "tempfile",
 ]
@@ -1873,6 +1874,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka-fmt"
+version = "0.60.2"
+dependencies = [
+ "bumpalo",
+ "deka_syntax",
+]
+
+[[package]]
 name = "deka-modules"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1947,14 +1956,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "deka-fmt"
-version = "0.60.2"
-dependencies = [
- "bumpalo",
- "deka_syntax",
 ]
 
 [[package]]

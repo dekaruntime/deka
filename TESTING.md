@@ -141,3 +141,5 @@ fixtures snapshot the 27 active lesson sources from dekaruntime/website main
 (as audited 3 October 2026). This move does not admit the legacy formatter corpus
 category to the VM gate; that is a separate port-note task.
 The filesystem migration admits only three exact original clock-independent fixtures (`fs-mkdirs-idempotent`, `fs-read-missing`, `fs-read-dir-missing`). The native adapter checks original source, passing run status, package names, original `dekaJson` and expected stdout. It does not install a legacy package, edit source or waive checks; normal `check`, `run` and output comparison remain required. Changed or unrelated metadata fails closed.
+
+Corpus diagnostic capture shares the native CLI/editor position decoder. Real CLI regressions assert ordered APS55 messages and primary cause, retain exact source headers/positions in stderr, and prevent imported file context from becoming a finding. Legacy caret/plain fallbacks remain covered separately. See `docs/dekascript/native/corpus-check-messages.mdx`.

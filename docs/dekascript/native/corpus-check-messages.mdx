@@ -1,0 +1,7 @@
+# Native diagnostic capture
+
+The corpus gate decodes positioned APS55 `[check] line:column: message` findings using the same native position decoder as the CLI renderer and editor. Its diagnostic list contains the ordered messages; the first message becomes the primary error. Source headers and context remain in captured stderr and never become findings.
+
+The original stderr retains file context and ordered source positions. Message comparisons stay independent of formatting-induced position changes. Existing caret and plain-line fallback behavior and corpus expectation checks remain intact.
+
+Actual CLI tests verify multiple findings and an imported-module failure, including exact messages, primary cause, source headers and positions. A real formatting pass moves source positions while preserving the extracted messages. This changes conformance capture, not the language checker or its output format.
