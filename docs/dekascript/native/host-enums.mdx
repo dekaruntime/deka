@@ -1,0 +1,9 @@
+# Typed host enums
+
+Rust host operations can exchange named enums and structs directly with DekaScript. `HostEnum` supplies the ordered case names and payload types; `HostStruct` supplies the named fields. The host catalog generates the declarations used by the checker and validates values against those same schemas.
+
+A host enum uses the VM's ordinary enum constructor and match machinery. It retains its native declaration identity through import aliases and re-exports; an ordinary record or an unrelated source enum cannot stand in for it. `getType`, signatures and printed values show public names rather than the compiler's private brand.
+
+An operation with `with_enum_result_channel(schema, "Failed")` returns `Result<T, ErrorEnum>` (or `Promise<Result<T, ErrorEnum>>`). A Rust operational error becomes that declared string-payload case inside `Err`. Invalid enum labels, incorrect payloads and conflicting schemas are protocol errors, not operational errors. Existing string error channels continue to return `Result<T, string>`.
+
+Asynchronous operations keep the same result type after `await`. An I/O error remains a `Result`; it does not become a language `Throw`.

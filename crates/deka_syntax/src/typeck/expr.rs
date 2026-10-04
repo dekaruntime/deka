@@ -1502,7 +1502,7 @@ impl<'a> Checker<'a> {
         // A generic struct erases to the same runtime value as a plain one;
         // the type arguments live only in the checker (rfd#56).
         if info.type_params.is_empty() {
-            Type::Struct { name }
+            self.canonical_nominal_type(name, Type::Struct { name })
         } else {
             Type::Generic { base: name, args }
         }
@@ -1767,6 +1767,12 @@ impl<'a> Checker<'a> {
         field: &'a str,
         span: ast::Span,
     ) -> Type<'a> {
+        if let ast::Expr::Identifier { name, .. } = object {
+            if self.enums.get(name).is_some_and(|info| info.cases.iter().any(|case| case.name == field)) {
+                return self.check_enum_constructor(name, field, None, span);
+            }
+        }
+
         let object_type = self.check_expr(object);
         if let Type::Opaque { name, identity } = &object_type {
             if let Some((operation, ty)) = self.native_properties.get(&(*identity, field)).cloned()
@@ -1924,7 +1930,7 @@ impl<'a> Checker<'a> {
                 {
                     if let Some(info) = self.enums.get(enum_name).cloned() {
                         if info.cases.iter().any(|c| c.name == field) {
-                            return Type::Named { name: enum_name };
+                            return self.canonical_nominal_type(enum_name, Type::Named { name: enum_name });
                         }
                         self.error_span(
                             span,
@@ -2512,6 +2518,7 @@ impl<'a> Checker<'a> {
         payload: Option<&ast::Expr<'a>>,
         span: ast::Span,
     ) -> Type<'a> {
+        if self.reject_type_only_value_use(enum_name, span) { return Type::Error; }
         let payload_type = payload.map(|expr| self.check_expr(expr));
 
         if enum_name == "Option" {
@@ -2577,7 +2584,7 @@ impl<'a> Checker<'a> {
         }
 
         if params.is_empty() {
-            return Type::Named { name: enum_name };
+            return self.canonical_nominal_type(enum_name, Type::Named { name: enum_name });
         }
         // Parameters a payload-free case cannot pin are genuinely
         // unconstrained, not unresolved. Keep them as `Var`, which may unify
@@ -3500,8 +3507,9 @@ impl<'a> Checker<'a> {
         // `enum Box<T>` used as `Box<number>` arrives as Type::Generic, not
         // Type::Named. Accept both and remember the type arguments so the case
         // payload can be substituted below (deka#372).
+        let canonical = self.canonical_nominal_type(enum_name, Type::Named { name: enum_name });
         let type_args: Vec<Type<'a>> = match scrutinee_type {
-            Type::Named { name } if *name == enum_name => Vec::new(),
+            Type::Named { .. } if *scrutinee_type == canonical => Vec::new(),
             Type::Generic { base, args } if *base == enum_name => args.clone(),
             _ if scrutinee_type.is_error() => Vec::new(),
             _ => {
@@ -4348,6 +4356,20 @@ impl<'a> Checker<'a> {
                 span,
                 false,
             );
+        }
+
+        // Imported enum namespaces use the same constructor check as local enums.
+        if let ast::Expr::Identifier { name, .. } = object {
+            if let Some(info) = self.enums.get(name) {
+                if let Some(case) = info.cases.iter().find(|case| case.name == method_name) {
+                    let count = usize::from(case.payload.is_some());
+                    if args.len() != count || !type_args.is_empty() {
+                        self.error_span(span, format!("enum case `{method_name}` expects {count} argument(s) and no explicit type arguments"));
+                        return Some(Type::Error);
+                    }
+                    return Some(self.check_enum_constructor(name, method_name, args.first(), span));
+                }
+            }
         }
 
         // Builtin `Name.type()` on `super` declarations (rfd#41, deka#561
@@ -5887,7 +5909,7 @@ impl<'a> Checker<'a> {
                 // Same erasure story as the literal form: generic structs
                 // return their `Generic` type with inferred arguments.
                 if info.type_params.is_empty() {
-                    Type::Struct { name }
+                    self.canonical_nominal_type(name, Type::Struct { name })
                 } else {
                     Type::Generic {
                         base: name,
