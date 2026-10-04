@@ -1,3 +1,5 @@
+#[path = "support/check.rs"]
+mod check;
 use std::process::{Command, Output};
 #[path = "../../deka_vm/tests/support/http_server.rs"]
 mod server;
@@ -59,11 +61,14 @@ async fn main() {{
     )
     .unwrap();
     let cli = env!("CARGO_BIN_EXE_deka");
-    ok(Command::new(cli)
-        .args(["check", "main.ds", "--entry", "main"])
-        .current_dir(project.path())
-        .output()
-        .unwrap());
+    check::checked(
+        Command::new(cli)
+            .args(["check", "main.ds", "--entry", "main"])
+            .current_dir(project.path())
+            .output()
+            .unwrap(),
+        "main.ds",
+    );
     let expected = b"network Deka\nHTTP 200; HTTP 404\n404\nfalse\nmissing\n";
     assert_eq!(
         ok(Command::new(cli)

@@ -1,5 +1,6 @@
 //! Public native compiler/VM CLI. The legacy V8 CLI remains a separate crate.
 //! Command dispatch lives in [`cli`]; this module holds the implementations.
+mod check_output;
 pub mod cli;
 mod packages;
 
@@ -118,7 +119,7 @@ pub(crate) fn hosts() -> Result<Hosts> {
             }
         },
     ))?;
-    deka_vm::time::register(&mut hosts)?;
+    deka_vm::builtin_time::register(&mut hosts)?;
     deka_vm::builtin_math::register(&mut hosts)?;
     deka_vm::timers::register(&mut hosts)?;
     deka_vm::text_codec::register(&mut hosts)?;
