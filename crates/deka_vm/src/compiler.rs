@@ -671,6 +671,15 @@ fn lower_module<'a>(
                 if spec.is_type_only && host_module(source) {
                     continue;
                 }
+                let target = module_path(path, source, project)?;
+                if module_exports[&target]
+                    .values
+                    .get(spec.imported)
+                    .and_then(deka_syntax::typeck::JsonOperation::from_module_type)
+                    .is_some()
+                {
+                    continue;
+                }
                 if host_module(source) {
                     let operation = builtins::operation(source, spec.imported, hosts)?;
                     lower.hosts.insert(spec.local.into(), operation);
@@ -775,6 +784,14 @@ fn lower_module<'a>(
                     // consumer imported from the origin directly (deka#1210).
                     Some(source) if host_module(source) => {
                         for name in *names {
+                            if module_exports[&builtins::path(source)]
+                                .values
+                                .get(name.name)
+                                .and_then(deka_syntax::typeck::JsonOperation::from_module_type)
+                                .is_some()
+                            {
+                                continue;
+                            }
                             let operation = builtins::operation(source, name.name, hosts)?;
                             lower.host_closure(&operation, entry)?;
                             let external = name.alias.unwrap_or(name.name);
@@ -786,7 +803,17 @@ fn lower_module<'a>(
                     Some(source) => {
                         let target = module_path(path, source, project)?;
                         for name in *names {
-                            if module_exports[&target].structs.contains_key(name.name) {
+                            if module_exports[&target]
+                                .values
+                                .get(name.name)
+                                .and_then(deka_syntax::typeck::JsonOperation::from_module_type)
+                                .is_some()
+                            {
+                                continue;
+                            }
+                            if module_exports[&target].structs.contains_key(name.name)
+                                || module_exports[&target].enums.contains_key(name.name)
+                            {
                                 continue;
                             }
                             let external = name.alias.unwrap_or(name.name);
@@ -1250,7 +1277,7 @@ fn compile_modules(
         pattern_types: HashMap::new(),
         signature_calls: HashMap::new(),
         json_calls: HashMap::new(),
-        json_types: json_lower::JsonTypes::new(&asts, &struct_identities, &edges),
+        json_types: json_lower::JsonTypes::new(&asts, &struct_identities, &edges, &barrels),
         json_factories: Default::default(),
         newtype_results: HashMap::new(),
         console_outputs: ["echo", CONSOLE_ERROR_OPERATION]

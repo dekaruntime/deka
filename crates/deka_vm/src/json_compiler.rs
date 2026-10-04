@@ -15,19 +15,31 @@ pub(super) struct JsonTypes {
     contexts: HashMap<PathBuf, BTreeMap<String, String>>,
     origins: BTreeMap<String, PathBuf>,
     embeds: BTreeMap<String, Vec<String>>,
+    declaration_origins: HashMap<PathBuf, BTreeMap<String, PathBuf>>,
 }
 impl JsonTypes {
     pub(super) fn new(
         asts: &HashMap<PathBuf, &deka_syntax::ast::Program<'_>>,
         identities: &HashMap<PathBuf, BTreeMap<String, String>>,
         edges: &HashMap<PathBuf, Vec<(String, String, PathBuf)>>,
+        barrels: &HashMap<PathBuf, Vec<(String, String, PathBuf)>>,
     ) -> Self {
         let mut types = Self {
             contexts: identities.clone(),
             ..Default::default()
         };
         for (path, ast) in asts {
+            types
+                .declaration_origins
+                .insert(path.clone(), BTreeMap::new());
             for stmt in ast.statements {
+                if let Stmt::Enum { name, .. } | Stmt::Newtype { name, .. } = stmt {
+                    types
+                        .declaration_origins
+                        .get_mut(path)
+                        .expect("module declarations")
+                        .insert((*name).into(), path.clone());
+                }
                 if let Stmt::Struct { name, embeds, .. } = stmt {
                     let identity = &identities[path][*name];
                     types.origins.insert(identity.clone(), path.clone());
@@ -47,6 +59,34 @@ impl JsonTypes {
                         .expect("module context")
                         .insert(local.clone(), identity.clone());
                 }
+            }
+        }
+        loop {
+            let mut changed = false;
+            for (path, imports) in edges.iter().chain(barrels) {
+                for (local, original, target) in imports {
+                    let Some(origin) = types
+                        .declaration_origins
+                        .get(target)
+                        .and_then(|names| names.get(original))
+                        .cloned()
+                    else {
+                        continue;
+                    };
+                    let names = types
+                        .declaration_origins
+                        .get_mut(path)
+                        .expect("module declarations");
+                    for name in [local, original] {
+                        if !names.contains_key(name) {
+                            names.insert(name.clone(), origin.clone());
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
             }
         }
         types
@@ -70,6 +110,22 @@ impl JsonTypes {
                     })
                     .collect::<Result<Vec<_>>>()?,
             ),
+            JsonDescriptor::Option(inner) => {
+                JsonShape::Option(Box::new(self.shape(inner, module)?))
+            }
+            JsonDescriptor::Union(members) => JsonShape::Union(
+                members
+                    .iter()
+                    .map(|member| self.shape(member, module))
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+            JsonDescriptor::Result(ok, err) => JsonShape::Enum {
+                name: "Result".into(),
+                cases: vec![
+                    ("Ok".into(), Some(self.shape(ok, module)?)),
+                    ("Err".into(), Some(self.shape(err, module)?)),
+                ],
+            },
             JsonDescriptor::Array(elem) => JsonShape::Array(Box::new(self.shape(elem, module)?)),
             JsonDescriptor::Tuple(elements) => JsonShape::Tuple(
                 elements
@@ -82,23 +138,85 @@ impl JsonTypes {
     fn type_shape(&self, tree: &DescriptorTree<'_>, module: &Path) -> Result<crate::JsonShape> {
         use crate::{JsonField, JsonShape};
         Ok(match tree {
-            DescriptorTree::Leaf { kind: kind @ ("number" | "string" | "boolean"), .. } => JsonShape::Leaf((*kind).into()),
+            DescriptorTree::Leaf {
+                kind: kind @ ("number" | "string" | "boolean" | "none"),
+                ..
+            } => JsonShape::Leaf((*kind).into()),
             DescriptorTree::Struct { name, fields } => {
-                let identity = self.contexts.get(module).and_then(|names| names.get(*name))
+                let identity = self
+                    .contexts
+                    .get(module)
+                    .and_then(|names| names.get(*name))
                     .ok_or_else(|| format!("JSON struct `{name}` has no declaration identity"))?;
                 let origin = &self.origins[identity];
-                let fields = fields.iter().map(|field| {
-                    if field.optional {
-                        return Err(format!("JSON encoding for optional field `{}` awaits the APS 43 type-mapping decision", field.name));
-                    }
-                    Ok(JsonField { name: field.name.into(), shape: self.type_shape(&field.ty, origin)? })
-                }).collect::<Result<Vec<_>>>()?;
-                JsonShape::Struct { name: (*name).into(), identity: identity.clone(), fields,
-                    embeds: self.embeds[identity].clone() }
+                let fields = fields
+                    .iter()
+                    .map(|field| {
+                        if field.optional {
+                            return Err(format!(
+                                "JSON encoding for optional field `{}` is not supported",
+                                field.name
+                            ));
+                        }
+                        Ok(JsonField {
+                            name: field.name.into(),
+                            shape: self.type_shape(&field.ty, origin)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                JsonShape::Struct {
+                    name: (*name).into(),
+                    identity: identity.clone(),
+                    fields,
+                    embeds: self.embeds[identity].clone(),
+                }
             }
-            DescriptorTree::Array { elem } => JsonShape::Array(Box::new(self.type_shape(elem, module)?)),
-            DescriptorTree::Tuple { elements } => JsonShape::Tuple(elements.iter().map(|e| self.type_shape(e, module)).collect::<Result<Vec<_>>>()?),
-            _ => return Err("JSON encoding for this type awaits the APS 43 type-mapping decision; supported types are number, string, boolean, arrays, tuples and structs with required fields".into()),
+            DescriptorTree::Array { elem } => {
+                JsonShape::Array(Box::new(self.type_shape(elem, module)?))
+            }
+            DescriptorTree::Tuple { elements } => JsonShape::Tuple(
+                elements
+                    .iter()
+                    .map(|e| self.type_shape(e, module))
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+            DescriptorTree::Option { inner } => {
+                JsonShape::Option(Box::new(self.type_shape(inner, module)?))
+            }
+            DescriptorTree::Enum { name, cases } => {
+                let origin = self
+                    .declaration_origins
+                    .get(module)
+                    .and_then(|names| names.get(*name))
+                    .map(PathBuf::as_path)
+                    .unwrap_or(module);
+                JsonShape::Enum {
+                    name: (*name).into(),
+                    cases: cases
+                        .iter()
+                        .map(|(case, payload)| {
+                            Ok((
+                                (*case).into(),
+                                payload
+                                    .as_ref()
+                                    .map(|tree| self.type_shape(tree, origin))
+                                    .transpose()?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                }
+            }
+            DescriptorTree::Newtype { name, repr } => JsonShape::Newtype {
+                name: (*name).into(),
+                repr: Box::new(self.type_shape(repr, module)?),
+            },
+            DescriptorTree::Union { members } => JsonShape::Union(
+                members
+                    .iter()
+                    .map(|tree| self.type_shape(tree, module))
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+            _ => return Err("this type is unsupported for native JSON".into()),
         })
     }
 }
@@ -120,7 +238,21 @@ fn factory_ids(shape: &crate::JsonShape, out: &mut std::collections::BTreeSet<St
                 factory_ids(&field.shape, out);
             }
         }
-        crate::JsonShape::Array(elem) => factory_ids(elem, out),
+        crate::JsonShape::Array(elem)
+        | crate::JsonShape::Option(elem)
+        | crate::JsonShape::Newtype { repr: elem, .. } => factory_ids(elem, out),
+        crate::JsonShape::Enum { cases, .. } => {
+            for (_, payload) in cases {
+                if let Some(shape) = payload {
+                    factory_ids(shape, out);
+                }
+            }
+        }
+        crate::JsonShape::Union(members) => {
+            for member in members {
+                factory_ids(member, out);
+            }
+        }
         crate::JsonShape::Tuple(elements) => {
             for elem in elements {
                 factory_ids(elem, out);
@@ -165,13 +297,12 @@ impl<'a> Lower<'a> {
         else {
             return Ok(false);
         };
-        let Expr::Call {
-            callee: Expr::FieldAccess { object, .. },
-            args,
-            ..
-        } = e
-        else {
+        let Expr::Call { callee, args, .. } = e else {
             return Err("checked JSON call has an invalid shape".into());
+        };
+        let object = match callee {
+            Expr::FieldAccess { object, .. } => Some(*object),
+            _ => None,
         };
         let shape = shape?;
         if let Some(operation) = body_operation {
@@ -196,7 +327,7 @@ impl<'a> Lower<'a> {
                 function,
                 captures: vec![],
             });
-            self.expr(object, c)?;
+            self.expr(object.ok_or("checked JSON body call has no receiver")?, c)?;
             c.emit(Op::Host {
                 operation,
                 arguments: 1,
@@ -208,7 +339,7 @@ impl<'a> Lower<'a> {
         let input = if let [argument] = *args {
             argument
         } else {
-            object
+            object.ok_or("checked JSON conversion has no input")?
         };
         self.expr(input, c)?;
         match operation {
