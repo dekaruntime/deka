@@ -39,7 +39,10 @@ async fn panic_stops_the_program_with_its_message() {
 fn a_builtin_the_vm_does_not_know_says_so() {
     let hosts = Hosts::default();
     let error = compiler::compile(r#"const x = parseNumber("42");"#, &hosts).unwrap_err();
-    assert_eq!(error.to_string(), "unknown built-in parseNumber");
+    assert_eq!(
+        error.to_string(),
+        "<source>: 1:11: unknown built-in parseNumber"
+    );
 }
 
 #[test]
@@ -48,6 +51,6 @@ fn a_forward_reference_keeps_its_own_error() {
     let error = compiler::compile("later();\nfn later() {}\n", &hosts).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "binding later is unavailable here; forward references are unsupported"
+        "<source>: 1:1: binding later is unavailable here; forward references are unsupported"
     );
 }
