@@ -41,7 +41,7 @@ fn channels<'a>(ty: &Type<'a>, channel: &str) -> Option<(Type<'a>, Type<'a>)> {
 /// Localize named types in an imported signature to the actual
 /// imported constructor bindings. Comparing original spellings is unsound:
 /// two modules can both export a struct named Fault with different factories.
-pub(super) fn localize_export<'a>(
+pub fn localize_export<'a>(
     ty: &Type<'a>,
     specs: &[ast::ImportSpec<'a>],
     exports: &super::ModuleExports<'a>,
@@ -97,7 +97,14 @@ pub(super) fn localize_export<'a>(
                 || exports.enums.contains_key(spec.imported)
                 || exports.newtypes.contains_key(spec.imported)
         })
-        .map(|spec| (spec.imported, spec.local))
+        .flat_map(|spec| {
+            // Both the barrel's external key and the origin spelling can occur
+            // in its exported signatures. Keep localization tied to this
+            // module's explicit type imports, never to unrelated basenames.
+            let origin = exports.nominal_names.get(spec.imported).copied();
+            std::iter::once((spec.imported, spec.local))
+                .chain(origin.map(|name| (name, spec.local)))
+        })
         .collect();
     rename(ty, &names)
 }

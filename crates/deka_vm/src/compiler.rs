@@ -1145,11 +1145,12 @@ fn compile_modules(
     // barrels without deka_syntax changes: copy the origin's export entries
     // under the barrel's external names. Barrel cycles (re-export-only
     // loops) are skipped here and load through the runtime machinery.
-    fn augment_reexports(
+    fn augment_reexports<'a>(
         module: &std::path::Path,
         barrels: &HashMap<std::path::PathBuf, Vec<(String, String, std::path::PathBuf)>>,
-        module_exports: &mut HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'_>>,
+        module_exports: &mut HashMap<std::path::PathBuf, deka_syntax::ModuleExports<'a>>,
         visiting: &mut Vec<std::path::PathBuf>,
+        arena: &'a bumpalo::Bump,
     ) {
         if visiting.contains(&module.to_path_buf()) {
             return;
@@ -1159,67 +1160,91 @@ fn compile_modules(
             visiting.pop();
             return;
         };
-        for (external, original, target) in entries {
-            augment_reexports(&target, barrels, module_exports, visiting);
-            let Some(source) = module_exports.get(&target).cloned() else {
+        for (external, original, target) in &entries {
+            augment_reexports(target, barrels, module_exports, visiting, arena);
+            let Some(source) = module_exports.get(target).cloned() else {
                 continue;
             };
             let Some(exports) = module_exports.get_mut(module) else {
                 continue;
             };
             if let Some(ty) = source.values.get(original.as_str()) {
-                exports
-                    .values
-                    .insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+                // Localize before combining different declaring namespaces:
+                // two origins may each call their nominal type `Thing`.
+                let specs: Vec<_> = entries
+                    .iter()
+                    .filter(|(_, _, origin)| origin == target)
+                    .filter_map(|(external, original, _)| {
+                        let (imported, _) =
+                            source.nominal_names.get_key_value(original.as_str())?;
+                        Some(deka_syntax::ast::ImportSpec {
+                            imported,
+                            local: arena.alloc_str(external),
+                            span: deka_syntax::ast::Span::dummy(),
+                            is_type_only: true,
+                        })
+                    })
+                    .collect();
+                exports.values.insert(
+                    arena.alloc_str(external),
+                    deka_syntax::typeck::localize_export(ty, &specs, &source),
+                );
+            }
+            if source.nominal_names.contains_key(original.as_str()) {
+                // Values above are now in the barrel's namespace. Do not
+                // retain an origin basename here: another forwarded factory
+                // may return a private type with that same spelling.
+                let name = arena.alloc_str(external);
+                exports.nominal_names.insert(name, name);
             }
             if let Some(info) = source.structs.get(original.as_str()) {
                 exports
                     .structs
-                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+                    .insert(arena.alloc_str(external), info.clone());
             }
             if let Some(info) = source.enums.get(original.as_str()) {
                 exports
                     .enums
-                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+                    .insert(arena.alloc_str(external), info.clone());
             }
             if let Some(ty) = source.aliases.get(original.as_str()) {
                 exports
                     .aliases
-                    .insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+                    .insert(arena.alloc_str(external), ty.clone());
             }
             if let Some(ty) = source.opaques.get(original.as_str()) {
                 exports
                     .opaques
-                    .insert(Box::leak(external.clone().into_boxed_str()), ty.clone());
+                    .insert(arena.alloc_str(external), ty.clone());
             }
             if let Some(info) = source.newtypes.get(original.as_str()) {
                 exports
                     .newtypes
-                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+                    .insert(arena.alloc_str(external), info.clone());
             }
             if let Some(info) = source.interfaces.get(original.as_str()) {
                 exports
                     .interfaces
-                    .insert(Box::leak(external.clone().into_boxed_str()), info.clone());
+                    .insert(arena.alloc_str(external), info.clone());
             }
             if let Some(tree) = source.build_fragments.get(original.as_str()) {
                 exports
                     .build_fragments
-                    .insert(Box::leak(external.clone().into_boxed_str()), tree.clone());
+                    .insert(arena.alloc_str(external), tree.clone());
             }
             if source.interactive_components.contains(original.as_str()) {
                 exports
                     .interactive_components
-                    .insert(Box::leak(external.clone().into_boxed_str()));
+                    .insert(arena.alloc_str(external));
             }
             if external == "default" {
-                exports.default_export_declared_name = Some(Box::leak(original.into_boxed_str()));
+                exports.default_export_declared_name = Some(arena.alloc_str(original));
             }
         }
         visiting.pop();
     }
     for (path, _source) in modules {
-        augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new());
+        augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new(), &arena);
     }
 
     let globals = native_globals(hosts, &host_exports, &arena);
@@ -1247,7 +1272,7 @@ fn compile_modules(
             module_exports.insert(path.clone(), exports);
         }
         for (path, _) in modules {
-            augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new());
+            augment_reexports(path, &barrels, &mut module_exports, &mut Vec::new(), &arena);
         }
         if modules
             .iter()
@@ -1290,7 +1315,13 @@ fn compile_modules(
             }
         }
         for (module, _) in modules {
-            augment_reexports(module, &barrels, &mut module_exports, &mut Vec::new());
+            augment_reexports(
+                module,
+                &barrels,
+                &mut module_exports,
+                &mut Vec::new(),
+                &arena,
+            );
         }
     }
 
