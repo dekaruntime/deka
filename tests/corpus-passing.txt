@@ -589,6 +589,7 @@ modules-relative-import-side-effect-001
 modules-relative-import-struct-001
 modules-relative-import-subdirectory-001
 option-struct-defaults-required
+packages-bytes-from-string-len
 parser-array-trailing-comma
 parser-arrow-bare-parameter-rejected
 parser-async-arrow-function
@@ -731,3 +732,6 @@ unsafe-unsafe-typed-result-mismatch-fail
 time-now-after-epoch
 time-now-is-number
 time-two-nows
+data-types-number-math-total
+data-types-number-math-option
+error-globals-math-module-pi

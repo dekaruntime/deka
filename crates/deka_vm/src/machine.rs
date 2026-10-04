@@ -28,6 +28,7 @@ struct Handler {
 enum Work {
     Code(Vec<Frame>),
     Join(Join),
+    CallbackWait(Handle),
     Host {
         future: HostFuture,
         result: HostType,
@@ -53,6 +54,7 @@ struct Task {
     promise: Handle,
     work: Work,
     waiting: Option<Handle>,
+    completion: Option<crate::callback::Completion>,
 }
 enum Step {
     Continue,
@@ -147,6 +149,9 @@ impl Vm {
         roots.extend(self.context.roots());
         for task in self.tasks.values() {
             roots.push(task.promise);
+            if let Work::CallbackWait(promise) = &task.work {
+                roots.push(*promise);
+            }
             if let Work::Join(join) = &task.work {
                 roots.extend(&join.inputs);
                 roots.extend(join.values.iter().flatten());
@@ -269,6 +274,7 @@ impl Vm {
                 promise,
                 work,
                 waiting: None,
+                completion: None,
             },
         );
         promise
@@ -463,6 +469,7 @@ impl Vm {
                     callback,
                     args,
                     job,
+                    completion,
                 } => {
                     if job.is_some_and(|job| job.is_cancelled()) {
                         continue;
@@ -483,7 +490,12 @@ impl Vm {
                         .map(|value| self.alloc_host_value(value))
                         .collect::<Result<Vec<_>>>()?;
                     let frame = self.frame(function, captures, args, slot_children)?;
+                    let id = self.next_task;
                     self.spawn(Work::Code(vec![frame]));
+                    self.tasks
+                        .get_mut(&id)
+                        .ok_or("missing callback task")?
+                        .completion = completion;
                 }
             }
         }
@@ -583,7 +595,7 @@ impl Vm {
                     })
                     && match &task.work {
                         Work::Host { ready, .. } => ready.is_ready(),
-                        Work::Code(_) => true,
+                        Work::Code(_) | Work::CallbackWait(_) => true,
                         Work::Join(join) => join.checked_epoch != Some(self.completion_epoch),
                     }
             })
@@ -597,6 +609,17 @@ impl Vm {
             let mut task = self.tasks.remove(&id).ok_or("missing scheduled task")?;
             task.waiting = None;
             let result = match &mut task.work {
+                Work::CallbackWait(promise) => {
+                    remaining -= 1;
+                    match self.heap.get(*promise)? {
+                        Value::Promise(Some(outcome)) => Some(outcome.clone()),
+                        Value::Promise(None) => {
+                            task.waiting = Some(*promise);
+                            None
+                        }
+                        _ => return Err("invalid callback promise".into()),
+                    }
+                }
                 Work::Join(join) => {
                     let before = remaining;
                     let result = self.poll_join(join, &mut remaining)?;
@@ -652,7 +675,35 @@ impl Vm {
                 self.turn_cursor = id.saturating_add(1);
             }
             if let Some(result) = result {
-                let result = result?;
+                // A non-async language function may return a promise directly.
+                // Follow it without polling or re-entering the VM from Rust.
+                if task.completion.is_some()
+                    && let Ok(Outcome::Value(promise)) = &result
+                    && matches!(self.heap.get(*promise)?, Value::Promise(_))
+                {
+                    task.work = Work::CallbackWait(*promise);
+                    task.waiting = Some(*promise);
+                    progressed = true;
+                    self.tasks.insert(id, task);
+                    continue;
+                }
+                let result = if let Some(completion) = task.completion.take() {
+                    let host_result = self.callback_result(
+                        &result,
+                        &completion.result,
+                        completion.result_channel,
+                    );
+                    match host_result {
+                        Ok(value) => completion.resolve(value),
+                        Err(error) => {
+                            completion.resolve(Err(error.clone()));
+                            return Err(error);
+                        }
+                    }
+                    result?
+                } else {
+                    result?
+                };
                 #[cfg(feature = "ui")]
                 if self.events.remove(&id)
                     && let Outcome::Thrown(value) = &result
@@ -670,6 +721,47 @@ impl Vm {
         }
         self.collect()?;
         Ok((progressed, deferred))
+    }
+    fn callback_result(
+        &self,
+        outcome: &Result<Outcome>,
+        expected: &HostType,
+        result_channel: bool,
+    ) -> Result<Result<HostValue>> {
+        let handle = match outcome {
+            Ok(Outcome::Value(handle)) => *handle,
+            Ok(Outcome::Thrown(handle)) => {
+                return Err(format!("uncaught Throw: {}", self.value_text(*handle)?));
+            }
+            Err(error) => return Err(error.clone()),
+        };
+        let handle = if result_channel {
+            let Value::Record(record) = self.heap.get(handle)? else {
+                return Err("callback did not return a Result".into());
+            };
+            if record.enum_name.as_deref() != Some("Result") {
+                return Err("callback did not return a Result".into());
+            }
+            let case = record.get("name").ok_or("Result has no case")?;
+            let payload = *record.get("value").ok_or("Result has no payload")?;
+            match self.heap.get(*case)? {
+                Value::String(case) if case == "Ok" => payload,
+                Value::String(case) if case == "Err" => {
+                    let Value::String(error) = self.heap.get(payload)? else {
+                        return Err("callback Result error must be a string".into());
+                    };
+                    return Ok(Err(error.clone()));
+                }
+                _ => return Err("invalid callback Result case".into()),
+            }
+        } else {
+            handle
+        };
+        let value = self.to_host(handle)?;
+        if !expected.accepts(&value) {
+            return Err("callback returned the wrong result type".into());
+        }
+        Ok(Ok(expected.normalize(value)))
     }
     fn root_result(&self) -> Poll<Result<Handle>> {
         let Some(root) = self.root else {
@@ -1910,8 +2002,14 @@ fn promise_add_text(value: Value) -> Result<String> {
 }
 /// How `string(x)` turns a number into text; string+number concat uses the
 /// same conversion, as the note-03 decision requires.
-fn number_text(n: f64) -> String {
-    format!("{n}")
+pub(crate) fn number_text(n: f64) -> String {
+    if n == f64::INFINITY {
+        "Infinity".into()
+    } else if n == f64::NEG_INFINITY {
+        "-Infinity".into()
+    } else {
+        format!("{n}")
+    }
 }
 fn arguments(frame: &mut Frame, count: usize) -> Result<Vec<Handle>> {
     // Do not reserve an untrusted bytecode operand's claimed size.

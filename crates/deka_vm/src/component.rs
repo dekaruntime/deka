@@ -172,7 +172,7 @@ impl Component {
         let value = self.resolve(value)?;
         match self.vm.heap.get(value)? {
             Value::String(s) => Ok(s.clone()),
-            Value::Number(n) => Ok(n.to_string()),
+            Value::Number(n) => Ok(crate::machine::number_text(*n)),
             Value::Bool(b) => Ok(b.to_string()),
             _ => Err("attribute must be scalar".into()),
         }
