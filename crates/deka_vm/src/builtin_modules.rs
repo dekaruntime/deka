@@ -74,13 +74,14 @@ const MODULES: &[Module] = &[
     },
 ];
 fn module(name: &str) -> Option<&'static Module> {
+    let name = if name == "@deka/math" { "math" } else { name };
     MODULES.iter().find(|module| module.name == name)
 }
 pub(super) fn contains(name: &str) -> bool {
     module(name).is_some()
 }
 pub(super) fn path(name: &str) -> PathBuf {
-    PathBuf::from("<builtin>").join(name)
+    PathBuf::from("<builtin>").join(module(name).map_or(name, |module| module.name))
 }
 pub(super) fn is_path(path: &std::path::Path) -> bool {
     path.starts_with("<builtin>")
@@ -94,6 +95,12 @@ impl Module {
                 .strip_prefix(self.prefix)
                 .filter(|name| !name.is_empty())
         }
+    }
+}
+pub(super) fn constant(source: &str, export: &str) -> Option<crate::Literal> {
+    match (module(source)?.name, export) {
+        ("math", "PI") => Some(crate::Literal::Number(crate::builtin_math::PI)),
+        _ => None,
     }
 }
 pub(super) fn operation(source: &str, export: &str, hosts: &Hosts) -> Result<String> {
@@ -132,6 +139,11 @@ pub(super) fn exports<'a>(
                 for (name, operation) in deka_syntax::typeck::JsonOperation::MODULE_FUNCTIONS {
                     exports.values.insert(name, operation.module_type());
                 }
+            }
+            if module.name == "math" {
+                exports
+                    .values
+                    .insert("PI", deka_syntax::typeck::Type::Named { name: "number" });
             }
             (path(module.name), exports)
         })

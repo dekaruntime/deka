@@ -731,3 +731,6 @@ unsafe-unsafe-typed-result-mismatch-fail
 
 # Native crypto exports; pinned sources run unchanged.
 crypto-random-bytes-rejects-zero
+data-types-number-math-total
+data-types-number-math-option
+error-globals-math-module-pi
