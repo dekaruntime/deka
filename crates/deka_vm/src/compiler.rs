@@ -562,6 +562,11 @@ fn lower_module<'a>(
         .iter()
         .map(|(site, op)| (*site as usize, (*op).to_owned()))
         .collect();
+    lower.number_math_calls = checked
+        .number_math_calls
+        .keys()
+        .map(|p| *p as usize)
+        .collect();
     lower.type_of_calls = checked.type_of_calls.iter().map(|p| *p as usize).collect();
     lower.signature_calls = checked
         .signature_calls
@@ -672,6 +677,12 @@ fn lower_module<'a>(
                     continue;
                 }
                 if host_module(source) {
+                    if let Some(value) = builtins::constant(source, spec.imported) {
+                        entry.emit(Op::Const(value));
+                        let slot = entry.bind(spec.local);
+                        entry.emit(Op::Store(slot));
+                        continue;
+                    }
                     let operation = builtins::operation(source, spec.imported, hosts)?;
                     lower.hosts.insert(spec.local.into(), operation);
                     continue;
@@ -775,8 +786,12 @@ fn lower_module<'a>(
                     // consumer imported from the origin directly (deka#1210).
                     Some(source) if host_module(source) => {
                         for name in *names {
-                            let operation = builtins::operation(source, name.name, hosts)?;
-                            lower.host_closure(&operation, entry)?;
+                            if let Some(value) = builtins::constant(source, name.name) {
+                                entry.emit(Op::Const(value));
+                            } else {
+                                let operation = builtins::operation(source, name.name, hosts)?;
+                                lower.host_closure(&operation, entry)?;
+                            }
                             let external = name.alias.unwrap_or(name.name);
                             let slot = entry.bind(external);
                             entry.emit(Op::Store(slot));
@@ -1242,6 +1257,7 @@ fn compile_modules(
         method_decls: BTreeMap::new(),
         struct_embeds: BTreeMap::new(),
         native_property_calls: Default::default(),
+        number_math_calls: Default::default(),
         type_of_calls: Default::default(),
         exception_forms: HashMap::new(),
         exception_sources: Default::default(),
@@ -1563,6 +1579,7 @@ struct Lower<'a> {
     /// The host registry supplies the output sink and its wire signature.
     console_outputs: std::collections::BTreeSet<&'static str>,
     native_property_calls: HashMap<usize, String>,
+    number_math_calls: std::collections::BTreeSet<usize>,
     type_of_calls: std::collections::BTreeSet<usize>,
     exception_forms: HashMap<usize, ExceptionEmit>,
     exception_sources: std::collections::BTreeSet<usize>,
@@ -2935,6 +2952,30 @@ impl<'a> Lower<'a> {
                 }
                 // Explicit type arguments erase; the typechecker has already
                 // verified them.
+                if let Expr::FieldAccess { object, field, .. } = callee
+                    && self
+                        .number_math_calls
+                        .contains(&(e as *const Expr as usize))
+                {
+                    let method = deka_syntax::math_catalog::method(field)
+                        .ok_or("unknown number math method")?;
+                    let operation = crate::builtin_math::operation(method.name);
+                    if !self.host_arities.contains_key(&operation) {
+                        return Err(format!(
+                            "native number math operation {} is not registered",
+                            method.name
+                        ));
+                    }
+                    self.expr(object, c)?;
+                    for argument in *args {
+                        self.expr(argument, c)?;
+                    }
+                    c.emit(Op::Host {
+                        operation,
+                        arguments: 1 + method.arguments,
+                    });
+                    return Ok(());
+                }
                 // A recorded receiver-method call rewrites to its free
                 // function: `r.move()` is `move$Mover(r.Mover)` — the embed
                 // path walks from the receiver value to the record the
