@@ -738,3 +738,6 @@ error-globals-math-module-pi
 
 http-invalid-url
 http-get-refused
+fs-mkdirs-idempotent
+fs-read-missing
+fs-read-dir-missing

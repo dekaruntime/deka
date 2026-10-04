@@ -3,6 +3,7 @@
 //! and evaluate the outcome against each case's expectation.
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+mod native_fs;
 mod process;
 
 pub const DEFAULT_DEKA_LOCK: &str = "{\n  \"lockfileVersion\": 1,\n  \"packages\": {}\n}\n";
@@ -397,7 +398,8 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     let native_fixture = native_json
         || native_bytes_fixture(case)
         || native_time_fixture(case)
-        || native_http_fixture(case);
+        || native_http_fixture(case)
+        || native_fs::matches(case);
     if !case.packages.is_empty() && !native_fixture {
         return Err(format!(
             "{} declares packages {:?}; the gate is offline and cannot install them",

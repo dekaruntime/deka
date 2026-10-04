@@ -3,6 +3,7 @@
 See [Checking native programs](./native/checking) for source validation and the
 distinction between check errors and execution failures.
 See [Checking an unpublished package](./native/package-checking) for local consumer validation before publishing.
+See [Forwarding type exports](./native/type-barrels) for type-only barrel imports.
 
 Deka's native runtime compiles DekaScript to VM bytecode and renders a node tree
 through its Rust layout, text and animation implementation. The compiler,
@@ -658,3 +659,5 @@ See [Native JSON](./native/json) for typed parsing and serialization.
 
 See [Typed host enums](./native/host-enums) for named host values and enum Result error channels.
 See [Nested generic calls](./native/generic-calls) for explicit call type arguments such as `JSON.parse<Array<number>>(text)`.
+
+See [Native filesystem operations](./native/fs) for byte I/O, directory entries and typed filesystem Results.
