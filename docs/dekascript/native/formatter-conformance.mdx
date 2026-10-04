@@ -1,0 +1,22 @@
+# Formatter conformance
+
+The corpus gate exercises the archived `formatter` category with the actual
+`deka fmt` command. It checks and runs each original program, formats its staged
+source twice, then checks and runs the formatted program. Both executions must
+agree on success, compilation failures, stdout and diagnostic messages. The
+recorded corpus stdout and diagnostic expectations remain authoritative.
+
+Initially valid source must still parse and keep its comments. Initially invalid
+source must remain byte-identical and continue to produce its recorded failure;
+formatting does not repair it. A second formatting pass must change no bytes.
+
+All 35 archived fixtures meet this contract: 12 successful programs and 23
+expected parse failures. The names of some negative fixtures describe older
+language decisions, so the corpus metadata determines their current expectation.
+No archived sources, statuses or expected outputs were rewritten for this gate.
+
+The CI consumer `cargo run -p corpus_gate --example formatter_gate -- <deka>`
+also stages a deliberately unformatted program, asserts its exact canonical
+source against an independent golden and verifies its real stdout. This catches
+a missing formatter invocation or an implementation that returns input unchanged,
+even when the program still produces the correct answer.
