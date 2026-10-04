@@ -589,6 +589,7 @@ modules-relative-import-side-effect-001
 modules-relative-import-struct-001
 modules-relative-import-subdirectory-001
 option-struct-defaults-required
+packages-bytes-from-string-len
 parser-array-trailing-comma
 parser-arrow-bare-parameter-rejected
 parser-async-arrow-function

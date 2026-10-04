@@ -317,6 +317,21 @@ fn native_json_source(source: &str) -> bool {
     })
 }
 
+// This one pinned fixture's package metadata predates the native bytes module.
+// Only obsolete metadata is bypassed: source and its exact output are still run.
+const LEGACY_BYTES_SOURCE: &str = "import { echo } from \"io\"\nimport { from_string, len } from \"bytes\"\n\nconst encoded = from_string(\"hello\")\necho(string(len(encoded)))\n";
+fn native_bytes_fixture(case: &Case) -> bool {
+    case.slug == "packages-bytes-from-string-len"
+        && case.status == Status::Pass
+        && case.stage == Stage::Run
+        && case.packages == ["bytes"]
+        && case.source == LEGACY_BYTES_SOURCE
+        && case.expected_stdout.as_deref() == Some("5\n")
+        && case.expected_diagnostic_contains.is_none()
+        && case.files.is_empty()
+        && case.deka_json.is_none()
+}
+
 pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, String> {
     // The pinned JSON corpus predates native typed JSON and still names its
     // old package. These fixtures now run against the built-in language path;
@@ -326,7 +341,8 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
         && std::iter::once(case.source.as_str())
             .chain(case.files.iter().map(|(_, source)| source.as_str()))
             .all(native_json_source);
-    if !case.packages.is_empty() && !native_json {
+    let native_fixture = native_json || native_bytes_fixture(case);
+    if !case.packages.is_empty() && !native_fixture {
         return Err(format!(
             "{} declares packages {:?}; the gate is offline and cannot install them",
             case.slug, case.packages
@@ -338,7 +354,7 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     std::fs::write(directory.join("deka.lock"), DEFAULT_DEKA_LOCK).unwrap();
     let deka_json = match &case.deka_json {
         Some(value) => format!("{}\n", serde_json::to_string_pretty(value).unwrap()),
-        None if !case.packages.is_empty() && !native_json => PACKAGE_DEKA_JSON.to_string(),
+        None if !case.packages.is_empty() && !native_fixture => PACKAGE_DEKA_JSON.to_string(),
         None => DEFAULT_DEKA_JSON.to_string(),
     };
     std::fs::write(directory.join("deka.json"), deka_json).unwrap();
@@ -520,6 +536,43 @@ mod tests {
             transpile_failed,
             diagnostics: if ok { Vec::new() } else { vec!["boom".into()] },
         }
+    }
+
+    fn legacy_bytes_case() -> Case {
+        let mut fixture = case(Status::Pass, Stage::Run);
+        fixture.slug = "packages-bytes-from-string-len".into();
+        fixture.packages = vec!["bytes".into()];
+        fixture.source = LEGACY_BYTES_SOURCE.into();
+        fixture.expected_stdout = Some("5\n".into());
+        fixture
+    }
+    #[test]
+    fn bytes_metadata_migration_rejects_changed_source_output_and_real_packages() {
+        assert!(native_bytes_fixture(&legacy_bytes_case()));
+        let mut fixture = legacy_bytes_case();
+        fixture.packages.push("unpublished-real-package".into());
+        assert!(!native_bytes_fixture(&fixture));
+        let scratch = tempfile::tempdir().unwrap();
+        assert!(
+            run_case(Path::new("missing-runtime"), &fixture, scratch.path())
+                .unwrap_err()
+                .contains("offline")
+        );
+        let mut fixture = legacy_bytes_case();
+        fixture.source.push_str("echo(99)\n");
+        assert!(!native_bytes_fixture(&fixture));
+        let mut fixture = legacy_bytes_case();
+        fixture.expected_stdout = Some("99\n".into());
+        assert!(!native_bytes_fixture(&fixture));
+        let mut fixture = legacy_bytes_case();
+        fixture.slug = "packages-bytes-roundtrip".into();
+        assert!(!native_bytes_fixture(&fixture));
+        let mut fixture = legacy_bytes_case();
+        fixture.status = Status::Fail;
+        assert!(!native_bytes_fixture(&fixture));
+        let mut fixture = legacy_bytes_case();
+        fixture.deka_json = Some(serde_json::json!({"name":"new-metadata"}));
+        assert!(!native_bytes_fixture(&fixture));
     }
 
     #[test]
