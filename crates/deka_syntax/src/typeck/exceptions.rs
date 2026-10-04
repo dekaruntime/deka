@@ -38,7 +38,7 @@ fn channels<'a>(ty: &Type<'a>, channel: &str) -> Option<(Type<'a>, Type<'a>)> {
     }
 }
 
-/// Localize named types in an imported Exception signature to the actual
+/// Localize named types in an imported signature to the actual
 /// imported constructor bindings. Comparing original spellings is unsound:
 /// two modules can both export a struct named Fault with different factories.
 pub(super) fn localize_export<'a>(
@@ -46,23 +46,6 @@ pub(super) fn localize_export<'a>(
     specs: &[ast::ImportSpec<'a>],
     exports: &super::ModuleExports<'a>,
 ) -> Type<'a> {
-    fn has_exception(ty: &Type<'_>) -> bool {
-        match ty {
-            Type::Generic {
-                base: "Exception", ..
-            } => true,
-            Type::Generic {
-                base: "Promise",
-                args,
-            } => args.iter().any(has_exception),
-            Type::Generic {
-                base: "Hook",
-                args,
-            } => args.iter().any(has_exception),
-            Type::Function { ret, .. } => has_exception(ret),
-            _ => false,
-        }
-    }
     fn rename<'a>(ty: &Type<'a>, names: &HashMap<&'a str, &'a str>) -> Type<'a> {
         let name = |n: &'a str| names.get(n).copied().unwrap_or(n);
         match ty {
@@ -106,9 +89,6 @@ pub(super) fn localize_export<'a>(
             },
             other => other.clone(),
         }
-    }
-    if !has_exception(ty) {
-        return ty.clone();
     }
     let names = specs
         .iter()

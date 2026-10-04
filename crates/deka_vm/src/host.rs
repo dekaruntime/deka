@@ -43,6 +43,22 @@ impl PartialEq for HostHandle {
         self.name == other.name && Rc::ptr_eq(&self.resource, &other.resource)
     }
 }
+/// A named enum schema shared by checking, marshalling and error channels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HostEnum {
+    pub name: String,
+    pub cases: Vec<(String, Option<HostType>)>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct HostStruct {
+    pub name: String,
+    pub fields: BTreeMap<String, HostType>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct HostEnumError {
+    pub schema: HostEnum,
+    pub case: String,
+}
 #[derive(Clone, Debug, PartialEq)]
 pub enum HostValue {
     Unit,
@@ -56,6 +72,15 @@ pub enum HostValue {
     Bytes(Vec<u8>),
     Handle(HostHandle),
     Callback(HostCallback),
+    Enum {
+        name: String,
+        case: String,
+        payload: Option<Box<HostValue>>,
+    },
+    Struct {
+        name: String,
+        fields: BTreeMap<String, HostValue>,
+    },
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum HostType {
@@ -71,6 +96,8 @@ pub enum HostType {
     Bytes,
     Handle(String),
     Callback,
+    Enum(Box<HostEnum>),
+    Struct(Box<HostStruct>),
     /// A synchronous or asynchronous language callback with a single checked
     /// argument/return contract. Result failures are data, not thrown values.
     TypedCallback {
@@ -107,6 +134,29 @@ impl HostType {
                     .get(name)
                     .map_or(matches!(ty, Self::Option(_)), |v| ty.accepts(v))
             }),
+            (
+                Self::Enum(schema),
+                HostValue::Enum {
+                    name,
+                    case,
+                    payload,
+                },
+            ) => {
+                name == &schema.brand()
+                    && schema.cases.iter().any(|(label, ty)| {
+                        label == case
+                            && match (ty, payload) {
+                                (None, None) => true,
+                                (Some(ty), Some(value)) => ty.accepts(value),
+                                _ => false,
+                            }
+                    })
+            }
+            (Self::Struct(schema), HostValue::Struct { name, fields }) => {
+                name == &schema.brand()
+                    && Self::Record(schema.fields.clone())
+                        .accepts(&HostValue::Record(fields.clone()))
+            }
             (Self::Handle(name), HostValue::Handle(handle)) => name == handle.name(),
             _ => false,
         }
@@ -156,6 +206,8 @@ impl HostType {
                     .join(", ")
             ),
             Self::Handle(name) => name.clone(),
+            Self::Enum(schema) => schema.brand(),
+            Self::Struct(schema) => schema.brand(),
         }
     }
     fn validate(&self, handles: &mut BTreeSet<String>, depth: usize) -> Result<()> {
@@ -175,6 +227,25 @@ impl HostType {
                 for ty in args.iter().chain(std::iter::once(result.as_ref())) {
                     ty.validate(handles, depth + 1)?;
                 }
+            }
+            Self::Enum(schema) => {
+                validate_nominal_name(&schema.name)?;
+                if schema.cases.is_empty() {
+                    return Err("host enum needs a case".into());
+                }
+                let mut names = BTreeSet::new();
+                for (case, payload) in &schema.cases {
+                    if !identifier(case) || !names.insert(case) {
+                        return Err("invalid or duplicate host enum case".into());
+                    }
+                    if let Some(ty) = payload {
+                        ty.validate(handles, depth + 1)?;
+                    }
+                }
+            }
+            Self::Struct(schema) => {
+                validate_nominal_name(&schema.name)?;
+                Self::Record(schema.fields.clone()).validate(handles, depth + 1)?;
             }
             Self::List(item) | Self::Option(item) => item.validate(handles, depth + 1)?,
             Self::Tuple(items) => {
@@ -277,6 +348,40 @@ impl HostType {
                         .collect(),
                 )
             }
+            (
+                Self::Enum(schema),
+                HostValue::Enum {
+                    name,
+                    case,
+                    payload,
+                },
+            ) => {
+                let ty = &schema
+                    .cases
+                    .iter()
+                    .find(|(label, _)| label == &case)
+                    .expect("validated host enum")
+                    .1;
+                HostValue::Enum {
+                    name,
+                    case,
+                    payload: payload.map(|value| {
+                        Box::new(
+                            ty.as_ref()
+                                .expect("validated enum payload")
+                                .normalize(*value),
+                        )
+                    }),
+                }
+            }
+            (Self::Struct(schema), HostValue::Struct { name, fields }) => {
+                let HostValue::Record(fields) =
+                    Self::Record(schema.fields.clone()).normalize(HostValue::Record(fields))
+                else {
+                    unreachable!()
+                };
+                HostValue::Struct { name, fields }
+            }
             (_, value) => value,
         }
     }
@@ -305,6 +410,9 @@ pub struct HostOp {
     /// Operational failures are Result data. Protocol faults remain
     /// VM errors. The declaration and dispatch share this output contract.
     pub result_channel: bool,
+    pub result_error: Option<HostEnumError>,
+    /// Synchronous operational failures raise a typed JsError.
+    pub exception_channel: bool,
     pub global: bool,
     /// A zero-argument Rust getter exposed as a typed ambient value.
     pub global_value: Option<String>,
@@ -323,6 +431,20 @@ impl HostOp {
     /// Declare `Result<T, string>` (or `Promise<Result<T, string>>`) output.
     pub fn with_result_channel(mut self) -> Self {
         self.result_channel = true;
+        self
+    }
+    /// Operational string failures become a declared string-payload enum case.
+    pub fn with_enum_result_channel(mut self, schema: HostEnum, case: &str) -> Self {
+        self.result_channel = true;
+        self.result_error = Some(HostEnumError {
+            schema,
+            case: case.into(),
+        });
+        self
+    }
+    /// Declare synchronous `Exception<T, JsError>`; async channels fail closed.
+    pub fn with_exception_channel(mut self) -> Self {
+        self.exception_channel = true;
         self
     }
     pub fn with_defaults(mut self, defaults: Vec<HostValue>) -> Self {
@@ -365,8 +487,16 @@ impl HostOp {
             .join(", ")
     }
     fn output_source(&self) -> String {
-        let value = if self.result_channel {
-            format!("Result<{}, string>", self.result.source())
+        let value = if self.exception_channel {
+            format!("Exception<{}, JsError>", self.result.source())
+        } else if self.result_channel {
+            format!(
+                "Result<{}, {}>",
+                self.result.source(),
+                self.result_error
+                    .as_ref()
+                    .map_or_else(|| "string".to_string(), |error| error.schema.brand())
+            )
         } else {
             self.result.source().to_owned()
         };
@@ -416,6 +546,8 @@ impl HostOp {
             result,
             asynchronous,
             result_channel: false,
+            result_error: None,
+            exception_channel: false,
             global: false,
             global_value: None,
             namespace: None,
@@ -430,9 +562,20 @@ impl HostOp {
 #[derive(Default, Clone)]
 pub struct Hosts {
     operations: BTreeMap<String, HostOp>,
+    nominal: BTreeMap<String, HostType>,
 }
 impl Hosts {
     pub fn register(&mut self, op: HostOp) -> Result<()> {
+        if op.exception_channel
+            && (op.asynchronous
+                || op.result_channel
+                || op.result_error.is_some()
+                || op.global_value.is_some()
+                || op.receiver_property
+                || op.json_body)
+        {
+            return Err("Exception host channel requires a synchronous throwing function".into());
+        }
         if op.name.is_empty()
             || !op
                 .name
@@ -526,7 +669,21 @@ impl Hosts {
         {
             return Err("invalid or duplicate host receiver method".into());
         }
+        if let Some(error) = &op.result_error {
+            if !op.result_channel
+                || !error
+                    .schema
+                    .cases
+                    .iter()
+                    .any(|(name, ty)| name == &error.case && ty.as_ref() == Some(&HostType::String))
+            {
+                return Err("host enum error needs a declared string-payload case".into());
+            }
+            HostType::Enum(Box::new(error.schema.clone())).validate(&mut BTreeSet::new(), 0)?;
+        }
+        let nominal = Self::nominal_schemas(self.operations.values().chain(Some(&op)))?;
         self.operations.insert(op.name.clone(), op);
+        self.nominal = nominal;
         Ok(())
     }
     pub fn operation(&self, name: &str) -> Result<&HostOp> {
@@ -539,7 +696,7 @@ impl Hosts {
         name: &str,
         mut args: Vec<HostValue>,
         context: &HostContext,
-    ) -> Result<(HostReply, HostType, bool, bool)> {
+    ) -> Result<(HostReply, HostType, bool, bool, Option<HostEnumError>)> {
         let op = self.operation(name)?;
         // Closure invocation fills omitted parameter cells with unit. Defaults
         // cannot be unit, so only the optional trailing cells are removed here.
@@ -568,7 +725,13 @@ impl Hosts {
                 "synchronous host operation {name} returned a future"
             ));
         }
-        Ok((reply, op.result.clone(), op.asynchronous, op.result_channel))
+        Ok((
+            reply,
+            op.result.clone(),
+            op.asynchronous,
+            op.result_channel,
+            op.result_error.clone(),
+        ))
     }
     pub(crate) fn declarations_names_and_arities(&self) -> BTreeMap<String, usize> {
         self.operations
@@ -600,10 +763,13 @@ impl Hosts {
                     .expect("registered host schema");
             }
         }
-        let mut source = handles
-            .into_iter()
-            .map(|name| format!("export opaque type {name};\n"))
-            .collect::<String>();
+        let mut source = self.nominal_source();
+        source.push_str(
+            &handles
+                .into_iter()
+                .map(|name| format!("export opaque type {name};\n"))
+                .collect::<String>(),
+        );
         for op in self.operations.values() {
             let args = op.parameters_source(0);
             // Host failures are Result data or VM protocol faults, never language
@@ -662,3 +828,141 @@ fn default_source(value: &HostValue) -> Option<String> {
         _ => return None,
     })
 }
+fn validate_nominal_name(name: &str) -> Result<()> {
+    if !identifier(name)
+        || !name.starts_with(char::is_uppercase)
+        || matches!(
+            name,
+            "Option" | "Result" | "Promise" | "Exception" | "Array" | "Type"
+        )
+    {
+        return Err("invalid named host type".into());
+    }
+    Ok(())
+}
+impl HostEnum {
+    pub fn brand(&self) -> String {
+        crate::native_brand::brand(&self.name)
+    }
+}
+impl HostStruct {
+    pub fn brand(&self) -> String {
+        crate::native_brand::brand(&self.name)
+    }
+}
+impl Hosts {
+    fn nominal_schemas<'a>(
+        operations: impl Iterator<Item = &'a HostOp>,
+    ) -> Result<BTreeMap<String, HostType>> {
+        fn collect(ty: &HostType, out: &mut BTreeMap<String, HostType>) -> Result<()> {
+            let name = match ty {
+                HostType::Enum(schema) => Some(&schema.name),
+                HostType::Struct(schema) => Some(&schema.name),
+                HostType::Handle(name) => Some(name),
+                _ => None,
+            };
+            if let Some(name) = name {
+                if let Some(old) = out.get(name) {
+                    if old != ty {
+                        return Err(format!("conflicting host type schema: {name}"));
+                    }
+                } else {
+                    out.insert(name.clone(), ty.clone());
+                }
+            }
+            match ty {
+                HostType::Enum(schema) => {
+                    for (_, payload) in &schema.cases {
+                        if let Some(ty) = payload {
+                            collect(ty, out)?;
+                        }
+                    }
+                }
+                HostType::Struct(schema) => {
+                    for ty in schema.fields.values() {
+                        collect(ty, out)?;
+                    }
+                }
+                HostType::Record(fields) => {
+                    for ty in fields.values() {
+                        collect(ty, out)?;
+                    }
+                }
+                HostType::List(ty) | HostType::Option(ty) => collect(ty, out)?,
+                HostType::TypedCallback { args, result, .. } => {
+                    for ty in args.iter().chain(std::iter::once(result.as_ref())) {
+                        collect(ty, out)?;
+                    }
+                }
+                HostType::Tuple(items) => {
+                    for ty in items {
+                        collect(ty, out)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        let mut out = BTreeMap::new();
+        for op in operations {
+            for ty in op.args.iter().chain(std::iter::once(&op.result)) {
+                collect(ty, &mut out)?;
+            }
+            if let Some(error) = &op.result_error {
+                collect(&HostType::Enum(Box::new(error.schema.clone())), &mut out)?;
+            }
+        }
+        Ok(out)
+    }
+    #[cfg(feature = "compiler")]
+    pub(crate) fn nominal_types_for(
+        &self,
+        includes: impl Fn(&str) -> bool,
+    ) -> BTreeMap<String, HostType> {
+        Self::nominal_schemas(
+            self.operations
+                .iter()
+                .filter_map(|(name, op)| includes(name).then_some(op)),
+        )
+        .expect("registered host schemas were validated together")
+    }
+    pub(crate) fn nominal_types(&self) -> BTreeMap<String, HostType> {
+        self.nominal.clone()
+    }
+    pub(crate) fn nominal_type(&self, brand: &str) -> Option<&HostType> {
+        self.nominal.get(public_native_name(brand))
+    }
+    fn nominal_source(&self) -> String {
+        let mut out = String::new();
+        for ty in self.nominal_types().values() {
+            match ty {
+                HostType::Struct(schema) => {
+                    out.push_str(&format!("struct {} {{\n", schema.brand()));
+                    for (name, ty) in &schema.fields {
+                        out.push_str(&format!("{name}: {}\n", ty.source()));
+                    }
+                    out.push_str("}\n");
+                    out.push_str(&format!("export {{ {} }};\n", schema.brand()));
+                }
+                HostType::Enum(schema) => {
+                    out.push_str(&format!("enum {} {{\n", schema.brand()));
+                    for (name, payload) in &schema.cases {
+                        out.push_str(&format!(
+                            "{name}{} ,\n",
+                            payload
+                                .as_ref()
+                                .map(|ty| format!("({})", ty.source()))
+                                .unwrap_or_default()
+                        ));
+                    }
+                    out.push_str("}\n");
+                    out.push_str(&format!("export {{ {} }};\n", schema.brand()));
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+}
+
+pub(crate) use crate::native_brand::public_name as public_native_name;

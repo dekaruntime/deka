@@ -196,9 +196,9 @@ mod tests {
     }
     #[test]
     fn engine_bounds_and_authentication_failures_are_explicit() {
-        let fill: Entropy = Rc::new(crypto::fill_random);
-        let key = crypto::random_bytes(32., &fill).unwrap();
-        let nonce = crypto::random_bytes(12., &fill).unwrap();
+        use aes_gcm::aead::{AeadCore, KeyInit, OsRng};
+        let key = aes_gcm::Aes256Gcm::generate_key(&mut OsRng).to_vec();
+        let nonce = aes_gcm::Aes256Gcm::generate_nonce(&mut OsRng).to_vec();
         let mut wrong_key = key.clone();
         wrong_key[0] ^= 1;
         let large = vec![0; 16 * 1024 * 1024 + 1];

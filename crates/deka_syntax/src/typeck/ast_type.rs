@@ -162,9 +162,9 @@ impl<'a> Checker<'a> {
                     if let Some(ty) = self.opaques.get(name) {
                         ty.clone()
                     } else if self.structs.contains_key(name) {
-                        Type::Struct { name }
+                        self.canonical_nominal_type(name, Type::Struct { name })
                     } else if self.enums.contains_key(name) {
-                        Type::Named { name }
+                        self.canonical_nominal_type(name, Type::Named { name })
                     } else if let Some(info) = self.interfaces.get(name) {
                         Type::Interface {
                             name,
