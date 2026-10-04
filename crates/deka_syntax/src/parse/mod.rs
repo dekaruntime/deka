@@ -12,6 +12,8 @@ use crate::lexer::{Lexer, Token, TokenKind};
 #[cfg(test)]
 mod arrow_tests;
 #[cfg(test)]
+mod generic_call_tests;
+#[cfg(test)]
 mod stmt_tests;
 mod expr;
 mod jsx;
