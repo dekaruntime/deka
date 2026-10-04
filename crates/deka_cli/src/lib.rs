@@ -2,6 +2,7 @@
 //! Command dispatch lives in [`cli`]; this module holds the implementations.
 mod check_output;
 pub mod cli;
+mod package_check;
 mod packages;
 
 mod desktop_runtime;
