@@ -1,0 +1,42 @@
+---
+title: "Local names for imported types"
+---
+
+Two imports of one nominal declaration refer to the same type. You can use
+either local name in annotations, including function parameters and returns.
+Different declaring modules still define distinct structs, enums and newtypes,
+even when the names and fields match. This also works through renamed barrels.
+
+`library.ds`:
+
+```ds
+type ProjectId number;
+export {ProjectId};
+export fn makeId() ProjectId {
+    return ProjectId(42);
+}
+```
+
+`main.ds`:
+
+```ds
+import {echo} from "io";
+
+import type {ProjectId as First, ProjectId as Second} from "./library.ds";
+import {makeId} from "./library.ds";
+
+fn copy(value: First) Second {
+    return value;
+}
+
+fn main() void {
+    echo(string(unboxNumber(copy(makeId()))));
+}
+```
+
+`deka check main.ds --entry main` succeeds; running the program prints `42`.
+Built executables preserve this behavior without the source files.
+`import type` still creates a type binding; another alias does not make that
+binding usable as a constructor or runtime value. For enums and structs,
+import an ordinary value binding when you need to construct a value or match
+its cases. Diagnostics use the first local binding as the shared spelling.

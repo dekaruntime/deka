@@ -3203,6 +3203,7 @@ impl<'a> Checker<'a> {
         span: ast::Span,
         scrutinee_type: &Type<'a>,
     ) {
+        let name = self.nominal_aliases.get(name).copied().unwrap_or(name);
         let type_args = match scrutinee_type {
             Type::Struct { name: actual } if *actual == name => None,
             Type::Generic { base, args } if *base == name && self.structs.contains_key(base) => {

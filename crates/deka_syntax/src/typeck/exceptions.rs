@@ -38,6 +38,51 @@ fn channels<'a>(ty: &Type<'a>, channel: &str) -> Option<(Type<'a>, Type<'a>)> {
     }
 }
 
+pub(super) fn rename_nominal_type<'a>(ty: &Type<'a>, names: &HashMap<&'a str, &'a str>) -> Type<'a> {
+    let name = |n: &'a str| names.get(n).copied().unwrap_or(n);
+    match ty {
+        Type::Struct { name: n } => Type::Struct { name: name(n) },
+        Type::Named { name: n } => Type::Named { name: name(n) },
+        Type::Interface { name: n, identity } => Type::Interface {
+            name: name(n),
+            identity: *identity,
+        },
+        Type::Newtype { name: n, repr } => Type::Newtype {
+            name: name(n),
+            repr: *repr,
+        },
+        Type::Generic { base, args } => Type::Generic {
+            base: name(base),
+            args: args.iter().map(|t| rename_nominal_type(t, names)).collect(),
+        },
+        Type::Union { members } => Type::Union {
+            members: members.iter().map(|t| rename_nominal_type(t, names)).collect(),
+        },
+        Type::Option { inner } => Type::Option {
+            inner: Box::new(rename_nominal_type(inner, names)),
+        },
+        Type::Tuple { elements } => Type::Tuple {
+            elements: elements.iter().map(|t| rename_nominal_type(t, names)).collect(),
+        },
+        Type::Array { elem } => Type::Array {
+            elem: Box::new(rename_nominal_type(elem, names)),
+        },
+        Type::Function {
+            params,
+            ret,
+            optional,
+        } => Type::Function {
+            params: params.iter().map(|t| rename_nominal_type(t, names)).collect(),
+            ret: Box::new(rename_nominal_type(ret, names)),
+            optional: *optional,
+        },
+        Type::Object { fields } => Type::Object {
+            fields: fields.iter().map(|(n, t)| (*n, rename_nominal_type(t, names))).collect(),
+        },
+        other => other.clone(),
+    }
+}
+
 /// Localize named types in an imported signature to the actual
 /// imported constructor bindings. Comparing original spellings is unsound:
 /// two modules can both export a struct named Fault with different factories.
@@ -46,50 +91,6 @@ pub fn localize_export<'a>(
     specs: &[ast::ImportSpec<'a>],
     exports: &super::ModuleExports<'a>,
 ) -> Type<'a> {
-    fn rename<'a>(ty: &Type<'a>, names: &HashMap<&'a str, &'a str>) -> Type<'a> {
-        let name = |n: &'a str| names.get(n).copied().unwrap_or(n);
-        match ty {
-            Type::Struct { name: n } => Type::Struct { name: name(n) },
-            Type::Named { name: n } => Type::Named { name: name(n) },
-            Type::Interface { name: n, identity } => Type::Interface {
-                name: name(n),
-                identity: *identity,
-            },
-            Type::Newtype { name: n, repr } => Type::Newtype {
-                name: name(n),
-                repr: *repr,
-            },
-            Type::Generic { base, args } => Type::Generic {
-                base: name(base),
-                args: args.iter().map(|t| rename(t, names)).collect(),
-            },
-            Type::Union { members } => Type::Union {
-                members: members.iter().map(|t| rename(t, names)).collect(),
-            },
-            Type::Option { inner } => Type::Option {
-                inner: Box::new(rename(inner, names)),
-            },
-            Type::Tuple { elements } => Type::Tuple {
-                elements: elements.iter().map(|t| rename(t, names)).collect(),
-            },
-            Type::Array { elem } => Type::Array {
-                elem: Box::new(rename(elem, names)),
-            },
-            Type::Function {
-                params,
-                ret,
-                optional,
-            } => Type::Function {
-                params: params.iter().map(|t| rename(t, names)).collect(),
-                ret: Box::new(rename(ret, names)),
-                optional: *optional,
-            },
-            Type::Object { fields } => Type::Object {
-                fields: fields.iter().map(|(n, t)| (*n, rename(t, names))).collect(),
-            },
-            other => other.clone(),
-        }
-    }
     let names = specs
         .iter()
         .filter(|spec| {
@@ -106,7 +107,7 @@ pub fn localize_export<'a>(
                 .chain(origin.map(|name| (name, spec.local)))
         })
         .collect();
-    rename(ty, &names)
+    rename_nominal_type(ty, &names)
 }
 
 impl<'a> Checker<'a> {
@@ -129,6 +130,11 @@ impl<'a> Checker<'a> {
             self.index_flow.kill();
         }
         let ty = self.check_expr_erasure(expr);
+        let ty = if self.nominal_aliases.is_empty() {
+            ty
+        } else {
+            rename_nominal_type(&ty, &self.nominal_aliases)
+        };
         self.apply_index_effect(expr);
         self.validate_option_erasure(&ty, expr.span());
         if matches!(ty, Type::Option { .. }) {

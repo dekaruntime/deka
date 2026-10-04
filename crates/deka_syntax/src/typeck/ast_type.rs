@@ -46,7 +46,12 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn resolve_ast_type(&mut self, ty: &ast::Type<'a>) -> Type<'a> {
-        self.resolve_ast_type_rec(ty, &mut HashSet::new())
+        let ty = self.resolve_ast_type_rec(ty, &mut HashSet::new());
+        if self.nominal_aliases.is_empty() {
+            ty
+        } else {
+            super::exceptions::rename_nominal_type(&ty, &self.nominal_aliases)
+        }
     }
 
     /// Seed one struct/enum/interface declared in the host file (dsc#288)
