@@ -280,7 +280,12 @@ fn validate_package(
     {
         return Err(format!("package manifest does not match {name}@{version}"));
     }
-    let entry = package_manifest
+    package_entry(package, &package_manifest)?;
+    dependency_pins(&package_manifest, name)
+}
+
+pub(crate) fn package_entry(package: &Path, manifest: &Value) -> Result<std::path::PathBuf> {
+    let entry = manifest
         .get("entry")
         .and_then(Value::as_str)
         .unwrap_or("index.ds");
@@ -294,14 +299,18 @@ fn validate_package(
         )
         || !package.join(entry_path).is_file()
     {
+        let name = manifest
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("<unnamed>");
         return Err(format!(
             "package {name} has no valid DekaScript entry: {entry}"
         ));
     }
-    dependency_pins(&package_manifest, name)
+    Ok(package.join(entry_path))
 }
 
-fn dependency_pins(manifest: &Value, owner: &str) -> Result<BTreeMap<String, String>> {
+pub(crate) fn dependency_pins(manifest: &Value, owner: &str) -> Result<BTreeMap<String, String>> {
     let Some(value) = manifest.get("dependencies") else {
         return Ok(BTreeMap::new());
     };
