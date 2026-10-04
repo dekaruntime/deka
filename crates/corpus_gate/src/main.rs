@@ -1,4 +1,4 @@
-//! Corpus gate (deka#1214): run listed corpus cases against `deka run` and
+//! Corpus gate (deka#1214): check and run listed corpus cases and
 //! fail if any stops matching its expectation. `--all` runs every case and
 //! prints matched slugs — that is how tests/corpus-passing.txt is generated
 //! and how a language PR finds the programs it fixed.

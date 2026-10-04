@@ -1,9 +1,9 @@
 //! Corpus gate library (deka#1214): enumerate testsuite-corpus cases,
-//! materialize fixtures exactly like the corpus runner, execute `deka run`,
+//! materialize fixtures exactly like the corpus runner, check then execute them,
 //! and evaluate the outcome against each case's expectation.
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+mod process;
 
 pub const DEFAULT_DEKA_LOCK: &str = "{\n  \"lockfileVersion\": 1,\n  \"packages\": {}\n}\n";
 pub const DEFAULT_DEKA_JSON: &str = "{\n  \"name\": \"conformance-fixture\",\n  \"security\": {\n    \"allow\": {\n      \"read\": [\"./\"],\n      \"write\": [\".cache\"]\n    },\n    \"prompt\": false\n  }\n}\n";
@@ -249,6 +249,7 @@ pub struct RunResult {
     pub stdout: String,
     pub stderr: String,
     pub error: Option<String>,
+    /// Compilation failed in the observed check phase, never inferred from stdout.
     pub transpile_failed: bool,
     pub diagnostics: Vec<String>,
 }
@@ -331,29 +332,15 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     };
     std::fs::write(directory.join("deka.json"), deka_json).unwrap();
 
-    let mut child = Command::new(deka)
-        .args(["run", &entry])
-        .current_dir(&directory)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn {}: {e}", deka.display()))?;
-    let deadline = std::time::Instant::now() + RUN_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(25));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("{} timed out after {RUN_TIMEOUT:?}", case.slug));
-            }
-            Err(e) => return Err(format!("failed to wait for {}: {e}", case.slug)),
-        }
+    let checked = process::execute(deka, "check", &entry, &directory, &case.slug)?;
+    if !checked.status.success() {
+        return Ok(command_result(checked, true));
     }
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    let output = process::execute(deka, "run", &entry, &directory, &case.slug)?;
+    Ok(command_result(output, false))
+}
+
+fn command_result(output: std::process::Output, check_failed: bool) -> RunResult {
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let raw_stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let stderr: String = raw_stderr
@@ -362,7 +349,6 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
         .collect::<Vec<_>>()
         .join("\n");
     let failed = !output.status.success();
-    let ran_in_isolate = raw_stderr.contains("Run failed:") || !stdout.is_empty();
     let diagnostics = if failed {
         parse_native_diagnostics(if stderr.is_empty() {
             &raw_stderr
@@ -389,22 +375,22 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     } else {
         None
     };
-    Ok(RunResult {
+    RunResult {
         ok: !failed,
         stdout,
         stderr,
         error,
-        transpile_failed: failed && !ran_in_isolate,
+        transpile_failed: check_failed,
         diagnostics,
-    })
+    }
 }
 
 fn stage_matches(expected: Stage, actual: Stage) -> bool {
     if expected == actual {
         return true;
     }
-    // The native isolate does not distinguish typecheck from parse on
-    // compile failure.
+    // The combined source check reports parse and typecheck diagnostics in
+    // one phase; preserve the corpus's existing compilation-stage grouping.
     matches!(
         (expected, actual),
         (Stage::Parse, Stage::Typecheck) | (Stage::Typecheck, Stage::Parse)
