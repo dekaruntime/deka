@@ -11,6 +11,10 @@ deka fmt app.dsx
 deka fmt src
 ```
 
+Recursive discovery skips symlinked entries and the dependency/build folders
+`node_modules`, `ds_modules`, `.git`, `.target`, `target` and `dist`, using the
+same traversal policy as `deka test`.
+
 Check formatting without changing files. A difference exits with status 1 and
 reports each file that would change:
 

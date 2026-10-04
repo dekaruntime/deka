@@ -96,11 +96,15 @@ fn collect(root: &Path) -> Result<Vec<PathBuf>, String> {
         for entry in fs::read_dir(&directory)
             .map_err(|error| format!("failed to read {}: {error}", directory.display()))?
         {
-            let path = entry
-                .map_err(|error| {
-                    format!("failed to read entry in {}: {error}", directory.display())
-                })?
-                .path();
+            let entry = entry.map_err(|error| {
+                format!("failed to read entry in {}: {error}", directory.display())
+            })?;
+            if !crate::source_entry::discoverable(&entry)
+                .map_err(|error| format!("failed to inspect {}: {error}", entry.path().display()))?
+            {
+                continue;
+            }
+            let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
             } else if path
