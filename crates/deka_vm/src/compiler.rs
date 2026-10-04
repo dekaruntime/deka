@@ -930,7 +930,6 @@ fn lower_module<'a>(
                                 .is_some()
                                 || module_exports[&target].structs.contains_key(name.name)
                                 || module_exports[&target].enums.contains_key(name.name)
-
                             {
                                 continue;
                             }
@@ -954,8 +953,8 @@ fn lower_module<'a>(
                                 .get(name.name)
                                 .and_then(deka_syntax::typeck::JsonOperation::from_module_type)
                                 .is_some()
-                                || erased_export(&module_exports[&target], name.name) {
-
+                                || erased_export(&module_exports[&target], name.name)
+                            {
                                 continue;
                             }
                             let external = name.alias.unwrap_or(name.name);

@@ -108,18 +108,32 @@ async fn json_intrinsics_and_erased_type_exports_share_one_barrel() {
     let types = dir.path().join("types.ds");
     let codec = dir.path().join("codec.ds");
     let main = dir.path().join("main.ds");
-    std::fs::write(&types, "export interface Named { name: string; } export alias Label = string;").unwrap();
-    std::fs::write(&codec, r#"export {parse as decode, stringify as encode} from "json";
-        export {Named, Label} from "./types.ds";"#).unwrap();
-    std::fs::write(&main, r#"import {decode, encode, Named, Label} from "./codec.ds";
+    std::fs::write(
+        &types,
+        "export interface Named { name: string; } export alias Label = string;",
+    )
+    .unwrap();
+    std::fs::write(
+        &codec,
+        r#"export {parse as decode, stringify as encode} from "json";
+        export {Named, Label} from "./types.ds";"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &main,
+        r#"import {decode, encode, Named, Label} from "./codec.ds";
         alias Payload = {name: Label};
         fn display(value: Named) string { return value.name; }
         fn main() string {
             return match decode<Payload>(encode({name:"Deka"})) {
                 Ok(value) => display(value), Err(error) => error
             };
-        }"#).unwrap();
+        }"#,
+    )
+    .unwrap();
     let program = compiler::compile_file(&main, &Hosts::default(), Some("main")).unwrap();
-    for path in [types, codec, main] { std::fs::remove_file(path).unwrap(); }
+    for path in [types, codec, main] {
+        std::fs::remove_file(path).unwrap();
+    }
     assert_eq!(execute(program).await, HostValue::String("Deka".into()));
 }
