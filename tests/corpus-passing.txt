@@ -735,3 +735,7 @@ time-two-nows
 data-types-number-math-total
 data-types-number-math-option
 error-globals-math-module-pi
+
+fs-mkdirs-idempotent
+fs-read-missing
+fs-read-dir-missing
