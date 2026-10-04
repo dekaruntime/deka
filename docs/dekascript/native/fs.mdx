@@ -1,0 +1,49 @@
+# Native filesystem operations
+
+The `fs` module provides file reads, file writes, directory listing and directory creation. File contents are immutable `bytes`; convert text explicitly with the `bytes` module.
+
+```ds
+import { from_string, to_string } from "bytes"
+import { mkdirs, write_file, read_file } from "fs"
+import { echo } from "io"
+
+async fn main() Promise<boolean> {
+    const made = unwrap(await mkdirs("data")) or {
+        echo("mkdir failed");
+        return false;
+    };
+    echo(string(made));
+    const written = unwrap(await write_file("data/note.txt", from_string("native"))) or {
+        echo("write failed");
+        return false;
+    };
+    echo(string(written));
+    const data = unwrap(await read_file("data/note.txt")) or {
+        echo("read failed");
+        return false;
+    };
+    const text = unwrap(to_string(data)) or {
+        echo("decode failed");
+        return false;
+    };
+    echo(text);
+    return true;
+}
+```
+
+This prints `true`, `6` and `native`, and writes the six bytes of `native` to `data/note.txt`. `mkdirs` succeeds when the directory already exists. `write_file` replaces a file's contents and requires its parent directory to exist.
+
+| Operation | Successful value |
+| --- | --- |
+| `read_file(path)` | `bytes` |
+| `write_file(path, data)` | Number of bytes written |
+| `read_dir(path)` | Array of records with `name`, `is_dir` and `is_file` fields |
+| `mkdirs(path)` | `true` |
+
+Each asynchronous operation returns `Promise<Result<T, FsError>>` and yields while Rust performs the I/O. The `_sync` twin returns `Result<T, FsError>` directly and blocks its calling thread. Both forms use the same filesystem engine and declared types.
+
+`read_dir` preserves the operating system's enumeration order. Entry names must be valid UTF-8; invalid names return an error rather than replacement characters. The file and directory flags describe the entry itself, so a symbolic link has both flags false.
+
+`FsError` is a named enum with `Failed(string)`, `PermissionDenied(FsPermission)`, `UnsupportedHost` and `InvalidPayload` cases. `FsPermission` has `capability` and `target` string fields. These names and constructors remain available for typed components and module interfaces. Native filesystem failures use `Failed(message)`; there is no permission configuration or grant prompt.
+
+A failed operation is `Err(FsError.Failed(message))`. It remains Result data after `await`; a language `try` catches `Throw`, rather than filesystem failures. Handle the Result with `match` or an explicit `unwrap(...) or { ... }` fallback.

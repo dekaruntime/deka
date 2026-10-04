@@ -1,0 +1,21 @@
+# Module resolution errors
+
+`deka check main.ds` resolves relative imports, re-exports and declared packages
+through the same module graph used by `deka run`. A resolution failure reports
+its original cause at the import or re-export statement's file, line and column.
+
+For example, if line 3 imports a missing package:
+
+```text
+[check] main.ds
+[check] 3:1: package @example/card is not declared in deka.json dependencies
+```
+
+An error in a dependency names that dependency once, followed by its own source
+location. The entry's import statement does not replace or prefix a dependency's
+parse, type or further import error. Self-import errors keep their existing
+cyclic-module explanation and now point to the self-import statement.
+
+Package declarations, installation checks, version pins and missing-file causes
+retain their existing rules. A missing entry source or unreadable project
+manifest has no import statement to identify, so it remains a file error.

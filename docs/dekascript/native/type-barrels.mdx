@@ -1,0 +1,49 @@
+---
+title: "Forwarding type exports"
+---
+
+A barrel can forward declared types alongside functions and constants.
+Named aliases, interfaces, enums, opaques and newtypes keep their checker
+metadata when renamed, forwarded again, or exported as the default type.
+Import a type with `import type`; import callable factories as ordinary values.
+
+`library.ds`:
+
+```ds
+alias Count = number;
+export {Count};
+export fn answer() Count {
+    return 42;
+}
+```
+
+`index.ds`:
+
+```ds
+export {Count as default, answer} from "./library.ds";
+```
+
+`main.ds`:
+
+```ds
+import {echo} from "io";
+
+import type {default as Count} from "./index.ds";
+import {answer} from "./index.ds";
+
+fn main() void {
+    const value: Count = answer();
+    echo(string(value));
+}
+```
+
+Running `deka run main.ds --entry main` prints `42`. Type metadata does not
+become an ordinary runtime variable. A missing export or an attempt to use a
+type-only import as a value remains a check error. Value factories still run
+in their declaring module, so a barrel does not reconstruct their values.
+For enum and newtype factory signatures, keep the original declared name as
+the local type import. Arbitrary local renaming of these nominal types remains
+a separate native compiler gap ([enum alias tracking](https://github.com/dekaruntime/deka/issues/1347)).
+
+An unpublished package whose entry is a barrel can use
+`deka check --as-package .` to check this public surface too.

@@ -44,6 +44,17 @@ pub struct PackageExport {
     pub name: String,
     pub type_only: bool,
 }
+/// Declared type exports have checker metadata, not ordinary runtime cells.
+/// A same-named value, when present, still needs its actual exported binding.
+fn erased_export(surface: &deka_syntax::ModuleExports<'_>, name: &str) -> bool {
+    !surface.values.contains_key(name)
+        && (surface.interfaces.contains_key(name)
+            || surface.structs.contains_key(name)
+            || surface.enums.contains_key(name)
+            || surface.aliases.contains_key(name)
+            || surface.opaques.contains_key(name)
+            || surface.newtypes.contains_key(name))
+}
 pub fn package_check_inputs(
     path: &std::path::Path,
     name: &str,
@@ -298,6 +309,20 @@ fn module_path(
     }
     project.package_path(parent, source)
 }
+/// Stamp a refusal once at the statement that produced it. The graph stamps
+/// only resolution failures on its own edges; recursive module errors already
+/// carry the dependency's source and must pass through unchanged.
+fn source_refusal(source_file: &str, span: Span, error: String) -> String {
+    if error.starts_with(&format!("{source_file}: ")) {
+        error
+    } else {
+        format!(
+            "{source_file}: {}:{}: {error}",
+            span.start.line, span.start.column
+        )
+    }
+}
+
 /// Modules in dependency order. A module already being loaded is not loaded
 /// again (import cycles load, deka#1206); reads of exports that initialize
 /// later than the importer become checked loads during lowering, computed
@@ -338,9 +363,15 @@ fn load_modules(
                 _ => None,
             };
             if let Some(source) = source.filter(|source| !host_module(source)) {
-                let target = module_path(&path, source, project)?;
+                let target = module_path(&path, source, project).map_err(|error| {
+                    source_refusal(&path.display().to_string(), stmt.span(), error)
+                })?;
                 if target == path {
-                    return Err(format!("cyclic module import: {}", path.display()));
+                    return Err(source_refusal(
+                        &path.display().to_string(),
+                        stmt.span(),
+                        format!("cyclic module import: {}", path.display()),
+                    ));
                 }
                 if !visiting.contains(&target) {
                     visit(target, project, visiting, loaded)?;
@@ -453,6 +484,7 @@ fn lower_module<'a>(
     lower: &mut Lower<'a>,
 ) -> Result<BTreeMap<String, usize>> {
     let mut deferred = deferred;
+    lower.source_file = path.display().to_string();
     let mut imports = HashMap::new();
     for stmt in ast.statements {
         let source = match stmt {
@@ -902,7 +934,7 @@ fn lower_module<'a>(
                     Some(source) => {
                         let target = module_path(path, source, project)?;
                         for name in *names {
-                            if module_exports[&target].structs.contains_key(name.name) {
+                            if erased_export(&module_exports[&target], name.name) {
                                 continue;
                             }
                             let external = name.alias.unwrap_or(name.name);
@@ -918,7 +950,16 @@ fn lower_module<'a>(
                                         target.clone(),
                                     ));
                                 }
-                                (None, None) => return Err("missing module export".into()),
+                                (None, None) => {
+                                    return Err(format!(
+                                        "{}: {}:{}: module {} does not export `{}`",
+                                        path.display(),
+                                        name.span.start.line,
+                                        name.span.start.column,
+                                        target.display(),
+                                        name.name
+                                    ));
+                                }
                             }
                         }
                     }
@@ -1357,6 +1398,7 @@ fn compile_modules(
     }
     let mut bindings: HashMap<std::path::PathBuf, BTreeMap<String, usize>> = HashMap::new();
     let mut lower = Lower {
+        source_file: String::new(),
         functions: vec![],
         hosts: BTreeMap::new(),
         host_namespaces: BTreeMap::new(),
@@ -1563,13 +1605,7 @@ fn compile_modules(
             .collect::<std::collections::BTreeSet<_>>();
         output.extend(names.into_iter().map(|name| PackageExport {
             name: name.to_owned(),
-            type_only: !surface.values.contains_key(name)
-                && (surface.interfaces.contains_key(name)
-                    || surface.structs.contains_key(name)
-                    || surface.enums.contains_key(name)
-                    || surface.aliases.contains_key(name)
-                    || surface.opaques.contains_key(name)
-                    || surface.newtypes.contains_key(name)),
+            type_only: erased_export(surface, name),
         }));
     }
     Ok(program)
@@ -1683,6 +1719,7 @@ enum ClosureBody<'s, 'a> {
 /// expression, and whether the field is optional.
 type StructFields<'a> = Vec<(String, Option<&'a Expr<'a>>, bool)>;
 struct Lower<'a> {
+    source_file: String,
     functions: Vec<Function>,
     hosts: BTreeMap<String, String>,
     host_namespaces: BTreeMap<String, Vec<(String, String)>>,
@@ -1737,6 +1774,10 @@ struct Lower<'a> {
     newtype_results: HashMap<usize, String>,
 }
 impl<'a> Lower<'a> {
+    /// Recursive lowering keeps the innermost refusal and its module once.
+    fn refusal(&self, span: Span, error: String) -> String {
+        source_refusal(&self.source_file, span, error)
+    }
     /// Prelude cases have the same ordered schema and bytecode as declared enums.
     fn enum_cases(&self, name: &str) -> Option<Vec<(String, bool)>> {
         self.enums.get(name).cloned().or_else(|| {
@@ -2295,6 +2336,10 @@ impl<'a> Lower<'a> {
         Ok(())
     }
     fn statement(&mut self, s: &Stmt<'a>, c: &mut Context) -> Result<()> {
+        self.statement_inner(s, c)
+            .map_err(|error| self.refusal(s.span(), error))
+    }
+    fn statement_inner(&mut self, s: &Stmt<'a>, c: &mut Context) -> Result<()> {
         match s {
             Stmt::Import { .. } | Stmt::Empty { .. } => {}
             // Types are erased at run time: an alias is the same value, a
@@ -2594,12 +2639,20 @@ impl<'a> Lower<'a> {
                     c.emit(Op::Store(slot));
                 }
             }
-            _ => {
-                return Err(format!(
-                    "{}:{}: statement is unsupported by VM experiment",
-                    s.span().start.line,
-                    s.span().start.column
-                ));
+            Stmt::Summon { .. } => {
+                return Err(
+                    "summoned foreign declarations are not supported by the native VM".into(),
+                );
+            }
+            Stmt::BridgeDecl { .. } => {
+                return Err(
+                    "ambient bridge declarations are not supported by the native VM".into(),
+                );
+            }
+            Stmt::Export { .. } => {
+                return Err(
+                    "ambient export declarations are not supported by the native VM".into(),
+                );
             }
         }
         Ok(())
@@ -2729,6 +2782,10 @@ impl<'a> Lower<'a> {
         Ok(())
     }
     fn expr(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
+        self.expr_inner(e, c)
+            .map_err(|error| self.refusal(e.span(), error))
+    }
+    fn expr_inner(&mut self, e: &Expr<'a>, c: &mut Context) -> Result<()> {
         match self
             .exception_forms
             .get(&(e as *const Expr as usize))
@@ -3512,12 +3569,33 @@ impl<'a> Lower<'a> {
                     c.emit(Op::Const(Literal::String("".into())));
                 }
             }
-            _ => {
+            Expr::BigInt { .. } => {
+                return Err("bigint literals are not supported by the native VM".into());
+            }
+            Expr::Unsafe { .. } => {
+                return Err("unsafe blocks are not supported by the native VM".into());
+            }
+            Expr::Build { .. } => {
+                return Err("build blocks are not supported by the native VM".into());
+            }
+            Expr::Bridge { kind, action, .. } => {
                 return Err(format!(
-                    "{}:{}: expression is unsupported by VM experiment",
-                    e.span().start.line,
-                    e.span().start.column
+                    "bridge call {kind}.{action} is not supported by the native VM"
                 ));
+            }
+            Expr::ImportMeta { .. } => {
+                return Err("import.meta is not supported by the native VM".into());
+            }
+            Expr::JsxFragment { .. } => {
+                return Err("standalone JSX fragments are not supported by the native VM".into());
+            }
+            Expr::JsxText { .. } => {
+                return Err("standalone JSX text is not supported by the native VM".into());
+            }
+            Expr::Spread { .. } => {
+                return Err(
+                    "standalone spread expressions are not supported by the native VM".into(),
+                );
             }
         }
         if let Some(name) = self.newtype_results.get(&(e as *const Expr as usize)) {
