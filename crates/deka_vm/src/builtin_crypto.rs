@@ -196,31 +196,36 @@ mod tests {
     }
     #[test]
     fn engine_bounds_and_authentication_failures_are_explicit() {
+        let fill: Entropy = Rc::new(crypto::fill_random);
+        let key = crypto::random_bytes(32., &fill).unwrap();
+        let nonce = crypto::random_bytes(12., &fill).unwrap();
+        let mut wrong_key = key.clone();
+        wrong_key[0] ^= 1;
         let large = vec![0; 16 * 1024 * 1024 + 1];
         let algorithm = "x".repeat(large.len());
         assert!(crypto::digest(&algorithm, &[]).is_err());
         assert!(crypto::hmac(&algorithm, &[], &[]).is_err());
         assert!(crypto::hmac("sha256", &[], &large).is_err());
         assert!(crypto::secure_compare(&large, &large).is_err());
-        assert!(crypto::aes_256_gcm(&[0; 32], &[0; 12], &large, &[], false).is_err());
+        assert!(crypto::aes_256_gcm(&key, &nonce, &large, &[], false).is_err());
         assert_eq!(
-            crypto::aes_256_gcm(&[0; 32], &[0; 11], &[], &[], false).unwrap_err(),
+            crypto::aes_256_gcm(&key, &nonce[..11], &[], &[], false).unwrap_err(),
             "nonce_length_invalid"
         );
         assert_eq!(
-            crypto::aes_256_gcm(&[0; 32], &[0; 12], &[], &[], true).unwrap_err(),
+            crypto::aes_256_gcm(&key, &nonce, &[], &[], true).unwrap_err(),
             "aes_decrypt_failed"
         );
-        let cipher = crypto::aes_256_gcm(&[0; 32], &[0; 12], b"native", b"aad", false).unwrap();
+        let cipher = crypto::aes_256_gcm(&key, &nonce, b"native", b"aad", false).unwrap();
         let mut tampered = cipher.clone();
         tampered[0] ^= 1;
         for (key, data, aad) in [
-            (&[1; 32][..], &cipher[..], b"aad".as_slice()),
-            (&[0; 32][..], &tampered[..], b"aad".as_slice()),
-            (&[0; 32][..], &cipher[..], b"bad".as_slice()),
+            (wrong_key.as_slice(), &cipher[..], b"aad".as_slice()),
+            (key.as_slice(), &tampered[..], b"aad".as_slice()),
+            (key.as_slice(), &cipher[..], b"bad".as_slice()),
         ] {
             assert_eq!(
-                crypto::aes_256_gcm(key, &[0; 12], data, aad, true).unwrap_err(),
+                crypto::aes_256_gcm(key, &nonce, data, aad, true).unwrap_err(),
                 "aes_decrypt_failed"
             );
         }
