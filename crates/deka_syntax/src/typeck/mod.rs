@@ -21,6 +21,7 @@ use crate::diagnostics::Diagnostic;
 mod ast_type;
 mod descriptor;
 mod exceptions;
+pub use exceptions::localize_export;
 mod expr;
 #[cfg(test)]
 mod arrow_tests;
@@ -270,6 +271,9 @@ pub struct ModuleExports<'a> {
     pub aliases: HashMap<&'a str, ast::Type<'a>>,
     pub opaques: HashMap<&'a str, Type<'a>>,
     pub newtypes: HashMap<&'a str, NewtypeInfo>,
+    /// Declaring spelling behind an exported nominal type. Barrel export keys
+    /// may change without changing the names inside origin factory signatures.
+    pub nominal_names: HashMap<&'a str, &'a str>,
     /// Compiler-supplied opaque property signatures, derived from host functions.
     pub native_properties: NativeProperties<'a>,
     /// Opaque receiver identity and method -> async raw string-body host op.
@@ -318,6 +322,7 @@ impl<'a> Default for ModuleExports<'a> {
             aliases: HashMap::new(),
             opaques: HashMap::new(),
             newtypes: HashMap::new(),
+            nominal_names: HashMap::new(),
             receiver_methods: HashMap::new(),
             native_properties: HashMap::new(),
             native_json_bodies: HashMap::new(),
@@ -1937,6 +1942,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     }
                     if let Some(info) = declared_structs.get(local) {
                         exports.structs.insert(external, info.clone());
+                        exports.nominal_names.insert(external, local);
                         let mut closure = HashMap::new();
                         collect_promotion_structs(
                             info,
@@ -1957,6 +1963,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     }
                     if let Some(info) = declared_enums.get(local) {
                         exports.enums.insert(external, info.clone());
+                        exports.nominal_names.insert(external, local);
                     }
                     if let Some(ty) = declared_aliases.get(local) {
                         exports.aliases.insert(external, ty.clone());
@@ -1974,6 +1981,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     }
                     if let Some(info) = declared_newtypes.get(local) {
                         exports.newtypes.insert(external, info.clone());
+                        exports.nominal_names.insert(external, local);
                         // Promote receiver methods declared on the local
                         // newtype to the exported name.
                         for ((rt, mn), mi) in receiver_methods.iter() {

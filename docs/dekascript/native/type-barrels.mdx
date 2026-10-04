@@ -41,9 +41,8 @@ Running `deka run main.ds --entry main` prints `42`. Type metadata does not
 become an ordinary runtime variable. A missing export or an attempt to use a
 type-only import as a value remains a check error. Value factories still run
 in their declaring module, so a barrel does not reconstruct their values.
-For enum and newtype factory signatures, keep the original declared name as
-the local type import. Arbitrary local renaming of these nominal types remains
-a separate native compiler gap ([enum alias tracking](https://github.com/dekaruntime/deka/issues/1347)).
+Enum and newtype factory signatures also follow renamed local type imports.
+See [Importing nominal types through barrels](./import-aliases) for an example.
 
 An unpublished package whose entry is a barrel can use
 `deka check --as-package .` to check this public surface too.
