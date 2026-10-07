@@ -1,0 +1,50 @@
+# Selecting live view elements
+
+`view.querySelector(selector)` returns `Result<Option<ViewElement>, string>`.
+`view.querySelectorAll(selector)` returns `Result<Array<ViewElement>, string>`.
+Both search the current app's attached Rust-owned tree in preorder, including
+its root element. A missing match is `Ok(None)` or `Ok([])`.
+
+```deka
+export fn App() {
+    let output = "Click to find the greeting";
+    return (<view>
+        <p id="greeting" className="text-sm">Hello, Deka!</p>
+        <button onClick={fn() {
+            output = match(view.querySelector("view > p#greeting.text-sm")) {
+                Ok(Some(node)) => node.textContent,
+                Ok(None) => "Greeting missing",
+                Err(error) => error
+            };
+        }}>Find greeting</button>
+        <p>{output}</p>
+    </view>);
+}
+```
+
+Clicking the button displays `Hello, Deka!`. The supported selector grammar is
+locked by APS 73:
+
+| Selector | Matches |
+| --- | --- |
+| `p` | Elements with that tag |
+| `#greeting` | Elements with that exact authored ID |
+| `.text-sm` | Elements with that complete class token |
+| `p#greeting.text-sm` | All parts on the same element |
+| `div p` | A `p` with a matching ancestor |
+| `div > p` | A `p` whose immediate parent matches |
+
+Whitespace separates descendant selectors; whitespace around `>` is optional.
+Identifiers support letters, underscores, hyphens and non-ASCII characters,
+with digits after the start. Escaped identifiers, universal selectors, attribute
+selectors, pseudo-classes, selector lists and sibling combinators return `Err`
+with the offending byte position. No browser fallback is used. Class tokens
+containing brackets or other selector punctuation cannot yet be queried through
+escaped CSS syntax. Unsupported tags simply match no elements.
+
+Text nodes never match. Queries observe current effective IDs and classes after
+binding updates. Returned arrays are snapshots: changing an array does not edit
+the tree. Their handles refer to the same retained resources returned by
+`view.getElementById`; they observe later changes and remain usable after
+removal. Detached nodes are excluded from subsequent queries. Desktop and the
+canvas preview run the same selector implementation.
