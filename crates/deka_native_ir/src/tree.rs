@@ -106,6 +106,12 @@ impl PartialEq for NodeHandle {
 }
 impl Eq for NodeHandle {}
 impl NodeHandle {
+    pub fn tag_name(&self) -> Option<String> {
+        match &self.0.borrow().kind {
+            Kind::Element(tag) => Some(tag.clone()),
+            Kind::Text => None,
+        }
+    }
     pub fn slot(&self) -> Vec<usize> {
         #[cfg(test)]
         SLOT_CLONES.with(|count| count.set(count.get() + 1));

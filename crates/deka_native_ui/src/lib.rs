@@ -30,10 +30,28 @@ pub enum Reload {
     Preserve,
     Reset,
 }
+/// Text editing metadata from the application's retained tree.
+#[derive(Clone, Debug)]
+pub struct TextControl {
+    pub controlled: bool,
+    pub id: String,
+    pub value: String,
+    pub placeholder: String,
+    pub multiline: bool,
+}
 pub trait Application: 'static {
     fn initial_state(&self) -> Vec<f64>;
     fn render(&self, state: &[f64]) -> Node;
     fn event(&self, handler: usize, state: &mut [f64]);
+    fn text_controls(&self) -> Vec<TextControl> {
+        vec![]
+    }
+    fn text_input(&self, _id: &str, _value: String) -> bool {
+        false
+    }
+    fn key_input(&self, _id: &str, _key: String) -> bool {
+        false
+    }
     /// Backend-independent application scheduling. Backends supply a wake and
     /// drive finite turns; applications keep their task ownership internally.
     fn has_ready_work(&self) -> bool {

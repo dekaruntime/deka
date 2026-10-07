@@ -6,8 +6,19 @@ use winit::keyboard::{Key, NamedKey};
 /// One input event, in logical pixels.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Input {
+    EditKey(KeyInput),
+    Text(String),
+    Preedit(String, Option<(usize, usize)>),
+    Move {
+        x: f32,
+        y: f32,
+    },
+    Release,
     /// The primary (left) button went down at this position.
-    Press { x: f32, y: f32 },
+    Press {
+        x: f32,
+        y: f32,
+    },
     /// A key went down or up. `repeat` is set for auto-repeated presses.
     Key {
         name: String,
@@ -95,5 +106,93 @@ mod tests {
         }
         let enter = key_name(&Key::Named(NamedKey::Enter)).unwrap();
         assert!(world.key(&enter, true));
+    }
+}
+
+/// The complete keyboard payload consumed by the native editor. Winit's
+/// KeyEvent has private platform fields; headless drivers supply these public
+/// fields to the same ingress used by the OS adapter.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KeyInput {
+    pub name: String,
+    pub text: Option<String>,
+    pub down: bool,
+    pub shift: bool,
+    pub command: bool,
+    pub word: bool,
+    pub control: bool,
+}
+#[derive(Default)]
+pub struct EventLayer {
+    cursor: (f32, f32),
+    modifiers: winit::keyboard::ModifiersState,
+}
+impl EventLayer {
+    pub(crate) fn translate(
+        &mut self,
+        event: &winit::event::WindowEvent,
+        scale: f64,
+    ) -> Option<Input> {
+        use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
+        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+        match event {
+            WindowEvent::ModifiersChanged(m) => {
+                self.modifiers = m.state();
+                None
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = ((position.x / scale) as f32, (position.y / scale) as f32);
+                Some(Input::Move {
+                    x: self.cursor.0,
+                    y: self.cursor.1,
+                })
+            }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
+                ..
+            } => {
+                if *state == ElementState::Pressed {
+                    Some(Input::Press {
+                        x: self.cursor.0,
+                        y: self.cursor.1,
+                    })
+                } else {
+                    Some(Input::Release)
+                }
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                let mac = cfg!(target_os = "macos");
+                Some(Input::EditKey(KeyInput {
+                    name: key_name(&event.key_without_modifiers())?,
+                    text: event.text.as_ref().map(ToString::to_string),
+                    down: event.state == ElementState::Pressed,
+                    shift: self.modifiers.shift_key(),
+                    command: if mac {
+                        self.modifiers.super_key()
+                    } else {
+                        self.modifiers.control_key()
+                    },
+                    word: if mac {
+                        self.modifiers.alt_key()
+                    } else {
+                        self.modifiers.control_key()
+                    },
+                    control: self.modifiers.control_key(),
+                }))
+            }
+            WindowEvent::Ime(Ime::Commit(text)) => Some(Input::Text(text.clone())),
+            WindowEvent::Ime(Ime::Preedit(text, cursor)) => {
+                Some(Input::Preedit(text.clone(), *cursor))
+            }
+            WindowEvent::Ime(Ime::Disabled) => Some(Input::Preedit(String::new(), None)),
+            WindowEvent::Focused(focus) => {
+                if !focus {
+                    self.modifiers = winit::keyboard::ModifiersState::empty();
+                }
+                Some(Input::Focus(*focus))
+            }
+            _ => None,
+        }
     }
 }

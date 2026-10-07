@@ -10,9 +10,9 @@ mod web {
         let text = signal(String::new());
         let key = signal(String::new());
         view! {<view className="p-4 gap-4">
-            <input id="name" className="w-60 h-10" value={move ||text.get().unwrap()}
-                onInput={move |event| if let Event::Input(value)=event { text.set(value); }}
+            <input id="name" className="w-60 h-10" value={text}
                 onKeyDown={move |event| if let Event::KeyDown(value)=event { key.set(value.clone()); if value=="Enter" { text.set("Confirmed".to_owned()); } }}/>
+            <textarea id="notes" className="w-60 h-24" value={text}/>
             <p>"Hello {text}"</p><p>"Key: {key}"</p>
         </view>}
     }

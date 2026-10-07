@@ -138,10 +138,6 @@ impl ViewNode {
             context: Rc::downgrade(context),
         }
     }
-    #[cfg(feature = "web")]
-    pub(crate) fn renderer_id(&self) -> String {
-        self.node.snapshot().id
-    }
     pub fn as_element(&self) -> Option<ViewElement> {
         self.node.is_element().then(|| ViewElement(self.clone()))
     }
@@ -222,6 +218,9 @@ impl ViewElement {
             .into_iter()
             .filter_map(|node| node.as_element())
             .collect()
+    }
+    pub fn tag_name(&self) -> Option<String> {
+        self.0.node.tag_name()
     }
     pub fn get_attribute(&self, name: &str) -> Option<String> {
         self.0.node.attribute(name)

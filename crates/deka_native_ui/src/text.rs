@@ -75,7 +75,7 @@ fn bundled_collection(system_fonts: bool) -> (Collection, String) {
 }
 /// The bundled face is registered once per process (and the system scan runs at most once).
 /// Clones share the font data, so every renderer produces the same glyphs and image ids.
-fn context(system_fonts: bool) -> (FontContext, String) {
+pub(crate) fn context(system_fonts: bool) -> (FontContext, String) {
     static BUNDLED_ONLY: OnceLock<(Collection, String)> = OnceLock::new();
     static WITH_SYSTEM: OnceLock<(Collection, String)> = OnceLock::new();
     let cell = if system_fonts {

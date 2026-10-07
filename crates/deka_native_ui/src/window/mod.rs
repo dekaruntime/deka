@@ -9,6 +9,7 @@
 //! changed or a scene animates, and never while the window is hidden.
 //!
 //! Nothing here panics on a frame: errors are logged and the frame is skipped.
+mod editor;
 mod encode;
 mod input;
 #[cfg(target_os = "macos")]
@@ -22,17 +23,17 @@ pub use render::Snapshot;
 
 use crate::{Application, Waker, scene::Scene};
 pub(crate) use input::Input;
-use input::key_name;
+pub use input::{EventLayer, KeyInput};
 use render::{Gpu, Pending};
 use schedule::{Schedule, Wait};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+pub use ui::{DesktopSession, TextClipboard};
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::dpi::{LogicalPosition, LogicalSize, PhysicalSize};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::keyboard::ModifiersState;
-use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+
 use winit::window::{Window, WindowId};
 
 /// What a window shows: a deka [`Application`] or the portfolio world.
@@ -42,6 +43,9 @@ pub(crate) trait Content: 'static {
     /// Handle one input; `true` when the window must redraw.
     fn input(&mut self, input: Input) -> bool;
     /// Background work between input events; `true` when the window must redraw.
+    fn ime_area(&self) -> Option<crate::scene::Rect> {
+        None
+    }
     fn turn(&mut self) -> bool {
         false
     }
@@ -163,8 +167,7 @@ pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
         window: None,
         surface: None,
         schedule: Schedule::new(),
-        cursor: PhysicalPosition::new(0., 0.),
-        modifiers: ModifiersState::empty(),
+        events: EventLayer::default(),
         focused: true,
         presented: 0,
         drawn_scale: None,
@@ -194,6 +197,7 @@ struct Surface {
 }
 
 struct Shell<C: Content> {
+    events: EventLayer,
     proxy: EventLoopProxy<Wake>,
     content: C,
     options: Options,
@@ -201,8 +205,6 @@ struct Shell<C: Content> {
     window: Option<Arc<Window>>,
     surface: Option<Surface>,
     schedule: Schedule,
-    cursor: PhysicalPosition<f64>,
-    modifiers: ModifiersState,
     focused: bool,
     presented: u64,
     /// The scale factor the last frame was drawn at.
@@ -325,6 +327,19 @@ impl<C: Content> Shell<C> {
         if self.content.input(input) {
             self.schedule.invalidate();
         }
+        self.sync_ime();
+    }
+    fn sync_ime(&self) {
+        if let Some(window) = &self.window {
+            let area = self.content.ime_area();
+            window.set_ime_allowed(area.is_some());
+            if let Some(r) = area {
+                window.set_ime_cursor_area(
+                    LogicalPosition::new(r.x, r.y),
+                    LogicalSize::new(r.width, r.height),
+                );
+            }
+        }
     }
 
     /// Frame one, and the window shown with it.
@@ -393,6 +408,7 @@ impl<C: Content> Shell<C> {
             presented_at: Instant::now(),
         };
         self.content.presented(self.focused);
+        self.sync_ime();
         if let Some(on_frame) = self.options.on_frame.as_mut() {
             on_frame(frame);
         }
@@ -537,6 +553,9 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        if let Some(input) = self.events.translate(&event, self.scale()) {
+            self.input(input);
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.resize(size),
@@ -556,37 +575,6 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
             WindowEvent::RedrawRequested => self.frame(event_loop),
             WindowEvent::Focused(focused) => {
                 self.focused = focused;
-                if !focused {
-                    self.modifiers = ModifiersState::empty();
-                }
-                self.input(Input::Focus(focused));
-            }
-            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
-            WindowEvent::CursorMoved { position, .. } => self.cursor = position,
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Left,
-                ..
-            } => {
-                let scale = self.scale();
-                self.input(Input::Press {
-                    x: (self.cursor.x / scale) as f32,
-                    y: (self.cursor.y / scale) as f32,
-                });
-            }
-            WindowEvent::KeyboardInput {
-                event,
-                is_synthetic: false,
-                ..
-            } => {
-                if let Some(name) = key_name(&event.key_without_modifiers()) {
-                    self.input(Input::Key {
-                        name,
-                        down: event.state == ElementState::Pressed,
-                        repeat: event.repeat,
-                        shift: self.modifiers.shift_key(),
-                    });
-                }
             }
             _ => {}
         }
