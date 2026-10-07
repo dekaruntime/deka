@@ -25,3 +25,6 @@ tests/dump/.cache/
 # Agent-local build and temporary outputs
 /.target/
 /.tmp/
+
+# local evidence logs: they belong in PR bodies, not the repo
+/tasks/
