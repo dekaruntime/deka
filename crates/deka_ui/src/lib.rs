@@ -12,7 +12,7 @@ pub use retained::{
     ComponentState, NodeRef, ViewClassList, ViewElement, ViewError, ViewNode, ViewTree, node_ref,
     tree,
 };
-pub use view::{Children, Event, EventKind, UiApp, View};
+pub use view::{Children, ErrorSink, Event, EventKind, UiApp, UiError, View};
 
 /// Generated component props provide their typed builder. Macro expansion
 /// infers it from the imported Rust function rather than a second name lookup.
@@ -30,7 +30,7 @@ where
     P::builder()
 }
 #[cfg(feature = "desktop")]
-pub use view::{launch, launch_with};
+pub use view::{LaunchOptions, launch, launch_with, launch_with_options};
 
 /// Common Rust UI authoring imports.
 pub mod prelude {
@@ -43,6 +43,6 @@ pub mod prelude {
         Derived, Effect, ReactiveError, Scope, Signal, batch, derived, effect, signal,
     };
     #[cfg(feature = "desktop")]
-    pub use crate::{WindowOptions, launch, launch_with};
+    pub use crate::{LaunchOptions, WindowOptions, launch, launch_with, launch_with_options};
     pub use crate::{component, view};
 }

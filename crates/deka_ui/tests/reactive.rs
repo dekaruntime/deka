@@ -354,5 +354,5 @@ fn late_reactive_handles_return_errors_after_scope_teardown() {
         registration.dispose(),
         Err(deka_ui::ReactiveError::DroppedScope)
     );
-    assert!(format!("{state}").contains("scope has been dropped"));
+    assert_eq!(format!("{state}"), "");
 }

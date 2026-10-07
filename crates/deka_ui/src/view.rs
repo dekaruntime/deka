@@ -146,13 +146,16 @@ impl View {
     where
         V: IntoAttribute<M>,
     {
-        assert!(
-            matches!(name, "id" | "className" | "value" | "placeholder"),
-            "unsupported native attribute {name}"
-        );
-        self.element_mut()
-            .attributes
-            .insert(name.into(), value.into_attribute());
+        if !matches!(name, "id" | "className" | "value" | "placeholder") {
+            return Self(Builder::Error(format!(
+                "unsupported native attribute {name}"
+            )));
+        }
+        if let Some(element) = self.element_mut() {
+            element
+                .attributes
+                .insert(name.into(), value.into_attribute());
+        }
         self
     }
     pub fn class<V, M>(mut self, name: &str, value: V) -> Self
@@ -165,13 +168,15 @@ impl View {
         if let Err(error) = deka_native_ir::apply_classes(&mut Default::default(), name) {
             return Self(Builder::Error(error));
         }
-        self.element_mut()
-            .toggles
-            .insert(name.into(), value.into_toggle());
+        if let Some(element) = self.element_mut() {
+            element.toggles.insert(name.into(), value.into_toggle());
+        }
         self
     }
     pub fn on(mut self, kind: EventKind, event: impl FnMut(Event) + 'static) -> Self {
-        self.element_mut().events.insert(kind, Box::new(event));
+        if let Some(element) = self.element_mut() {
+            element.events.insert(kind, Box::new(event));
+        }
         self
     }
     pub fn on_click(self, event: impl FnMut(Event) + 'static) -> Self {
@@ -181,18 +186,31 @@ impl View {
     where
         V: IntoView<M>,
     {
-        self.element_mut().children.push(child.into_view());
+        if let Some(element) = self.element_mut() {
+            element.children.push(child.into_view());
+        }
         self
     }
     pub fn children(mut self, children: impl IntoIterator<Item = View>) -> Self {
-        self.element_mut().children.push(Self::fragment(children));
+        if let Some(element) = self.element_mut() {
+            element.children.push(Self::fragment(children));
+        }
         self
     }
-    fn element_mut(&mut self) -> &mut Element {
+    fn element_mut(&mut self) -> Option<&mut Element> {
+        if !matches!(
+            self.0,
+            Builder::Element(_) | Builder::Ref(_, _) | Builder::State(_, _)
+        ) {
+            if !matches!(self.0, Builder::Error(_)) {
+                self.0 = Builder::Error("attributes/events/children require an element".into());
+            }
+            return None;
+        }
         match &mut self.0 {
-            Builder::Element(element) => element,
+            Builder::Element(element) => Some(element),
             Builder::Ref(view, _) | Builder::State(view, _) => view.element_mut(),
-            _ => panic!("attributes/events/children require an element"),
+            _ => None,
         }
     }
 }
@@ -283,8 +301,48 @@ impl<F: FnOnce(P) -> View, P: Default> BuildApp<Props<P>> for F {
     }
 }
 
+/// An operational error with its authored structural path and binding name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiError {
+    pub path: Vec<usize>,
+    pub binding: String,
+    pub message: String,
+}
+impl std::fmt::Display for UiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "node {:?} binding {}: {}",
+            self.path, self.binding, self.message
+        )
+    }
+}
+/// Called once per error occurrence, on the owning UI thread.
+pub type ErrorSink = Rc<dyn Fn(&UiError)>;
+const ERROR_BUFFER_LIMIT: usize = 128;
+
+/// Host launch configuration. The default sink logs errors to stderr.
+#[cfg(feature = "desktop")]
+pub struct LaunchOptions {
+    pub window: deka_native_ui::window::Options,
+    pub reduced_motion: bool,
+    pub error_sink: Option<ErrorSink>,
+}
+
+#[cfg(feature = "desktop")]
+impl LaunchOptions {
+    pub fn new(window: deka_native_ui::window::Options) -> Self {
+        Self {
+            window,
+            reduced_motion: false,
+            error_sink: None,
+        }
+    }
+}
+
 pub(crate) type PublishedState = (Anchor, Rc<dyn Any>);
 pub(crate) type Anchor = Rc<RefCell<Option<NodeHandle>>>;
+
 type Callback = Rc<RefCell<Box<dyn FnMut(Event)>>>;
 struct Listener {
     anchor: Anchor,
@@ -303,6 +361,8 @@ pub(crate) struct Context {
     pending_frame: Cell<bool>,
     waker: RefCell<Option<deka_native_ui::Waker>>,
     errors: RefCell<Vec<String>>,
+    error_sink: RefCell<Option<ErrorSink>>,
+    error_location: RefCell<(Vec<usize>, String)>,
 }
 impl Context {
     pub(crate) fn snapshot(&self) -> Node {
@@ -333,6 +393,41 @@ impl Context {
         self.next_state.set(token + 1);
         self.states.borrow_mut().insert(token, (anchor, state));
         token
+    }
+    fn report(&self, path: &[usize], binding: &str, message: String) {
+        let error = UiError {
+            path: path.to_vec(),
+            binding: binding.into(),
+            message,
+        };
+        {
+            let mut errors = self.errors.borrow_mut();
+            if errors.len() == ERROR_BUFFER_LIMIT {
+                errors.remove(0);
+            }
+            errors.push(error.message.clone());
+        }
+        let sink = self.error_sink.borrow().clone();
+        if let Some(sink) = sink {
+            sink(&error);
+        } else {
+            eprintln!("deka ui: {error}");
+        }
+    }
+    fn report_current(&self, message: String) {
+        let (path, binding) = self.error_location.borrow().clone();
+        self.report(&path, &binding, message);
+    }
+    fn at<R>(&self, path: &[usize], binding: &str, run: impl FnOnce() -> R) -> R {
+        struct Location<'a>(&'a Context, Option<(Vec<usize>, String)>);
+        impl Drop for Location<'_> {
+            fn drop(&mut self) {
+                self.0.error_location.replace(self.1.take().unwrap());
+            }
+        }
+        let previous = self.error_location.replace((path.to_vec(), binding.into()));
+        let _location = Location(self, Some(previous));
+        run()
     }
     fn changed(&self, changed: bool) {
         if changed {
@@ -381,6 +476,8 @@ impl Registrations {
 impl Drop for Registrations {
     fn drop(&mut self) {
         for effect in self.effects.drain(..) {
+            // Teardown is idempotent; DroppedScope means all registrations are
+            // already gone, so no live operation or error needs reporting.
             let _ = effect.dispose();
         }
         if let Some(context) = self.context.upgrade() {
@@ -456,6 +553,8 @@ impl Prepared {
 
 fn bind(
     value: Attribute,
+    path: &[usize],
+    binding: &str,
     anchor: &Anchor,
     context: &Rc<Context>,
     registrations: &mut Registrations,
@@ -468,14 +567,17 @@ fn bind(
             let output = initial.clone();
             let target = anchor.clone();
             let context = Rc::downgrade(context);
+            let path = path.to_vec();
+            let binding = binding.to_owned();
             registrations.effects.push(effect(move || {
-                let value = getter();
+                let Some(context) = context.upgrade() else {
+                    return;
+                };
+                let value = context.at(&path, &binding, &mut getter);
                 if let Some(node) = target.borrow().as_ref() {
-                    if let Some(context) = context.upgrade() {
-                        match patch(node, value) {
-                            Ok(changed) => context.changed(changed),
-                            Err(error) => context.errors.borrow_mut().push(error),
-                        }
+                    match patch(node, value) {
+                        Ok(changed) => context.changed(changed),
+                        Err(error) => context.report(&path, &binding, error),
                     }
                 } else {
                     *output.borrow_mut() = value;
@@ -493,7 +595,7 @@ fn prepare(
 ) -> Result<Prepared, String> {
     let mut prepared = Prepared::new(context);
     match view.0 {
-        Builder::Error(error) => return Err(error),
+        Builder::Error(error) => return Err(format!("node {path:?} builder: {error}")),
         Builder::Ref(view, reference) => {
             reference.check(context.scope_id)?;
             let mut next = prepare(*view, path, parent, context)?;
@@ -533,12 +635,15 @@ fn prepare(
                 };
                 let mut slot = prefix.clone();
                 slot.push(0);
-                let (next, reactive) =
-                    crate::reactive::owned(|| prepare(getter(), slot, parent.clone(), &context));
+                let (next, reactive) = crate::reactive::owned(|| {
+                    context.at(&prefix, "children", || {
+                        prepare(getter(), slot, parent.clone(), &context)
+                    })
+                });
                 let mut next = match next {
                     Ok(next) => next,
                     Err(error) => {
-                        context.errors.borrow_mut().push(error);
+                        context.report(&prefix, "children", error);
                         return;
                     }
                 };
@@ -555,7 +660,7 @@ fn prepare(
                     let roots = match replacement {
                         Ok(roots) => roots,
                         Err(error) => {
-                            context.errors.borrow_mut().push(error);
+                            context.report(&prefix, "children", error);
                             return;
                         }
                     };
@@ -581,6 +686,8 @@ fn prepare(
             prepared.root_anchors.push(anchor.clone());
             let text = bind(
                 value,
+                &path,
+                "text",
                 &anchor,
                 context,
                 &mut prepared.registrations,
@@ -624,6 +731,8 @@ fn prepare(
             };
             wire.classes = bind(
                 classes,
+                &path,
+                "className",
                 &anchor,
                 context,
                 &mut prepared.registrations,
@@ -637,6 +746,8 @@ fn prepare(
                 let property = name.clone();
                 let value = bind(
                     value,
+                    &path,
+                    &name,
                     &anchor,
                     context,
                     &mut prepared.registrations,
@@ -651,7 +762,8 @@ fn prepare(
                     wire.handler = Some(token);
                 }
             }
-            wire.style()?;
+            wire.style()
+                .map_err(|error| format!("node {path:?} className: {error}"))?;
             prepared.slots.push(path.clone());
             prepared.anchors.push((path.clone(), anchor.clone()));
             for (index, child) in element.children.into_iter().enumerate() {
@@ -681,12 +793,27 @@ impl UiApp {
     where
         A: BuildApp<M>,
     {
+        Self::new_with_error_sink(app, None)
+    }
+    /// Install the sink before mounting, including initial binding errors.
+    pub fn new_with_error_sink<A, M>(app: A, sink: Option<ErrorSink>) -> Self
+    where
+        A: BuildApp<M>,
+    {
         let scope = Scope::new();
         let context = Rc::new(Context {
             scope_id: scope.id(),
             ..Context::default()
         });
         crate::retained::register(scope.id(), &context);
+        context.error_sink.replace(sink);
+        context.error_location.replace((vec![], "reactive".into()));
+        let weak = Rc::downgrade(&context);
+        scope.on_error(move |error| {
+            if let Some(context) = weak.upgrade() {
+                context.report_current(error.to_string());
+            }
+        });
         let registrations = scope.run(|| {
             let view = app.build();
             let view = if view.single_root() {
@@ -697,7 +824,7 @@ impl UiApp {
             let mut prepared = match prepare(view, vec![], Anchor::default(), &context) {
                 Ok(prepared) => prepared,
                 Err(error) => {
-                    context.errors.borrow_mut().push(error);
+                    context.report(&[], "mount", error);
                     Prepared::new(&context)
                 }
             };
@@ -713,13 +840,13 @@ impl UiApp {
                 .borrow_mut()
                 .update_slots(wire, &prepared.slots);
             if let Err(error) = result {
-                context.errors.borrow_mut().push(error);
+                context.report(&[], "mount", error);
                 // The validated fallback has no authored bindings or classes.
                 if let Err(error) = context.tree.borrow_mut().update(WireNode {
                     tag: "view".into(),
                     ..Default::default()
                 }) {
-                    context.errors.borrow_mut().push(error);
+                    context.report(&[], "mount", error);
                 }
                 prepared = Prepared::new(&context);
             }
@@ -798,12 +925,23 @@ impl UiApp {
             return false;
         };
         let before = self.context.patches.get();
-        self.scope.batch(|| callback.borrow_mut()(event));
+        let path = self
+            .context
+            .listeners
+            .borrow()
+            .get(&token)
+            .and_then(|listener| listener.anchor.borrow().as_ref().map(NodeHandle::slot))
+            .unwrap_or_default();
+        self.context.at(&path, "event", || {
+            self.scope.batch(|| callback.borrow_mut()(event))
+        });
         if self.context.patches.get() != before {
             self.patch_passes.set(self.patch_passes.get() + 1);
         }
         true
     }
+    /// Drain the last 128 operational mount/binding errors (oldest evicted).
+    /// Every occurrence has already been delivered to the sink.
     /// Drain operational mount/binding errors. Failed patches retain the last
     /// valid tree; other reactions continue in the same flush.
     pub fn take_errors(&self) -> Vec<String> {
@@ -855,7 +993,35 @@ pub fn launch_with<A, M>(app: A, options: deka_native_ui::window::Options, reduc
 where
     A: BuildApp<M>,
 {
-    deka_native_ui::window::run_with(UiApp::new(app), options, reduced_motion);
+    launch_with_options(
+        app,
+        LaunchOptions {
+            window: options,
+            reduced_motion,
+            error_sink: None,
+        },
+    );
+}
+
+/// Launch with a host callback installed before any bindings are evaluated.
+#[cfg(feature = "desktop")]
+pub fn launch_with_options<A, M>(app: A, options: LaunchOptions)
+where
+    A: BuildApp<M>,
+{
+    launch_configured(app, options, deka_native_ui::window::run_with);
+}
+#[cfg(feature = "desktop")]
+fn launch_configured<A, M, R>(
+    app: A,
+    options: LaunchOptions,
+    host: impl FnOnce(UiApp, deka_native_ui::window::Options, bool) -> R,
+) -> R
+where
+    A: BuildApp<M>,
+{
+    let app = UiApp::new_with_error_sink(app, options.error_sink);
+    host(app, options.window, options.reduced_motion)
 }
 
 #[cfg(test)]
@@ -863,6 +1029,143 @@ mod tests {
     use super::*;
     use crate::signal;
 
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn launch_option_sink_receives_running_binding_error() {
+        let errors = Rc::new(RefCell::new(Vec::new()));
+        let output = errors.clone();
+        let mut options =
+            LaunchOptions::new(deka_native_ui::window::Options::new("sink", 320., 240.));
+        options.error_sink = Some(Rc::new(move |error| {
+            output.borrow_mut().push(error.clone())
+        }));
+        launch_configured(
+            || {
+                let invalid = signal(false);
+                View::element("view")
+                    .attr("className", move || {
+                        if invalid.get().unwrap() {
+                            "p-bad"
+                        } else {
+                            "p-2"
+                        }
+                    })
+                    .child(View::element("button").on_click(move |_| invalid.toggle()))
+            },
+            options,
+            |app, _, _| {
+                let mut state = app.initial_state();
+                let before = app.render(&state);
+                app.event(0, &mut state);
+                assert_eq!(app.render(&state), before);
+                assert_eq!(errors.borrow().len(), 1);
+                assert_eq!(errors.borrow()[0].binding, "className");
+            },
+        );
+    }
+    #[test]
+    fn host_application_binding_errors_reach_sink_once_with_location() {
+        let errors = Rc::new(RefCell::new(Vec::new()));
+        let output = errors.clone();
+        let app = UiApp::new_with_error_sink(
+            || {
+                let invalid = signal(false);
+                View::element("view")
+                    .child(View::element("p").attr("className", move || {
+                        if invalid.get().unwrap() {
+                            "p-bad"
+                        } else {
+                            "p-2"
+                        }
+                    }))
+                    .child(View::element("button").on_click(move |_| invalid.toggle()))
+            },
+            Some(Rc::new(move |error| {
+                output.borrow_mut().push(error.clone())
+            })),
+        );
+        let mut state = app.initial_state();
+        let before = app.render(&state);
+        app.event(0, &mut state);
+        assert_eq!(app.render(&state), before);
+        app.render(&state);
+        assert_eq!(errors.borrow().len(), 1);
+        assert_eq!(errors.borrow()[0].path, [0]);
+        assert_eq!(errors.borrow()[0].binding, "className");
+        assert!(!errors.borrow()[0].message.is_empty());
+        assert_eq!(app.take_errors().len(), 1);
+        assert!(app.take_errors().is_empty());
+        assert_eq!(errors.borrow().len(), 1);
+    }
+    #[test]
+    fn sink_reports_initial_errors_and_diagnostic_buffer_is_bounded() {
+        let calls = Rc::new(Cell::new(0));
+        let output = calls.clone();
+        let app = UiApp::new_with_error_sink(
+            || View::element("view").attr("className", "p-bad"),
+            Some(Rc::new(move |_| output.set(output.get() + 1))),
+        );
+        assert_eq!(calls.get(), 1);
+        for n in 0..1000 {
+            app.context.report(&[3], "test", n.to_string());
+        }
+        assert_eq!(calls.get(), 1001);
+        let buffer = app.take_errors();
+        assert_eq!(buffer.len(), ERROR_BUFFER_LIMIT);
+        assert!(buffer[0].ends_with("872"));
+        assert!(buffer.last().unwrap().ends_with("999"));
+    }
+    #[test]
+    fn disposed_toggle_and_text_conveniences_render_defaults_and_report() {
+        let errors = Rc::new(RefCell::new(Vec::new()));
+        let output = errors.clone();
+        let app = UiApp::new_with_error_sink(
+            || {
+                let ((toggle, computed, text), owner) = crate::reactive::owned(|| {
+                    (
+                        signal(true),
+                        crate::derived(|| true),
+                        signal("old".to_owned()),
+                    )
+                });
+                drop(owner);
+                View::element("view")
+                    .class("p-4", toggle)
+                    .class("opacity-25", computed)
+                    .child(text)
+            },
+            Some(Rc::new(move |error| {
+                output.borrow_mut().push(error.clone())
+            })),
+        );
+        assert_eq!(errors.borrow().len(), 3);
+        assert!(
+            errors
+                .borrow()
+                .iter()
+                .all(|error| error.message.contains("disposed"))
+        );
+        assert_eq!(errors.borrow()[0].binding, "className");
+        assert_eq!(errors.borrow()[2].binding, "text");
+        assert!(
+            app.tree()
+                .children
+                .iter()
+                .all(|node| node.text.as_deref() == Some(""))
+        );
+        assert_eq!(app.tree().style.opacity, 1.);
+    }
+    #[test]
+    fn non_element_builder_misuse_is_reported_without_unwinding() {
+        let app = UiApp::new(|| View::fragment([]).attr("id", "bad").child("bad"));
+        let errors = app.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("builder: attributes/events/children require an element"));
+        let app = UiApp::new(|| View::dynamic(|| "child").on_click(|_| {}));
+        assert_eq!(app.take_errors().len(), 1);
+        let app = UiApp::new(|| View::text("child").attr("unsupported", "x"));
+        assert_eq!(app.take_errors().len(), 1);
+    }
     #[test]
     fn invalid_reactive_classes_report_without_losing_the_last_valid_tree() {
         let app = UiApp::new(|| {
