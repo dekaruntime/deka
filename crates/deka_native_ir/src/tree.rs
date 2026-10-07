@@ -6,7 +6,7 @@ use crate::{Node, Style, WireNode};
 type Result<T> = std::result::Result<T, String>;
 use std::{
     cell::RefCell,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, HashSet},
     rc::{Rc, Weak},
 };
 
@@ -87,14 +87,23 @@ struct Owner;
 /// are weak. The renderer receives snapshots, never these resource references.
 #[derive(Clone)]
 pub struct NodeHandle(pub Rc<RefCell<Record>>);
+#[cfg(test)]
+thread_local! {
+    static SLOT_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static HANDLE_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 impl PartialEq for NodeHandle {
     fn eq(&self, other: &Self) -> bool {
+        #[cfg(test)]
+        HANDLE_COMPARISONS.with(|count| count.set(count.get() + 1));
         Rc::ptr_eq(&self.0, &other.0)
     }
 }
 impl Eq for NodeHandle {}
 impl NodeHandle {
     pub fn slot(&self) -> Vec<usize> {
+        #[cfg(test)]
+        SLOT_CLONES.with(|count| count.set(count.get() + 1));
         self.0.borrow().slot.clone()
     }
     pub fn all_children(&self) -> Vec<Self> {
@@ -255,25 +264,52 @@ impl Tree {
             return Err("child lies outside its structural slot".into());
         }
         let old = parent.all_children();
+        let mut by_slot = HashMap::with_capacity(old.len());
+        for node in &old {
+            // Clone a path once per child, rather than for every candidate match.
+            by_slot.entry(node.slot()).or_insert_with(|| node.clone());
+        }
         let mut replacements = Vec::with_capacity(prepared.len());
         for next in prepared {
-            let current = old.iter().find(|node| node.slot() == next.slot).cloned();
+            let current = by_slot.remove(&next.slot);
             let node = self.retain(current, next)?;
             node.0.borrow_mut().parent = Some(Rc::downgrade(&parent.0));
             replacements.push(node);
         }
-        let mut children: Vec<_> = old
-            .iter()
-            .filter(|node| !node.slot().starts_with(prefix))
-            .cloned()
-            .collect();
-        children.extend(replacements.iter().cloned());
-        children.sort_by_key(NodeHandle::slot);
+        let kept: HashSet<_> = replacements.iter().map(|node| node.0.as_ptr()).collect();
+        let mut untouched = Vec::with_capacity(old.len());
         for node in old {
-            if !children.contains(&node) {
-                node.0.borrow_mut().parent = None;
+            if node.0.borrow().slot.starts_with(prefix) {
+                if !kept.contains(&node.0.as_ptr()) {
+                    node.0.borrow_mut().parent = None;
+                }
+            } else {
+                untouched.push(node);
             }
         }
+        // Authored structural paths arrive in order. Merge the unchanged and
+        // replaced sequences linearly; retain the old sorting semantics for
+        // unusual callers supplying unordered paths, without cloning paths.
+        let compare = |a: &NodeHandle, b: &NodeHandle| a.0.borrow().slot.cmp(&b.0.borrow().slot);
+        if !untouched.is_sorted_by(|a, b| compare(a, b).is_le()) {
+            untouched.sort_by(compare);
+        }
+        let mut ordered = replacements.clone();
+        if !ordered.is_sorted_by(|a, b| compare(a, b).is_le()) {
+            ordered.sort_by(compare);
+        }
+        let mut children = Vec::with_capacity(untouched.len() + ordered.len());
+        let mut untouched = untouched.into_iter().peekable();
+        let mut ordered = ordered.into_iter().peekable();
+        while let (Some(a), Some(b)) = (untouched.peek(), ordered.peek()) {
+            if compare(a, b).is_le() {
+                children.extend(untouched.next());
+            } else {
+                children.extend(ordered.next());
+            }
+        }
+        children.extend(untouched);
+        children.extend(ordered);
         parent.0.borrow_mut().children = children;
         self.records.retain(|_, record| record.strong_count() > 0);
         Ok(replacements)
@@ -348,22 +384,24 @@ impl Tree {
             }
         };
         let old_children = node.0.borrow().children.clone();
+        let mut by_slot = HashMap::with_capacity(old_children.len());
+        for old in &old_children {
+            by_slot.entry(old.slot()).or_insert_with(|| old.clone());
+        }
         let mut children = Vec::with_capacity(next.children.len());
         for (position, child) in next.children.into_iter().enumerate() {
             let old = if child.slot.is_empty() {
                 old_children.get(position).cloned()
             } else {
-                old_children
-                    .iter()
-                    .find(|node| node.0.borrow().slot == child.slot)
-                    .cloned()
+                by_slot.remove(&child.slot)
             };
             let kept = self.retain(old, child)?;
             kept.0.borrow_mut().parent = Some(Rc::downgrade(&node.0));
             children.push(kept);
         }
+        let kept: HashSet<_> = children.iter().map(|child| child.0.as_ptr()).collect();
         for old in &old_children {
-            if !children.contains(old) {
+            if !kept.contains(&old.0.as_ptr()) {
                 old.0.borrow_mut().parent = None;
             }
         }
@@ -417,5 +455,94 @@ impl Record {
         self.classes = classes;
         self.style = style;
         true
+    }
+}
+
+#[cfg(test)]
+mod replacement_tests {
+    use super::*;
+    fn text(value: impl ToString) -> WireNode {
+        WireNode {
+            text: Some(value.to_string()),
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn large_slot_replacement_has_linear_path_clones_and_identity_checks() {
+        for size in [64, 1024] {
+            let mut tree = Tree::default();
+            let mut children = vec![text("Before")];
+            children.extend((0..size).map(text));
+            children.push(text("After"));
+            let mut slots = vec![vec![], vec![0]];
+            slots.extend((0..size).map(|i| vec![1, i]));
+            slots.push(vec![2]);
+            tree.update_slots(
+                WireNode {
+                    tag: "view".into(),
+                    children,
+                    ..Default::default()
+                },
+                &slots,
+            )
+            .unwrap();
+            let parent = tree.root.clone().unwrap();
+            let before = parent.all_children();
+            SLOT_CLONES.with(|count| count.set(0));
+            HANDLE_COMPARISONS.with(|count| count.set(0));
+            let next = tree
+                .replace_slot(
+                    &parent,
+                    &[1],
+                    (0..size - 1).map(|i| text(i + 1)).collect(),
+                    &(0..size - 1).map(|i| vec![1, i]).collect::<Vec<_>>(),
+                )
+                .unwrap();
+            assert!(
+                SLOT_CLONES.with(|count| count.get()) <= 4 * size,
+                "quadratic slot cloning"
+            );
+            assert!(
+                HANDLE_COMPARISONS.with(|count| count.get()) <= 4 * size,
+                "quadratic identity checks"
+            );
+            let after = parent.all_children();
+            assert!(after.first() == before.first());
+            assert!(after.last() == before.last());
+            for (i, node) in next.iter().enumerate() {
+                assert!(node == &before[i + 1]);
+                assert_eq!(node.text_content(), (i + 1).to_string());
+                assert!(node.parent() == Some(parent.clone()));
+            }
+            assert!(before[size].parent().is_none());
+            assert_eq!(
+                parent.text_content(),
+                "Before".to_owned()
+                    + &(1..size).map(|i| i.to_string()).collect::<String>()
+                    + "After"
+            );
+        }
+    }
+    #[test]
+    fn unsorted_slots_keep_ordering_compatibility_without_quadratic_clones() {
+        let mut tree = Tree::default();
+        tree.update_slots(
+            WireNode {
+                tag: "view".into(),
+                children: vec![text("After"), text("Before")],
+                ..Default::default()
+            },
+            &[vec![], vec![2], vec![0]],
+        )
+        .unwrap();
+        let parent = tree.root.clone().unwrap();
+        tree.replace_slot(
+            &parent,
+            &[1],
+            vec![text("B"), text("A")],
+            &[vec![1, 1], vec![1, 0]],
+        )
+        .unwrap();
+        assert_eq!(parent.text_content(), "BeforeABAfter");
     }
 }
