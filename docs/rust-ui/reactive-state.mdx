@@ -70,3 +70,5 @@ When an update or batch panics, read tracking, context and batch depth are resto
 Partial writes stay queued without executing reactions during unwinding. After
 catching the panic, `scope.flush()` resumes pending work. Applications should
 handle their errors at the event boundary.
+
+Dynamic child registrations own the signals and reactions created while building those children. Replacing the children releases those values and recycles signal, subscriber and observer slots. Copied handles never alias a later allocation in a reused slot. Ordinary scope-level state remains live until its scope drops.

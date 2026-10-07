@@ -305,6 +305,7 @@ impl Context {
 #[derive(Default)]
 struct Registrations {
     effects: Vec<Effect>,
+    reactive: Vec<crate::reactive::ReactiveOwner>,
     events: Vec<usize>,
     groups: Vec<Rc<RefCell<Registrations>>>,
     context: Weak<Context>,
@@ -312,6 +313,7 @@ struct Registrations {
 impl Registrations {
     fn extend(&mut self, mut other: Self) {
         self.effects.append(&mut other.effects);
+        self.reactive.append(&mut other.reactive);
         self.events.append(&mut other.events);
         self.groups.append(&mut other.groups);
     }
@@ -343,6 +345,7 @@ impl Prepared {
             registrations: Registrations {
                 context: Rc::downgrade(context),
                 effects: vec![],
+                reactive: vec![],
                 events: vec![],
                 groups: vec![],
             },
@@ -427,7 +430,9 @@ fn prepare(view: View, path: Vec<usize>, parent: Anchor, context: &Rc<Context>) 
                 };
                 let mut slot = prefix.clone();
                 slot.push(0);
-                let mut next = prepare(getter(), slot, parent.clone(), &context);
+                let (mut next, reactive) =
+                    crate::reactive::owned(|| prepare(getter(), slot, parent.clone(), &context));
+                next.registrations.reactive.push(reactive);
                 let target = parent.borrow().clone();
                 if let Some(parent) = target {
                     let wires = std::mem::take(&mut next.wires);

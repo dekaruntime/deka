@@ -98,6 +98,7 @@ fn resolve(id: u64) -> Rc<Core> {
 pub struct Signal<T: 'static> {
     scope: u64,
     slot: usize,
+    generation: u64,
     marker: PhantomData<fn() -> T>,
     thread: PhantomData<Rc<()>>,
 }
@@ -111,13 +112,27 @@ struct Value<T>(RefCell<Option<T>>);
 fn allocate<T: 'static>(value: Option<T>) -> Signal<T> {
     let core = current();
     let mut values = core.values.borrow_mut();
-    let slot = values.len();
-    values.push(Rc::new(Value(RefCell::new(value))));
-    core.subscribers.borrow_mut().push(BTreeSet::new());
-    core.revisions.borrow_mut().push(0);
+    let value: Rc<dyn Any> = Rc::new(Value(RefCell::new(value)));
+    let slot = if let Some(slot) = core.free_values.borrow_mut().pop() {
+        values[slot] = Some(value);
+        core.value_generations.borrow_mut()[slot] += 1;
+        slot
+    } else {
+        let slot = values.len();
+        values.push(Some(value));
+        core.subscribers.borrow_mut().push(BTreeSet::new());
+        core.revisions.borrow_mut().push(0);
+        core.value_generations.borrow_mut().push(0);
+        slot
+    };
+    if let Some(owner) = core.owners.borrow_mut().last_mut() {
+        owner.values.push(slot);
+    }
+    let generation = core.value_generations.borrow()[slot];
     Signal {
         scope: core.id,
         slot,
+        generation,
         marker: PhantomData,
         thread: PhantomData,
     }
@@ -128,7 +143,14 @@ pub fn signal<T: 'static>(value: T) -> Signal<T> {
 }
 impl<T: 'static> Signal<T> {
     fn value(self, core: &Core) -> Rc<Value<T>> {
+        assert_eq!(
+            core.value_generations.borrow()[self.slot],
+            self.generation,
+            "reactive signal has been disposed"
+        );
         core.values.borrow()[self.slot]
+            .as_ref()
+            .expect("reactive signal has been disposed")
             .clone()
             .downcast::<Value<T>>()
             .unwrap_or_else(|_| panic!("reactive signal type mismatch"))
@@ -249,18 +271,15 @@ pub fn derived<T: PartialEq + 'static>(mut compute: impl FnMut() -> T + 'static)
 pub struct Effect {
     scope: u64,
     slot: usize,
+    generation: u64,
     marker: PhantomData<Rc<()>>,
 }
 impl Effect {
     pub fn dispose(self) {
         let core = resolve(self.scope);
-        let observer = core.observers.borrow_mut()[self.slot].take();
-        if let Some(observer) = observer {
-            for dependency in observer.dependencies {
-                core.subscribers.borrow_mut()[dependency].remove(&self.slot);
-            }
+        if core.observer_generations.borrow()[self.slot] == self.generation {
+            core.dispose_observer(self.slot);
         }
-        core.dirty.borrow_mut().remove(&self.slot);
     }
 }
 /// Run now and after observed signals change. Conditional reads replace the
@@ -287,7 +306,12 @@ struct Observer {
 #[derive(Default)]
 struct Core {
     id: u64,
-    values: RefCell<Vec<Rc<dyn Any>>>,
+    values: RefCell<Vec<Option<Rc<dyn Any>>>>,
+    free_values: RefCell<Vec<usize>>,
+    value_generations: RefCell<Vec<u64>>,
+    free_observers: RefCell<Vec<usize>>,
+    observer_generations: RefCell<Vec<u64>>,
+    owners: RefCell<Vec<Owned>>,
     observers: RefCell<Vec<Option<Observer>>>,
     subscribers: RefCell<Vec<BTreeSet<usize>>>,
     reads: RefCell<Vec<BTreeMap<usize, u64>>>,
@@ -298,22 +322,50 @@ struct Core {
 }
 fn observe(kind: Kind, run: impl FnMut() + 'static) -> Effect {
     let core = current();
-    let slot = core.observers.borrow().len();
-    core.observers.borrow_mut().push(Some(Observer {
+    let slot = if let Some(slot) = core.free_observers.borrow_mut().pop() {
+        core.observer_generations.borrow_mut()[slot] += 1;
+        slot
+    } else {
+        let slot = core.observers.borrow().len();
+        core.observers.borrow_mut().push(None);
+        core.observer_generations.borrow_mut().push(0);
+        slot
+    };
+    let generation = core.observer_generations.borrow()[slot];
+    core.observers.borrow_mut()[slot] = Some(Observer {
         callback: Rc::new(RefCell::new(Box::new(run))),
         dependencies: BTreeSet::new(),
         kind,
-    }));
+    });
+    if let Some(owner) = core.owners.borrow_mut().last_mut() {
+        owner.effects.push(Effect {
+            scope: core.id,
+            slot,
+            generation,
+            marker: PhantomData,
+        });
+    }
     // Hold the batch boundary while installing nested reactions. In particular,
     // a derived value must finish its read capture before its dependents run.
     Scope(core.clone()).batch(|| core.evaluate(slot));
     Effect {
         scope: core.id,
         slot,
+        generation,
         marker: PhantomData,
     }
 }
 impl Core {
+    fn dispose_observer(&self, slot: usize) {
+        let observer = self.observers.borrow_mut()[slot].take();
+        if let Some(observer) = observer {
+            for dependency in observer.dependencies {
+                self.subscribers.borrow_mut()[dependency].remove(&slot);
+            }
+            self.dirty.borrow_mut().remove(&slot);
+            self.free_observers.borrow_mut().push(slot);
+        }
+    }
     fn changed(self: &Rc<Self>, slot: usize) {
         let mut revisions = self.revisions.borrow_mut();
         revisions[slot] = revisions[slot]
@@ -339,6 +391,7 @@ impl Core {
             let _capture = Capture {
                 core: self.clone(),
                 slot,
+                generation: self.observer_generations.borrow()[slot],
             };
             callback.borrow_mut()();
         });
@@ -385,6 +438,7 @@ impl Drop for Flushing {
 struct Capture {
     core: Rc<Core>,
     slot: usize,
+    generation: u64,
 }
 impl Drop for Capture {
     fn drop(&mut self) {
@@ -394,6 +448,9 @@ impl Drop for Capture {
             .borrow_mut()
             .pop()
             .expect("reaction read capture");
+        if self.core.observer_generations.borrow()[self.slot] != self.generation {
+            return;
+        }
         let dependencies: BTreeSet<_> = reads.keys().copied().collect();
         if let Some(observer) = self.core.observers.borrow_mut()[self.slot].as_mut() {
             let mut subscribers = self.core.subscribers.borrow_mut();
@@ -411,5 +468,136 @@ impl Drop for Capture {
                 self.core.dirty.borrow_mut().insert(self.slot);
             }
         }
+    }
+}
+
+// Dynamic children own allocations created while building their registrations.
+// Ordinary nested effects retain the scope lifetime unless explicitly disposed.
+#[derive(Default)]
+struct Owned {
+    values: Vec<usize>,
+    effects: Vec<Effect>,
+}
+pub(crate) struct ReactiveOwner {
+    core: Weak<Core>,
+    owned: Owned,
+}
+impl Drop for ReactiveOwner {
+    fn drop(&mut self) {
+        let Some(core) = self.core.upgrade() else {
+            return;
+        };
+        for effect in self.owned.effects.drain(..) {
+            effect.dispose();
+        }
+        for slot in self.owned.values.drain(..) {
+            core.values.borrow_mut()[slot] = None;
+            core.subscribers.borrow_mut()[slot].clear();
+            core.free_values.borrow_mut().push(slot);
+        }
+    }
+}
+pub(crate) fn owned<R>(run: impl FnOnce() -> R) -> (R, ReactiveOwner) {
+    let core = current();
+    core.owners.borrow_mut().push(Owned::default());
+    struct CaptureOwner(Option<Rc<Core>>);
+    impl Drop for CaptureOwner {
+        fn drop(&mut self) {
+            if let Some(core) = self.0.take() {
+                let owned = core.owners.borrow_mut().pop().expect("allocation owner");
+                drop(ReactiveOwner {
+                    core: Rc::downgrade(&core),
+                    owned,
+                });
+            }
+        }
+    }
+    let mut guard = CaptureOwner(Some(core.clone()));
+    let value = run();
+    let owned = core.owners.borrow_mut().pop().expect("allocation owner");
+    guard.0 = None;
+    (
+        value,
+        ReactiveOwner {
+            core: Rc::downgrade(&core),
+            owned,
+        },
+    )
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::*;
+    use crate::{UiApp, View};
+    #[test]
+    fn dynamic_list_reuses_all_reactive_slots_and_releases_values() {
+        let input = Rc::new(Cell::new(None));
+        let output = input.clone();
+        let weak = Rc::new(RefCell::new(Vec::new()));
+        let weak_output = weak.clone();
+        let app = UiApp::new(move || {
+            let length = signal(8);
+            output.set(Some(length));
+            View::element("view").child(View::dynamic(move || {
+                let length = length.get();
+                (0..length)
+                    .map(|_| {
+                        let value = Rc::new(());
+                        weak_output.borrow_mut().push(Rc::downgrade(&value));
+                        let state = signal(value);
+                        let count = signal(1);
+                        let doubled = derived(move || count.get() * 2);
+                        effect(move || {
+                            state.get();
+                        });
+                        View::live_text(move || doubled.get().to_string())
+                    })
+                    .collect::<Vec<_>>()
+            }))
+        });
+        let length = input.get().unwrap();
+        let core = resolve(length.scope);
+        for index in 0..100 {
+            length.set(if index % 2 == 0 { 4 } else { 8 });
+            assert!(core.values.borrow().len() <= 49);
+            assert!(core.subscribers.borrow().len() <= 49);
+            assert!(core.observers.borrow().len() <= 65);
+            assert!(
+                weak.borrow()
+                    .iter()
+                    .filter(|value| value.strong_count() > 0)
+                    .count()
+                    <= 8
+            );
+            assert_eq!(app.tree().children.len(), length.get());
+        }
+        drop(app);
+        drop(core);
+        assert!(weak.borrow().iter().all(|value| value.upgrade().is_none()));
+    }
+    #[test]
+    fn disposed_effect_handle_cannot_dispose_reused_registration() {
+        let scope = Scope::new();
+        let calls = Rc::new(Cell::new(0));
+        let input = scope.run(|| signal(0));
+        let old = scope.run(|| {
+            effect(move || {
+                input.get();
+            })
+        });
+        old.dispose();
+        let output = calls.clone();
+        let next = scope.run(|| {
+            effect(move || {
+                input.get();
+                output.set(output.get() + 1);
+            })
+        });
+        assert_eq!(old.slot, next.slot);
+        old.dispose();
+        input.set(1);
+        assert_eq!(calls.get(), 2);
+        next.dispose();
+        assert_eq!(scope.0.free_observers.borrow().len(), 1);
     }
 }
