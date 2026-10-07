@@ -151,7 +151,45 @@ pub(crate) struct Tree {
     next: u64,
     owner: Rc<Owner>,
 }
+impl super::selectors::SelectorTree for Tree {
+    type Node = NodeHandle;
+    fn with_element<R>(
+        &self,
+        node: &NodeHandle,
+        read: impl for<'a> FnOnce(Option<super::selectors::Element<'a>>) -> R,
+    ) -> R {
+        let record = node.0.borrow();
+        read(match &record.kind {
+            Kind::Text => None,
+            Kind::Element(tag) => Some(super::selectors::Element {
+                tag,
+                id: record.attributes.get("id").map(String::as_str),
+                classes: &record.classes,
+            }),
+        })
+    }
+    fn parent(&self, node: &NodeHandle) -> Option<NodeHandle> {
+        node.parent()
+    }
+    fn children(&self, node: &NodeHandle) -> Vec<NodeHandle> {
+        node.0.borrow().children.clone()
+    }
+}
 impl Tree {
+    pub(super) fn query(
+        &self,
+        selector: &super::selectors::Selector,
+        all: bool,
+    ) -> Vec<NodeHandle> {
+        let Some(root) = &self.root else {
+            return vec![];
+        };
+        if all {
+            selector.query_all(self, root)
+        } else {
+            selector.query_first(self, root).into_iter().collect()
+        }
+    }
     pub(super) fn owns(&self, node: &NodeHandle) -> bool {
         Rc::ptr_eq(&self.owner, &node.0.borrow().owner)
     }

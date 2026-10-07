@@ -44,5 +44,5 @@ node and keeps a detached node alive until the VM releases the handle. Creating
 a replacement app starts a separate session, even if the host catalog is shared.
 
 `children`, `parentNode` and `classList` are read-only properties. Changing the
-returned children list does not change the tree. Selector queries, text and
-attribute writes, structure edits and listeners are subsequent API slices.
+returned children list does not change the tree. See [Selecting live view elements](./view-selectors) for checked selector queries.
+Text and attribute writes, structure edits and listeners are subsequent API slices.

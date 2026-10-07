@@ -3,7 +3,7 @@ use super::tree::{NodeHandle, Record, Tree};
 use crate::{HostHandle, HostOp, HostReply, HostType, HostValue, Result};
 use std::{cell::RefCell, rc::Rc};
 
-fn handle(node: NodeHandle, brand: &str) -> HostValue {
+pub(super) fn handle(node: NodeHandle, brand: &str) -> HostValue {
     HostValue::Handle(HostHandle::from_shared(brand, node.0))
 }
 fn optional(node: Option<NodeHandle>, brand: &str) -> HostValue {
@@ -27,6 +27,7 @@ fn node(value: &HostValue, tree: &RefCell<Tree>) -> Result<NodeHandle> {
 }
 pub(crate) fn operations(tree: Rc<RefCell<Tree>>) -> Vec<HostOp> {
     let query_tree = tree.clone();
+    let selectors = super::selector_api::operations(tree.clone());
     let mut ops = vec![
         HostOp::new(
             "__view_get_element_by_id",
@@ -132,6 +133,7 @@ pub(crate) fn operations(tree: Rc<RefCell<Tree>>) -> Vec<HostOp> {
         )
         .with_receiver_property("ViewElement", "classList"),
     );
+    ops.extend(selectors);
     ops
 }
 
