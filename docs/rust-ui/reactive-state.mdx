@@ -34,7 +34,7 @@ Count: 1, doubled: 2
 ```
 
 A `Signal<T>` is a Copy handle, including when `T` is a `String`. `get()` clones
-its current value and records a dependency when a reaction is running. Formatting
+its current value into a `Result` and records a dependency when a reaction is running. Formatting
 a signal with `Display` records the same read. `set(value)` replaces the value;
 `update(|value| ...)` changes it in place. Boolean signals provide `toggle()`;
 numeric signals support `+=` and `-=`.
@@ -62,9 +62,10 @@ the final values. `UiApp` batches each dispatched event automatically.
 
 Create signals and reactions inside `Scope::run` or `Scope::batch`. A scope owns
 their values and closures. Dropping its last clone releases them; Copy signal
-handles do not retain the scope. Using a handle after that point panics instead
-of aliasing a later application's state. Signals and scopes stay on their UI
-thread; a reaction cannot subscribe to a different scope's signals.
+handles do not retain the scope. Reads and checked writes after that point return
+`ReactiveError::DroppedScope`; copied handles cannot alias a later application's
+state. Signals and scopes stay on their UI thread; reading a different scope's
+signal during a reaction returns `ReactiveError::CrossScopeRead`.
 
 When an update or batch panics, read tracking, context and batch depth are restored.
 Partial writes stay queued without executing reactions during unwinding. After
