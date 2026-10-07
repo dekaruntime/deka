@@ -1287,6 +1287,8 @@ impl<'a> Parser<'a> {
                 let span = self.span_from(start, start_byte);
                 if self.at(TokenKind::LBrace) {
                     let body = self.parse_block()?;
+                    // Include the body: formatter gaps and diagnostics use this span.
+                    let span = self.span_from(start, start_byte);
                     Some(Stmt::Export {
                         decl: crate::ast::ExportDecl::Function {
                             name,

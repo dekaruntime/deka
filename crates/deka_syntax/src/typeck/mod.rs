@@ -21,6 +21,7 @@ use crate::diagnostics::Diagnostic;
 mod ast_type;
 mod descriptor;
 mod exceptions;
+pub use exceptions::localize_export;
 mod expr;
 #[cfg(test)]
 mod arrow_tests;
@@ -34,6 +35,8 @@ mod hooks;
 #[cfg(test)]
 mod hooks_tests;
 mod indexing;
+mod jwt;
+pub use jwt::{JwtCall, JwtOperation};
 mod stmt;
 #[cfg(test)]
 mod tuples_tests;
@@ -154,6 +157,8 @@ pub struct TypeckResult<'a> {
     pub native_property_calls: HashMap<*const ast::Expr<'a>, &'a str>,
     /// `.toJSON()` and `.parseJSON<T>()` call sites specialized to a static shape.
     pub json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
+    /// Native JWT calls specialize complete claims/options through checked JSON schemas.
+    pub jwt_calls: HashMap<*const ast::Expr<'a>, jwt::JwtCall<'a>>,
     /// Builtin array call sites: accessors produce Option (deka#561,
     /// deka#566); `has` emits an inline predicate and carries a bounds fact
     /// into a guarded branch (rfd#65).
@@ -266,6 +271,9 @@ pub struct ModuleExports<'a> {
     pub aliases: HashMap<&'a str, ast::Type<'a>>,
     pub opaques: HashMap<&'a str, Type<'a>>,
     pub newtypes: HashMap<&'a str, NewtypeInfo>,
+    /// Declaring spelling behind an exported nominal type. Barrel export keys
+    /// may change without changing the names inside origin factory signatures.
+    pub nominal_names: HashMap<&'a str, &'a str>,
     /// Compiler-supplied opaque property signatures, derived from host functions.
     pub native_properties: NativeProperties<'a>,
     /// Opaque receiver identity and method -> async raw string-body host op.
@@ -314,6 +322,7 @@ impl<'a> Default for ModuleExports<'a> {
             aliases: HashMap::new(),
             opaques: HashMap::new(),
             newtypes: HashMap::new(),
+            nominal_names: HashMap::new(),
             receiver_methods: HashMap::new(),
             native_properties: HashMap::new(),
             native_json_bodies: HashMap::new(),
@@ -879,6 +888,7 @@ pub fn check_program_with_native_declarations<'a>(
         super_trees: checker.super_trees,
         native_property_calls: checker.native_property_calls,
         json_calls: checker.json_calls,
+        jwt_calls: checker.jwt_calls,
         array_builtin_calls: checker.array_builtin_calls,
         number_math_calls: checker.number_math_calls,
         unwrap_calls: checker.unwrap_calls,
@@ -1932,6 +1942,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     }
                     if let Some(info) = declared_structs.get(local) {
                         exports.structs.insert(external, info.clone());
+                        exports.nominal_names.insert(external, local);
                         let mut closure = HashMap::new();
                         collect_promotion_structs(
                             info,
@@ -1952,6 +1963,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     }
                     if let Some(info) = declared_enums.get(local) {
                         exports.enums.insert(external, info.clone());
+                        exports.nominal_names.insert(external, local);
                     }
                     if let Some(ty) = declared_aliases.get(local) {
                         exports.aliases.insert(external, ty.clone());
@@ -1969,6 +1981,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     }
                     if let Some(info) = declared_newtypes.get(local) {
                         exports.newtypes.insert(external, info.clone());
+                        exports.nominal_names.insert(external, local);
                         // Promote receiver methods declared on the local
                         // newtype to the exported name.
                         for ((rt, mn), mi) in receiver_methods.iter() {
@@ -2167,6 +2180,7 @@ struct Checker<'a> {
     native_json_bodies: HashMap<(usize, &'a str), &'a str>,
     native_property_calls: HashMap<*const ast::Expr<'a>, &'a str>,
     json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
+    jwt_calls: HashMap<*const ast::Expr<'a>, jwt::JwtCall<'a>>,
     /// Builtin `Array.first()`/`Array.last()`/`Array.pop()`/`Array.shift()`
     /// call sites to rewrite to an Option-producing expression, keyed by call
     /// expression pointer. Lowering collections like this one must also be
@@ -2307,6 +2321,7 @@ impl<'a> Checker<'a> {
             native_receiver_methods: HashMap::new(),
             native_property_calls: HashMap::new(),
             json_calls: HashMap::new(),
+            jwt_calls: HashMap::new(),
             index_flow: indexing::IndexFlow::default(),
             array_builtin_calls: HashMap::new(),
             number_math_calls: HashMap::new(),
@@ -2578,6 +2593,7 @@ impl<'a> Checker<'a> {
         self.static_type_calls.clear();
         self.native_property_calls.clear();
         self.json_calls.clear();
+        self.jwt_calls.clear();
         self.array_builtin_calls.clear();
         self.index_flow = indexing::IndexFlow::default();
         self.number_math_calls.clear();

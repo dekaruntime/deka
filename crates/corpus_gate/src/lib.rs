@@ -1,8 +1,11 @@
 //! Corpus gate library (deka#1214): enumerate testsuite-corpus cases,
 //! materialize fixtures exactly like the corpus runner, check then execute them,
 //! and evaluate the outcome against each case's expectation.
+mod native_async_fixture;
+mod native_crypto_fixture;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+mod formatter;
 mod native_fs;
 mod process;
 
@@ -16,6 +19,9 @@ const RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 fn native_diagnostic(slug: &str) -> Option<&'static str> {
     Some(match slug {
         "functions-duplicate-parameter-fail" => "duplicate parameter `x`",
+        "basics-redeclare-let-as-const-fail"
+        | "basics-redeclare-const-fail"
+        | "functions-duplicate-module-const-in-body-fail" => "duplicate binding `x` in this scope",
         "data-types-array-find-undefined-access-fail" => {
             "cannot access field `length` on type `Option<number>`"
         }
@@ -200,19 +206,33 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
         deka_json,
         packages,
     };
-    if missing_message && native_duplicate_parameter_fixture(&case) {
+    if missing_message && native_duplicate_binding_fixture(&case) {
         case.stage = Stage::Typecheck;
     }
+    native_async_fixture::migrate(&mut case, &metadata);
     Some(case)
 }
 
-// Preserve the original program and expectations. Only its original metadata
-// moves the named duplicate-parameter failure from execution to checking.
-fn native_duplicate_parameter_fixture(case: &Case) -> bool {
-    case.slug == "functions-duplicate-parameter-fail"
-        && case.status == Status::Fail
+// These original negative controls predate native checking. Their intended
+// duplicate-declaration failure is now caught before execution; only the exact
+// source/metadata combination is migrated, never the source or expected result.
+fn native_duplicate_binding_fixture(case: &Case) -> bool {
+    let source = match case.slug.as_str() {
+        "basics-redeclare-let-as-const-fail" => "let x = 1\nconst x = 2\n",
+        "basics-redeclare-const-fail" => {
+            "import { echo } from \"io\"\nconst x = 1\nconst x = 2\necho(string(x))\n"
+        }
+        "functions-duplicate-parameter-fail" => {
+            "import { echo } from \"io\"\nfn add(x: number, x: number) number {\n  return x + x\n}\necho(string(add(1, 2)))\n"
+        }
+        "functions-duplicate-module-const-in-body-fail" => {
+            "import { echo } from \"io\"\nconst x = 1\nconst x = 2\nfn read() number {\n  return x\n}\necho(string(read()))\n"
+        }
+        _ => return false,
+    };
+    case.status == Status::Fail
         && case.stage == Stage::Run
-        && case.source == "import { echo } from \"io\"\nfn add(x: number, x: number) number {\n  return x + x\n}\necho(string(add(1, 2)))\n"
+        && case.source == source
         && case.expected_stdout.is_none()
         && case.deka_json.is_none()
         && case.packages.is_empty()
@@ -417,8 +437,10 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     let native_fixture = native_json
         || native_bytes_fixture(case)
         || native_time_fixture(case)
+        || native_crypto_fixture::accepts(case)
         || native_http_fixture(case)
         || native_fs::matches(case);
+
     if !case.packages.is_empty() && !native_fixture {
         return Err(format!(
             "{} declares packages {:?}; the gate is offline and cannot install them",
@@ -436,11 +458,27 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     };
     std::fs::write(directory.join("deka.json"), deka_json).unwrap();
 
-    let checked = process::execute(deka, "check", &entry, &directory, &case.slug)?;
+    if case.slug.starts_with("formatter-") {
+        let before = execute_program(deka, &entry, &directory, &case.slug)?;
+        formatter::format_project(deka, case, &entry, &directory)?;
+        let after = execute_program(deka, &entry, &directory, &case.slug)?;
+        formatter::preserves_execution(&case.slug, &before, &after)?;
+        return Ok(after);
+    }
+    execute_program(deka, &entry, &directory, &case.slug)
+}
+
+fn execute_program(
+    deka: &Path,
+    entry: &str,
+    directory: &Path,
+    slug: &str,
+) -> Result<RunResult, String> {
+    let checked = process::execute(deka, "check", entry, directory, slug)?;
     if !checked.status.success() {
         return Ok(command_result(checked, true));
     }
-    let output = process::execute(deka, "run", &entry, &directory, &case.slug)?;
+    let output = process::execute(deka, "run", entry, directory, slug)?;
     Ok(command_result(output, false))
 }
 
@@ -741,6 +779,60 @@ mod tests {
             parse_native_diagnostics("[security] ignored\ntype mismatch at 3:1\n"),
             vec!["type mismatch at 3:1".to_string()]
         );
+    }
+
+    #[test]
+    fn original_duplicate_binding_fixture_requires_the_named_check_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = dir.path().join("basics/redeclare_const_fail");
+        std::fs::create_dir_all(&fixture).unwrap();
+        let entry = fixture.join("test.fail.ds");
+        let metadata = fixture.join("test.json");
+        std::fs::write(
+            &entry,
+            "import { echo } from \"io\"\nconst x = 1\nconst x = 2\necho(string(x))\n",
+        )
+        .unwrap();
+        std::fs::write(&metadata, r#"{"stage":"run"}"#).unwrap();
+        let load = || load_cases(dir.path()).pop().unwrap();
+        let original = load();
+        assert_eq!(original.stage, Stage::Typecheck);
+        assert!(
+            evaluate(
+                &original,
+                &run(false, "", "duplicate binding `x` in this scope", true)
+            )
+            .is_empty()
+        );
+        assert!(
+            !evaluate(
+                &original,
+                &run(
+                    false,
+                    "",
+                    "expression is unsupported by VM experiment",
+                    true
+                )
+            )
+            .is_empty()
+        );
+        assert!(!evaluate(&original, &run(true, "2\n", "", false)).is_empty());
+        std::fs::write(&entry, "const x = 1; const x = 2;").unwrap();
+        assert_eq!(load().stage, Stage::Run);
+        std::fs::write(&entry, &original.source).unwrap();
+        std::fs::write(
+            &metadata,
+            r#"{"stage":"run","expectedDiagnosticContains":"explicit replacement"}"#,
+        )
+        .unwrap();
+        let explicit = load();
+        assert_eq!(explicit.stage, Stage::Run);
+        assert_eq!(
+            explicit.expected_diagnostic_contains.as_deref(),
+            Some("explicit replacement")
+        );
+        std::fs::write(&metadata, r#"{"stage":"run","packages":["custom"]}"#).unwrap();
+        assert_eq!(load().stage, Stage::Run);
     }
 
     #[test]

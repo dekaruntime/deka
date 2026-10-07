@@ -56,15 +56,9 @@ async fn erased_types_cross_renamed_default_and_multihop_barrels_with_origin_fac
             "outer.ds",
             "export {Renamed as default, factory} from \"./inner.ds\";",
         );
-        // Imported nominal aliases are tracked separately in deka#1347.
-        // Forward their metadata under renamed external/default exports,
-        // preserving the origin name consumed by existing factory signatures.
-        let local_type = if matches!(kind, "enum" | "newtype") {
-            "Thing"
-        } else {
-            "Public"
-        };
-        let body = body.replace("Public", local_type);
+        // All imported type aliases use the consumer's spelling, including
+        // nominal enum/newtype factories forwarded through default barrels.
+        let local_type = "Public";
         let return_type = if kind == "interface" {
             "string"
         } else {
@@ -150,4 +144,94 @@ fn an_erased_forwarded_type_is_not_a_value_and_missing_names_still_fail() {
         compiler::compile_file(&dir.path().join("main.ds"), &Hosts::default(), Some("main"))
             .unwrap_err();
     assert!(error.contains("Missing"), "{error}");
+}
+
+#[tokio::test]
+async fn same_spelled_nominal_factories_in_one_barrel_remain_distinct() {
+    for kind in ["enum", "newtype"] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = if kind == "enum" {
+            "enum Thing {One, Two} export {Thing}; export fn make() Thing {return Thing.Two;}"
+        } else {
+            "type Thing number; export {Thing}; export fn make() Thing {return Thing(42);}"
+        };
+        write(dir.path(), "left.ds", source);
+        write(dir.path(), "right.ds", source);
+        write(
+            dir.path(),
+            "inner.ds",
+            "export {Thing as Left, make as left} from \"./left.ds\"; export {Thing as Right, make as right} from \"./right.ds\";",
+        );
+        write(
+            dir.path(),
+            "outer.ds",
+            "export {Left as First, Right as Second, left, right} from \"./inner.ds\";",
+        );
+        let read = if kind == "enum" {
+            "a.index + b.index"
+        } else {
+            "unboxNumber(a) + unboxNumber(b)"
+        };
+        write(
+            dir.path(),
+            "main.ds",
+            &format!(
+                "import type {{First as A, Second as B}} from \"./outer.ds\"; import {{left, right}} from \"./outer.ds\"; fn main() number {{const a:A=left(); const b:B=right(); return {read};}}"
+            ),
+        );
+        let program =
+            compiler::compile_file(&dir.path().join("main.ds"), &Hosts::default(), Some("main"))
+                .unwrap_or_else(|e| panic!("{kind}: {e}"));
+        assert_eq!(
+            Vm::new(program, Hosts::default())
+                .unwrap()
+                .run()
+                .await
+                .unwrap(),
+            HostValue::Number(if kind == "enum" { 2. } else { 84. })
+        );
+        write(
+            dir.path(),
+            "main.ds",
+            "import type {First as A, Second as B} from \"./outer.ds\"; import {left, right} from \"./outer.ds\"; fn main() number {const a:A=right(); return 0;}",
+        );
+        let error =
+            compiler::compile_file(&dir.path().join("main.ds"), &Hosts::default(), Some("main"))
+                .unwrap_err();
+        assert!(
+            error.contains("expected type `A`, found type `B`"),
+            "{kind}: {error}"
+        );
+    }
+}
+
+#[test]
+fn an_unexported_same_spelled_type_is_not_renamed_to_another_origin() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "left.ds",
+        "type Thing number; export {Thing}; export fn left() Thing {return Thing(1);}",
+    );
+    write(
+        dir.path(),
+        "right.ds",
+        "type Thing number; export fn right() Thing {return Thing(2);}",
+    );
+    write(
+        dir.path(),
+        "inner.ds",
+        "export {Thing as Public, left} from \"./left.ds\"; export {right} from \"./right.ds\";",
+    );
+    write(
+        dir.path(),
+        "main.ds",
+        "import type {Public as Local} from \"./inner.ds\"; import {right} from \"./inner.ds\"; const value: Local = right();",
+    );
+    let error =
+        compiler::compile_file(&dir.path().join("main.ds"), &Hosts::default(), None).unwrap_err();
+    assert!(
+        error.contains("expected type `Local`, found type `Thing`"),
+        "{error}"
+    );
 }

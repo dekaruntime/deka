@@ -1,0 +1,10 @@
+export fn App() {
+    const lightsOn = true;
+    const message = lightsOn ? "The lights are on" : "The lights are off";
+
+    return (
+        <view>
+            <p>{message}</p>
+        </view>
+    );
+}

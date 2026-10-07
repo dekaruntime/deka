@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'crates/deka_syntax/**'
+      - 'crates/deka_fmt/**'
       - 'crates/deka_native_ir/**'
       - 'crates/deka_native_ui/**'
       - 'crates/deka_vm/**'
@@ -37,7 +38,7 @@ jobs:
       - run: sccache --show-stats
       - name: Check and test the local frontend and runtime
         run: |
-          cargo fmt -p deka_native_web -p deka_vm -p deka_native_ir -p deka_native_ui -p deka_cli -p deka_executable --check
+          cargo fmt -p deka-fmt -p deka_native_web -p deka_vm -p deka_native_ir -p deka_native_ui -p deka_cli -p deka_executable --check
           cargo check --locked -p deka_vm --all-targets --features compiler,host,ui
           cargo clippy --locked -p deka_vm --all-targets --features compiler,host,ui --no-deps -- -D warnings
           # The desktop window (winit + wgpu + vello_gpu) builds on Linux with no system
@@ -62,6 +63,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt
       - uses: mozilla-actions/sccache-action@v0.0.9
       - run: sccache --show-stats
       - name: Download and verify the corpus
@@ -75,6 +78,7 @@ jobs:
       - name: Build the runtime and the gate
         # The gate runs programs, never a window: without the desktop feature the build needs no X11 libraries on the runner.
         run: |
+          cargo fmt -p corpus_gate --check
           cargo test --locked --release -p corpus_gate
           cargo build --locked -p deka_cli --no-default-features
           cargo build --locked -p corpus_gate
@@ -82,6 +86,8 @@ jobs:
         run: |
           corpus_dir=$(echo tests/testsuite/*/corpus)
           target/debug/corpus-gate "$corpus_dir" tests/corpus-passing.txt target/debug/deka
+          cargo run --locked --release -p corpus_gate --example formatter_gate -- target/debug/deka
+          cargo run --locked --release -p deka-fmt --example audit -- "$corpus_dir" crates/deka_fmt/tests/fixtures/tour
   desktop-build:
     runs-on: macos-15
     env:

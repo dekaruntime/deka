@@ -1,4 +1,8 @@
+[Formatter conformance](./native/formatter-conformance.mdx) describes the actual CLI corpus gate.
+
 # Native runtime preview
+
+See [Formatting DekaScript](./native/formatting) for `deka fmt` files, directory checks and stdin.
 
 See [Checking native programs](./native/checking) for source validation and the
 distinction between check errors and execution failures.
@@ -52,6 +56,10 @@ runtime while the VM integration is being completed. For npm installations use
 `npx deka test` or your project's test script.
 
 See [Native builtin modules](./native/builtin-modules) for Rust standard-library imports.
+See [The json module](./native/json-module) for typed imported conversions.
+
+See [Bindings and lexical scopes](./native/duplicate-bindings) for same-scope
+rejection and nested shadowing.
 
 ## Browser showcase
 
@@ -662,7 +670,16 @@ See [Native URLs](./native/url) for typed URL parsing and query parameters.
 
 See [Native JSON](./native/json) for typed parsing and serialization.
 
-See [Typed host enums](./native/host-enums) for named host values and enum Result error channels.
+See [Crypto module](./native/crypto-module) for Rust-backed hashes, authentication, encryption and randomness.
+
+- [Native JSON wire formats](./native/json-wire-formats)
+
+See [Importing nominal types through barrels](./native/import-aliases) for renamed factory signatures.
 See [Nested generic calls](./native/generic-calls) for explicit call type arguments such as `JSON.parse<Array<number>>(text)`.
 
+See [JWT module](./native/jwt-module) for typed HS256 signing and verification.
+See [Typed host enums](./native/host-enums) for named host values and enum Result error channels.
+
 See [Native filesystem operations](./native/fs) for byte I/O, directory entries and typed filesystem Results.
+
+See the [native async corpus guide](./native/async-corpus) for the full async category and the exact archived-fixture migration.

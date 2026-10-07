@@ -2,8 +2,10 @@
 //! Command dispatch lives in [`cli`]; this module holds the implementations.
 mod check_output;
 pub mod cli;
+mod fmt;
 mod package_check;
 mod packages;
+mod source_entry;
 
 mod desktop_runtime;
 
@@ -133,6 +135,7 @@ pub(crate) fn hosts() -> Result<Hosts> {
     deka_vm::abort::register(&mut hosts)?;
     deka_vm::crypto::register(&mut hosts)?;
     deka_vm::builtin_crypto::register(&mut hosts)?;
+    deka_vm::jwt::register(&mut hosts)?;
     deka_vm::fetch::register(&mut hosts)?;
     deka_vm::builtin_http::register(&mut hosts)?;
     deka_vm::blob::register(&mut hosts)?;
@@ -261,13 +264,7 @@ pub(crate) fn tests(paths: &[String], out: &Output, err: &Output) -> Result<()> 
                 .map_err(|e| e.to_string())?;
             entries.sort_by_key(|e| e.path());
             for entry in entries {
-                if matches!(
-                    entry.file_name().to_str(),
-                    Some("node_modules" | "ds_modules" | ".git" | ".target" | "target" | "dist")
-                ) {
-                    continue;
-                }
-                if entry.file_type().map_err(|e| e.to_string())?.is_symlink() {
+                if !source_entry::discoverable(&entry).map_err(|error| error.to_string())? {
                     continue;
                 }
                 discover(&entry.path(), false, out)?;
