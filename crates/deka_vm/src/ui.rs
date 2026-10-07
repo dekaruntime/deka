@@ -1,58 +1,9 @@
 //! Adapter from VM-owned component instances to the existing retained Rust UI tree.
 use crate::*;
 use deka_native_ui::{Application, Node};
-use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct WireNode {
-    #[serde(default)]
-    pub tag: String,
-    #[serde(default)]
-    pub classes: String,
-    /// Authored scalar attributes retained independently of renderer snapshots.
-    #[serde(default)]
-    pub attributes: std::collections::BTreeMap<String, String>,
-    #[serde(default)]
-    pub text: Option<String>,
-    #[serde(default)]
-    pub handler: Option<usize>,
-    #[serde(default)]
-    pub children: Vec<WireNode>,
-}
-impl WireNode {
-    pub(crate) fn style(&self) -> Result<deka_native_ui::Style> {
-        let mut style = if self.text.is_some() {
-            deka_native_ui::Style::default()
-        } else {
-            // Inputs use the platform editor; their presentation container is
-            // a div, while the retained store keeps the original input kind.
-            deka_native_ir::element_style(if self.tag == "input" {
-                "div"
-            } else {
-                &self.tag
-            })?
-        };
-        deka_native_ir::apply_classes(&mut style, &self.classes)?;
-        Ok(style)
-    }
-    pub fn into_node(self, id: String) -> Result<Node> {
-        let style = self.style()?;
-        let children = self
-            .children
-            .into_iter()
-            .enumerate()
-            .map(|(i, c)| c.into_node(format!("{id}/{i}")))
-            .collect::<Result<_>>()?;
-        Ok(Node {
-            id,
-            style,
-            text: self.text,
-            on_click: self.handler,
-            children,
-        })
-    }
-}
+pub use deka_native_ir::WireNode;
 /// Shared event-to-tree adapter for both desktop windows and the WASM canvas.
 /// VM execution happens on load/events; presentation frames only read this tree.
 pub struct UiSession {

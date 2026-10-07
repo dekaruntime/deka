@@ -1222,6 +1222,9 @@ dependencies = [
 [[package]]
 name = "deka_native_ir"
 version = "0.61.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "deka_native_ui"

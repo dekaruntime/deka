@@ -1,0 +1,3 @@
+COMMAND: ['cargo', 'update', '--offline', '-p', 'deka_vm', '--manifest-path', 'tools/deka-package/Cargo.toml']
+     Locking 0 packages to highest Rust 1.99.0 compatible versions
+note: pass `--verbose` to see 11 unchanged dependencies behind latest

@@ -1,0 +1,8 @@
+COMMAND: ['cargo', 'clippy', '--release', '--locked', '-p', 'deka_native_ir', '--all-targets', '--all-features', '--no-deps', '--', '-D', 'warnings']
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling syn v3.0.5
+   Compiling serde_derive v1.0.229
+    Checking serde v1.0.229
+    Checking deka_native_ir v0.61.0 (/Volumes/Projects/codex/deka/crates/deka_native_ir)
+    Finished `release` profile [optimized] target(s) in 8.98s
