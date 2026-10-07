@@ -1,0 +1,2 @@
+COMMAND: ['python3', 'tasks/evidence/aps74-store/verify_move.py']
+Original VM test bodies, all integration tests, tour fixtures and corpus list unchanged; one store/style preparation implementation.

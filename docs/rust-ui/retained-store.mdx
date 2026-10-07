@@ -1,0 +1,28 @@
+---
+title: Shared native tree
+---
+
+The Rust UI and the reference DekaScript VM use the same retained store in
+`deka_native_ir`. Renderer `Node` values are snapshots of that store.
+A snapshot does not own the lasting identity of a view element.
+
+The store keeps authored text, classes and scalar attributes separately from
+their effective values. An imperative edit appears in the next snapshot and
+survives until the binding computes a different authored value. Updating text
+preserves other properties on the same element. Structural slots preserve a
+static sibling when an earlier conditional disappears; dynamic lists remain
+positional.
+
+`WireNode` prepares element defaults and utility classes using the existing
+native style catalog. Unsupported elements and classes are rejected before a
+prepared frame is committed. Input presentation uses the existing div style
+while retaining the input's element kind.
+
+The store owns child edges and uses weak parent and identity-index edges.
+Detached nodes stay alive only while a caller retains a handle; handles from
+separate sessions cannot alias. Selectors share one matcher for supported tag,
+id, class, child and descendant queries.
+
+The store's raw resource bridge is an internal, unpublished contract. Rust
+application authoring is provided by `deka-ui`; stable public tree-editing APIs
+are developed separately.
