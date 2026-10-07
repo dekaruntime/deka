@@ -38,6 +38,9 @@ impl BrowserApp {
         self.scene = self
             .renderer
             .render_at(&tree, width, height, scale, milliseconds, reduced);
+        if let Some(id) = &self.focus {
+            self.scene.focus_ring(id);
+        }
         let errors = self.app.take_errors();
         if !errors.is_empty() {
             return Err(errors.join("\n"));
@@ -74,7 +77,7 @@ impl BrowserApp {
     pub fn pointer(&mut self, x: f32, y: f32) -> bool {
         if let Some(target) = self.scene.hit(x, y) {
             self.focus = Some(target.id.clone());
-            return self.app.dispatch(target.handler);
+            return self.activate(&target.id);
         }
         self.focus = self
             .scene
@@ -88,20 +91,18 @@ impl BrowserApp {
     /// Tab follows rendered controls; boundaries let focus leave the canvas.
     pub fn key(&mut self, key: &str, backwards: bool) -> bool {
         if key == "Tab" {
-            let current = self
-                .scene
-                .targets
+            use deka_native_ui::Application;
+            let targets = deka_native_ui::tab_order(&self.app.semantics());
+            let current = targets
                 .iter()
-                .position(|t| Some(&t.id) == self.focus.as_ref());
+                .position(|id| Some(id) == self.focus.as_ref());
             let next = match (current, backwards) {
                 (None, false) => Some(0),
-                (None, true) => self.scene.targets.len().checked_sub(1),
+                (None, true) => targets.len().checked_sub(1),
                 (Some(i), false) => Some(i + 1),
                 (Some(i), true) => i.checked_sub(1),
             };
-            self.focus = next
-                .and_then(|i| self.scene.targets.get(i))
-                .map(|t| t.id.clone());
+            self.focus = next.and_then(|i| targets.get(i)).cloned();
             return self.focus.is_some();
         }
         if let Some(id) = &self.focus {
@@ -109,7 +110,7 @@ impl BrowserApp {
                 return true;
             }
             if matches!(key, "Enter" | " ") {
-                return self.app.dispatch_to(id, Event::Click);
+                return self.activate(id);
             }
         }
         false
@@ -121,6 +122,36 @@ impl BrowserApp {
     }
     pub fn key_to(&self, node_id: &str, key: &str) -> bool {
         self.app.dispatch_to(node_id, Event::KeyDown(key.into()))
+    }
+    pub fn semantic_nodes(&self) -> Result<String, String> {
+        use deka_native_ui::{Application, SemanticRole};
+        let nodes: Vec<_> = self.app.semantics().into_iter().map(|node| serde_json::json!({
+            "id":node.id,"parent":node.parent,"name":node.name,"value":node.value,"disabled":node.disabled,"hidden":node.hidden,"tabIndex":node.tab_index,"clickable":node.clickable,
+            "role": match node.role { SemanticRole::Group => "group", SemanticRole::Label => "text", SemanticRole::Button => "button", SemanticRole::TextInput => "input", SemanticRole::MultilineTextInput => "textarea" }
+        })).collect();
+        serde_json::to_string(&nodes).map_err(|e| e.to_string())
+    }
+    pub fn focus_node(&mut self, id: &str) -> bool {
+        use deka_native_ui::Application;
+        if self
+            .app
+            .semantics()
+            .iter()
+            .any(|n| n.id == id && n.tab_index.is_some() && !n.disabled && !n.hidden)
+        {
+            self.focus = Some(id.into());
+            true
+        } else {
+            false
+        }
+    }
+    pub fn activate(&self, id: &str) -> bool {
+        use deka_native_ui::Application;
+        self.app
+            .semantics()
+            .iter()
+            .any(|n| n.id == id && n.clickable && !n.disabled && !n.hidden)
+            && self.app.dispatch_to(id, Event::Click)
     }
     pub fn blur(&mut self) {
         self.focus = None;

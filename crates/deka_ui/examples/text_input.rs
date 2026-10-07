@@ -4,8 +4,9 @@ use deka_ui::prelude::*;
 fn App() -> View {
     let text = signal("Type here".to_owned());
     view! {<view className="p-4 gap-4">
-        <input value={text} placeholder="Name" className="w-80 h-10"/>
-        <textarea value={text} className="w-80 h-24"/>
+        <input aria-label="Name" value={text} placeholder="Name" className="w-80 h-10"/>
+        <textarea aria-label="Notes" value={text} className="w-80 h-24"/>
+        <button onClick={move |_| text.set(String::new())}>"Clear"</button>
         <p>"Value: {text}"</p>
     </view>}
 }

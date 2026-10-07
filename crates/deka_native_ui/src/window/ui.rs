@@ -29,6 +29,8 @@ pub(crate) struct UiContent<A: Application> {
     editors: BTreeMap<String, Editor>,
     dragging: bool,
     clipboard: Box<dyn TextClipboard>,
+    semantics: Vec<crate::SemanticNode>,
+    accessibility: super::accessibility::Projection,
     live: bool,
     waker: Option<Waker>,
     wake_pending: Arc<AtomicBool>,
@@ -48,12 +50,21 @@ impl<A: Application> UiContent<A> {
             editors: BTreeMap::new(),
             dragging: false,
             clipboard: Box::new(SystemClipboard(None)),
+            semantics: vec![],
+            accessibility: Default::default(),
             live,
             waker: None,
             wake_pending: Arc::new(AtomicBool::new(false)),
         }
     }
 
+    fn available(&self, id: &str) -> bool {
+        self.semantics.is_empty()
+            || self
+                .semantics
+                .iter()
+                .any(|n| n.id == id && !n.disabled && !n.hidden)
+    }
     fn publish(&mut self, id: &str) {
         let editor = self.editors.get_mut(id).unwrap();
         if editor.text.is_composing() {
@@ -72,6 +83,8 @@ impl<A: Application> UiContent<A> {
             .iter()
             .find(|t| Some(&t.id) == self.focused.as_ref())
             .map(|t| t.handler);
+        let handler =
+            handler.filter(|_| self.focused.as_ref().is_some_and(|id| self.available(id)));
         if let Some(handler) = handler {
             self.host.click(handler);
         }
@@ -79,15 +92,19 @@ impl<A: Application> UiContent<A> {
     }
 
     fn cycle_focus(&mut self, backwards: bool) {
-        let targets: Vec<_> = self
-            .scene
-            .nodes
-            .iter()
-            .filter(|n| {
-                self.editors.contains_key(&n.id) || self.scene.targets.iter().any(|t| t.id == n.id)
-            })
-            .map(|n| n.id.clone())
-            .collect();
+        let targets = if self.semantics.is_empty() {
+            self.scene
+                .nodes
+                .iter()
+                .filter(|n| {
+                    self.editors.contains_key(&n.id)
+                        || self.scene.targets.iter().any(|t| t.id == n.id)
+                })
+                .map(|n| n.id.clone())
+                .collect()
+        } else {
+            crate::tab_order(&self.semantics)
+        };
         let current = targets
             .iter()
             .position(|id| Some(id) == self.focused.as_ref());
@@ -111,6 +128,7 @@ impl<A: Application> UiContent<A> {
 impl<A: Application> Content for UiContent<A> {
     fn frame(&mut self, width: f32, height: f32, scale: f32) -> &Scene {
         let root = self.host.render();
+        self.semantics = self.host.app.semantics();
         let controls = self.host.app.text_controls();
         self.editors
             .retain(|id, _| controls.iter().any(|c| &c.id == id));
@@ -122,7 +140,14 @@ impl<A: Application> Content for UiContent<A> {
             editor.sync(&c.value, c.controlled);
         }
         if self.focused.as_ref().is_some_and(|id| {
-            !self.editors.contains_key(id) && !self.scene.targets.iter().any(|t| &t.id == id)
+            if self.semantics.is_empty() {
+                !self.editors.contains_key(id) && !self.scene.targets.iter().any(|t| &t.id == id)
+            } else {
+                !self
+                    .semantics
+                    .iter()
+                    .any(|n| &n.id == id && n.tab_index.is_some() && !n.disabled && !n.hidden)
+            }
         }) {
             self.focused = None;
         }
@@ -173,6 +198,7 @@ impl<A: Application> Content for UiContent<A> {
                     .rev()
                     .find(|n| {
                         self.editors.contains_key(&n.id)
+                            && self.available(&n.id)
                             && n.rect.contains(x, y)
                             && n.clip.contains(x, y)
                     })
@@ -193,6 +219,9 @@ impl<A: Application> Content for UiContent<A> {
                 let Some(target) = self.scene.hit(x, y) else {
                     return false;
                 };
+                if !self.available(&target.id) {
+                    return false;
+                }
                 let (id, handler) = (target.id.clone(), target.handler);
                 self.focused = Some(id);
                 self.host.click(handler);
@@ -316,6 +345,95 @@ impl<A: Application> Content for UiContent<A> {
         }
     }
 
+    fn accessibility(&mut self, scale: f32) -> accesskit::TreeUpdate {
+        let mut update = self.accessibility.tree(
+            &self.semantics,
+            &self.scene,
+            self.active.then_some(self.focused.as_deref()).flatten(),
+            scale,
+        );
+        for control in &self.semantics {
+            if control.hidden {
+                continue;
+            }
+            if let Some(editor) = self.editors.get_mut(&control.id) {
+                let id = self.accessibility.id(&control.id);
+                if let Some(index) = update.nodes.iter().position(|(node, _)| *node == id) {
+                    let (_, mut node) = update.nodes.remove(index);
+                    editor.accessibility(&mut update, &mut node, || self.accessibility.allocate());
+                    update.nodes.push((id, node));
+                }
+            }
+        }
+        update
+    }
+    fn accessibility_event(&mut self, event: &accesskit_winit::WindowEvent) -> bool {
+        use accesskit::{Action, ActionData};
+        let accesskit_winit::WindowEvent::ActionRequested(request) = event else {
+            return false;
+        };
+        if request.target_tree != accesskit::TreeId::ROOT {
+            return false;
+        }
+        let Some(id) = self
+            .accessibility
+            .target(request.target_node)
+            .map(str::to_owned)
+        else {
+            return false;
+        };
+        let Some(node) = self
+            .semantics
+            .iter()
+            .find(|n| n.id == id && !n.hidden && !n.disabled)
+        else {
+            return false;
+        };
+        match request.action {
+            Action::Focus if node.tab_index.is_some() => {
+                if let Some(editor) = self
+                    .focused
+                    .as_ref()
+                    .and_then(|id| self.editors.get_mut(id))
+                {
+                    editor.cancel();
+                }
+                self.focused = Some(id);
+                true
+            }
+            Action::Click if node.clickable => {
+                if let Some(target) = self.scene.targets.iter().find(|t| t.id == id) {
+                    self.host.click(target.handler);
+                    true
+                } else {
+                    false
+                }
+            }
+            Action::SetValue => {
+                if let (Some(editor), Some(ActionData::Value(value))) =
+                    (self.editors.get_mut(&id), &request.data)
+                {
+                    editor.replace(value);
+                    self.publish(&id);
+                    true
+                } else {
+                    false
+                }
+            }
+            Action::SetTextSelection => {
+                if let (Some(editor), Some(ActionData::SetTextSelection(selection))) =
+                    (self.editors.get_mut(&id), &request.data)
+                {
+                    editor.accessible_selection(selection);
+                    self.focused = Some(id);
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
     fn ime_area(&self) -> Option<crate::scene::Rect> {
         if !self.active {
             return None;
@@ -428,6 +546,12 @@ impl<A: Application> DesktopSession<A> {
     }
     pub fn focus(&self) -> Option<&str> {
         self.content.focused.as_deref()
+    }
+    pub fn accessibility(&mut self, scale: f32) -> accesskit::TreeUpdate {
+        self.content.accessibility(scale)
+    }
+    pub fn accessibility_event(&mut self, event: &accesskit_winit::WindowEvent) -> bool {
+        self.content.accessibility_event(event)
     }
     pub fn ime_area(&self) -> Option<crate::scene::Rect> {
         self.content.ime_area()

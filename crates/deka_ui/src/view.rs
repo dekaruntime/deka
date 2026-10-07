@@ -185,7 +185,7 @@ impl View {
     where
         V: IntoAttribute<M>,
     {
-        if !matches!(name, "id" | "className" | "value" | "placeholder") {
+        if !deka_native_ir::is_supported_attribute(name) {
             return Self(Builder::Error(format!(
                 "unsupported native attribute {name}"
             )));
@@ -1051,6 +1051,73 @@ impl Application for UiApp {
     }
     fn event(&self, handler: usize, _: &mut [f64]) {
         self.dispatch(handler);
+    }
+    fn semantics(&self) -> Vec<deka_native_ui::SemanticNode> {
+        use deka_native_ui::{SemanticNode, SemanticRole};
+        fn visit(
+            node: &NodeHandle,
+            parent: Option<String>,
+            hidden: bool,
+            disabled: bool,
+            output: &mut Vec<SemanticNode>,
+        ) {
+            let tag = node.tag_name();
+            let role = match tag.as_deref() {
+                Some("button") => SemanticRole::Button,
+                Some("input") => SemanticRole::TextInput,
+                Some("textarea") => SemanticRole::MultilineTextInput,
+                None => SemanticRole::Label,
+                _ => SemanticRole::Group,
+            };
+            let hidden = hidden || node.attribute("aria-hidden").as_deref() == Some("true");
+            let disabled = disabled
+                || node
+                    .attribute("disabled")
+                    .is_some_and(|v| !matches!(v.as_str(), "false" | "0"));
+            let clickable = node.has_click_handler();
+            let natural = matches!(
+                role,
+                SemanticRole::Button | SemanticRole::TextInput | SemanticRole::MultilineTextInput
+            ) || clickable;
+            let name = node.attribute("aria-label").unwrap_or_else(|| {
+                if matches!(
+                    role,
+                    SemanticRole::TextInput | SemanticRole::MultilineTextInput
+                ) {
+                    node.attribute("placeholder").unwrap_or_default()
+                } else if natural || role == SemanticRole::Label {
+                    node.text_content()
+                } else {
+                    String::new()
+                }
+            });
+            let id = node.renderer_id();
+            output.push(SemanticNode {
+                id: id.clone(),
+                parent,
+                role,
+                name,
+                value: node.attribute("value").unwrap_or_default(),
+                disabled,
+                hidden,
+                tab_index: node
+                    .attribute("tabIndex")
+                    .and_then(|v| v.parse().ok())
+                    .or(natural.then_some(0)),
+                clickable,
+            });
+            // A button's descendant text supplies its accessible name.
+            if role != SemanticRole::Button {
+                for child in node.all_children() {
+                    visit(&child, Some(id.clone()), hidden, disabled, output);
+                }
+            }
+        }
+        let mut output = vec![];
+        if let Some(root) = self.context.tree.borrow().root.as_ref() {
+            visit(root, None, false, false, &mut output);
+        }
+        output
     }
     fn text_controls(&self) -> Vec<deka_native_ui::TextControl> {
         let mut controls = Vec::new();

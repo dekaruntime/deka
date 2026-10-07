@@ -83,7 +83,10 @@ try {
   }
   const page=await browser.newPage();page.setDefaultTimeout(30000)
   await page.goto(url+'/?fixture=input-fixture');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start())
-  const input=page.locator('input');await input.pressSequentially('Sami')
+  const input=page.getByRole('textbox',{name:'Name',exact:true});
+  assert.equal(await page.getByRole('textbox',{name:'Notes',exact:true}).count(),1);
+  assert.equal(await page.getByRole('button',{name:'Clear',exact:true}).count(),1);
+await input.pressSequentially('Sami')
   assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello Sami'))
   await input.press('Enter');assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Key: Enter'))
   assert.equal(await input.inputValue(),'Confirmed');
@@ -101,8 +104,14 @@ try {
   assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello clipboard 日本'));
   await input.press('ControlOrMeta+A');await input.press('ControlOrMeta+X');assert.equal(await input.inputValue(),'');
   await input.press('ControlOrMeta+V');assert.equal(await input.inputValue(),'clipboard 日本');
-  await page.evaluate(()=>window.stop());assert.equal(await input.count(),0);assert.equal(await textarea.count(),0)
-  console.log('PASS: native browser text/key input and teardown')
+  await page.getByRole('button',{name:'Clear',exact:true}).focus();
+  await page.keyboard.press('Enter');assert.equal(await input.inputValue(),'');
+  const accessibilitySnapshot=await page.locator('body').ariaSnapshot();
+  assert(accessibilitySnapshot.includes('textbox "Name"'));
+  assert(accessibilitySnapshot.includes('textbox "Notes"'));
+  assert(accessibilitySnapshot.includes('button "Clear"'));
+  await page.evaluate(()=>window.stop());assert.equal(await page.getByRole('button',{name:'Clear'}).count(),0);assert.equal(await input.count(),0);assert.equal(await textarea.count(),0)
+  console.log('PASS: browser text/key/clipboard input, accessible controls/actions and teardown')
   await page.goto(url+'/?fixture=.&inspect');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start('counter'))
   const canvas=page.locator('canvas');const before=await canvas.screenshot()
   await canvas.focus();await page.keyboard.press('Tab');await page.keyboard.press('Enter');assert.notDeepEqual(await canvas.screenshot(),before)
