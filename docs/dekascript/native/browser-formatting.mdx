@@ -1,0 +1,22 @@
+# Formatting in the browser
+
+The native browser WASM package exports `format_ds(source)`. Initialize the package
+as usual, then pass a DekaScript string and receive its formatted source:
+
+```js
+import init, { format_ds } from './deka_native_web.js'
+
+await init({ module_or_path: wasmBytes })
+const formatted = format_ds('const count=0\n')
+// const count = 0\n
+```
+
+This calls the same Rust AST printer as `deka fmt`. It supports component tags,
+slots, comments and the parser's syntax without creating a preview or resetting
+application state. Incomplete source returns unchanged; format is separate from
+validation. There is no JavaScript formatting backend or compiler subprocess.
+
+CI exercises the actual generated browser bindings headlessly, compares every
+pinned corpus and current-tour source against native formatter output, and checks
+second-pass idempotence. The native audit separately verifies parser roundtrips
+and reports initially invalid sources instead of silently dropping them.

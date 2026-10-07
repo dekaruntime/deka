@@ -2073,6 +2073,7 @@ dependencies = [
 name = "deka_native_web"
 version = "0.61.0"
 dependencies = [
+ "deka-fmt",
  "deka_native_ui",
  "deka_vm",
  "serde_json",
