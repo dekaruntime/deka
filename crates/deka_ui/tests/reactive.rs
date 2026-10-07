@@ -171,12 +171,18 @@ fn effect_disposal_and_scope_drop_release_reactions_and_values() {
     assert!(weak_capture.upgrade().is_none());
     drop(scope);
     assert!(weak_value.upgrade().is_none());
-    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| retained.get())).is_err());
+    assert_eq!(
+        retained.try_get(),
+        Err(deka_ui::reactive::ReactiveError::DroppedScope)
+    );
     let replacement = Scope::new();
     replacement.run(|| {
         signal(42);
     });
-    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| state.get())).is_err());
+    assert_eq!(
+        state.try_get(),
+        Err(deka_ui::reactive::ReactiveError::DroppedScope)
+    );
 }
 
 #[test]
@@ -191,7 +197,7 @@ fn panic_restores_context_batch_depth_and_pending_reactions() {
     });
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         scope.batch(|| {
-            state.update(|value| {
+            state.update::<()>(|value| {
                 *value = 7;
                 panic!("event failed");
             })
@@ -214,14 +220,14 @@ fn separate_scopes_cannot_accidentally_alias_or_cross_subscribe() {
     let b = second.run(|| signal(2));
     a.set(3);
     assert_eq!(b.get(), 2);
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        second.run(|| {
-            effect(move || {
-                a.get();
-            })
-        });
-    }));
-    assert!(result.is_err());
+    second.run(|| {
+        effect(move || {
+            assert_eq!(
+                a.try_get(),
+                Err(deka_ui::reactive::ReactiveError::CrossScopeRead)
+            );
+        })
+    });
     second.run(|| {
         effect(move || {
             b.get();

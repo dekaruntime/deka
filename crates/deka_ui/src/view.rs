@@ -204,12 +204,12 @@ where
         View::dynamic(self)
     }
 }
-impl<T: Clone + Display + 'static> IntoView<Tracked> for Signal<T> {
+impl<T: Clone + Default + Display + 'static> IntoView<Tracked> for Signal<T> {
     fn into_view(self) -> View {
         View::live_text(move || self.get())
     }
 }
-impl<T: Clone + Display + 'static> IntoView<Tracked> for Derived<T> {
+impl<T: Clone + Default + Display + 'static> IntoView<Tracked> for Derived<T> {
     fn into_view(self) -> View {
         View::live_text(move || self.get())
     }

@@ -62,8 +62,9 @@ the final values. `UiApp` batches each dispatched event automatically.
 
 Create signals and reactions inside `Scope::run` or `Scope::batch`. A scope owns
 their values and closures. Dropping its last clone releases them; Copy signal
-handles do not retain the scope. Using a handle after that point panics instead
-of aliasing a later application's state. Signals and scopes stay on their UI
+handles do not retain the scope. Checked `try_get`, `try_set` and `try_update` return a typed `ReactiveError`
+after disposal. Convenience `get` (for `T: Default`), `set` and operators report
+errors through `Scope::on_error` or stderr; reads render the default value. Signals and scopes stay on their UI
 thread; a reaction cannot subscribe to a different scope's signals.
 
 When an update or batch panics, read tracking, context and batch depth are restored.
@@ -72,3 +73,8 @@ catching the panic, `scope.flush()` resumes pending work. Applications should
 handle their errors at the event boundary.
 
 Dynamic child registrations own the signals and reactions created while building those children. Replacing the children releases those values and recycles signal, subscriber and observer slots. Copied handles never alias a later allocation in a reused slot. Ordinary scope-level state remains live until its scope drops.
+
+Signals and nested reactions created during an effect execution belong to that
+execution. Its next run releases them before computing replacements; disposing
+the effect or its Dynamic child releases the last execution. Copied handles from
+a previous execution return `DisposedSignal`, even when their slot is reused.
