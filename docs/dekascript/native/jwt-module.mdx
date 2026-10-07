@@ -1,0 +1,33 @@
+# JWT module
+
+The native `jwt` module implements the existing HS256 signing and verification API in Rust. It uses the shared crypto engine, with no JavaScript boundary or package download.
+
+```ds
+import { sign, verify } from "jwt"
+import { from_string } from "bytes"
+import { echo } from "io"
+
+fn main() {
+    const key = from_string("development example secret")
+    const token = unwrap(sign({ sub: "user-7", name: "Deka" }, key, { exp_in: 60 })) or {
+        return;
+    }
+    const claims = unwrap(verify(token, key)) or {
+        return;
+    }
+    match claims.sub {
+        Some(subject) => echo(subject),
+        None => echo("No subject")
+    }
+}
+```
+
+Save the example as `main.ds`, then run `deka run main.ds --entry main`. Build a standalone executable with `deka build main.ds --entry main --outfile jwt-app`.
+
+`sign(payload, secret, options = {})` returns `Result<string, string>`. Payloads are statically checked records or structs. Known claims have the established types: `iat`, `exp`, and `nbf` are numbers; `iss`, `aud`, and `sub` are strings. Those fields can be absent or `Option` values. Additional statically known JSON fields are retained. Signing preserves field insertion order, including nested records, and flattens only the top-level payload struct. Ordinary JSON serialization keeps its existing format. Optional `None` values follow the shared JSON rule and encode as `null`.
+
+`verify(token, secret, options = {})` returns a `Result` whose successful record has six `Option` fields: `iat`, `exp`, `nbf`, `iss`, `aud`, and `sub`. Missing or null fields become `None`. The public type does not expose additional custom claims. Verification checks the HS256 signature, issued-at time, expiration, not-before time, and expected issuer and audience. Errors are `Err(string)` values, not throws. Non-finite values and oversized payload/options are also returned through `Err`; every argument is evaluated once, in source order, before serialization.
+
+Options retain the existing contract: `alg`, `iss`, `aud`, and `sub` are optional strings; `exp_in`, `exp`, and `leeway` are optional numbers. Signing defaults to HS256, inserts issued-at when absent, and lets explicit `exp` override `exp_in`. Verification accepts HS256 from the signed header. Expiration is valid at its exact boundary; leeway extends the accepted time range.
+
+Named imports, aliases and reexports are supported. Calls specialize the complete checked payload schema. Intrinsic function values and explicit type arguments are currently rejected. Secrets are bytes. Input and intermediate JSON are bounded to 16 MiB; cryptographic calls run synchronously within the current VM turn.

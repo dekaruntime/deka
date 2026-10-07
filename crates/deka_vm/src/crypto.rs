@@ -3,17 +3,14 @@ use crate::{HostHandle, HostOp, HostReply, HostType, HostValue, Hosts, Result};
 use std::rc::Rc;
 const MAX_CRYPTO_INPUT: usize = 16 * 1024 * 1024;
 const MAX_RANDOM_BYTES: usize = 65536;
-type Entropy = Rc<dyn Fn(&mut [u8]) -> Result<()>>;
+pub(crate) type Entropy = Rc<dyn Fn(&mut [u8]) -> Result<()>>;
 
 pub fn digest(algorithm: &str, data: &[u8]) -> Result<Vec<u8>> {
+    bounded(algorithm.as_bytes())?;
     if data.len() > MAX_CRYPTO_INPUT {
         return Err("input too large".into());
     }
-    let name = algorithm
-        .trim()
-        .to_ascii_lowercase()
-        .replace('_', "-")
-        .replace(' ', "");
+    let name = normalize_algorithm(algorithm);
     use sha2::Digest;
     Ok(match name.as_str() {
         "sha256" | "sha-256" => sha2::Sha256::digest(data).to_vec(),
@@ -23,6 +20,98 @@ pub fn digest(algorithm: &str, data: &[u8]) -> Result<Vec<u8>> {
         "blake3" => blake3::hash(data).as_bytes().to_vec(),
         _ => return Err(format!("unknown digest algorithm '{algorithm}'")),
     })
+}
+fn normalize_algorithm(name: &str) -> String {
+    name.trim()
+        .to_ascii_lowercase()
+        .replace('_', "-")
+        .replace(' ', "")
+}
+fn bounded(data: &[u8]) -> Result<()> {
+    if data.len() > MAX_CRYPTO_INPUT {
+        Err("input too large".into())
+    } else {
+        Ok(())
+    }
+}
+pub fn hmac(algorithm: &str, key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
+    bounded(algorithm.as_bytes())?;
+    bounded(key)?;
+    bounded(data)?;
+    use hmac::{Hmac, Mac};
+    fn finish<M: Mac>(
+        mac: std::result::Result<M, impl std::fmt::Debug>,
+        data: &[u8],
+    ) -> Result<Vec<u8>> {
+        let mut mac = mac.map_err(|_| "invalid hmac key".to_owned())?;
+        mac.update(data);
+        Ok(mac.finalize().into_bytes().to_vec())
+    }
+    match normalize_algorithm(algorithm).as_str() {
+        "sha256" | "sha-256" | "hs256" => finish(Hmac::<sha2::Sha256>::new_from_slice(key), data),
+        "sha384" | "sha-384" | "hs384" => finish(Hmac::<sha2::Sha384>::new_from_slice(key), data),
+        "sha512" | "sha-512" | "hs512" => finish(Hmac::<sha2::Sha512>::new_from_slice(key), data),
+        _ => Err(format!("unknown hmac algorithm '{algorithm}'")),
+    }
+}
+pub fn secure_compare(a: &[u8], b: &[u8]) -> Result<bool> {
+    bounded(a)?;
+    bounded(b)?;
+    if a.len() != b.len() {
+        return Ok(false);
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b) {
+        diff |= x ^ y;
+    }
+    Ok(std::hint::black_box(diff) == 0)
+}
+pub fn aes_256_gcm(
+    key: &[u8],
+    nonce: &[u8],
+    data: &[u8],
+    aad: &[u8],
+    decrypt: bool,
+) -> Result<Vec<u8>> {
+    use aes_gcm::aead::{Aead, KeyInit, Payload};
+    use aes_gcm::{Aes256Gcm, Nonce};
+    if key.len() != 32 {
+        return Err("key_length_invalid".into());
+    }
+    if nonce.len() != 12 {
+        return Err("nonce_length_invalid".into());
+    }
+    if data.len() > MAX_CRYPTO_INPUT + if decrypt { 16 } else { 0 } {
+        return Err("input too large".into());
+    }
+    bounded(aad)?;
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "key_length_invalid".to_owned())?;
+    let payload = Payload { msg: data, aad };
+    if decrypt {
+        cipher
+            .decrypt(Nonce::from_slice(nonce), payload)
+            .map_err(|_| "aes_decrypt_failed".into())
+    } else {
+        cipher
+            .encrypt(Nonce::from_slice(nonce), payload)
+            .map_err(|_| "aes_encrypt_failed".into())
+    }
+}
+pub fn bcrypt_verify(password: &str, hash: &str) -> Result<bool> {
+    // bcrypt's input limit is bytes; never accept a truncated password.
+    if password.len() > 72 {
+        return Ok(false);
+    }
+    bounded(hash.as_bytes())?;
+    bcrypt::verify(password, hash).map_err(|_| "bcrypt_verify_failed".into())
+}
+pub(crate) fn random_bytes(len: f64, fill: &Entropy) -> Result<Vec<u8>> {
+    if !len.is_finite() || len.fract() != 0. || !(1. ..=1_048_576.).contains(&len) {
+        return Err("random length must be an integer from 1 to 1048576".into());
+    }
+    let mut out = vec![0; len as usize];
+    fill(&mut out)?;
+    Ok(out)
 }
 pub fn fill_random(output: &mut [u8]) -> Result<()> {
     getrandom::getrandom(output).map_err(|error| format!("OS entropy unavailable: {error}"))
@@ -34,7 +123,7 @@ fn random_values(mut bytes: Vec<u8>, fill: &Entropy) -> Result<Vec<u8>> {
     fill(&mut bytes)?;
     Ok(bytes)
 }
-fn random_uuid(fill: &Entropy) -> Result<String> {
+pub(crate) fn random_uuid(fill: &Entropy) -> Result<String> {
     let mut bytes = [0; 16];
     fill(&mut bytes)?;
     Ok(uuid::Builder::from_random_bytes(bytes)

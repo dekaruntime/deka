@@ -1,0 +1,46 @@
+# Native JSON wire formats
+
+The native VM follows the confirmed APS 43 decision recorded in
+[dekaruntime/deka#1300](https://github.com/dekaruntime/deka/issues/1300#issuecomment-5968961796).
+The JSON module, namespace, receiver methods and `Response.json<T>()` share the
+same checked schema and Rust conversion engine.
+
+| DekaScript type | JSON representation |
+| --- | --- |
+| `Option<T>` | `None` is `null`; `Some(x)` is the representation of `x` |
+| `Result<T, E>` | `{"tag":"Ok","value":...}` or `{"tag":"Err","value":...}` |
+| Declared enum | `{"tag":"Case","value":...}`; a case without a payload omits `value` |
+| Newtype | Its underlying number, string or boolean |
+| Union | Parsing must match exactly one member; zero or multiple matches return `Err` |
+| Required struct | Existing wrapper `{"TypeName":{"field":...}}` |
+
+```ds
+import { parse, stringify } from "json";
+import { echo } from "io";
+
+alias Reply = Result<number, string>;
+const response: Reply = Ok(42);
+const text = stringify(response);
+const message = match parse<Reply>(text) {
+    Ok(Ok(value)) => "Answer: " + string(value),
+    Ok(Err(error)) => error,
+    Err(error) => "Invalid JSON: " + error
+};
+echo(message);
+```
+
+This prints `Answer: 42`. Parsing creates genuine nominal enum and newtype
+values, so matching, reflection and receiver methods keep working. Nested
+struct payloads preserve their nominal identities and methods, including
+private structs behind a module's exported enum.
+
+`Option<Option<T>>` is a compile error for JSON, including aliases and nested
+fields or containers: `null` cannot distinguish `None` from `Some(None)`.
+An ordinary `Option` field is required in the struct's wire object; its value
+can be `null`. Optional declaration fields (`field?: T`) remain unsupported.
+
+Missing or unknown enum tags, missing payloads, wrong payload types and values
+on payload-less cases return `Err`. Malformed JSON and ambiguous union input
+also return `Err`, never `Throw`. Recursive types, functions, host handles and
+dynamic untyped JSON remain outside the supported data shapes. Object key
+ordering is not an API guarantee.

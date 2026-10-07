@@ -1156,6 +1156,17 @@ impl Vm {
                 let text = crate::json::stringify(&self.heap, value, &shape)?;
                 frame.stack.push(self.heap.alloc(Value::String(text)));
             }
+            Op::JwtStringify { shape, error } => {
+                let value = pop(frame)?;
+                let (case, index, text) =
+                    match crate::json::jwt_stringify(&self.heap, value, &shape) {
+                        Ok(text) => ("Ok", 0, text),
+                        Err(_) => ("Err", 1, error),
+                    };
+                let payload = self.heap.alloc(Value::String(text));
+                let result = self.enum_value("Result".into(), case.into(), index, Some(payload));
+                frame.stack.push(result);
+            }
             Op::JsonParse(shape) => {
                 let factories = pop(frame)?;
                 let text = pop(frame)?;

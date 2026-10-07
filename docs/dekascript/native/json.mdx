@@ -24,9 +24,9 @@ own wrappers. Parsed values keep their nominal identity and receiver
 methods, including calls through interfaces. Object key ordering is not
 an API guarantee.
 
-Option, Result, other enums, newtypes, unions and optional struct fields
-await the JSON type-mapping decision; these shapes fail native compilation
-with an explicit diagnostic. Recursive and function-valued types are also
-unsupported. A local value called `JSON` behaves normally. User-declared
-`toJSON` receiver methods keep precedence for receiver calls; the namespace
-serializer uses the checked data shape directly.
+Option, Result, other enums, newtypes and unions use the confirmed
+[Native JSON wire formats](./json-wire-formats). Directly nested Option types,
+optional struct fields, recursive and function-valued types are unsupported.
+A local value called `JSON` behaves normally. User-declared `toJSON` receiver
+methods keep precedence for receiver calls; the namespace serializer uses the
+checked data shape directly.

@@ -8,7 +8,7 @@ argument and return types from the same host declarations used by the VM.
 import { sha256 } from "crypto";
 import { echo } from "io";
 
-const length = match await sha256(TextEncoder().encode("abc")) {
+const length = match sha256(TextEncoder().encode("abc")) {
     Ok(digest) => digest.length,
     Err(error) => 0
 };
@@ -16,7 +16,7 @@ echo(string(length));
 ```
 
 This prints `32`. `sha256` accepts immutable bytes and returns
-`Promise<Result<bytes, string>>`, using the same SHA-256 engine as
+`Result<bytes, string>`, using the same SHA-256 engine as
 `crypto.subtle.digest`. Import aliases and re-exporting through local modules
 preserve that signature. Operational failures are `Err` values.
 
