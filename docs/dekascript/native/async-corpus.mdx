@@ -1,0 +1,17 @@
+---
+title: Native async corpus
+---
+
+The native corpus gate checks and runs all 48 async cases, including await in
+loops, nested awaits, Promise joins and Result error arms.
+
+The pinned pre-native corpus has one obsolete JavaScript construction in
+`async_return_promise_unwraps`. Sami approved replacing that source with native
+DekaScript in dekaruntime/testsuite#103. Until the release owner publishes and
+pins that corpus, the gate migrates only its exact archived source, entry path,
+metadata, output and empty dependency context. Changed contracts are never
+rewritten. The expected stdout remains `1\n2\n`; the replacement also asserts
+the Err fallback. Already-migrated corpus source runs unchanged.
+
+This migration adds no JavaScript support and changes no compiler behavior,
+release tag or checksum pin. General task cancellation remains separate work.

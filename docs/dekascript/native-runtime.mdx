@@ -1,3 +1,5 @@
+[Formatter conformance](./native/formatter-conformance.mdx) describes the actual CLI corpus gate.
+
 # Native runtime preview
 
 See [Formatting DekaScript](./native/formatting) for `deka fmt` files, directory checks and stdin.
@@ -670,11 +672,14 @@ See [Crypto module](./native/crypto-module) for Rust-backed hashes, authenticati
 
 - [Native JSON wire formats](./native/json-wire-formats)
 
+See [Importing nominal types through barrels](./native/import-aliases) for renamed factory signatures.
 See [Nested generic calls](./native/generic-calls) for explicit call type arguments such as `JSON.parse<Array<number>>(text)`.
 
 See [JWT module](./native/jwt-module) for typed HS256 signing and verification.
 See [Typed host enums](./native/host-enums) for named host values and enum Result error channels.
 
 See [Native filesystem operations](./native/fs) for byte I/O, directory entries and typed filesystem Results.
+
+See the [native async corpus guide](./native/async-corpus) for the full async category and the exact archived-fixture migration.
 
 - [Native argument failure conformance](native/corpus-argument-negatives)

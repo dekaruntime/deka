@@ -1,10 +1,12 @@
 //! Corpus gate library (deka#1214): enumerate testsuite-corpus cases,
 //! materialize fixtures exactly like the corpus runner, check then execute them,
 //! and evaluate the outcome against each case's expectation.
+mod native_async_fixture;
 mod native_crypto_fixture;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 mod builtin_negative;
+mod formatter;
 mod native_fs;
 mod process;
 
@@ -207,6 +209,7 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
     if missing_message && native_duplicate_binding_fixture(&case) {
         case.stage = Stage::Typecheck;
     }
+    native_async_fixture::migrate(&mut case, &metadata);
     Some(case)
 }
 
@@ -453,11 +456,27 @@ pub fn run_case(deka: &Path, case: &Case, scratch: &Path) -> Result<RunResult, S
     };
     std::fs::write(directory.join("deka.json"), deka_json).unwrap();
 
-    let checked = process::execute(deka, "check", &entry, &directory, &case.slug)?;
+    if case.slug.starts_with("formatter-") {
+        let before = execute_program(deka, &entry, &directory, &case.slug)?;
+        formatter::format_project(deka, case, &entry, &directory)?;
+        let after = execute_program(deka, &entry, &directory, &case.slug)?;
+        formatter::preserves_execution(&case.slug, &before, &after)?;
+        return Ok(after);
+    }
+    execute_program(deka, &entry, &directory, &case.slug)
+}
+
+fn execute_program(
+    deka: &Path,
+    entry: &str,
+    directory: &Path,
+    slug: &str,
+) -> Result<RunResult, String> {
+    let checked = process::execute(deka, "check", entry, directory, slug)?;
     if !checked.status.success() {
         return Ok(command_result(checked, true));
     }
-    let output = process::execute(deka, "run", &entry, &directory, &case.slug)?;
+    let output = process::execute(deka, "run", entry, directory, slug)?;
     Ok(command_result(output, false))
 }
 
