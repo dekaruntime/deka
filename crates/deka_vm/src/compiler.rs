@@ -2,6 +2,7 @@
 use crate::{Function, Hosts, ListMut, Literal, Op, Program, PromiseJoin, Result};
 pub use deka_syntax::console::STDERR_OPERATION as CONSOLE_ERROR_OPERATION;
 use deka_syntax::{Diagnostic, Severity, ast::*, typeck::ExceptionEmit};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 #[path = "builtin_modules.rs"]
 mod builtins;
@@ -23,7 +24,9 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
             root: None,
             dependencies: BTreeMap::new(),
             lock: BTreeMap::new(),
+            resolved: Default::default(),
         },
+        None,
         None,
     )
 }
@@ -34,8 +37,205 @@ pub fn compile_entry(source: &str, hosts: &Hosts, entry_name: &str) -> Result<Pr
 /// Self-imports and external packages fail explicitly.
 pub fn compile_file(path: &std::path::Path, hosts: &Hosts, entry: Option<&str>) -> Result<Program> {
     let project = Project::load(path)?;
-    compile_modules(&load_modules(path, &project)?, hosts, entry, &project, None)
+    compile_modules(
+        &load_modules(path, &project)?,
+        hosts,
+        entry,
+        &project,
+        None,
+        None,
+    )
 }
+/// Detect a default fetch module and compile its native serving bootstrap.
+/// No file is generated beside source. The graph and typechecker are unchanged;
+/// the root's handler gets the same contextual type as `http.serve` callbacks.
+pub fn compile_script_file(
+    path: &std::path::Path,
+    hosts: &Hosts,
+    entry: Option<&str>,
+) -> Result<(Program, bool)> {
+    ScriptInputs::load(path)?.compile(hosts, entry)
+}
+/// One immutable compiler input snapshot shared by cache hashing and lowering.
+pub struct ScriptInputs {
+    project: Project,
+    modules: Vec<(std::path::PathBuf, String)>,
+}
+impl ScriptInputs {
+    pub fn load(path: &std::path::Path) -> Result<Self> {
+        let project = Project::load(path)?;
+        let modules = load_modules(path, &project)?;
+        if let Some((root, _)) = modules.last()
+            && let (Some(parent), Some(filename)) =
+                (root.parent(), root.file_name().and_then(|f| f.to_str()))
+        {
+            project.resolved.borrow_mut().insert(
+                (
+                    parent.join("<native-http-bootstrap>"),
+                    format!("./{filename}"),
+                ),
+                root.clone(),
+            );
+        }
+        Ok(Self { project, modules })
+    }
+    pub fn sources(&self) -> &[(std::path::PathBuf, String)] {
+        &self.modules
+    }
+    pub fn resolutions(&self) -> Vec<Resolution> {
+        self.project
+            .resolved
+            .borrow()
+            .iter()
+            .map(|((importer, specifier), target)| Resolution {
+                importer: importer.clone(),
+                specifier: specifier.clone(),
+                target: target.clone(),
+            })
+            .collect()
+    }
+    pub fn is_server(&self) -> Result<bool> {
+        is_server_source(&self.modules.last().ok_or("missing root module")?.1)
+    }
+    pub fn compile(&self, hosts: &Hosts, entry: Option<&str>) -> Result<(Program, bool)> {
+        compile_script_inputs(self, hosts, entry)
+    }
+}
+fn compile_script_inputs(
+    inputs: &ScriptInputs,
+    hosts: &Hosts,
+    entry: Option<&str>,
+) -> Result<(Program, bool)> {
+    let mut modules = inputs.modules.clone();
+    let project = &inputs.project;
+    let root = modules.last().ok_or("missing root module")?.0.clone();
+    let server = entry.is_none() && is_server_source(&modules.last().expect("root module").1)?;
+    if !server {
+        return compile_modules(&modules, hosts, entry, project, None, None).map(|p| (p, false));
+    }
+    let filename = root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("invalid server source name")?;
+    let specifier = serde_json::to_string(&format!("./{filename}")).map_err(|e| e.to_string())?;
+    let bootstrap = format!(
+        r#"import app from {specifier};
+import {{serve}} from "http";
+import {{__cli_http_options,__cli_http_listening}} from "vm:host";
+const server=match serve(__cli_http_options(),app.fetch){{Ok(server)=>server,Err(error)=>panic(error)}};
+__cli_http_listening(server.addr);
+"#
+    );
+    modules.push((
+        root.parent()
+            .ok_or("missing server directory")?
+            .join("<native-http-bootstrap>"),
+        bootstrap,
+    ));
+    compile_modules(&modules, hosts, None, project, None, Some(&root)).map(|p| (p, true))
+}
+fn default_binding<'a>(ast: &deka_syntax::ast::Program<'a>) -> Option<&'a str> {
+    ast.statements.iter().find_map(|stmt| match stmt {
+        Stmt::Export {
+            decl:
+                ExportDecl::NamedGroup {
+                    names,
+                    source: None,
+                },
+            ..
+        } => names
+            .iter()
+            .find(|n| n.alias == Some("default"))
+            .map(|n| n.name),
+        _ => None,
+    })
+}
+pub fn is_server_source(source: &str) -> Result<bool> {
+    let arena = bumpalo::Bump::new();
+    let parsed = deka_syntax::parse(source, &arena);
+    diagnostics(&parsed.errors)?;
+    let ast = parsed.program.ok_or("missing source program")?;
+    let named = default_binding(&ast);
+    Ok(ast.statements.iter().any(|stmt| match stmt {
+        Stmt::Export {
+            decl:
+                ExportDecl::Const {
+                    name,
+                    value: Expr::Object { fields, .. },
+                    ..
+                },
+            ..
+        } if *name == "default" || named == Some(*name) => fields.iter().any(|f| f.key == "fetch"),
+        Stmt::Const {
+            name,
+            value: Expr::Object { fields, .. },
+            ..
+        } if named == Some(*name) => fields.iter().any(|f| f.key == "fetch"),
+        _ => false,
+    }))
+}
+fn server_default_type<'a>(
+    hosts: &Hosts,
+    arena: &'a bumpalo::Bump,
+    value: &Expr<'a>,
+) -> Result<Type<'a>> {
+    let handler = hosts
+        .operation("http_serve")?
+        .args
+        .get(1)
+        .ok_or("missing HTTP handler contract")?
+        .clone();
+    let Expr::Object { fields, .. } = value else {
+        return Err("default fetch needs an object literal".into());
+    };
+    let function = fields
+        .iter()
+        .find(|f| f.key == "fetch")
+        .ok_or("missing fetch handler")?;
+    let Expr::Function { is_async, .. } = &function.value else {
+        return Err("default fetch needs a function handler".into());
+    };
+    let crate::HostType::TypedCallback {
+        args,
+        result,
+        result_channel,
+    } = handler
+    else {
+        return Err("invalid HTTP callback contract".into());
+    };
+    let parameters = args
+        .iter()
+        .map(crate::HostType::source)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let output = if result_channel {
+        format!("Result<{}, string>", result.source())
+    } else {
+        result.source()
+    };
+    let output = if *is_async {
+        format!("Promise<{output}>")
+    } else {
+        output
+    };
+    let ty = format!("{{fetch: fn({parameters}) {output}}}");
+    let source = arena.alloc_str(&format!("export const contract: {ty} = {{}};"));
+    let parsed = deka_syntax::parse(source, arena);
+    diagnostics(&parsed.errors)?;
+    match parsed
+        .program
+        .ok_or("missing server contract")?
+        .statements
+        .first()
+    {
+        Some(Stmt::Export {
+            decl: ExportDecl::Const { ty: Some(ty), .. },
+            ..
+        }) => Ok(ty.clone()),
+        _ => Err("invalid server contract declaration".into()),
+    }
+}
+
 /// Native source graph and public names needed to check a local package through
 /// an installed consumer. Uses the same resolver and export collector as compile.
 pub struct PackageCheckInputs {
@@ -70,7 +270,7 @@ pub fn package_check_inputs(
     let project = Project::load(path)?;
     let sources = load_modules(path, &project)?;
     let mut exports = Vec::new();
-    compile_modules(&sources, hosts, None, &project, Some(&mut exports))?;
+    compile_modules(&sources, hosts, None, &project, Some(&mut exports), None)?;
     Ok(PackageCheckInputs { sources, exports })
 }
 
@@ -150,6 +350,14 @@ pub struct Project {
     root: Option<std::path::PathBuf>,
     dependencies: BTreeMap<String, String>,
     lock: BTreeMap<String, String>,
+    resolved: RefCell<Resolutions>,
+}
+type Resolutions = BTreeMap<(std::path::PathBuf, String), std::path::PathBuf>;
+/// Frozen import edge used in materialization identity.
+pub struct Resolution {
+    pub importer: std::path::PathBuf,
+    pub specifier: String,
+    pub target: std::path::PathBuf,
 }
 
 impl Project {
@@ -168,6 +376,7 @@ impl Project {
                     root: None,
                     dependencies: BTreeMap::new(),
                     lock: BTreeMap::new(),
+                    resolved: Default::default(),
                 });
             }
         };
@@ -193,6 +402,7 @@ impl Project {
             root: Some(root),
             dependencies,
             lock,
+            resolved: Default::default(),
         })
     }
 
@@ -298,6 +508,19 @@ impl Project {
 }
 
 fn module_path(
+    parent: &std::path::Path,
+    source: &str,
+    project: &Project,
+) -> Result<std::path::PathBuf> {
+    let key = (parent.to_owned(), source.to_owned());
+    if let Some(path) = project.resolved.borrow().get(&key) {
+        return Ok(path.clone());
+    }
+    let path = resolve_module_path(parent, source, project)?;
+    project.resolved.borrow_mut().insert(key, path.clone());
+    Ok(path)
+}
+fn resolve_module_path(
     parent: &std::path::Path,
     source: &str,
     project: &Project,
@@ -425,9 +648,13 @@ fn native_globals<'a>(
             .get(op.name.as_str())
             .expect("host declaration")
             .clone();
-        let deka_syntax::typeck::Type::Object { fields } = globals
-            .entry(name)
-            .or_insert_with(|| deka_syntax::typeck::Type::Object { fields: vec![] })
+        let deka_syntax::typeck::Type::Object { fields, .. } =
+            globals
+                .entry(name)
+                .or_insert_with(|| deka_syntax::typeck::Type::Object {
+                    fields: vec![],
+                    optional: vec![],
+                })
         else {
             unreachable!("validated namespace/global collision");
         };
@@ -454,7 +681,13 @@ fn native_globals<'a>(
             (kind.name(), ty)
         })
         .collect();
-    globals.insert("Promise", deka_syntax::typeck::Type::Object { fields });
+    globals.insert(
+        "Promise",
+        deka_syntax::typeck::Type::Object {
+            fields,
+            optional: vec![],
+        },
+    );
     globals
 }
 
@@ -551,6 +784,12 @@ fn lower_module<'a>(
                 },
             )
         })
+        .collect();
+    lower.optional_record_reads = checked
+        .exception_forms
+        .optional_record_reads
+        .iter()
+        .map(|expr| *expr as usize)
         .collect();
     lower.optional_field_reads = checked
         .exception_forms
@@ -1045,6 +1284,7 @@ fn compile_modules(
     entry_name: Option<&str>,
     project: &Project,
     package_exports: Option<&mut Vec<PackageExport>>,
+    server_root: Option<&std::path::Path>,
 ) -> Result<Program> {
     let arena = bumpalo::Bump::new();
     let declarations = hosts.declarations()
@@ -1112,8 +1352,51 @@ fn compile_modules(
     for (path, source) in modules {
         let parsed = deka_syntax::parse(source, &arena);
         diagnostics(&parsed.errors)?;
-        let ast: &deka_syntax::ast::Program<'_> =
-            arena.alloc(parsed.program.ok_or("missing source program")?);
+        let mut ast = parsed.program.ok_or("missing source program")?;
+        if server_root.is_some_and(|root| root == path) {
+            let named = default_binding(&ast);
+            let value = ast
+                .statements
+                .iter()
+                .find_map(|stmt| match stmt {
+                    Stmt::Export {
+                        decl: ExportDecl::Const { name, value, .. },
+                        ..
+                    } if *name == "default" || named == Some(*name) => Some(value),
+                    Stmt::Const { name, value, .. } if named == Some(*name) => Some(value),
+                    _ => None,
+                })
+                .ok_or("missing default fetch object")?;
+            let ty = server_default_type(hosts, &arena, value)?;
+            ast.statements =
+                arena.alloc_slice_fill_iter(ast.statements.iter().cloned().map(|mut stmt| {
+                    match &mut stmt {
+                        Stmt::Export {
+                            decl:
+                                ExportDecl::Const {
+                                    name,
+                                    ty: annotation,
+                                    ..
+                                },
+                            ..
+                        } if *name == "default" || named == Some(*name) => {
+                            if annotation.is_none() {
+                                *annotation = Some(ty.clone());
+                            }
+                        }
+                        Stmt::Const {
+                            name,
+                            ty: annotation,
+                            ..
+                        } if named == Some(*name) && annotation.is_none() => {
+                            *annotation = Some(ty.clone());
+                        }
+                        _ => {}
+                    }
+                    stmt
+                }));
+        }
+        let ast: &deka_syntax::ast::Program<'_> = arena.alloc(ast);
         module_exports.insert(
             path.clone(),
             deka_syntax::collect_module_exports(ast, &arena),
@@ -1512,6 +1795,7 @@ fn compile_modules(
         host_namespaces: BTreeMap::new(),
         host_values: BTreeMap::new(),
         optional_field_reads: Default::default(),
+        optional_record_reads: Default::default(),
         host_arities: hosts.declarations_names_and_arities(),
         declared: std::collections::BTreeSet::new(),
         newtypes: std::collections::BTreeSet::new(),
@@ -1835,6 +2119,7 @@ struct Lower<'a> {
     host_namespaces: BTreeMap<String, Vec<(String, String)>>,
     host_values: BTreeMap<String, String>,
     optional_field_reads: std::collections::HashSet<usize>,
+    optional_record_reads: std::collections::HashSet<usize>,
     host_arities: BTreeMap<String, usize>,
     /// Top-level names declared anywhere in the current module. A call to one
     /// of these before its declaration is a forward reference; a call to any
@@ -3641,6 +3926,11 @@ impl<'a> Lower<'a> {
                 self.expr(object, c)?;
                 c.emit(
                     if self
+                        .optional_record_reads
+                        .contains(&(e as *const Expr as usize))
+                    {
+                        Op::OptionalValueField((*field).into())
+                    } else if self
                         .optional_field_reads
                         .contains(&(e as *const Expr as usize))
                     {

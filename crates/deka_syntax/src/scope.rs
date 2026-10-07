@@ -212,7 +212,12 @@ fn render_type(ty: &Type<'_>) -> String {
             "{{ {} }}",
             fields
                 .iter()
-                .map(|field| format!("{}: {}", field.name, render_type(&field.ty)))
+                .map(|field| format!(
+                    "{}{}: {}",
+                    field.name,
+                    if field.optional { "?" } else { "" },
+                    render_type(&field.ty)
+                ))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),

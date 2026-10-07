@@ -1,0 +1,105 @@
+---
+title: Native HTTP servers
+description: Serve buffered Web Request and Response objects in the native VM.
+---
+
+A native `.ds` HTTP application exports a fetch handler. Its `req` parameter
+is inferred as the native `Request`; return a `Result<Response, string>`.
+An async handler returns a `Promise<Result<Response, string>>`.
+
+```ds
+export default {
+  async fetch(req) {
+    const text = unwrap(await req.text()) or { return Err("body"); };
+    return Response(req.method + ":" + text);
+  }
+};
+```
+
+Save this as `server.ds` and run:
+
+```sh
+deka check server.ds
+deka serve server.ds --hostname 127.0.0.1 --port 8000
+```
+
+The startup diagnostic is `Listening on http://127.0.0.1:8000/`.
+A POST with body `hello` returns `POST:hello`. `deka run server.ds` uses the
+same entry point. The default address is `0.0.0.0:8000`; port `0` asks the OS
+for an available port and the diagnostic reports the actual address.
+`--entry` on `run` explicitly chooses a function instead of the default handler.
+
+Build a source-free executable with `deka build server.ds --outfile server`.
+Move it anywhere and run `./server --hostname 127.0.0.1 --port 8000`, or
+`deka serve ./server` / `deka run ./server`. The compiler, source tree and cache
+are unnecessary at startup. Directory and `deka.json` inputs prefer an authored
+`dist/deka-app`; an invalid authored executable fails before binding a port.
+Non-desktop `.ds` execution uses a content-addressed native bytecode cache, including
+all resolved source inputs, frozen import edges and the actual compiler executable. Its directory is
+`DEKA_CACHE_DIR`, then `$XDG_CACHE_HOME/deka`, then `$HOME/.deka/cache`.
+Warm runs reuse the same entry without compiler progress output. Corrupt or
+version-stale runtime cache entries are regenerated. Native entries are bounded
+to 64; the oldest entries are evicted after materialization. `deka cache clean`
+removes native materialization entries without touching authored artifacts or
+other cache subdirectories.
+
+## Programmatic serving
+
+`serve(options, handler)` from `"http"` returns `Result<HttpServer, string>`.
+It starts a VM-owned HTTP/1.1 listener immediately. The handler receives the same
+Request resource used by fetch; it returns the same Response resource read by
+fetch clients. It can be synchronous or asynchronous. Initializer fields are
+independently optional and take ordinary typed values:
+
+```ds
+import { serve } from "http";
+
+const server = match serve(
+    { hostname: "127.0.0.1", port: 8000 },
+    fn(req: Request) Result<Response, string> {
+      return Response(req.method);
+    }
+) {
+  Ok(server) => server,
+  Err(error) => panic(error),
+};
+await server.finished();
+```
+
+`server.addr` is a read-only `{ hostname: string, port: number, transport: string }`
+snapshot. `await server.shutdown()` returns `Result<void, string>`: it stops
+accepting connections, lets current requests finish and waits for shutdown.
+`await server.finished()` returns the same completion result. Completion is a
+method because native async properties are not supported. An open listener keeps
+its VM running. Cancelling or dropping the VM releases its listener, connections
+and pending handlers. Independent connections make progress while another
+handler or TLS handshake is pending. At most 1024 connections are accepted at
+once; further connections wait in the OS backlog.
+
+TLS uses the shared rustls transport. Pass both `cert` and `key` as PEM `bytes`
+in the options record. A missing half or invalid PEM returns `Err` before binding.
+Supply credentials explicitly; the runtime reads no implicit certificate files.
+See [native TLS](/docs/dekascript/native/tls) for generated test identities and
+client verification.
+
+## Buffered Web bodies
+
+Inbound Requests expose read-only `url`, `method`, `headers` and `bodyUsed`.
+Their live Headers preserve the existing native header rules. `await req.text()`,
+`await req.bytes()` and `await req.json<T>()` return typed Results. A nonempty or
+explicitly supplied body can be consumed once across aliases. Reading an absent
+body returns empty bytes/text without marking it used. JSON uses the existing
+checked native JSON schema for `T`.
+
+The listener buffers input and output, each capped at 16 MiB. The input limit also
+covers chunked requests without a Content-Length. Streaming is a later streams
+slice. Oversized requests get HTTP 413, invalid request data gets 400, and handler
+`Err`, a consumed Response body or oversized output gets 500. Handler error text
+is kept off the wire. A failed request does not stop other requests; VM faults
+retain the ordinary VM error and cancellation behavior.
+
+Response headers are live until dispatch. Duplicate Set-Cookie fields stay
+separate. The transport computes Content-Length and framing from the buffered
+body; caller-supplied Content-Length and Transfer-Encoding cannot change it.
+HEAD sends no body and reports the corresponding buffered representation length.
+Returning a Response consumes its body, so reusing a consumed Response fails.

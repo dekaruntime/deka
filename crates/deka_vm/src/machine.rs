@@ -998,7 +998,8 @@ impl Vm {
             .ok_or("instruction pointer outside function")?
             .clone();
         frame.ip += 1;
-        let optional_field = matches!(&op, Op::OptionalField(_));
+        let optional_value_field = matches!(&op, Op::OptionalValueField(_));
+        let optional_field = matches!(&op, Op::OptionalField(_) | Op::OptionalValueField(_));
         match op {
             Op::Const(v) => {
                 frame.stack.push(self.heap.alloc(v.into()));
@@ -1587,7 +1588,7 @@ impl Vm {
                 }
                 frame.stack.push(self.heap.alloc(Value::Record(fields)));
             }
-            Op::Field(name) | Op::OptionalField(name) => {
+            Op::Field(name) | Op::OptionalField(name) | Op::OptionalValueField(name) => {
                 let h = pop(frame)?;
                 self.heap.observe(
                     h,
@@ -1617,7 +1618,14 @@ impl Vm {
                             let Value::Record(fields) = self.heap.get(owner)? else {
                                 unreachable!()
                             };
-                            *fields.get(&name).ok_or("missing field")?
+                            {
+                                let value = *fields.get(&name).ok_or("missing field")?;
+                                if optional_value_field {
+                                    self.enum_value("Option".into(), "Some".into(), 0, Some(value))
+                                } else {
+                                    value
+                                }
+                            }
                         } else if optional_field {
                             self.enum_value("Option".into(), "None".into(), 1, None)
                         } else {

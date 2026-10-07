@@ -942,6 +942,7 @@ impl<'a> Checker<'a> {
                     field_types.push((field.key, ty));
                 }
                 Type::Object {
+                    optional: vec![],
                     fields: field_types,
                 }
             }
@@ -1872,6 +1873,7 @@ impl<'a> Checker<'a> {
                 args,
             } if args.len() == 1 && field == "Provider" => Type::Function {
                 params: vec![Type::Object {
+                    optional: vec![],
                     fields: vec![("value", args[0].clone()), ("children", Type::react_node())],
                 }],
                 ret: Box::new(Type::react_node()),
@@ -1887,9 +1889,18 @@ impl<'a> Checker<'a> {
                 );
                 Type::Error
             }
-            Type::Object { fields } => {
+            Type::Object { fields, optional } => {
                 if let Some((_, ty)) = fields.iter().find(|(name, _)| *name == field) {
-                    ty.clone()
+                    if optional.contains(&field) {
+                        self.exception_forms
+                            .optional_record_reads
+                            .insert(expr as *const _);
+                        Type::Option {
+                            inner: Box::new(ty.clone()),
+                        }
+                    } else {
+                        ty.clone()
+                    }
                 } else {
                     self.error_span(span, format!("object has no field `{field}`"));
                     Type::Error
@@ -3597,10 +3608,23 @@ impl<'a> Checker<'a> {
             }
             _ => None,
         };
-        let left_type = native_setter.as_ref().map_or_else(
-            || self.check_expr(left),
-            |(_, value)| value.clone(),
-        );
+        let ordinary_optional_write = match (op, left) {
+            (ast::BinOp::Assign, ast::Expr::FieldAccess { object, field, .. }) => {
+                match self.check_expr(object) {
+                    Type::Object { fields, optional } if optional.contains(field) => fields
+                        .iter()
+                        .find(|(name, _)| name == field)
+                        .map(|(_, ty)| ty.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let left_type = ordinary_optional_write.unwrap_or_else(|| {
+            native_setter
+                .as_ref()
+                .map_or_else(|| self.check_expr(left), |(_, value)| value.clone())
+        });
         // Pipe checks its right-hand side specially (it desugars into a call),
         // so avoid the generic check_expr here.
         let saved_flow = self.index_flow.clone();
@@ -5132,7 +5156,8 @@ impl<'a> Checker<'a> {
     ) -> Result<super::descriptor::JsonDescriptor<'a>, String> {
         use super::descriptor::JsonDescriptor as J;
         Ok(match ty {
-            Type::Object { fields } => J::Record(
+            Type::Object { optional, .. } if !optional.is_empty() => return Err("JSON conversion of ordinary optional record fields is not supported; use explicit Option fields".into()),
+            Type::Object { fields, .. } => J::Record(
                 fields
                     .iter()
                     .map(|(name, ty)| Ok((*name, self.json_descriptor(ty, span)?)))
@@ -6175,6 +6200,11 @@ fn collect_param_names_rec<'a>(
         }
         Type::Option { inner } => collect_param_names_rec(inner, names, seen),
         Type::Array { elem } => collect_param_names_rec(elem, names, seen),
+        Type::Object { fields, .. } => {
+            for (_, ty) in fields {
+                collect_param_names_rec(ty, names, seen);
+            }
+        }
         Type::Function { params, ret, .. } => {
             for p in params {
                 collect_param_names_rec(p, names, seen);
@@ -6199,6 +6229,7 @@ fn contains_param(ty: &Type<'_>) -> bool {
         Type::Param { .. } => true,
         Type::Option { inner } => contains_param(inner),
         Type::Array { elem } => contains_param(elem),
+        Type::Object { fields, .. } => fields.iter().any(|(_, ty)| contains_param(ty)),
         Type::Function { params, ret, .. } => {
             params.iter().any(contains_param) || contains_param(ret)
         }
@@ -6253,6 +6284,13 @@ fn unsolved_params_to_var<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>)
                 .map(|a| unsolved_params_to_var(a, subst))
                 .collect(),
         },
+        Type::Object { fields, optional } => Type::Object {
+            fields: fields
+                .iter()
+                .map(|(name, ty)| (*name, unsolved_params_to_var(ty, subst)))
+                .collect(),
+            optional: optional.clone(),
+        },
         _ => ty.clone(),
     }
 }
@@ -6280,6 +6318,13 @@ fn infer_type_args<'a>(
             }
         }
         (Type::Array { elem: d }, Type::Array { elem: a }) => infer_type_args(d, a, params, out),
+        (Type::Object { fields: d, .. }, Type::Object { fields: a, .. }) => {
+            for (name, ty) in d {
+                if let Some((_, actual)) = a.iter().find(|(n, _)| n == name) {
+                    infer_type_args(ty, actual, params, out);
+                }
+            }
+        }
         // Function-typed parameters carry type parameters too: `map`'s
         // `(T -> U) -> Array<U>` solves U from the callback's return type
         // (deka#467). Positional binding is a heuristic (parameters are

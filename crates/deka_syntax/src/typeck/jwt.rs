@@ -130,7 +130,10 @@ impl<'a> Checker<'a> {
                 .collect(),
             _ => return Err("JWT claims and options must be a checked record or struct".into()),
         };
-        let Type::Object { fields: expected } = contract else {
+        let Type::Object {
+            fields: expected, ..
+        } = contract
+        else {
             return Err("invalid native JWT record contract".into());
         };
         for (name, expected) in expected {

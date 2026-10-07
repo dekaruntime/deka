@@ -2,12 +2,7 @@
 use crate::{HostHandle, HostOp, HostReply, HostType, HostValue, Hosts, Result};
 use std::cell::RefCell;
 
-#[derive(Debug)]
-enum Body {
-    Absent,
-    Buffered(Vec<u8>),
-    Consumed,
-}
+use crate::http_body::{Body, HasBody};
 
 /// Network hosts can construct the same object as the language constructor.
 /// There is no stream/tee implementation hidden behind this buffered slice.
@@ -16,7 +11,7 @@ pub struct ResponseObject {
     status_text: String,
     url: String,
     headers: HostValue,
-    body: RefCell<Body>,
+    body: Body,
 }
 impl ResponseObject {
     pub fn from_parts(
@@ -43,7 +38,7 @@ impl ResponseObject {
             status_text,
             url,
             headers: crate::http_headers::handle(headers),
-            body: RefCell::new(body.map_or(Body::Absent, Body::Buffered)),
+            body: Body::new(body),
         })
     }
     pub fn new(text: &str) -> Result<Self> {
@@ -70,23 +65,27 @@ impl ResponseObject {
         self.headers.clone()
     }
     pub fn body_used(&self) -> bool {
-        matches!(*self.body.borrow(), Body::Consumed)
+        self.body.used()
     }
     fn consume(&self) -> Result<Vec<u8>> {
-        let mut body = self.body.borrow_mut();
-        match &*body {
-            Body::Absent => Ok(vec![]),
-            Body::Consumed => Err("response body has already been consumed".into()),
-            Body::Buffered(_) => {
-                let Body::Buffered(bytes) = std::mem::replace(&mut *body, Body::Consumed) else {
-                    unreachable!("buffered response body")
-                };
-                Ok(bytes)
-            }
-        }
+        self.body.consume().map_err(|e| format!("response {e}"))
     }
-    fn text(&self) -> Result<String> {
-        crate::text_codec::decode_utf8(&self.consume()?)
+    pub(crate) fn wire_parts(&self) -> Result<(u16, crate::http_headers::HeaderList, Vec<u8>)> {
+        let HostValue::Handle(headers) = &self.headers else {
+            return Err("invalid Response headers".into());
+        };
+        let headers = headers
+            .downcast_ref::<RefCell<crate::http_headers::HeaderList>>()
+            .ok_or("invalid Response header resource")?
+            .borrow()
+            .clone();
+        Ok((self.status, headers, self.consume()?))
+    }
+}
+impl HasBody for ResponseObject {
+    const BRAND: &'static str = "Response";
+    fn body(&self) -> &Body {
+        &self.body
     }
 }
 
@@ -113,7 +112,6 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
         ("statusText", HostType::String),
         ("url", HostType::String),
         ("headers", HostType::Handle("Headers".into())),
-        ("bodyUsed", HostType::Bool),
     ] {
         hosts.register(
             HostOp::new(
@@ -142,38 +140,7 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
             .with_receiver_property("Response", property),
         )?;
     }
-    for method in ["text", "bytes", "json"] {
-        let op = HostOp::new(
-            &format!("__response_{method}"),
-            vec![HostType::Handle("Response".into())],
-            if method == "bytes" {
-                HostType::Bytes
-            } else {
-                HostType::String
-            },
-            true,
-            move |args| {
-                let HostValue::Handle(handle) = &args[0] else {
-                    unreachable!("checked Response")
-                };
-                let Some(response) = handle.downcast_ref::<ResponseObject>() else {
-                    return HostReply::Ready(Err("invalid Response resource".into()));
-                };
-                HostReply::Ready(if method == "bytes" {
-                    response.consume().map(HostValue::Bytes)
-                } else {
-                    response.text().map(HostValue::String)
-                })
-            },
-        )
-        .with_receiver_method("Response", method)
-        .with_result_channel();
-        hosts.register(if method == "json" {
-            op.with_json_body()
-        } else {
-            op
-        })?;
-    }
+    crate::http_body::register::<ResponseObject>(hosts, "response")?;
     Ok(())
 }
 
@@ -245,14 +212,14 @@ mod tests {
         )
         .unwrap();
         for _ in 0..2 {
-            assert_eq!(absent.text().unwrap(), "");
+            assert_eq!(absent.body.text().unwrap(), "");
             assert!(!absent.body_used());
         }
         let empty = ResponseObject::new("").unwrap();
         assert!(!empty.body_used());
         assert!(empty.consume().unwrap().is_empty());
         assert!(empty.body_used());
-        assert!(empty.text().is_err());
+        assert!(empty.body.text().is_err());
     }
     #[test]
     fn utf8_body_reads_remove_bom_and_replace_malformed_bytes_without_changing_bytes() {
@@ -265,7 +232,7 @@ mod tests {
             Some(bytes.clone()),
         )
         .unwrap();
-        assert_eq!(text.text().unwrap(), "A�");
+        assert_eq!(text.body.text().unwrap(), "A�");
         assert!(text.consume().is_err());
         let raw = ResponseObject::from_parts(
             200,
@@ -300,9 +267,9 @@ mod tests {
             panic!("Response alias")
         };
         let response = h.downcast_ref::<ResponseObject>().unwrap();
-        assert_eq!(response.text().unwrap(), "Deka");
+        assert_eq!(response.body.text().unwrap(), "Deka");
         assert!(response.body_used());
-        assert!(response.text().is_err());
+        assert!(response.body.text().is_err());
         assert_eq!(
             h.downcast_ref::<ResponseObject>().unwrap().headers(),
             header

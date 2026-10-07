@@ -110,6 +110,8 @@ pub struct ExceptionLowering<'a> {
     /// Resolved Result patterns; spelling alone cannot identify a builtin enum.
     pub result_patterns: HashSet<*const ast::Pattern<'a>>,
     pub option_values: HashSet<*const ast::Expr<'a>>,
+    /// Omitted ordinary record fields read as Option without requiring Some on writes.
+    pub optional_record_reads: HashSet<*const ast::Expr<'a>>,
     pub option_patterns: HashSet<*const ast::Pattern<'a>>,
     pub catches: HashMap<*const ast::Type<'a>, &'a str>,
     pub summons: HashMap<*const ast::Expr<'a>, (Vec<Type<'a>>, Type<'a>, bool)>,
@@ -954,7 +956,7 @@ pub(crate) fn is_concrete_export_type(ty: &Type<'_>) -> bool {
         Type::Generic { args, .. }
         | Type::Tuple { elements: args }
         | Type::Union { members: args } => args.iter().all(is_concrete_export_type),
-        Type::Object { fields } => fields
+        Type::Object { fields, .. } => fields
             .iter()
             .all(|(_, field_type)| is_concrete_export_type(field_type)),
         _ => true,
@@ -988,7 +990,7 @@ fn collect_struct_type_names<'a>(ty: &Type<'a>, names: &mut HashSet<&'a str>) {
                 collect_struct_type_names(arg, names);
             }
         }
-        Type::Object { fields } => {
+        Type::Object { fields, .. } => {
             for (_, field_type) in fields {
                 collect_struct_type_names(field_type, names);
             }
@@ -1237,7 +1239,8 @@ fn substitute_opaques<'a>(ty: Type<'a>, opaques: &HashMap<&'a str, Type<'a>>) ->
                 .map(|t| substitute_opaques(t, opaques))
                 .collect(),
         },
-        Type::Object { fields } => Type::Object {
+        Type::Object { fields, optional } => Type::Object {
+            optional: optional.clone(),
             fields: fields
                 .into_iter()
                 .map(|(name, t)| (name, substitute_opaques(t, opaques)))
@@ -1633,7 +1636,22 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     .collect(),
             },
             ast::Type::Record { fields, .. } => Type::Object {
-                fields: fields.iter().map(|field| (field.name, ast_type_to_export_type(&field.ty, structs, enums, aliases, newtypes, seen))).collect(),
+                optional: fields
+                    .iter()
+                    .filter(|f| f.optional)
+                    .map(|f| f.name)
+                    .collect(),
+                fields: fields
+                    .iter()
+                    .map(|field| {
+                        (
+                            field.name,
+                            ast_type_to_export_type(
+                                &field.ty, structs, enums, aliases, newtypes, seen,
+                            ),
+                        )
+                    })
+                    .collect(),
             },
             ast::Type::Union { members, .. } => Type::Union {
                 members: members
@@ -2627,6 +2645,7 @@ impl<'a> Checker<'a> {
         self.exception_forms.result_values.clear();
         self.exception_forms.result_patterns.clear();
         self.exception_forms.option_values.clear();
+        self.exception_forms.optional_record_reads.clear();
         self.exception_forms.option_patterns.clear();
         self.method_calls.clear();
         self.type_of_calls.clear();
@@ -3059,9 +3078,11 @@ impl<'a> Checker<'a> {
         if let (
             Type::Object {
                 fields: expected_fields,
+                optional: expected_optional,
             },
             Type::Object {
                 fields: actual_fields,
+                optional: actual_optional,
             },
         ) = (expected, actual)
         {
@@ -3069,8 +3090,14 @@ impl<'a> Checker<'a> {
                 actual_fields
                     .iter()
                     .find(|(n, _)| n == name)
-                    .map(|(_, actual_ty)| self.is_assignable(expected_ty, actual_ty))
-                    .unwrap_or(matches!(expected_ty, Type::Option { .. }))
+                    .map(|(_, actual_ty)| {
+                        (!actual_optional.contains(name) || expected_optional.contains(name))
+                            && self.is_assignable(expected_ty, actual_ty)
+                    })
+                    .unwrap_or(
+                        expected_optional.contains(name)
+                            || matches!(expected_ty, Type::Option { .. }),
+                    )
             });
         }
         // Hook-typed functions are not plain functions. A plain function is
@@ -3125,10 +3152,17 @@ impl<'a> Checker<'a> {
                 };
                 let compatible = members.members.iter().all(|(field, expected_ty)| {
                     let actual_ty = match actual {
-                        Type::Object { fields } => fields
-                            .iter()
-                            .find(|(n, _)| n == field)
-                            .map(|(_, ty)| ty.clone()),
+                        Type::Object { fields, optional } => {
+                            fields.iter().find(|(n, _)| n == field).map(|(n, ty)| {
+                                if optional.contains(n) {
+                                    Type::Option {
+                                        inner: Box::new(ty.clone()),
+                                    }
+                                } else {
+                                    ty.clone()
+                                }
+                            })
+                        }
                         Type::Interface { name, identity } => {
                             if let Some(fields) = self.interface_members.get(identity) {
                                 fields
@@ -3183,6 +3217,7 @@ impl<'a> Checker<'a> {
             match actual {
                 Type::Object {
                     fields: actual_fields,
+                    optional: actual_optional,
                 } => {
                     for member in members.iter() {
                         match member {
@@ -3212,7 +3247,10 @@ impl<'a> Checker<'a> {
                                     }
                                     return false;
                                 };
-                                if !self.is_assignable(&expected_ty, actual_ty) {
+                                if (actual_optional.contains(field_name)
+                                    && !matches!(expected_ty, Type::Option { .. }))
+                                    || !self.is_assignable(&expected_ty, actual_ty)
+                                {
                                     return false;
                                 }
                             }

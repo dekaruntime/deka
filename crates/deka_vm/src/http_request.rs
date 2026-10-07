@@ -1,5 +1,6 @@
 //! Rust-owned request metadata and buffered transport snapshots.
 //! Source construction initially supports the settled default-GET slice.
+use crate::http_body::{Body, HasBody};
 use crate::{HostHandle, Result, http_headers::HeaderList, url::UrlObject};
 use std::cell::RefCell;
 
@@ -17,7 +18,8 @@ pub struct BufferedRequest {
 pub struct RequestObject {
     url: String,
     headers: HostHandle,
-    body: Option<Vec<u8>>,
+    method: String,
+    body: Body,
 }
 impl RequestObject {
     pub fn new(input: &str) -> Result<Self> {
@@ -32,14 +34,34 @@ impl RequestObject {
         Ok(Self {
             url: url.href(),
             headers,
-            body: None,
+            method: "GET".into(),
+            body: Body::new(None),
         })
+    }
+    /// Native server ingress constructs the same Web Request resource.
+    pub fn from_parts(
+        url: &str,
+        method: String,
+        headers: HeaderList,
+        body: Option<Vec<u8>>,
+    ) -> Result<Self> {
+        let mut request = Self::new(url)?;
+        let crate::HostValue::Handle(headers) = crate::http_headers::handle(headers) else {
+            unreachable!()
+        };
+        request.method = method;
+        request.headers = headers;
+        request.body = Body::new(body);
+        Ok(request)
+    }
+    pub fn into_host_value(self) -> crate::HostValue {
+        crate::HostValue::Handle(HostHandle::new("Request", self))
     }
     pub fn url(&self) -> &str {
         &self.url
     }
     pub fn method(&self) -> &str {
-        "GET"
+        &self.method
     }
     pub fn headers(&self) -> HostHandle {
         self.headers.clone()
@@ -55,8 +77,15 @@ impl RequestObject {
             url: self.url.clone(),
             method: self.method().into(),
             headers,
-            body: self.body.clone(),
+            body: self.body.snapshot()?,
         })
+    }
+}
+
+impl HasBody for RequestObject {
+    const BRAND: &'static str = "Request";
+    fn body(&self) -> &Body {
+        &self.body
     }
 }
 
@@ -113,6 +142,7 @@ pub fn register(hosts: &mut crate::Hosts) -> Result<()> {
             .with_receiver_property("Request", field),
         )?;
     }
+    crate::http_body::register::<RequestObject>(hosts, "request")?;
     Ok(())
 }
 

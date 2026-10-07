@@ -98,6 +98,8 @@ pub enum HostType {
     Option(Box<HostType>),
     Tuple(Vec<HostType>),
     Record(BTreeMap<String, HostType>),
+    /// An initializer with independently omittable, ordinarily typed fields.
+    OptionalRecord(BTreeMap<String, HostType>),
     Bytes,
     Handle(String),
     Callback,
@@ -134,6 +136,9 @@ impl HostType {
             }
             (Self::List(item), HostValue::List(items)) => items.iter().all(|v| item.accepts(v)),
             (Self::List(item), HostValue::Strings(_)) => **item == Self::String,
+            (Self::OptionalRecord(fields), HostValue::Record(values)) => fields
+                .iter()
+                .all(|(name, ty)| values.get(name).is_none_or(|v| ty.accepts(v))),
             (Self::Record(fields), HostValue::Record(values)) => fields.iter().all(|(name, ty)| {
                 values
                     .get(name)
@@ -202,6 +207,14 @@ impl HostType {
                     .join(", ")
             ),
             Self::List(item) => format!("Array<{}>", item.source()),
+            Self::OptionalRecord(fields) => format!(
+                "{{{}}}",
+                fields
+                    .iter()
+                    .map(|(name, ty)| format!("{name}?: {}", ty.source()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Self::Record(fields) => format!(
                 "{{{}}}",
                 fields
@@ -220,7 +233,7 @@ impl HostType {
             return Err("host type nesting limit exceeded".into());
         }
         match self {
-            Self::Record(fields) => {
+            Self::Record(fields) | Self::OptionalRecord(fields) => {
                 for (name, ty) in fields {
                     if !identifier(name) {
                         return Err("invalid host record field name".into());
@@ -332,6 +345,18 @@ impl HostType {
             (Self::List(_), HostValue::Strings(items)) => {
                 HostValue::List(items.into_iter().map(HostValue::String).collect())
             }
+            (Self::OptionalRecord(fields), HostValue::Record(values)) => HostValue::Record(
+                values
+                    .into_iter()
+                    .map(|(name, value)| {
+                        let value = match fields.get(&name) {
+                            Some(ty) => ty.normalize(value),
+                            None => value,
+                        };
+                        (name, value)
+                    })
+                    .collect(),
+            ),
             (Self::Record(fields), HostValue::Record(mut values)) => {
                 for (name, ty) in fields {
                     if matches!(ty, Self::Option(_)) {
@@ -981,7 +1006,7 @@ impl Hosts {
                         collect(ty, out)?;
                     }
                 }
-                HostType::Record(fields) => {
+                HostType::Record(fields) | HostType::OptionalRecord(fields) => {
                     for ty in fields.values() {
                         collect(ty, out)?;
                     }

@@ -178,12 +178,14 @@ pub(super) fn exports<'a>(
                     }),
                 };
                 let claims = Type::Object {
+                    optional: vec![],
                     fields: Claim::ALL
                         .iter()
                         .map(|field| (field.name(), field_type(field.kind())))
                         .collect(),
                 };
                 let options = Type::Object {
+                    optional: vec![],
                     fields: OptionField::ALL
                         .iter()
                         .map(|field| (field.name(), field_type(field.kind())))

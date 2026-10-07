@@ -464,6 +464,7 @@ pub enum Type<'a> {
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct RecordField<'a> {
+    pub optional: bool,
     pub name: &'a str,
     pub ty: Type<'a>,
     pub span: Span,

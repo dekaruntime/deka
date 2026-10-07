@@ -5,6 +5,7 @@ pub mod cli;
 mod fmt;
 mod package_check;
 mod packages;
+mod server;
 mod source_entry;
 
 mod desktop_runtime;
@@ -26,6 +27,8 @@ pub(crate) struct Payload {
     version: u32,
     program: Program,
     desktop: bool,
+    #[serde(default)]
+    server: bool,
 }
 #[derive(Deserialize)]
 struct Project {
@@ -88,6 +91,9 @@ pub(crate) fn source(path: &Path, entry: Option<String>) -> Result<Source> {
     })
 }
 pub(crate) fn hosts() -> Result<Hosts> {
+    hosts_options(server::Options::default())
+}
+fn hosts_options(options: server::Options) -> Result<Hosts> {
     let mut hosts = Hosts::default();
     for name in ["echo", "print", compiler::CONSOLE_ERROR_OPERATION] {
         let diagnostic = name == compiler::CONSOLE_ERROR_OPERATION;
@@ -140,14 +146,26 @@ pub(crate) fn hosts() -> Result<Hosts> {
     deka_vm::builtin_http::register(&mut hosts)?;
     deka_vm::tcp::register(&mut hosts)?;
     deka_vm::tls::register(&mut hosts)?;
+    deka_vm::http_server::register(&mut hosts)?;
     deka_vm::blob::register(&mut hosts)?;
+    server::register(&mut hosts, options)?;
     Ok(hosts)
 }
 pub(crate) fn compile(source: &Source) -> Result<Payload> {
+    let hosts = hosts()?;
+    let (program, server) = if source.desktop {
+        (
+            compiler::compile_file(&source.path, &hosts, source.entry.as_deref())?,
+            false,
+        )
+    } else {
+        compiler::compile_script_file(&source.path, &hosts, source.entry.as_deref())?
+    };
     Ok(Payload {
         version: 1,
-        program: compiler::compile_file(&source.path, &hosts()?, source.entry.as_deref())?,
+        program,
         desktop: source.desktop,
+        server,
     })
 }
 fn cli_runtime() -> Result<tokio::runtime::Runtime> {
@@ -157,6 +175,16 @@ fn cli_runtime() -> Result<tokio::runtime::Runtime> {
         .map_err(|e| e.to_string())
 }
 pub(crate) fn execute(payload: Payload, exercise: Option<usize>) -> Result<()> {
+    execute_options(payload, exercise, server::Options::default())
+}
+pub(crate) fn execute_options(
+    payload: Payload,
+    exercise: Option<usize>,
+    options: server::Options,
+) -> Result<()> {
+    if options.supplied() && !payload.server {
+        return Err("server options require a default fetch application".into());
+    }
     if payload.version != 1 {
         return Err("unsupported application format".into());
     }
@@ -176,7 +204,8 @@ pub(crate) fn execute(payload: Payload, exercise: Option<usize>) -> Result<()> {
         if exercise.is_some() {
             return Err("--exercise requires a desktop application".into());
         }
-        let mut vm = Vm::new(payload.program, hosts()?)?;
+        let runtime_hosts = hosts_options(options)?;
+        let mut vm = Vm::new(payload.program, runtime_hosts)?;
         cli_runtime()?.block_on(vm.run())?;
     }
     Ok(())

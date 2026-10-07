@@ -60,7 +60,10 @@ pub enum Type<'a> {
         elements: Vec<Type<'a>>,
     },
     /// An object record type with known fields.
-    Object { fields: Vec<(&'a str, Type<'a>)> },
+    Object {
+        fields: Vec<(&'a str, Type<'a>)>,
+        optional: Vec<&'a str>,
+    },
     /// A declared interface type. Identity is its member slice in the shared
     /// AST arena; it selects origin-resolved metadata across module boundaries.
     /// Satisfaction remains structural rather than nominal.
@@ -283,6 +286,13 @@ pub fn substitute_type<'a>(ty: &Type<'a>, subst: &std::collections::HashMap<&'a 
             base,
             args: args.iter().map(|a| substitute_type(a, subst)).collect(),
         },
+        Type::Object { fields, optional } => Type::Object {
+            fields: fields
+                .iter()
+                .map(|(name, ty)| (*name, substitute_type(ty, subst)))
+                .collect(),
+            optional: optional.clone(),
+        },
         Type::Union { members } => Type::Union {
             members: members.iter().map(|m| substitute_type(m, subst)).collect(),
         },
@@ -454,13 +464,17 @@ impl fmt::Display for Type<'_> {
                     .join(", ")
             ),
             Type::Array { elem } => write!(f, "Array<{elem}>"),
-            Type::Object { fields } => {
+            Type::Object { fields, optional } => {
                 write!(f, "{{")?;
                 for (i, (name, ty)) in fields.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{name}: {ty}")?;
+                    write!(
+                        f,
+                        "{name}{}: {ty}",
+                        if optional.contains(name) { "?" } else { "" }
+                    )?;
                 }
                 write!(f, "}}")
             }

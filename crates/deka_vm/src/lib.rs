@@ -29,8 +29,11 @@ pub mod demo;
 pub mod fetch;
 mod heap;
 mod host;
+pub mod http_body;
 pub mod http_headers;
 pub mod http_response;
+#[cfg(feature = "host")]
+pub mod http_server;
 mod json;
 #[cfg(feature = "host")]
 pub mod jwt;

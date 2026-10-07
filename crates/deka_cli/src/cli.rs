@@ -52,11 +52,61 @@ fn register_run(registry: &mut Registry) {
         handler: cmd_run,
     });
     entry_param(registry);
+    server_params(registry);
     registry.add_param(ParamSpec {
         name: "--exercise",
         description: "invoke the first click handler N times without opening a window",
         kind: ParamKind::Value,
     });
+}
+
+fn server_params(registry: &mut Registry) {
+    for (name, description) in [
+        (
+            "--port",
+            "server port (default: 8000; 0 chooses a free port)",
+        ),
+        ("--hostname", "listener IP address (default: 0.0.0.0)"),
+    ] {
+        registry.add_param(ParamSpec {
+            name,
+            description,
+            kind: ParamKind::Value,
+        });
+    }
+}
+fn register_serve(registry: &mut Registry) {
+    registry.add_command(CommandSpec {
+        name: "serve",
+        owner: "deka_cli",
+        category: "Core",
+        summary: "serve a native default fetch application",
+        aliases: &[],
+        subcommands: &[],
+        handler: cmd_serve,
+    });
+    server_params(registry);
+}
+
+fn register_cache(registry: &mut Registry) {
+    registry.add_command(CommandSpec {
+        name: "cache",
+        owner: "deka_cli",
+        category: "Core",
+        summary: "clear native materialization entries with cache clean",
+        aliases: &[],
+        subcommands: &[],
+        handler: cmd_cache,
+    });
+}
+fn cmd_cache(ctx: &Context) -> HandlerResult {
+    if ctx.args.positionals.as_slice() != ["clean"] || !ctx.args.params.is_empty() {
+        return Err(CommandError::usage("usage: deka cache clean"));
+    }
+    let count = crate::server::clear_cache().map_err(CommandError::Runtime)?;
+    ctx.out()
+        .print(format_args!("Cleared {count} native cache entries\n"));
+    Ok(ExitStatus::SUCCESS)
 }
 
 fn register_dev(registry: &mut Registry) {
@@ -194,6 +244,8 @@ pub fn register_fns() -> Vec<fn(&mut Registry)> {
     vec![
         register_global,
         register_run,
+        register_serve,
+        register_cache,
         register_dev,
         register_check,
         register_build,
@@ -349,11 +401,57 @@ fn source_arg(ctx: &Context) -> std::result::Result<Source, CommandError> {
     source(&path, ctx.param::<String>("--entry")?).map_err(CommandError::Runtime)
 }
 
+fn server_options(ctx: &Context) -> std::result::Result<crate::server::Options, CommandError> {
+    Ok(crate::server::Options {
+        hostname: ctx.param::<String>("--hostname")?,
+        port: ctx.param::<u16>("--port")?,
+    })
+}
+fn cmd_execute(ctx: &Context, serve: bool) -> HandlerResult {
+    let allowed = if serve {
+        &["--hostname", "--port"][..]
+    } else {
+        &["--hostname", "--port", "--entry", "--exercise"][..]
+    };
+    if ctx
+        .args
+        .params
+        .keys()
+        .any(|name| !allowed.contains(&name.as_str()))
+    {
+        return Err(CommandError::usage("unexpected application option"));
+    }
+
+    if ctx.args.positionals.len() > 1 {
+        return Err(CommandError::usage("expected one application path"));
+    }
+    if serve
+        && (ctx.args.params.contains_key("--entry") || ctx.args.params.contains_key("--exercise"))
+    {
+        return Err(CommandError::usage(
+            "serve accepts only --hostname and --port",
+        ));
+    }
+    let path = ctx
+        .args
+        .positionals
+        .first()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| "deka.json".into());
+    let options = server_options(ctx)?;
+    let payload = crate::server::load(&path, ctx.param::<String>("--entry")?, serve)
+        .map_err(CommandError::Runtime)?;
+    runtime(crate::execute_options(
+        payload,
+        ctx.param::<usize>("--exercise")?,
+        options,
+    ))
+}
 fn cmd_run(ctx: &Context) -> HandlerResult {
-    let source = source_arg(ctx)?;
-    let exercise = ctx.param::<usize>("--exercise")?;
-    let payload = compile(&source).map_err(CommandError::Runtime)?;
-    runtime(execute(payload, exercise))
+    cmd_execute(ctx, false)
+}
+fn cmd_serve(ctx: &Context) -> HandlerResult {
+    cmd_execute(ctx, true)
 }
 
 fn cmd_dev(ctx: &Context) -> HandlerResult {
@@ -491,8 +589,19 @@ fn package_directory(ctx: &Context) -> std::result::Result<PathBuf, CommandError
 
 /// Run a compiled application (its executable carries an embedded payload).
 /// Kept outside the registry: an installed app has no CLI surface beyond
-/// `--exercise N`, mirroring the pre-registry behavior.
+/// `--exercise N` for desktop apps or listener options for default fetch servers.
 fn run_embedded(payload: Payload, argv: &[String]) -> ExitCode {
+    if payload.server {
+        return match crate::server::Options::arguments(argv)
+            .and_then(|options| crate::execute_options(payload, None, options))
+        {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("deka: {error}");
+                ExitCode::from(1)
+            }
+        };
+    }
     let exercise = match argv {
         [] => None,
         [flag, count] if flag == "--exercise" => match count.parse() {
@@ -546,6 +655,22 @@ pub fn dispatch(registry: &Registry, argv: &[String]) -> ExitCode {
     let parsed = Args::collect(argv.to_vec(), registry);
     if parsed.errors.is_empty() {
         let args = &parsed.args;
+        if ["--hostname", "--port"]
+            .iter()
+            .any(|name| args.params.contains_key(*name))
+            && !matches!(
+                args.commands.first().map(String::as_str),
+                Some("run" | "serve")
+            )
+            && !(args.commands.is_empty()
+                && args
+                    .positionals
+                    .first()
+                    .is_some_and(|path| path.ends_with(".ds") || path.ends_with(".dsx")))
+        {
+            eprintln!("deka: --hostname and --port require run or serve");
+            return ExitCode::from(2);
+        }
         if args.flags.contains_key("--as-package")
             && args.commands.first().map(String::as_str) != Some("check")
         {

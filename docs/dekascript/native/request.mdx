@@ -51,7 +51,13 @@ native Headers validation and Result rules. Supplying the wrong constructor or
 header argument type, forging a request with a record, or assigning to a readonly
 request property is a compile error.
 
-This first native slice supports the default GET constructor and metadata.
-RequestInit/input/body overloads, body consumption, cloning, abort signals,
-HTTP transport policies, and browser forwarding remain separate work. It does
-not accept an initializer object yet.
+Native server ingress creates this same Request with its method, headers and
+buffered body. `await request.text()`, `await request.bytes()` and
+`await request.json<T>()` return typed Results. Reads consume a supplied body
+once across aliases; `request.bodyUsed` reports this state. An absent body remains
+unused and reads as empty text/bytes. See [HTTP servers](./http-server) for
+buffering limits and server entry points.
+
+The public constructor still supports GET plus metadata. RequestInit/input/body
+constructor overloads, cloning and abort-signal initialization remain later work;
+it does not accept an initializer object yet.

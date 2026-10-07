@@ -9,7 +9,7 @@ license = "MIT"
 [features]
 default = []
 compiler = ["dep:deka_syntax", "dep:bumpalo"]
-host = ["dep:tokio", "dep:url", "dep:reqwest", "dep:sha2", "dep:sha3", "dep:blake3", "dep:getrandom", "dep:uuid", "dep:hmac", "dep:aes-gcm", "dep:bcrypt", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls-platform-verifier", "dep:socket2"]
+host = ["dep:tokio", "dep:url", "dep:reqwest", "dep:sha2", "dep:sha3", "dep:blake3", "dep:getrandom", "dep:uuid", "dep:hmac", "dep:aes-gcm", "dep:bcrypt", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls-platform-verifier", "dep:socket2", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes", "dep:futures-util"]
 ui = ["dep:deka_native_ui", "dep:deka_native_ir"]
 gpu = ["ui", "deka_native_ui/runtime-shaders"]
 v8-control = ["dep:deno_core"]
@@ -40,6 +40,12 @@ tokio-rustls = { version = "0.26", optional = true, default-features = false, fe
 rustls-pemfile = { version = "2", optional = true }
 rustls-platform-verifier = { version = "0.7", optional = true }
 socket2 = { version = "0.6", optional = true }
+
+hyper = { version = "1", optional = true, features = ["server", "http1"] }
+hyper-util = { version = "0.1", optional = true, features = ["tokio"] }
+http-body-util = { version = "0.1", optional = true }
+bytes = { version = "1", optional = true }
+futures-util = { version = "0.3", optional = true }
 
 [[bin]]
 name = "dvmc"

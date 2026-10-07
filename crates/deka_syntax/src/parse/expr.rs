@@ -473,41 +473,69 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LBrace => {
                 self.advance();
-                let mut fields = Vec::new();
-                if !self.at(TokenKind::RBrace) {
-                    loop {
-                        let (field_start, field_start_byte) = self.span_start();
-                        if self.eat(TokenKind::Spread) {
-                            let expr = self.parse_expression()?;
-                            fields.push(crate::ast::ObjectField {
-                                key: "",
-                                value: expr,
-                                span: self.span_from(field_start, field_start_byte),
-                            });
-                        } else {
-                            let key = self.expect_object_key()?;
-                            self.expect(TokenKind::Colon)?;
-                            let value = self.parse_expression()?;
-                            fields.push(crate::ast::ObjectField {
-                                key,
-                                value,
-                                span: self.span_from(field_start, field_start_byte),
-                            });
-                        }
-                        if !self.eat(TokenKind::Comma) {
-                            break;
-                        }
-                        self.skip_newlines();
-                        if self.at(TokenKind::RBrace) {
-                            break;
+                // Admit complete multiline objects while retaining the existing
+                // diagnostic/recovery point for malformed object/block syntax.
+                let newline = self.at(TokenKind::Newline).then_some(self.pos);
+                let errors = self.errors.len();
+                let object = (|| {
+                    self.skip_newlines();
+                    let mut fields = Vec::new();
+                    if !self.at(TokenKind::RBrace) {
+                        loop {
+                            let (field_start, field_start_byte) = self.span_start();
+                            if self.eat(TokenKind::Spread) {
+                                let expr = self.parse_expression()?;
+                                fields.push(crate::ast::ObjectField {
+                                    key: "",
+                                    value: expr,
+                                    span: self.span_from(field_start, field_start_byte),
+                                });
+                            } else {
+                                let is_async = self.at(TokenKind::Async)
+                                    && self.peek_kind(1) != Some(TokenKind::Colon)
+                                    && self.peek_kind(1) != Some(TokenKind::LParen);
+                                if is_async {
+                                    self.advance();
+                                }
+                                let key = self.expect_object_key()?;
+                                let value = if self.at(TokenKind::LParen) {
+                                    self.parse_function_tail(field_start, field_start_byte, is_async)?
+                                } else {
+                                    if is_async {
+                                        self.error("expected method parameters after `async`");
+                                        return None;
+                                    }
+                                    self.expect(TokenKind::Colon)?;
+                                    self.parse_expression()?
+                                };
+                                fields.push(crate::ast::ObjectField {
+                                    key,
+                                    value,
+                                    span: self.span_from(field_start, field_start_byte),
+                                });
+                            }
+                            self.skip_newlines();
+                            if !self.eat(TokenKind::Comma) {
+                                break;
+                            }
+                            self.skip_newlines();
+                            if self.at(TokenKind::RBrace) {
+                                break;
+                            }
                         }
                     }
+                    self.expect(TokenKind::RBrace)?;
+                    Some(Expr::Object {
+                        fields: alloc_slice(self.arena, fields),
+                        span: self.span_from(start, start_byte),
+                    })
+                })();
+                if let (true, Some(newline)) = (object.is_none(), newline) {
+                    self.pos = newline;
+                    self.errors.truncate(errors);
+                    self.expect_object_key()?;
                 }
-                self.expect(TokenKind::RBrace)?;
-                Some(Expr::Object {
-                    fields: alloc_slice(self.arena, fields),
-                    span: self.span_from(start, start_byte),
-                })
+                object
             }
             TokenKind::Import => self.parse_import_meta(start, start_byte),
             TokenKind::Super => {
@@ -713,6 +741,16 @@ impl<'a> Parser<'a> {
     ) -> Option<Expr<'a>> {
         let is_async = self.eat(TokenKind::Async);
         self.advance(); // `fn`
+        self.parse_function_tail(start, start_byte, is_async)
+    }
+
+    /// Object methods and fn expressions have one parameter/body grammar.
+    fn parse_function_tail(
+        &mut self,
+        start: crate::ast::Pos,
+        start_byte: usize,
+        is_async: bool,
+    ) -> Option<Expr<'a>> {
         self.expect(TokenKind::LParen)?;
         let params = self.parse_params()?;
         self.expect(TokenKind::RParen)?;
@@ -909,8 +947,7 @@ impl<'a> Parser<'a> {
                         return match self.tokens.get(i + 2).map(|t| t.kind) {
                             Some(TokenKind::RBrace) => true,
                             Some(TokenKind::Identifier) => {
-                                self.tokens.get(i + 3).map(|t| t.kind)
-                                    == Some(TokenKind::Colon)
+                                self.tokens.get(i + 3).map(|t| t.kind) == Some(TokenKind::Colon)
                             }
                             _ => false,
                         };

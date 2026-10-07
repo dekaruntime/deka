@@ -111,6 +111,8 @@ pub enum Op {
     Field(String),
     /// Only checker-proven Option fields may default to nominal None.
     OptionalField(String),
+    /// Ordinary optional record fields wrap a present value in Some.
+    OptionalValueField(String),
     /// Like `Field`, but a record without the key stays itself. Backs the
     /// embed-path walk in a promoted method call: a literal may nest the
     /// embedded record under its type name or carry its fields flat.

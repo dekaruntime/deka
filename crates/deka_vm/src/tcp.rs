@@ -157,20 +157,22 @@ impl Listener {
     }
     pub async fn accept(&self) -> Result<Connection> {
         let mut closed = self.0.closed.subscribe();
-        let listener = self
-            .0
-            .listener
-            .borrow()
-            .clone()
-            .ok_or("TCP listener is closed")?;
+        // Poll under a short borrow. A pending accept must not retain the
+        // listener's fd after close() removes it from the shared state.
         tokio::select! {
             biased;
             _ = closed.changed() => Err("TCP listener is closed".into()),
-            result = listener.accept() => Connection::new(result.map_err(|e| e.to_string())?.0),
+            result = std::future::poll_fn(|cx| {
+                let listener = self.0.listener.borrow();
+                match listener.as_ref() {
+                    Some(listener) => listener.poll_accept(cx),
+                    None => std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "TCP listener is closed"))),
+                }
+            }) => Connection::new(result.map_err(|e| e.to_string())?.0),
         }
     }
 }
-pub(crate) fn address_type() -> HostType {
+pub fn address_type() -> HostType {
     HostType::Record(BTreeMap::from([
         ("hostname".into(), HostType::String),
         ("port".into(), HostType::Number),

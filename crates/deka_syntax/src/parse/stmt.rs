@@ -1413,13 +1413,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `export default <named fn declaration>` or `export default <identifier>`
-    /// (rfd#12 ESM alignment amendment). Anonymous forms (`export default
-    /// fn () { … }`, `export default { … }`) are rejected: a default export
-    /// must be a named declaration or a named binding, so every import site
-    /// still has a real name to grep for.
+    /// Default named functions/bindings and object exports. Object exports
+    /// use the existing `default` value cell (Sami's 6 October server direction).
     fn parse_export_default(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
         match self.current_kind() {
+            TokenKind::LBrace => {
+                let value = self.parse_expression()?;
+                self.expect_statement_end(false)?;
+                Some(Stmt::Export {
+                    decl: ExportDecl::Const {
+                        name: "default",
+                        ty: None,
+                        value,
+                    },
+                    span: self.span_from(start, start_byte),
+                })
+            }
             TokenKind::Fn | TokenKind::Async => {
                 let fn_offset = if self.current_kind() == TokenKind::Async {
                     if self.peek_kind(1) != Some(TokenKind::Fn) {

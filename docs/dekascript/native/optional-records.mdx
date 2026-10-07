@@ -1,0 +1,33 @@
+# Ordinary optional record fields
+
+Inline record types can declare an independently omitted field as `name?: T`.
+If present, its value is `T`. Reading it returns `Option<T>`:
+
+```ds
+fn describe(options: { port?: number }) string {
+  return match options.port {
+    Some(port) => "port " + string(port),
+    None => "default port",
+  };
+}
+console.log(describe({}));
+console.log(describe({ port: 8000 }));
+// default port
+// port 8000
+```
+
+This is distinct from an explicit `port: Option<number>` field, whose supplied
+value must be `Some(number)` or `None`. An omitted ordinary field reads as `None`,
+and a supplied ordinary value reads as `Some(value)`. Assigning a present value
+through a mutable binding uses the declared `T`, not `Some(T)`. A record with an
+omittable field cannot satisfy a record that requires that field.
+
+Object literals also pass their declared field types into function literals,
+including method shorthand and async methods. This provides the typed native
+Request parameter in [default HTTP fetch handlers](./http-server).
+
+Native option records use these fields so callers write `{ port: 8000 }`.
+JSON conversion currently requires explicit Option fields when a record has
+optional fields. It rejects ordinary optional records rather than dropping the
+presence information. Optional fields with an Option value are rejected on read
+because `Option<Option<T>>` cannot be distinguished under representation erasure.

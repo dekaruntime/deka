@@ -461,6 +461,27 @@ mod tests {
     // caller has — so they also pin the stack-safety of the chosen limit.
 
     #[test]
+    fn multiline_object_methods_preserve_malformed_object_diagnostics() {
+        let arena = bumpalo::Bump::new();
+        for source in [
+            "const o = {\n x: 1,\n y: 2\n};",
+            "export default {\n async fetch(req) { return Response(req.method); }\n};",
+        ] {
+            let parsed = parse(source, &arena);
+            assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        }
+        for source in [
+            "const o = {\n x: 1\n y: 2\n};",
+            "const r = match(1) {1 => {\n echo(\"one\")\n \"result\"\n}, _ => \"other\"};",
+            "match {\n 1 => \"one\"\n}",
+        ] {
+            let parsed = parse(source, &arena);
+            assert!(parsed.program.is_none());
+            assert!(parsed.errors.iter().any(|e| e.message.contains("expected object key, found `newline`")));
+        }
+    }
+
+    #[test]
     fn nesting_below_limit_parses() {
         let arena = Bump::new();
         let source = format!("const x = {}{}{}", "(".repeat(32), "1", ")".repeat(32));
@@ -1897,17 +1918,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_export_default_object_literal_rejected() {
+    fn parse_export_default_object_literal() {
         let arena = Bump::new();
-        let result = parse("export default { a: 1 };", &arena);
-        assert!(
-            result
-                .errors
-                .iter()
-                .any(|e| e.message.contains("named declaration") || e.message.contains("named binding")),
-            "{:?}",
-            result.errors
+        let result = parse(
+            "export default { fetch(req: string) { return req; } };",
+            &arena,
         );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert!(matches!(
+            &result.program.unwrap().statements[0],
+            Stmt::Export {
+                decl: crate::ast::ExportDecl::Const {
+                    name: "default",
+                    value: crate::ast::Expr::Object { .. },
+                    ..
+                },
+                ..
+            }
+        ));
     }
 
     #[test]

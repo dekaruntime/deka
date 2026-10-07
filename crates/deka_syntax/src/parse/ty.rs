@@ -110,11 +110,19 @@ impl<'a> Parser<'a> {
             while !self.at(TokenKind::RBrace) {
                 let field_start = self.span_start();
                 let name = self.expect_identifier()?;
+                let optional = self.eat(TokenKind::Question);
                 self.expect(TokenKind::Colon)?;
                 let ty = self.parse_type()?;
-                fields.push(crate::ast::RecordField { name, ty, span: self.span_from(field_start.0, field_start.1) });
+                fields.push(crate::ast::RecordField {
+                    name,
+                    ty,
+                    optional,
+                    span: self.span_from(field_start.0, field_start.1),
+                });
                 self.skip_newlines();
-                if !self.eat(TokenKind::Comma) { break; }
+                if !self.eat(TokenKind::Comma) && !self.eat(TokenKind::Semicolon) {
+                    break;
+                }
                 self.skip_newlines();
             }
             self.expect(TokenKind::RBrace)?;

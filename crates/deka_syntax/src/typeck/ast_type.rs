@@ -38,7 +38,7 @@ impl<'a> Checker<'a> {
                 for param in params { self.validate_option_erasure(param, span); }
                 self.validate_option_erasure(ret, span);
             }
-            Type::Object { fields } => {
+            Type::Object { fields, .. } => {
                 for (_, ty) in fields { self.validate_option_erasure(ty, span); }
             }
             _ => {}
@@ -341,8 +341,16 @@ impl<'a> Checker<'a> {
                     .collect(),
             },
             ast::Type::Record { fields, .. } => Type::Object {
-                fields: fields.iter().map(|field| (field.name, self.resolve_ast_type_rec(&field.ty, seen))).collect(),
-            }
+                optional: fields
+                    .iter()
+                    .filter(|f| f.optional)
+                    .map(|f| f.name)
+                    .collect(),
+                fields: fields
+                    .iter()
+                    .map(|field| (field.name, self.resolve_ast_type_rec(&field.ty, seen)))
+                    .collect(),
+            },
         }
     }
 

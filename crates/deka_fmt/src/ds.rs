@@ -774,13 +774,17 @@ impl<'src> Formatter<'src> {
     fn fmt_export_decl(&mut self, decl: &ExportDecl<'_>, stmt_end_line: usize) {
         match decl {
             ExportDecl::Const { name, ty, value } => {
-                self.write("export const ");
-                self.write(name);
-                if let Some(ty) = ty {
-                    self.write(": ");
-                    self.fmt_type(ty);
+                if *name == "default" {
+                    self.write("export default ");
+                } else {
+                    self.write("export const ");
+                    self.write(name);
+                    if let Some(ty) = ty {
+                        self.write(": ");
+                        self.fmt_type(ty);
+                    }
+                    self.write(" = ");
                 }
-                self.write(" = ");
                 self.fmt_expr(value);
             }
             ExportDecl::Function {
@@ -1876,7 +1880,14 @@ fn type_to_string(ty: &Type<'_>) -> String {
         Type::Record { fields, .. } => {
             let parts: Vec<String> = fields
                 .iter()
-                .map(|f| format!("{}: {}", f.name, type_to_string(&f.ty)))
+                .map(|f| {
+                    format!(
+                        "{}{}: {}",
+                        f.name,
+                        if f.optional { "?" } else { "" },
+                        type_to_string(&f.ty)
+                    )
+                })
                 .collect();
             format!("{{ {} }}", parts.join("; "))
         }

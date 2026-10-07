@@ -76,7 +76,8 @@ pub(super) fn rename_nominal_type<'a>(ty: &Type<'a>, names: &HashMap<&'a str, &'
             ret: Box::new(rename_nominal_type(ret, names)),
             optional: *optional,
         },
-        Type::Object { fields } => Type::Object {
+        Type::Object { fields, optional } => Type::Object {
+            optional: optional.clone(),
             fields: fields.iter().map(|(n, t)| (*n, rename_nominal_type(t, names))).collect(),
         },
         other => other.clone(),
@@ -206,6 +207,35 @@ impl<'a> Checker<'a> {
             let actual = self.check_exception_use(payload, Use::Value, Some((**inner).clone()));
             return Type::Option {
                 inner: Box::new(actual),
+            };
+        }
+        if let (
+            ast::Expr::Object { fields, .. },
+            Some(Type::Object {
+                fields: expected_fields,
+                ..
+            }),
+        ) = (expr, expected.as_ref())
+        {
+            let mut actual_fields = Vec::new();
+            let mut seen = HashSet::new();
+            for field in *fields {
+                if !field.key.is_empty() && !seen.insert(field.key) {
+                    self.error_span(
+                        field.span,
+                        format!("duplicate key `{}` in object literal", field.key),
+                    );
+                }
+                let contract = expected_fields
+                    .iter()
+                    .find(|(name, _)| *name == field.key)
+                    .map(|(_, ty)| ty.clone());
+                let actual = self.check_exception_use(&field.value, Use::Value, contract);
+                actual_fields.push((field.key, actual));
+            }
+            return Type::Object {
+                fields: actual_fields,
+                optional: vec![],
             };
         }
         match expr {
