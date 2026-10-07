@@ -50,8 +50,8 @@ pub fn fetch(target: &ContentTarget, cwd: &Path) -> Result<PathBuf, String> {
 
     stdio::log("downloading", target.name);
 
-    let temp = tempfile::tempdir()
-        .map_err(|err| format!("failed to create a temp directory: {}", err))?;
+    let temp =
+        tempfile::tempdir().map_err(|err| format!("failed to create a temp directory: {}", err))?;
     let archive = temp.path().join(format!("{}.tar.gz", target.name));
     download(&url, &archive)?;
     verify_sha256(&archive, &pin.sha256).map_err(|message| {
@@ -110,7 +110,10 @@ fn verify_sha256(path: &Path, expected: &str) -> Result<(), String> {
     io::copy(&mut file, &mut hasher).map_err(|err| format!("failed to hash archive: {}", err))?;
     let actual = format!("{:x}", hasher.finalize());
     if actual != expected {
-        return Err(format!("checksum mismatch: expected {}, got {}", expected, actual));
+        return Err(format!(
+            "checksum mismatch: expected {}, got {}",
+            expected, actual
+        ));
     }
     Ok(())
 }
@@ -122,8 +125,7 @@ fn verify_sha256(path: &Path, expected: &str) -> Result<(), String> {
 /// group-writable modes are a GitHub packaging artifact, not a permission
 /// the fetched content asked for.
 fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
-    let file =
-        fs::File::open(archive).map_err(|err| format!("failed to open archive: {}", err))?;
+    let file = fs::File::open(archive).map_err(|err| format!("failed to open archive: {}", err))?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut tar = tar::Archive::new(decoder);
 
@@ -131,25 +133,24 @@ fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
         .entries()
         .map_err(|err| format!("failed to read archive: {}", err))?
     {
-        let mut entry =
-            entry.map_err(|err| format!("failed to read archive entry: {}", err))?;
+        let mut entry = entry.map_err(|err| format!("failed to read archive entry: {}", err))?;
         let path = entry
             .path()
             .map_err(|err| format!("corrupt archive path: {}", err))?;
         // Strip the archive's single wrapper directory.
         let rel = match path.components().count() {
             0 | 1 => continue,
-            _ => path
-                .components()
-                .skip(1)
-                .collect::<std::path::PathBuf>(),
+            _ => path.components().skip(1).collect::<std::path::PathBuf>(),
         };
         // Refuse anything that is not a plain relative path inside dest.
         if rel
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
         {
-            return Err(format!("archive entry escapes the checkout: {}", path.display()));
+            return Err(format!(
+                "archive entry escapes the checkout: {}",
+                path.display()
+            ));
         }
         let out = dest.join(&rel);
         if let Some(parent) = out.parent() {
@@ -240,7 +241,11 @@ mod tests {
         fs::write(&file, bytes).unwrap();
         let expected = sha256_of(b"different bytes than what was pinned");
         let err = verify_sha256(&file, &expected).expect_err("tampered archive must fail");
-        assert!(err.contains("checksum mismatch"), "unexpected error: {}", err);
+        assert!(
+            err.contains("checksum mismatch"),
+            "unexpected error: {}",
+            err
+        );
     }
 
     #[test]
@@ -355,7 +360,11 @@ mod tests {
 
         let err = extract_archive(&tar_path, dir.path().join("out").as_path())
             .expect_err("traversal entry must be rejected");
-        assert!(err.contains("escapes the checkout"), "unexpected error: {}", err);
+        assert!(
+            err.contains("escapes the checkout"),
+            "unexpected error: {}",
+            err
+        );
         assert!(!dir.path().join("evil").exists());
     }
 

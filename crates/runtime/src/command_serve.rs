@@ -76,5 +76,3 @@ pub fn serves_built_artifact(context: &Context) -> bool {
             .parent()
             .is_some_and(|dist| dist.join("build-manifest.json").is_file())
 }
-
-

@@ -98,7 +98,11 @@ mod tests {
     #[test]
     fn dispatch_keeps_resolution_errors_and_command_fallbacks() {
         let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("deka.json"), r#"{"serve":{"entry":"missing.js"}}"#).unwrap();
+        std::fs::write(
+            root.path().join("deka.json"),
+            r#"{"serve":{"entry":"missing.js"}}"#,
+        )
+        .unwrap();
         assert!(matches!(
             prepare(context("serve", root.path())),
             Err(ContextError::HandlerResolve(_))

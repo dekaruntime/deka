@@ -183,10 +183,8 @@ mod tests {
 
     #[test]
     fn read_observation_invalidates_on_exact_path_change() {
-        let root = std::env::temp_dir().join(format!(
-            "deka-invalidation-test-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("deka-invalidation-test-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let manifest = manifest(vec![slot(
             "s1",
@@ -195,7 +193,10 @@ mod tests {
         )]);
         let changed = root.join("data").join("a.json");
         let invalidation = affected_slots(&manifest, &root, &[changed]);
-        assert_eq!(invalidation.slots, ["s1"].into_iter().map(str::to_string).collect());
+        assert_eq!(
+            invalidation.slots,
+            ["s1"].into_iter().map(str::to_string).collect()
+        );
         assert!(!invalidation.coarse);
 
         // An unrelated file does not invalidate.
@@ -222,10 +223,8 @@ mod tests {
 
     #[test]
     fn directory_listing_invalidates_on_direct_child_and_self_changes() {
-        let root = std::env::temp_dir().join(format!(
-            "deka-invalidation-test-dir-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("deka-invalidation-test-dir-{}", std::process::id()));
         std::fs::create_dir_all(root.join("data")).unwrap();
         let manifest = manifest(vec![slot(
             "s1",
@@ -234,11 +233,17 @@ mod tests {
         )]);
         // Added/renamed file directly inside the listed directory.
         let added = root.join("data").join("c.txt");
-        assert!(affected_slots(&manifest, &root, &[added]).slots.contains("s1"));
+        assert!(
+            affected_slots(&manifest, &root, &[added])
+                .slots
+                .contains("s1")
+        );
         // The listed directory itself went away.
-        assert!(affected_slots(&manifest, &root, &[root.join("data")])
-            .slots
-            .contains("s1"));
+        assert!(
+            affected_slots(&manifest, &root, &[root.join("data")])
+                .slots
+                .contains("s1")
+        );
         // A nested change does not affect the parent's listing.
         let nested = root.join("data").join("sub").join("deep.txt");
         assert!(affected_slots(&manifest, &root, &[nested]).is_empty());
@@ -246,10 +251,8 @@ mod tests {
 
     #[test]
     fn source_file_change_requests_a_wholesale_replan_not_stale_ids() {
-        let root = std::env::temp_dir().join(format!(
-            "deka-invalidation-test-src-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("deka-invalidation-test-src-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let manifest = manifest(vec![slot("s1", "app/page.dsx", Vec::new())]);
         let edit = root.join("app").join("page.dsx");
@@ -275,11 +278,22 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let manifest = manifest(vec![
-            slot("s1", "app/a.dsx", vec![("data/a.json", FsObservationKind::Read)]),
-            slot("s2", "app/b.dsx", vec![("data/b.json", FsObservationKind::Read)]),
+            slot(
+                "s1",
+                "app/a.dsx",
+                vec![("data/a.json", FsObservationKind::Read)],
+            ),
+            slot(
+                "s2",
+                "app/b.dsx",
+                vec![("data/b.json", FsObservationKind::Read)],
+            ),
         ]);
         let changed = root.join("data").join("b.json");
         let invalidation = affected_slots(&manifest, &root, &[changed]);
-        assert_eq!(invalidation.slots, ["s2"].into_iter().map(str::to_string).collect());
+        assert_eq!(
+            invalidation.slots,
+            ["s2"].into_iter().map(str::to_string).collect()
+        );
     }
 }

@@ -102,13 +102,8 @@ pub fn compile_and_reroot_entries(
     // Rewrite every specifier between the new locations and write the files.
     for (source, js) in &modules {
         let importer_target = targets.get(source).expect("target computed above");
-        let rewritten = rewrite_module_specifiers(
-            js,
-            source,
-            &targets,
-            &project_root,
-            importer_target,
-        )?;
+        let rewritten =
+            rewrite_module_specifiers(js, source, &targets, &project_root, importer_target)?;
         let dest = dist_server.join(importer_target);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)
@@ -133,9 +128,7 @@ fn assert_entry_linkage(dist_server: &Path, emitted: &EmittedEntries) -> Result<
         .into_iter()
         .flatten()
     {
-        let rel = module
-            .strip_prefix("server/")
-            .unwrap_or(module);
+        let rel = module.strip_prefix("server/").unwrap_or(module);
         let entry_path = dist_server.join(rel);
         let js = fs::read_to_string(&entry_path)
             .map_err(|err| format!("failed to read {}: {err}", entry_path.display()))?;
@@ -147,12 +140,8 @@ fn assert_entry_linkage(dist_server: &Path, emitted: &EmittedEntries) -> Result<
             if !(specifier.starts_with("./") || specifier.starts_with("../")) {
                 continue;
             }
-            let resolved = normalize_path(
-                &entry_path
-                    .parent()
-                    .unwrap_or(dist_server)
-                    .join(&specifier),
-            );
+            let resolved =
+                normalize_path(&entry_path.parent().unwrap_or(dist_server).join(&specifier));
             if !resolved.starts_with(dist_server) {
                 return Err(format!(
                     "server entry {rel} imports `{specifier}`, which escapes dist/server"
@@ -190,8 +179,7 @@ fn named_imports(js: &str) -> Vec<(String, Vec<String>)> {
         // Only statement-position `import` (start of line or after `;`/`}` +
         // whitespace) — skip substrings inside identifiers like
         // "important".
-        let before_ok = start == 0
-            || matches!(bytes[start - 1], b';' | b'\n' | b'}' | b' ');
+        let before_ok = start == 0 || matches!(bytes[start - 1], b';' | b'\n' | b'}' | b' ');
         let after = start + "import".len();
         let after_ok = bytes
             .get(after)
@@ -234,9 +222,16 @@ fn named_imports(js: &str) -> Vec<(String, Vec<String>)> {
                 let part = part.trim();
                 // `X as Y` binds the module's export `X` locally as `Y`; the
                 // export the target module must provide is the LEFT side.
-                part.split(" as ").next().map(str::trim).filter(|name| {
-                    !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$')
-                }).map(str::to_string)
+                part.split(" as ")
+                    .next()
+                    .map(str::trim)
+                    .filter(|name| {
+                        !name.is_empty()
+                            && name
+                                .chars()
+                                .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                    })
+                    .map(str::to_string)
             })
             .collect();
         out.push((specifier, names));
@@ -253,8 +248,8 @@ fn has_export(js: &str, name: &str) -> bool {
         return js.contains("export default");
     }
     for kw in ["function", "const", "class", "let", "var"] {
-        if js.contains(&format!("export {kw} {name}")
-            ) || js.contains(&format!("export async {kw} {name}"))
+        if js.contains(&format!("export {kw} {name}"))
+            || js.contains(&format!("export async {kw} {name}"))
         {
             return true;
         }
@@ -263,7 +258,9 @@ fn has_export(js: &str, name: &str) -> bool {
     while let Some(found) = js[cursor..].find("export {") {
         let at = cursor + found;
         let open = at + js[at..].find('{').expect("brace follows `export `");
-        let Some(close) = js[open..].find('}') else { break };
+        let Some(close) = js[open..].find('}') else {
+            break;
+        };
         let close = open + close;
         for item in js[open + 1..close].split(',') {
             // In an export list the RIGHT side of `as` is the exported name
@@ -284,11 +281,10 @@ fn emitted_set(
     targets: &BTreeMap<PathBuf, String>,
     entries_dir: &Path,
 ) -> Result<(), String> {
-    let source = fs::canonicalize(entries_dir.join(name)).unwrap_or_else(|_| entries_dir.join(name));
+    let source =
+        fs::canonicalize(entries_dir.join(name)).unwrap_or_else(|_| entries_dir.join(name));
     let target = targets.get(&source).ok_or_else(|| {
-        format!(
-            "compiled server entry {name} is missing from the dsc graph dump"
-        )
+        format!("compiled server entry {name} is missing from the dsc graph dump")
     })?;
     let module = format!("server/{target}");
     match name {
@@ -399,10 +395,7 @@ fn rewrite_module_specifiers(
                 let importer_dir = Path::new(importer_target)
                     .parent()
                     .unwrap_or_else(|| Path::new(""));
-                Some(relative_specifier(
-                    importer_dir,
-                    Path::new(&target),
-                ))
+                Some(relative_specifier(importer_dir, Path::new(&target)))
             }
             SpecKind::BuildValue(id) => {
                 let values_target = format!("{VALUES_DIR}/{id}.js");
@@ -491,9 +484,11 @@ pub fn relative_specifier(from_dir: &Path, to: &Path) -> String {
         shared += 1;
     }
     let mut parts: Vec<String> = (shared..from.len()).map(|_| "..".to_string()).collect();
-    parts.extend(to[shared..].iter().map(|component| {
-        component.as_os_str().to_string_lossy().into_owned()
-    }));
+    parts.extend(
+        to[shared..]
+            .iter()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned()),
+    );
     let spec = if parts.is_empty() {
         "./".to_string()
     } else {
@@ -707,9 +702,11 @@ pub fn relative_path(from_dir: &Path, to_file: &Path) -> String {
         shared += 1;
     }
     let mut parts: Vec<String> = (shared..from.len()).map(|_| "..".to_string()).collect();
-    parts.extend(to[shared..].iter().map(|component| {
-        component.as_os_str().to_string_lossy().into_owned()
-    }));
+    parts.extend(
+        to[shared..]
+            .iter()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned()),
+    );
     if parts.is_empty() {
         ".".to_string()
     } else {

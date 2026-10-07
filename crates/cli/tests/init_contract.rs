@@ -247,24 +247,28 @@ fn init_creates_dekascript_app_and_preserves_existing_files() {
 
     let page = project.path().join("app/page.dsx");
     fs::write(&page, "user-authored page").unwrap();
-    assert!(Command::new(cli_bin())
-        .arg("init")
-        .current_dir(project.path())
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new(cli_bin())
+            .arg("init")
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success()
+    );
     assert_eq!(fs::read_to_string(page).unwrap(), "user-authored page");
 }
 
 #[test]
 fn fresh_init_compiles_the_page() {
     let project = tempfile::tempdir().unwrap();
-    assert!(Command::new(cli_bin())
-        .arg("init")
-        .current_dir(project.path())
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new(cli_bin())
+            .arg("init")
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success()
+    );
 
     let mut check = Command::new(cli_bin());
     check
@@ -295,12 +299,14 @@ fn fresh_init_serves_html_and_css_without_exposing_project_files() {
     }
 
     let project = tempfile::tempdir().unwrap();
-    assert!(Command::new(cli_bin())
-        .arg("init")
-        .current_dir(project.path())
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new(cli_bin())
+            .arg("init")
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success()
+    );
     let port = TcpListener::bind(("127.0.0.1", 0))
         .unwrap()
         .local_addr()
@@ -357,10 +363,12 @@ fn fresh_init_serves_html_and_css_without_exposing_project_files() {
     );
     let css = http.get(format!("{base}/style.css")).send().unwrap();
     assert_eq!(css.status(), 200);
-    assert!(css.headers()["content-type"]
-        .to_str()
-        .unwrap()
-        .contains("text/css"));
+    assert!(
+        css.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .contains("text/css")
+    );
     assert!(css.text().unwrap().contains("font-family"));
 
     // deka#1045: an unmatched route must serve the static public/404.html,
@@ -370,10 +378,12 @@ fn fresh_init_serves_html_and_css_without_exposing_project_files() {
         .send()
         .unwrap();
     assert_eq!(missing.status(), 404);
-    assert!(missing.headers()["content-type"]
-        .to_str()
-        .unwrap()
-        .contains("text/html"));
+    assert!(
+        missing.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .contains("text/html")
+    );
     let missing_body = missing.text().unwrap();
     assert!(
         missing_body.contains("Not found"),
@@ -428,12 +438,14 @@ fn fresh_init_dev_serves_without_manual_permission_edits() {
     }
 
     let project = tempfile::tempdir().unwrap();
-    assert!(Command::new(cli_bin())
-        .arg("init")
-        .current_dir(project.path())
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new(cli_bin())
+            .arg("init")
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success()
+    );
 
     let port = TcpListener::bind(("127.0.0.1", 0))
         .unwrap()
@@ -488,7 +500,9 @@ fn fresh_init_dev_serves_without_manual_permission_edits() {
 
     let log_contents = fs::read_to_string(&log_path).unwrap();
     assert!(
-        !log_contents.to_ascii_lowercase().contains("permission denied")
+        !log_contents
+            .to_ascii_lowercase()
+            .contains("permission denied")
             && !log_contents.contains("invalid security policy")
             && !log_contents.contains("invalid permissions"),
         "deka dev must not hit the permission wall on a fresh scaffold:\n{log_contents}"
@@ -531,12 +545,14 @@ fn dev_without_declared_permissions_prints_an_implicit_grant_notice() {
     }
 
     let project = tempfile::tempdir().unwrap();
-    assert!(Command::new(cli_bin())
-        .arg("init")
-        .current_dir(project.path())
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new(cli_bin())
+            .arg("init")
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success()
+    );
     // Strip the scaffold's declared permissions to simulate a pre-RFD-53
     // manifest that never went through `deka init` with this fix.
     fs::write(

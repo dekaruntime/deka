@@ -1048,10 +1048,7 @@ mod tests {
             merged.allow.read,
             RuleList::List(vec!["./src".to_string(), "./data".to_string()])
         );
-        assert_eq!(
-            merged.deny.read,
-            RuleList::List(vec!["/etc".to_string()])
-        );
+        assert_eq!(merged.deny.read, RuleList::List(vec!["/etc".to_string()]));
     }
 
     #[test]

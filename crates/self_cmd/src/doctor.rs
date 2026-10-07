@@ -163,9 +163,7 @@ pub fn cmd(context: &Context) {
     }
     if error_count > 0 {
         println!();
-        println!(
-            "doctor: {error_count} problem(s) that will break a build (exit 1)"
-        );
+        println!("doctor: {error_count} problem(s) that will break a build (exit 1)");
         std::process::exit(1);
     }
 }
@@ -189,14 +187,11 @@ fn render_report(env: &DoctorEnv) -> (Vec<String>, usize) {
         // The shell execs the first *executable* entry, so that one wins.
         let winner = entries.iter().position(|entry| entry.executable);
         for (index, entry) in entries.iter().enumerate() {
-            let version = entry
-                .version
-                .as_deref()
-                .unwrap_or(if entry.executable {
-                    "version unavailable"
-                } else {
-                    "not probed (not executable)"
-                });
+            let version = entry.version.as_deref().unwrap_or(if entry.executable {
+                "version unavailable"
+            } else {
+                "not probed (not executable)"
+            });
             let marker = if !entry.executable {
                 "   (not executable, skipped by the shell)"
             } else if winner == Some(index) {
@@ -204,10 +199,7 @@ fn render_report(env: &DoctorEnv) -> (Vec<String>, usize) {
             } else {
                 ""
             };
-            lines.push(format!(
-                "    {}    {version}{marker}",
-                entry.path.display()
-            ));
+            lines.push(format!("    {}    {version}{marker}", entry.path.display()));
         }
     }
     // Several agreeing installs are untidy, not fatal.
@@ -253,7 +245,10 @@ fn render_report(env: &DoctorEnv) -> (Vec<String>, usize) {
     lines.push(format!("  running deka: {}", env.running_version));
     let pins = project_pins(&env.cwd);
     if pins.is_empty() {
-        lines.push("  no project pin found (no deka.json or node_modules/@dekaruntime/deka here)".to_string());
+        lines.push(
+            "  no project pin found (no deka.json or node_modules/@dekaruntime/deka here)"
+                .to_string(),
+        );
     }
     for pin in &pins {
         lines.push(format!("  {}: {}", pin.source, pin.version));
@@ -319,7 +314,11 @@ fn render_report(env: &DoctorEnv) -> (Vec<String>, usize) {
     } else {
         lines.push("findings:".to_string());
         for finding in &findings {
-            lines.push(format!("  [{}] {}", finding.severity.label(), finding.message));
+            lines.push(format!(
+                "  [{}] {}",
+                finding.severity.label(),
+                finding.message
+            ));
         }
         lines.push(format!(
             "summary: {error_count} error(s), {warn_count} warning(s)"
@@ -720,7 +719,11 @@ mod tests {
         assert!(!entries[0].executable);
         assert!(entries[1].executable);
         let winner = entries.iter().position(|e| e.executable);
-        assert_eq!(winner, Some(1), "the executable entry wins, not the first file");
+        assert_eq!(
+            winner,
+            Some(1),
+            "the executable entry wins, not the first file"
+        );
     }
 
     #[test]
@@ -740,7 +743,11 @@ mod tests {
         let via_env = executable_script(&bin, "other-dsc", "#!/bin/sh\necho 'dsc 0.53.9'\n");
         let pinned = pinned_root.join("target/release/dsc");
         std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
-        executable_script(pinned.parent().unwrap(), "dsc", "#!/bin/sh\necho 'dsc 0.53.1'\n");
+        executable_script(
+            pinned.parent().unwrap(),
+            "dsc",
+            "#!/bin/sh\necho 'dsc 0.53.1'\n",
+        );
 
         // PATH alone resolves via PATH.
         let env = fixture_env(&home, &[&path_dir]);
@@ -831,7 +838,11 @@ mod tests {
         executable_script(&path_dir, "dsc", "#!/bin/sh\necho 'dsc 0.53.0'\n");
         let pinned = pinned_root.join("target/release/dsc");
         std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
-        executable_script(pinned.parent().unwrap(), "dsc", "#!/bin/sh\necho 'dsc 0.53.1'\n");
+        executable_script(
+            pinned.parent().unwrap(),
+            "dsc",
+            "#!/bin/sh\necho 'dsc 0.53.1'\n",
+        );
 
         // DEKA_DSC and PATH do not apply, even when they would resolve.
         let env = DoctorEnv {
@@ -883,7 +894,10 @@ mod tests {
             ..fixture_env(&home, &[])
         };
         let (lines, errors) = render_report(&env);
-        assert_eq!(errors, 0, "sibling dsc matching the running binary is tidy:\n{lines:#?}");
+        assert_eq!(
+            errors, 0,
+            "sibling dsc matching the running binary is tidy:\n{lines:#?}"
+        );
 
         // Remove the sibling: both paths fail to resolve, two errors.
         std::fs::remove_file(running.join("dsc")).unwrap();
@@ -905,7 +919,11 @@ mod tests {
             r#"{"name":"@dekaruntime/deka","version":"0.53.4"}"#,
         )
         .unwrap();
-        std::fs::write(project.join("deka.json"), r#"{"name":"app","deka":"0.53.0"}"#).unwrap();
+        std::fs::write(
+            project.join("deka.json"),
+            r#"{"name":"app","deka":"0.53.0"}"#,
+        )
+        .unwrap();
 
         let pins = project_pins(&project);
         assert_eq!(pins.len(), 2);

@@ -23,10 +23,7 @@ pub fn cmd(context: &Context) {
             Some(target) => (run_content_suite(context, target), false),
             None => (Err(format!("unknown self test suite '{}'", name)), true),
         },
-        None => (
-            Err("missing suite name (php, tour)".to_string()),
-            true,
-        ),
+        None => (Err("missing suite name (php, tour)".to_string()), true),
     };
 
     if let Err(message) = result {

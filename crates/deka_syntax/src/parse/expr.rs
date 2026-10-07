@@ -1,10 +1,10 @@
 //! Expression parsing (Pratt parser).
 
-use crate::ast::{Expr, FunctionForm, Stmt, StructLiteralField, Type, UnOp, alloc, alloc_slice};
+use crate::ast::{alloc, alloc_slice, Expr, FunctionForm, Stmt, StructLiteralField, Type, UnOp};
 use crate::lexer::TokenKind;
 
-use super::Parser;
 use super::util::{infix_info, token_name};
+use super::Parser;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_expression(&mut self) -> Option<Expr<'a>> {
@@ -296,7 +296,9 @@ impl<'a> Parser<'a> {
                 // is typechecked and emitted from the AST instead of passing
                 // through as raw JavaScript.
                 let mut parts: Vec<crate::ast::TemplatePart<'a>> =
-                    vec![crate::ast::TemplatePart::Text(self.bump_str(self.current_text()))];
+                    vec![crate::ast::TemplatePart::Text(
+                        self.bump_str(self.current_text()),
+                    )];
                 self.advance();
                 while self.at(TokenKind::TemplateExprStart) {
                     self.advance();
@@ -909,8 +911,7 @@ impl<'a> Parser<'a> {
                         return match self.tokens.get(i + 2).map(|t| t.kind) {
                             Some(TokenKind::RBrace) => true,
                             Some(TokenKind::Identifier) => {
-                                self.tokens.get(i + 3).map(|t| t.kind)
-                                    == Some(TokenKind::Colon)
+                                self.tokens.get(i + 3).map(|t| t.kind) == Some(TokenKind::Colon)
                             }
                             _ => false,
                         };

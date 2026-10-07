@@ -120,9 +120,7 @@ fn serve_mode_for_runtime_resolver(
     detect_mode(&resolved.path)
 }
 
-fn as_legacy_serve_config(
-    config: runtime_config::ServeConfig,
-) -> ServeConfig {
+fn as_legacy_serve_config(config: runtime_config::ServeConfig) -> ServeConfig {
     ServeConfig {
         mode: config.mode.map(|mode| match mode {
             runtime_config::ServeMode::Static => ServeMode::Static,
@@ -244,7 +242,8 @@ mod tests {
         let configured = dir.join("main.phpx");
         fs::write(&explicit, "<?php echo 'simple';").expect("write explicit");
         fs::write(&configured, "<?php echo 'main';").expect("write configured");
-        fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.phpx"}}"#).expect("write config");
+        fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.phpx"}}"#)
+            .expect("write config");
 
         let resolved = resolve_handler_path(explicit.to_str().expect("path")).expect("resolve");
         let resolved_canon = resolved.path.canonicalize().expect("resolved canonicalize");
@@ -260,7 +259,8 @@ mod tests {
         let app_dir = dir.join("app");
         fs::create_dir_all(&app_dir).expect("mkdir app");
         fs::write(app_dir.join("page.phpx"), "<?php echo 'page';").expect("write page");
-        fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.phpx"}}"#).expect("write config");
+        fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"main.phpx"}}"#)
+            .expect("write config");
 
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         let resolved_canon = resolved.path.canonicalize().expect("resolved canonicalize");
@@ -332,8 +332,11 @@ mod tests {
         // claims to guard (QA proved this by reverting the production fix
         // entirely and watching the test still pass). Use the real gate.
         let dir = temp_dir("deka_handler_app_router_readonly");
-        fs::write(dir.join("deka.json"), r#"{"name":"app-router-readonly-fixture"}"#)
-            .expect("write deka.json");
+        fs::write(
+            dir.join("deka.json"),
+            r#"{"name":"app-router-readonly-fixture"}"#,
+        )
+        .expect("write deka.json");
         let app_dir = dir.join("app");
         fs::create_dir_all(&app_dir).expect("mkdir app");
         fs::write(

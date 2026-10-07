@@ -77,10 +77,7 @@ pub fn bundle_islands(
     js_builtins::inline_into(&bundled)
 }
 
-fn concat_esm_graph(
-    entry: &Path,
-    modules: &BTreeMap<PathBuf, String>,
-) -> Result<String, String> {
+fn concat_esm_graph(entry: &Path, modules: &BTreeMap<PathBuf, String>) -> Result<String, String> {
     let mut order = Vec::new();
     let mut visiting = BTreeSet::new();
     let mut seen = BTreeSet::new();
@@ -99,9 +96,9 @@ fn concat_esm_graph(
          }\n",
     );
     for path in &order {
-        let js = modules.get(path).ok_or_else(|| {
-            format!("island graph missing {}", path.display())
-        })?;
+        let js = modules
+            .get(path)
+            .ok_or_else(|| format!("island graph missing {}", path.display()))?;
         let id = module_id(path);
         let is_entry = path == entry;
         out.push_str(&rewrite_module(js, path, modules, &id, is_entry)?);
@@ -129,10 +126,7 @@ fn visit(
                 return visit(&alt, modules, visiting, seen, order);
             }
             visiting.remove(path);
-            return Err(format!(
-                "island graph does not contain {}",
-                path.display()
-            ));
+            return Err(format!("island graph does not contain {}", path.display()));
         }
     };
     for spec in relative_imports(js) {
@@ -260,7 +254,11 @@ fn rebuild_import(spec: &str, names: &[String]) -> String {
     if names.is_empty() {
         return format!("import {};\n", json_str(spec));
     }
-    format!("import {{ {} }} from {};\n", names.join(", "), json_str(spec))
+    format!(
+        "import {{ {} }} from {};\n",
+        names.join(", "),
+        json_str(spec)
+    )
 }
 
 fn next_import(source: &str) -> Option<(&str, &str, String, Vec<String>, &str)> {
@@ -400,7 +398,10 @@ fn strip_exports(js: &str) -> (String, Vec<String>) {
             rest = after.strip_prefix("function ").unwrap_or(after);
             continue;
         }
-        if let Some(name) = after.strip_prefix("async function ").and_then(ident_at_start) {
+        if let Some(name) = after
+            .strip_prefix("async function ")
+            .and_then(ident_at_start)
+        {
             exported.push(name);
             out.push_str("async function ");
             rest = after.strip_prefix("async function ").unwrap_or(after);

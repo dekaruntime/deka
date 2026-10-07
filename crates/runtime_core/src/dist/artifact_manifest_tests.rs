@@ -83,7 +83,9 @@ fn payload_root_hashes_path_and_digest_lines() {
 #[test]
 fn serialization_is_compact_deterministic_and_sorted() {
     let mut manifest = sample_manifest();
-    manifest.record_payloads(Path::new("/nonexistent-dist")).unwrap();
+    manifest
+        .record_payloads(Path::new("/nonexistent-dist"))
+        .unwrap();
     let first = format!("{}\n", manifest.canonical_json().unwrap());
     let second = format!("{}\n", manifest.canonical_json().unwrap());
     assert_eq!(first, second);
@@ -108,10 +110,7 @@ fn record_payloads_hashes_everything_except_descriptors_and_rejects_symlinks() {
     manifest.record_payloads(dist.path()).unwrap();
     let paths: Vec<&str> = manifest.payloads.iter().map(|p| p.path.as_str()).collect();
     assert_eq!(paths, vec!["client/index.html", "server/app/page.js"]);
-    assert_eq!(
-        manifest.payloads[1].digest,
-        artifact_digest(b"page")
-    );
+    assert_eq!(manifest.payloads[1].digest, artifact_digest(b"page"));
     assert_eq!(manifest.payloads[1].role, PayloadRole::Server);
     assert_eq!(manifest.payloads[0].role, PayloadRole::Client);
     assert_eq!(

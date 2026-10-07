@@ -1,4 +1,10 @@
-#![allow(clippy::all, dead_code, unused_variables, unused_assignments, unused_imports)]
+#![allow(
+    clippy::all,
+    dead_code,
+    unused_variables,
+    unused_assignments,
+    unused_imports
+)]
 
 mod command;
 pub mod dsc;

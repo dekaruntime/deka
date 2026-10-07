@@ -43,10 +43,7 @@ fn transpile_failure_names_the_producing_binaries() {
         "dsc's diagnostic must be preserved: {err}"
     );
     assert!(err.contains("dsc 0.99.0-test"), "dsc version: {err}");
-    assert!(
-        err.contains(stub.to_str().unwrap()),
-        "dsc path: {err}"
-    );
+    assert!(err.contains(stub.to_str().unwrap()), "dsc path: {err}");
     assert!(
         err.contains(&format!("deka {}", env!("CARGO_PKG_VERSION"))),
         "deka version: {err}"

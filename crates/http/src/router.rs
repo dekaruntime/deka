@@ -339,7 +339,10 @@ fn try_asset_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response>
 /// is replaced with `public/404.html` when the project ships one — the
 /// scaffolded 404 is a static file per RFD 24 (deka#1045), not a rendered
 /// route, so it must win over the JS-side `FallbackNotFound()` render.
-fn apply_static_not_found(state: &Arc<RuntimeState>, response_envelope: &mut engine::ResponseEnvelope) {
+fn apply_static_not_found(
+    state: &Arc<RuntimeState>,
+    response_envelope: &mut engine::ResponseEnvelope,
+) {
     if response_envelope.status != 404 {
         return;
     }
@@ -354,9 +357,10 @@ fn apply_static_not_found(state: &Arc<RuntimeState>, response_envelope: &mut eng
     response_envelope
         .headers
         .retain(|key, _| !key.eq_ignore_ascii_case("content-type"));
-    response_envelope
-        .headers
-        .insert("content-type".to_string(), "text/html; charset=utf-8".to_string());
+    response_envelope.headers.insert(
+        "content-type".to_string(),
+        "text/html; charset=utf-8".to_string(),
+    );
 }
 
 fn try_public_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response> {
@@ -631,10 +635,7 @@ mod tests {
         let out = inject_hmr_client(html);
         assert!(out.contains(crate::island_markers::JS_PRELUDE));
         for fragment in ["morphChildren", "patchIslandHtml"] {
-            assert!(
-                out.contains(fragment),
-                "injected client lost {fragment}"
-            );
+            assert!(out.contains(fragment), "injected client lost {fragment}");
         }
         for prefix in ["DEKA_ISLAND_START_PREFIX", "DEKA_ISLAND_END_PREFIX"] {
             assert!(

@@ -32,11 +32,8 @@ pub async fn serve_http(
             return Ok(());
         }
 
-        let app = app_router_with_rate_limiter(
-            Arc::clone(&state),
-            Arc::clone(&rate_limiter),
-            config,
-        );
+        let app =
+            app_router_with_rate_limiter(Arc::clone(&state), Arc::clone(&rate_limiter), config);
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -64,7 +61,8 @@ pub async fn serve_http(
                 Ok::<(), String>(())
             }));
         } else {
-            let app = app_router_with_rate_limiter(Arc::clone(&state), Arc::clone(&rate_limiter), config);
+            let app =
+                app_router_with_rate_limiter(Arc::clone(&state), Arc::clone(&rate_limiter), config);
             handles.push(tokio::spawn(async move {
                 axum::serve(
                     listener,

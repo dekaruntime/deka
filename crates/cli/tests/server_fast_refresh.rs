@@ -13,7 +13,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use tungstenite::protocol::WebSocket;
 use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{connect, Message};
+use tungstenite::{Message, connect};
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
@@ -199,14 +199,15 @@ impl Cdp {
         let mut ws_url = String::new();
         while Instant::now() < deadline {
             if let Ok(res) = client
-                .put(format!("http://127.0.0.1:{debug_port}/json/new?about:blank"))
+                .put(format!(
+                    "http://127.0.0.1:{debug_port}/json/new?about:blank"
+                ))
                 .send()
             {
                 if let Ok(body) = res.text() {
                     if let Ok(value) = serde_json::from_str::<Value>(&body) {
-                        if let Some(url) = value
-                            .get("webSocketDebuggerUrl")
-                            .and_then(|v| v.as_str())
+                        if let Some(url) =
+                            value.get("webSocketDebuggerUrl").and_then(|v| v.as_str())
                         {
                             ws_url = url.to_string();
                             break;
@@ -325,9 +326,7 @@ impl Cdp {
         } else {
             self.console_events.join("\n")
         };
-        format!(
-            "dev.log:\n{log}\n\nbrowser console/exceptions since Runtime.enable:\n{console}"
-        )
+        format!("dev.log:\n{log}\n\nbrowser console/exceptions since Runtime.enable:\n{console}")
     }
 
     fn call(&mut self, method: &str, params: Value) -> Value {
@@ -365,9 +364,7 @@ impl Cdp {
                         let method = value.get("method").and_then(|v| v.as_str());
                         if method == Some("Page.loadEventFired")
                             || method == Some("Page.lifecycleEvent")
-                                && value
-                                    .pointer("/params/name")
-                                    .and_then(|v| v.as_str())
+                                && value.pointer("/params/name").and_then(|v| v.as_str())
                                     == Some("load")
                         {
                             self.on_event(&text);
@@ -566,7 +563,8 @@ export fn Layout(props: LayoutProps) ReactNode {
         ty == Some("html-update") || ty == Some("reload")
     });
     assert_eq!(
-        message["type"], "html-update",
+        message["type"],
+        "html-update",
         "editing app/layout.dsx must morph like any other server component, not full-reload; \
          got {message:?}\ndev.log:\n{}",
         fs::read_to_string(&server.log_path).unwrap_or_default()
@@ -627,7 +625,9 @@ fn cdp_island_boundary_edit_reloads_instead_of_stale_morph() {
     let click_deadline = Instant::now() + Duration::from_secs(30);
     let mut count = String::new();
     while Instant::now() < click_deadline {
-        let _ = cdp.eval("document.getElementById('counter') && document.getElementById('counter').click()");
+        let _ = cdp.eval(
+            "document.getElementById('counter') && document.getElementById('counter').click()",
+        );
         count = cdp.eval_string(
             "document.getElementById('counter') && document.getElementById('counter').textContent",
         );
@@ -636,7 +636,10 @@ fn cdp_island_boundary_edit_reloads_instead_of_stale_morph() {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    assert_eq!(count, "3", "pre-edit clicks must stick in island React state");
+    assert_eq!(
+        count, "3",
+        "pre-edit clicks must stick in island React state"
+    );
 
     cdp.navigations = 0;
     cdp.drain();
@@ -720,7 +723,10 @@ fn hmr_payload_index_html_edit_triggers_reload() {
     let index_html = fs::read_to_string(root.path().join("index.html")).unwrap();
     fs::write(
         root.path().join("index.html"),
-        index_html.replace("<title>Server Fast Refresh</title>", "<title>Edited Shell</title>"),
+        index_html.replace(
+            "<title>Server Fast Refresh</title>",
+            "<title>Edited Shell</title>",
+        ),
     )
     .unwrap();
 
@@ -728,7 +734,8 @@ fn hmr_payload_index_html_edit_triggers_reload() {
         value.get("type").and_then(|v| v.as_str()) == Some("reload")
     });
     assert_eq!(
-        message["type"], "reload",
+        message["type"],
+        "reload",
         "editing index.html must trigger a full reload rather than a no-op; \
          dev.log:\n{}",
         fs::read_to_string(&server.log_path).unwrap_or_default()
@@ -772,7 +779,9 @@ fn cdp_morph_preserves_island_state_and_island_edit_reloads() {
     let click_deadline = Instant::now() + Duration::from_secs(30);
     let mut count = String::new();
     while Instant::now() < click_deadline {
-        let _ = cdp.eval("document.getElementById('counter') && document.getElementById('counter').click()");
+        let _ = cdp.eval(
+            "document.getElementById('counter') && document.getElementById('counter').click()",
+        );
         count = cdp.eval_string(
             "document.getElementById('counter') && document.getElementById('counter').textContent",
         );
@@ -782,13 +791,18 @@ fn cdp_morph_preserves_island_state_and_island_edit_reloads() {
         std::thread::sleep(Duration::from_millis(100));
     }
     while count != "3" && Instant::now() < click_deadline {
-        let _ = cdp.eval("document.getElementById('counter') && document.getElementById('counter').click()");
+        let _ = cdp.eval(
+            "document.getElementById('counter') && document.getElementById('counter').click()",
+        );
         count = cdp.eval_string(
             "document.getElementById('counter') && document.getElementById('counter').textContent",
         );
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert_eq!(count, "3", "pre-edit clicks must stick in island React state");
+    assert_eq!(
+        count, "3",
+        "pre-edit clicks must stick in island React state"
+    );
 
     let filled = cdp.eval_string(
         r#"(function(){

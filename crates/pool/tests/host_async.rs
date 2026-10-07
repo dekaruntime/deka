@@ -69,11 +69,7 @@ fn allow_under(root: &Path) -> String {
 }
 
 fn body_of(response: &pool::IsolateResponse) -> String {
-    assert!(
-        response.success,
-        "execution failed: {:?}",
-        response.error
-    );
+    assert!(response.success, "execution failed: {:?}", response.error);
     response
         .result
         .as_ref()
@@ -149,8 +145,7 @@ globalThis.app = async function(req) {{
         )
         .await
         .expect("pool execution");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body_of(&response)).expect("json body");
+    let parsed: serde_json::Value = serde_json::from_str(&body_of(&response)).expect("json body");
 
     assert_eq!(parsed["ok"], serde_json::json!(true), "body={parsed}");
     assert_eq!(parsed["textA"], "alpha", "body={parsed}");
@@ -280,11 +275,7 @@ globalThis.app = function(req) {
 
     // 4. Let the occupier finish; both workers are idle again.
     let medium = medium.await.expect("medium task");
-    assert!(
-        medium.success,
-        "medium request failed: {:?}",
-        medium.error
-    );
+    assert!(medium.success, "medium request failed: {:?}", medium.error);
 
     // 5. Measured round: reset the marker, then block the slow handler on a
     //    fresh 400 ms writer. The marker reappearing proves the slow op is in
@@ -404,13 +395,24 @@ globalThis.app = function(req) {
         )
         .await
         .expect("pool execution");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body_of(&response)).expect("json body");
-    assert_eq!(parsed["isPromise"], serde_json::json!(false), "body={parsed}");
+    let parsed: serde_json::Value = serde_json::from_str(&body_of(&response)).expect("json body");
+    assert_eq!(
+        parsed["isPromise"],
+        serde_json::json!(false),
+        "body={parsed}"
+    );
     assert_eq!(parsed["hasThen"], serde_json::json!(false), "body={parsed}");
     assert_eq!(parsed["ok"], serde_json::json!(true), "body={parsed}");
-    assert_eq!(parsed["isUint8Array"], serde_json::json!(true), "body={parsed}");
-    assert_eq!(parsed["isNumberArray"], serde_json::json!(false), "body={parsed}");
+    assert_eq!(
+        parsed["isUint8Array"],
+        serde_json::json!(true),
+        "body={parsed}"
+    );
+    assert_eq!(
+        parsed["isNumberArray"],
+        serde_json::json!(false),
+        "body={parsed}"
+    );
     assert_eq!(parsed["len"], serde_json::json!(8), "body={parsed}");
 }
 
@@ -470,8 +472,7 @@ globalThis.app = async function(req) {{
         )
         .await
         .expect("pool execution");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body_of(&response)).expect("json body");
+    let parsed: serde_json::Value = serde_json::from_str(&body_of(&response)).expect("json body");
 
     assert_eq!(parsed["threw"], serde_json::Value::Null, "body={parsed}");
     assert_eq!(parsed["ok"], serde_json::json!(false), "body={parsed}");
@@ -522,12 +523,15 @@ globalThis.app = function(req) {{
         )
         .await
         .expect("pool execution");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body_of(&response)).expect("json body");
+    let parsed: serde_json::Value = serde_json::from_str(&body_of(&response)).expect("json body");
 
     assert_eq!(parsed["readIsPromise"], false, "body={parsed}");
     assert_eq!(parsed["readOk"], true, "body={parsed}");
-    assert_eq!(parsed["payload"], serde_json::json!([0, 255, 128, 65]), "body={parsed}");
+    assert_eq!(
+        parsed["payload"],
+        serde_json::json!([0, 255, 128, 65]),
+        "body={parsed}"
+    );
     assert_eq!(parsed["invalidEnum"], "FsError", "body={parsed}");
     assert_eq!(parsed["invalidCase"], "InvalidPayload", "body={parsed}");
     assert!(

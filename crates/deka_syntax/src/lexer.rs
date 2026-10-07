@@ -1861,14 +1861,21 @@ mod tests {
 
     #[test]
     fn unexpected_non_ascii_char_is_diagnostic_not_panic() {
-        for source in ["const x = ©", "\u{FEFF}const x = 1", "const x = \u{FFFD}", "€"] {
+        for source in [
+            "const x = ©",
+            "\u{FEFF}const x = 1",
+            "const x = \u{FFFD}",
+            "€",
+        ] {
             let (kinds, _, diags) = lex_all(source);
             assert!(
                 kinds.contains(&TokenKind::Error),
                 "expected an Error token for {source:?}"
             );
             assert!(
-                diags.iter().any(|d| d.message.contains("unexpected character")),
+                diags
+                    .iter()
+                    .any(|d| d.message.contains("unexpected character")),
                 "expected unexpected-character diagnostic for {source:?}: {diags:?}"
             );
             for d in &diags {
@@ -1900,9 +1907,7 @@ mod tests {
         for source in ["\"", "'", "`", "const x = '", "const x = `", "\"café"] {
             let (kinds, _, diags) = lex_all(source);
             assert!(
-                diags
-                    .iter()
-                    .any(|d| d.message.contains("unterminated")),
+                diags.iter().any(|d| d.message.contains("unterminated")),
                 "expected unterminated diagnostic for {source:?}: {diags:?}"
             );
             for d in &diags {
@@ -1910,7 +1915,9 @@ mod tests {
             }
             // The offending quote/backtick token must still be produced.
             assert!(
-                kinds.iter().any(|k| matches!(k, TokenKind::String | TokenKind::BacktickString)),
+                kinds
+                    .iter()
+                    .any(|k| matches!(k, TokenKind::String | TokenKind::BacktickString)),
                 "expected a string token for {source:?}"
             );
         }
@@ -1994,13 +2001,7 @@ mod tests {
         // `\${` stays inside the text run: no interpolation opener.
         let (kinds, texts, diags) = lex_all("`\\${notInterp}`");
         assert!(diags.is_empty(), "{diags:?}");
-        assert_eq!(
-            kinds,
-            [
-                TokenKind::BacktickString,
-                TokenKind::Eof,
-            ]
-        );
+        assert_eq!(kinds, [TokenKind::BacktickString, TokenKind::Eof,]);
         assert_eq!(texts[0], "\\${notInterp}");
     }
 

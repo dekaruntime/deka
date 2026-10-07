@@ -46,11 +46,7 @@ impl Env {
 }
 
 fn run(env: &Env, dir: &Path, args: &[&str]) -> (bool, String) {
-    let output = env
-        .command(dir)
-        .args(args)
-        .output()
-        .expect("run deka");
+    let output = env.command(dir).args(args).output().expect("run deka");
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),

@@ -666,7 +666,10 @@ fn record_observation_for_action(
                 .map(is_not_found_error)
                 .unwrap_or(false);
             if not_found {
-                crate::build_observations::record_build_observation(path, FsObservationKind::Absent);
+                crate::build_observations::record_build_observation(
+                    path,
+                    FsObservationKind::Absent,
+                );
             }
         }
         Err(message) if is_not_found_error(&message) => {
@@ -752,8 +755,8 @@ pub(super) async fn op_php_fs_call_proto_async(
 ) -> Result<Vec<u8>, deno_core::error::CoreError> {
     let security_context = ::security::security_context::current_security_context();
     tokio::task::spawn_blocking(move || {
-        let _security_context = security_context
-            .map(::security::security_context::set_security_context);
+        let _security_context =
+            security_context.map(::security::security_context::set_security_context);
         fs_call_proto_impl(&request)
     })
     .await

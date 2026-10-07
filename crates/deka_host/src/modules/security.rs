@@ -310,10 +310,7 @@ mod security_rule_tests {
 /// compact JSON payload, exactly what `PermissionDenied::decode` reads back on
 /// the JS side (RFD 27). The payload is exactly capability+target; origin and
 /// config-hint detail stay on stderr so the wire format round-trips.
-fn permission_denied_err(
-    capability: &str,
-    target: Option<&str>,
-) -> deno_core::error::CoreError {
+fn permission_denied_err(capability: &str, target: Option<&str>) -> deno_core::error::CoreError {
     let denial = permissions::host_bridge::PermissionDenied {
         capability: capability.to_string(),
         target: target.unwrap_or("*").to_string(),
@@ -636,8 +633,8 @@ mod path_normalization_tests {
 #[cfg(test)]
 mod permission_denied_tests {
     use super::enforce_scope;
-    use permissions::host_bridge::{PERMISSION_DENIED_MARKER, PermissionDenied};
     use ::security::security_policy::{RuleList, SecurityScope};
+    use permissions::host_bridge::{PERMISSION_DENIED_MARKER, PermissionDenied};
 
     fn scope(read: RuleList) -> SecurityScope {
         SecurityScope {

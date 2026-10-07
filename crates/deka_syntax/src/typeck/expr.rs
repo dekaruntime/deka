@@ -583,8 +583,13 @@ impl<'a> Checker<'a> {
         else {
             return None;
         };
-        if !matches!(object, ast::Expr::Identifier { name: "console", .. })
-            || self.lookup_var("console").is_some()
+        if !matches!(
+            object,
+            ast::Expr::Identifier {
+                name: "console",
+                ..
+            }
+        ) || self.lookup_var("console").is_some()
         {
             return None;
         }
@@ -621,9 +626,7 @@ impl<'a> Checker<'a> {
                 if !condition.is_error() && !matches!(condition, Type::Named { name: "boolean" }) {
                     self.error_span(
                         args[0].span(),
-                        format!(
-                            "console.assert: `condition` expects `boolean`, got `{condition}`"
-                        ),
+                        format!("console.assert: `condition` expects `boolean`, got `{condition}`"),
                     );
                 }
                 for arg in &args[1..] {
@@ -1270,7 +1273,9 @@ impl<'a> Checker<'a> {
             // `resolve_primitive_field` -> `primitive_member`). The bare node
             // itself (not accessed through a field) has no use, so it types
             // as this marker rather than something constructible.
-            ast::Expr::ImportMeta { .. } => Type::Named { name: "import.meta" },
+            ast::Expr::ImportMeta { .. } => Type::Named {
+                name: "import.meta",
+            },
             _ => {
                 self.error_at_expr(expr, "unsupported expression in v2 typeck");
                 Type::Error
@@ -1416,12 +1421,10 @@ impl<'a> Checker<'a> {
             // value; everything else checks exactly as `return expr` does.
             (
                 ast::FunctionForm::ArrowExpr,
-                [
-                    stmt @ ast::Stmt::Return {
-                        value: Some(value),
-                        span: value_span,
-                    },
-                ],
+                [stmt @ ast::Stmt::Return {
+                    value: Some(value),
+                    span: value_span,
+                }],
             ) => self.check_arrow_expression_body(stmt, value, *value_span),
             _ => {
                 for stmt in body {
@@ -1777,7 +1780,11 @@ impl<'a> Checker<'a> {
         span: ast::Span,
     ) -> Type<'a> {
         if let ast::Expr::Identifier { name, .. } = object {
-            if self.enums.get(name).is_some_and(|info| info.cases.iter().any(|case| case.name == field)) {
+            if self
+                .enums
+                .get(name)
+                .is_some_and(|info| info.cases.iter().any(|case| case.name == field))
+            {
                 return self.check_enum_constructor(name, field, None, span);
             }
         }
@@ -1939,7 +1946,10 @@ impl<'a> Checker<'a> {
                 {
                     if let Some(info) = self.enums.get(enum_name).cloned() {
                         if info.cases.iter().any(|c| c.name == field) {
-                            return self.canonical_nominal_type(enum_name, Type::Named { name: enum_name });
+                            return self.canonical_nominal_type(
+                                enum_name,
+                                Type::Named { name: enum_name },
+                            );
                         }
                         self.error_span(
                             span,
@@ -2266,7 +2276,9 @@ impl<'a> Checker<'a> {
         // check above). It also has no props interface, so it falls straight
         // through to the untyped-attributes path below, same as any other
         // component the checker cannot resolve a props shape for.
-        if element.tag != "React.Fragment" && element.tag.chars().next().is_some_and(|c| c.is_uppercase()) {
+        if element.tag != "React.Fragment"
+            && element.tag.chars().next().is_some_and(|c| c.is_uppercase())
+        {
             let valid = match self.lookup_var(element.tag).map(|t| t.function_contract()) {
                 Some(Type::Function { params, ret, .. }) => {
                     params.len() <= 1
@@ -2527,7 +2539,9 @@ impl<'a> Checker<'a> {
         payload: Option<&ast::Expr<'a>>,
         span: ast::Span,
     ) -> Type<'a> {
-        if self.reject_type_only_value_use(enum_name, span) { return Type::Error; }
+        if self.reject_type_only_value_use(enum_name, span) {
+            return Type::Error;
+        }
         let payload_type = payload.map(|expr| self.check_expr(expr));
 
         if enum_name == "Option" {
@@ -2692,8 +2706,16 @@ impl<'a> Checker<'a> {
         let expected = self.exception_expected.take();
         let scrutinee_type =
             self.check_exception_use(scrutinee, super::exceptions::Use::Match, None);
-        if matches!(scrutinee_type, Type::Generic { base: "Exception", .. }) {
-            self.exception_forms.match_sources.insert(scrutinee as *const _);
+        if matches!(
+            scrutinee_type,
+            Type::Generic {
+                base: "Exception",
+                ..
+            }
+        ) {
+            self.exception_forms
+                .match_sources
+                .insert(scrutinee as *const _);
         }
         // rfd#56 phase 2: matching a value whose type is a bounded type
         // parameter checks the pattern — and later the exhaustiveness — as
@@ -3505,9 +3527,13 @@ impl<'a> Checker<'a> {
         let native_enum = match scrutinee_type {
             Type::Named { name: owner }
                 if crate::native_brand::public_name(owner) != *owner
-                    && self.enums.get(owner).is_some_and(|info| {
-                        info.cases.iter().any(|case| case.name == name)
-                    }) => Some(*owner),
+                    && self
+                        .enums
+                        .get(owner)
+                        .is_some_and(|info| info.cases.iter().any(|case| case.name == name)) =>
+            {
+                Some(*owner)
+            }
             _ => None,
         };
         let enum_name = match native_enum.or_else(|| self.case_to_enum.get(name).copied()) {
@@ -3589,18 +3615,18 @@ impl<'a> Checker<'a> {
         let native_setter = match (op, left) {
             (ast::BinOp::Assign, ast::Expr::FieldAccess { object, field, .. }) => {
                 match self.check_expr(object) {
-                    Type::Opaque { identity, .. } => {
-                        self.native_property_setters.get(&(identity, field)).cloned()
-                    }
+                    Type::Opaque { identity, .. } => self
+                        .native_property_setters
+                        .get(&(identity, field))
+                        .cloned(),
                     _ => None,
                 }
             }
             _ => None,
         };
-        let left_type = native_setter.as_ref().map_or_else(
-            || self.check_expr(left),
-            |(_, value)| value.clone(),
-        );
+        let left_type = native_setter
+            .as_ref()
+            .map_or_else(|| self.check_expr(left), |(_, value)| value.clone());
         // Pipe checks its right-hand side specially (it desugars into a call),
         // so avoid the generic check_expr here.
         let saved_flow = self.index_flow.clone();
@@ -3831,10 +3857,7 @@ impl<'a> Checker<'a> {
                                     // Do not turn a missing pipe target into Infer:
                                     // that used to let `value |> missing` pass any
                                     // enclosing assignment or return check.
-                                    self.error_span(
-                                        *span,
-                                        format!("unknown identifier `{name}`"),
-                                    );
+                                    self.error_span(*span, format!("unknown identifier `{name}`"));
                                     Type::Error
                                 }
                             }
@@ -3879,9 +3902,7 @@ impl<'a> Checker<'a> {
                                     ),
                                 );
                             }
-                            if !params.is_empty()
-                                && !self.is_assignable(&params[0], &left_type)
-                            {
+                            if !params.is_empty() && !self.is_assignable(&params[0], &left_type) {
                                 self.error_span(
                                     *span,
                                     super::with_union_narrowing_hint(
@@ -4075,7 +4096,8 @@ impl<'a> Checker<'a> {
                         if let Some((operation, _)) = &native_setter {
                             // Const binds a resource handle, not the resource's
                             // state. Only a declared setter grants this write.
-                            self.native_property_setter_calls.insert(expr as *const ast::Expr<'a>, operation);
+                            self.native_property_setter_calls
+                                .insert(expr as *const ast::Expr<'a>, operation);
                         } else {
                             let object_type = self.check_expr(object);
                             let is_native_property = matches!(
@@ -4091,7 +4113,10 @@ impl<'a> Checker<'a> {
                             }
                             let field_mutable = self.field_is_mutable(&object_type, field);
                             if !self.is_mutable_expr(object) && !field_mutable {
-                                self.error_at_expr(left, self.immutable_field_message(object, field));
+                                self.error_at_expr(
+                                    left,
+                                    self.immutable_field_message(object, field),
+                                );
                             }
                         }
                     }
@@ -4418,7 +4443,12 @@ impl<'a> Checker<'a> {
                         self.error_span(span, format!("enum case `{method_name}` expects {count} argument(s) and no explicit type arguments"));
                         return Some(Type::Error);
                     }
-                    return Some(self.check_enum_constructor(name, method_name, args.first(), span));
+                    return Some(self.check_enum_constructor(
+                        name,
+                        method_name,
+                        args.first(),
+                        span,
+                    ));
                 }
             }
         }
@@ -4543,9 +4573,15 @@ impl<'a> Checker<'a> {
         }
 
         if matches!(method_name, "toJSON" | "parseJSON") {
-            if let Some(ret) =
-                self.check_builtin_json(call_expr, &object_type, method_name, type_args, args, span, true)
-            {
+            if let Some(ret) = self.check_builtin_json(
+                call_expr,
+                &object_type,
+                method_name,
+                type_args,
+                args,
+                span,
+                true,
+            ) {
                 return Some(ret);
             }
         }
@@ -5474,8 +5510,15 @@ impl<'a> Checker<'a> {
                 return Type::Error;
             }
         }
-        if let ast::Expr::Identifier { name, span: name_span } = callee {
-            if let Some(marker) = self.lookup_var(name).filter(|ty| super::JwtOperation::from_module_type(ty).is_some()) {
+        if let ast::Expr::Identifier {
+            name,
+            span: name_span,
+        } = callee
+        {
+            if let Some(marker) = self
+                .lookup_var(name)
+                .filter(|ty| super::JwtOperation::from_module_type(ty).is_some())
+            {
                 if self.reject_type_only_value_use(name, *name_span) {
                     return Type::Error;
                 }
@@ -5555,7 +5598,10 @@ impl<'a> Checker<'a> {
                 return Type::Error;
             }
         }
-        if let ast::Expr::Identifier { name: "useState", .. } = callee {
+        if let ast::Expr::Identifier {
+            name: "useState", ..
+        } = callee
+        {
             return self.check_use_state(type_args, args, span);
         }
         if let ast::Expr::Identifier { name: "useRef", .. } = callee {

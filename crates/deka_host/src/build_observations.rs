@@ -48,7 +48,9 @@ pub fn begin_build_slot(slot_id: &str) {
 pub fn end_build_slot() -> Option<(String, Vec<FsObservation>)> {
     let mut slots = active_slots().lock().ok()?;
     let mut active = slots.pop()?;
-    active.observations.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.kind.cmp(&b.kind)));
+    active
+        .observations
+        .sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.kind.cmp(&b.kind)));
     active.observations.dedup();
     Some((active.slot_id, active.observations))
 }

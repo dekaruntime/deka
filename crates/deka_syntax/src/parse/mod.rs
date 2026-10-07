@@ -11,14 +11,14 @@ use crate::lexer::{Lexer, Token, TokenKind};
 
 #[cfg(test)]
 mod arrow_tests;
+mod expr;
 #[cfg(test)]
 mod generic_call_tests;
-#[cfg(test)]
-mod stmt_tests;
-mod expr;
 mod jsx;
 mod pattern;
 mod stmt;
+#[cfg(test)]
+mod stmt_tests;
 pub use stmt::expr_has_top_level_await;
 mod ty;
 mod util;
@@ -478,8 +478,7 @@ mod tests {
         assert!(result.errors.is_empty(), "{:?}", result.errors);
 
         // One more level must fail with the depth diagnostic, not an abort.
-        let source =
-            "{".repeat(MAX_NESTING_DEPTH + 1) + &"}".repeat(MAX_NESTING_DEPTH + 1);
+        let source = "{".repeat(MAX_NESTING_DEPTH + 1) + &"}".repeat(MAX_NESTING_DEPTH + 1);
         let result = parse(&source, &arena);
         assert!(result.program.is_none());
         assert!(
@@ -598,7 +597,12 @@ mod tests {
             ("const [[x, y], label] = f();", 1, 8, 6),
             ("let [label, [x, y]] = f();", 1, 13, 6),
             ("fn f([[x, y], label]) {}", 1, 7, 6),
-            ("fn f([[x, y], label]: [[number, number], string]) {}", 1, 7, 6),
+            (
+                "fn f([[x, y], label]: [[number, number], string]) {}",
+                1,
+                7,
+                6,
+            ),
             ("const f = fn ([[x, y], label]) {};", 1, 16, 6),
             ("const [[[x, y], z], label] = f();", 1, 8, 11),
             ("let [[[x, y], z], label] = f();", 1, 6, 11),
@@ -608,7 +612,12 @@ mod tests {
             ("fn f(\n  [[x, y], label]\n) {}", 2, 4, 6),
             ("fn f(prefix: number, [label, [x, y]]) {}", 1, 30, 6),
             ("interface F { fn f([[x, y], label]) }", 1, 21, 6),
-            (r#"summon { f([[x, y], label]) number } from "./f.mjs""#, 1, 13, 6),
+            (
+                r#"summon { f([[x, y], label]) number } from "./f.mjs""#,
+                1,
+                13,
+                6,
+            ),
         ] {
             let arena = Bump::new();
             let result = parse(source, &arena);
@@ -1456,27 +1465,39 @@ mod tests {
             );
             let program = result.program.unwrap();
             let params = match &program.statements[0] {
-                Stmt::Function { name, type_params, .. } => {
+                Stmt::Function {
+                    name, type_params, ..
+                } => {
                     assert_eq!(name, decl);
                     *type_params
                 }
-                Stmt::ReceiverMethod { name, type_params, .. } => {
+                Stmt::ReceiverMethod {
+                    name, type_params, ..
+                } => {
                     assert_eq!(name, decl);
                     *type_params
                 }
-                Stmt::Struct { name, type_params, .. } => {
+                Stmt::Struct {
+                    name, type_params, ..
+                } => {
                     assert_eq!(name, decl);
                     *type_params
                 }
-                Stmt::Enum { name, type_params, .. } => {
+                Stmt::Enum {
+                    name, type_params, ..
+                } => {
                     assert_eq!(name, decl);
                     *type_params
                 }
-                Stmt::TypeAlias { name, type_params, .. } => {
+                Stmt::TypeAlias {
+                    name, type_params, ..
+                } => {
                     assert_eq!(name, decl);
                     *type_params
                 }
-                Stmt::Interface { name, type_params, .. } => {
+                Stmt::Interface {
+                    name, type_params, ..
+                } => {
                     assert_eq!(name, decl);
                     *type_params
                 }
@@ -1490,10 +1511,9 @@ mod tests {
         let arena = Bump::new();
         let result = parse("type Pair<T> number", &arena);
         assert!(
-            result
-                .errors
-                .iter()
-                .any(|e| e.message.contains("newtype declarations cannot declare type parameters")),
+            result.errors.iter().any(|e| e
+                .message
+                .contains("newtype declarations cannot declare type parameters")),
             "newtype generics stay rejected, got: {:?}",
             result.errors
         );
@@ -1609,10 +1629,9 @@ mod tests {
             let arena = Bump::new();
             let result = parse(source, &arena);
             assert!(
-                result
-                    .errors
-                    .iter()
-                    .any(|e| e.message.contains("infers its type arguments from the field values")),
+                result.errors.iter().any(|e| e
+                    .message
+                    .contains("infers its type arguments from the field values")),
                 "{source:?} got: {:?}",
                 result.errors
             );
@@ -1625,10 +1644,7 @@ mod tests {
         // already writable — an interface, a union, or a concrete type. One
         // rule, not two mechanisms.
         let arena = Bump::new();
-        let result = parse(
-            "fn greet<T: Named>(x: T) T { return x; }",
-            &arena,
-        );
+        let result = parse("fn greet<T: Named>(x: T) T { return x; }", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {
@@ -1904,7 +1920,8 @@ mod tests {
             result
                 .errors
                 .iter()
-                .any(|e| e.message.contains("named declaration") || e.message.contains("named binding")),
+                .any(|e| e.message.contains("named declaration")
+                    || e.message.contains("named binding")),
             "{:?}",
             result.errors
         );
@@ -2349,11 +2366,39 @@ mod tests {
                     assert_eq!(
                         names,
                         vec![
-                            "if", "else", "for", "of", "return", "match", "unsafe", "super",
-                            "async", "await", "break", "continue", "fn", "let", "const", "mut",
-                            "function", "struct", "enum", "interface", "type", "alias",
-                            "import", "export", "from", "as", "pub", "build", "bridge", "true",
-                            "false", "None", "if-led"
+                            "if",
+                            "else",
+                            "for",
+                            "of",
+                            "return",
+                            "match",
+                            "unsafe",
+                            "super",
+                            "async",
+                            "await",
+                            "break",
+                            "continue",
+                            "fn",
+                            "let",
+                            "const",
+                            "mut",
+                            "function",
+                            "struct",
+                            "enum",
+                            "interface",
+                            "type",
+                            "alias",
+                            "import",
+                            "export",
+                            "from",
+                            "as",
+                            "pub",
+                            "build",
+                            "bridge",
+                            "true",
+                            "false",
+                            "None",
+                            "if-led"
                         ]
                     );
                 }
@@ -2712,9 +2757,13 @@ mod tests {
                 Expr::TemplateLiteral { parts, .. } => {
                     assert_eq!(parts.len(), 5);
                     assert!(matches!(parts[0], TemplatePart::Text(text) if text.is_empty()));
-                    assert!(matches!(parts[1], TemplatePart::Expr(Expr::Identifier { name, .. }) if *name == "a"));
+                    assert!(
+                        matches!(parts[1], TemplatePart::Expr(Expr::Identifier { name, .. }) if *name == "a")
+                    );
                     assert!(matches!(parts[2], TemplatePart::Text(text) if text == " and "));
-                    assert!(matches!(parts[3], TemplatePart::Expr(Expr::Identifier { name, .. }) if *name == "b"));
+                    assert!(
+                        matches!(parts[3], TemplatePart::Expr(Expr::Identifier { name, .. }) if *name == "b")
+                    );
                     assert!(matches!(parts[4], TemplatePart::Text(text) if text == "!"));
                 }
                 _ => panic!("expected template literal, got {:?}", value),
@@ -3362,7 +3411,12 @@ mod tests {
             let program = result.program.expect("parses");
             match program.statements[0] {
                 Stmt::Const {
-                    value: Expr::FieldAccess { object, field: got_field, .. },
+                    value:
+                        Expr::FieldAccess {
+                            object,
+                            field: got_field,
+                            ..
+                        },
                     ..
                 } => {
                     assert_eq!(got_field, field);
@@ -3389,7 +3443,10 @@ mod tests {
             } => {
                 assert!(matches!(
                     callee,
-                    Expr::FieldAccess { field: "resolve", .. }
+                    Expr::FieldAccess {
+                        field: "resolve",
+                        ..
+                    }
                 ));
             }
             ref other => panic!("expected const with call, got {other:?}"),
@@ -3401,7 +3458,10 @@ mod tests {
         let arena = Bump::new();
         let result = parse("const x = import.other", &arena);
         assert!(
-            result.errors.iter().any(|e| e.message.contains("import.meta")),
+            result
+                .errors
+                .iter()
+                .any(|e| e.message.contains("import.meta")),
             "{:?}",
             result.errors
         );

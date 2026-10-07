@@ -34,7 +34,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use deka_cli_core::Context;
 use sha2::{Digest, Sha256};
 
-
 /// Advisory printed (through `stdio::note`, after everything else) when a
 /// loose file ran through the user cache instead of a project.
 pub const NOT_A_PROJECT_NOTE: &str = "not a deka project — initialize one with: deka init";
@@ -210,8 +209,8 @@ fn locate_entry_artifact(out_dir: &Path, source: &Path) -> Result<PathBuf, Strin
 }
 
 fn collect_named_js(dir: &Path, name: &str, matches: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = fs::read_dir(dir)
-        .map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
+    let entries =
+        fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
         let path = entry.path();
@@ -238,8 +237,8 @@ fn materialize_with(
     compiler: &str,
     compile: impl Fn(&Path, &Path) -> Result<PathBuf, String>,
 ) -> Result<MaterializedLoose, String> {
-    let content = fs::read(source)
-        .map_err(|err| format!("failed to read {}: {err}", source.display()))?;
+    let content =
+        fs::read(source).map_err(|err| format!("failed to read {}: {err}", source.display()))?;
     let key = content_key(&content);
     let loose_root = cache_root.join(LOOSE_DIR);
     let entry_dir = loose_root.join(&key);
@@ -247,9 +246,7 @@ fn materialize_with(
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    let original_root = original_root
-        .canonicalize()
-        .unwrap_or(original_root);
+    let original_root = original_root.canonicalize().unwrap_or(original_root);
 
     if let Some(artifact) = valid_entry(&entry_dir, compiler)? {
         return Ok(MaterializedLoose {
@@ -346,8 +343,8 @@ fn valid_entry(entry_dir: &Path, compiler: &str) -> Result<Option<PathBuf>, Stri
 /// in the output tree when the recorded source path shape has changed.
 fn single_artifact(out_dir: &Path) -> Result<PathBuf, String> {
     fn walk(dir: &Path, matches: &mut Vec<PathBuf>) -> Result<(), String> {
-        let entries = fs::read_dir(dir)
-            .map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
+        let entries =
+            fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
         for entry in entries {
             let path = entry
                 .map_err(|err| format!("failed to read {}: {err}", dir.display()))?
@@ -364,7 +361,11 @@ fn single_artifact(out_dir: &Path) -> Result<PathBuf, String> {
     walk(out_dir, &mut matches)?;
     match matches.len() {
         1 => Ok(matches.pop().expect("one match")),
-        _ => Err(format!("{} artifacts in {}", matches.len(), out_dir.display())),
+        _ => Err(format!(
+            "{} artifacts in {}",
+            matches.len(),
+            out_dir.display()
+        )),
     }
 }
 
@@ -396,7 +397,12 @@ fn prune_loose(loose_root: &Path, max_entries: usize, max_bytes: u64) -> Result<
         let path = entry
             .map_err(|err| format!("failed to read {}: {err}", loose_root.display()))?
             .path();
-        if !path.is_dir() || path.file_name().and_then(|n| n.to_str()).is_none_or(|n| n.starts_with('.')) {
+        if !path.is_dir()
+            || path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_none_or(|n| n.starts_with('.'))
+        {
             continue;
         }
         let age_key = entry_age_key(&path);
@@ -650,7 +656,11 @@ mod tests {
             .expect("second");
 
         assert_eq!(first.artifact, second.artifact);
-        assert_eq!(CALLS.load(Ordering::SeqCst), 1, "warm entry must not recompile");
+        assert_eq!(
+            CALLS.load(Ordering::SeqCst),
+            1,
+            "warm entry must not recompile"
+        );
     }
 
     #[test]
@@ -707,9 +717,14 @@ mod tests {
 
         let a = write_source(source_root.path(), "app.ds", "export const v = 1\n");
         let b = write_source(source_root.path(), "other.ds", "export const v = 2\n");
-        let entry_a = materialize_with(&a, cache.path(), &compiler, fake_compile("v1", &CALLS)).expect("a");
-        let entry_b = materialize_with(&b, cache.path(), &compiler, fake_compile("v1", &CALLS)).expect("b");
-        assert_ne!(entry_a.artifact, entry_b.artifact, "distinct content must not share an entry");
+        let entry_a =
+            materialize_with(&a, cache.path(), &compiler, fake_compile("v1", &CALLS)).expect("a");
+        let entry_b =
+            materialize_with(&b, cache.path(), &compiler, fake_compile("v1", &CALLS)).expect("b");
+        assert_ne!(
+            entry_a.artifact, entry_b.artifact,
+            "distinct content must not share an entry"
+        );
     }
 
     #[test]
@@ -752,7 +767,10 @@ mod tests {
             .collect();
         assert_eq!(
             remaining,
-            ["c_entry", "d_entry"].into_iter().map(str::to_string).collect::<std::collections::BTreeSet<_>>(),
+            ["c_entry", "d_entry"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<std::collections::BTreeSet<_>>(),
             "name order breaks timestamp ties deterministically"
         );
     }
@@ -788,7 +806,10 @@ mod tests {
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(remaining.len(), 2);
-        assert!(remaining.contains(&"s2".to_string()), "newest survives: {remaining:?}");
+        assert!(
+            remaining.contains(&"s2".to_string()),
+            "newest survives: {remaining:?}"
+        );
     }
 
     #[test]
