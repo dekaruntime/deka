@@ -4,9 +4,14 @@
 pub mod reactive;
 pub use deka_ui_macros::{component, view};
 pub use reactive::{Derived, Effect, ReactiveError, Scope, Signal, batch, derived, effect, signal};
+mod retained;
 mod view;
 #[cfg(feature = "desktop")]
 pub use deka_native_ui::window::Options as WindowOptions;
+pub use retained::{
+    ComponentState, NodeRef, ViewClassList, ViewElement, ViewError, ViewNode, ViewTree, node_ref,
+    tree,
+};
 pub use view::{Children, Event, EventKind, UiApp, View};
 
 /// Generated component props provide their typed builder. Macro expansion
@@ -30,6 +35,10 @@ pub use view::{launch, launch_with};
 /// Common Rust UI authoring imports.
 pub mod prelude {
     pub use crate::{Children, Event, EventKind, UiApp, View};
+    pub use crate::{
+        ComponentState, NodeRef, ViewClassList, ViewElement, ViewError, ViewNode, ViewTree,
+        node_ref, tree,
+    };
     pub use crate::{
         Derived, Effect, ReactiveError, Scope, Signal, batch, derived, effect, signal,
     };

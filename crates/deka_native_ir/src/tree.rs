@@ -19,6 +19,10 @@ enum Kind {
     Element(String),
 }
 
+/// Effective element text replaces visible children while retaining their
+/// authored identities for a later binding change to reclaim the property.
+struct TextOverride(String);
+
 struct Prepared {
     kind: Kind,
     slot: Vec<usize>,
@@ -64,6 +68,7 @@ pub struct Record {
     #[doc(hidden)]
     pub parent: Option<Weak<RefCell<Record>>>,
     authored_text: Option<String>,
+    text_override: Option<TextOverride>,
     authored_classes: String,
     authored_attributes: BTreeMap<String, String>,
     attributes: BTreeMap<String, String>,
@@ -98,12 +103,78 @@ impl NodeHandle {
         self.0.borrow().slot.clone()
     }
     pub fn all_children(&self) -> Vec<Self> {
-        self.0.borrow().children.clone()
+        let record = self.0.borrow();
+        if record.text_override.is_some() {
+            vec![]
+        } else {
+            record.children.clone()
+        }
+    }
+    /// Effective writes do not change the last authored binding values.
+    pub fn set_text_content(&self, text: String) -> bool {
+        let mut record = self.0.borrow_mut();
+        if matches!(record.kind, Kind::Text) {
+            if record.text.as_ref() == Some(&text) {
+                return false;
+            }
+            record.text = Some(text);
+        } else {
+            if record
+                .text_override
+                .as_ref()
+                .is_some_and(|value| value.0 == text)
+            {
+                return false;
+            }
+            record.text_override = Some(TextOverride(text));
+        }
+        true
+    }
+    pub fn set_attribute(&self, name: &str, value: String) -> Result<bool> {
+        let mut record = self.0.borrow_mut();
+        if !matches!(record.kind, Kind::Element(_)) {
+            return Err("attributes require an element".into());
+        }
+        if !matches!(name, "id" | "className" | "value" | "placeholder") {
+            return Err(format!("unsupported native attribute {name}"));
+        }
+        if name == "className" {
+            let Kind::Element(tag) = &record.kind else {
+                return Err("classes require an element".into());
+            };
+            let style = WireNode {
+                tag: tag.clone(),
+                classes: value.clone(),
+                ..Default::default()
+            }
+            .style()?;
+            if record.attributes.get(name) == Some(&value) {
+                return Ok(false);
+            }
+            record.classes = value.clone();
+            record.style = style;
+        } else if record.attributes.get(name) == Some(&value) {
+            return Ok(false);
+        }
+        record.attributes.insert(name.into(), value);
+        Ok(true)
+    }
+    fn reclaim_text_overrides(&self) {
+        let mut current = Some(self.clone());
+        while let Some(node) = current {
+            let mut record = node.0.borrow_mut();
+            record.text_override = None;
+            current = record.parent.as_ref().and_then(Weak::upgrade).map(Self);
+        }
     }
     /// Patch one authored text property, preserving effective edits until its
     /// authored value changes. This is the same ownership rule used by retain.
     pub fn patch_text(&self, text: String) -> bool {
-        self.0.borrow_mut().patch_text(Some(text))
+        let changed = self.0.borrow_mut().patch_text(Some(text));
+        if changed {
+            self.reclaim_text_overrides();
+        }
+        changed
     }
     pub fn patch_attribute(&self, name: &str, value: String) -> Result<bool> {
         if name == "className" {
@@ -146,19 +217,24 @@ impl NodeHandle {
         matches!(self.0.borrow().kind, Kind::Element(_))
     }
     pub fn parent(&self) -> Option<Self> {
-        self.0.borrow().parent.as_ref()?.upgrade().map(Self)
+        let parent = self.0.borrow().parent.as_ref()?.upgrade().map(Self)?;
+        if parent.0.borrow().text_override.is_some() {
+            None
+        } else {
+            Some(parent)
+        }
     }
     pub fn children(&self) -> Vec<Self> {
-        self.0
-            .borrow()
-            .children
-            .iter()
-            .filter(|node| node.is_element())
-            .cloned()
+        self.all_children()
+            .into_iter()
+            .filter(Self::is_element)
             .collect()
     }
     pub fn text_content(&self) -> String {
         let record = self.0.borrow();
+        if let Some(text) = &record.text_override {
+            return text.0.clone();
+        }
         record.text.clone().unwrap_or_default()
             + &record
                 .children
@@ -178,9 +254,7 @@ impl NodeHandle {
         if self.is_element() && self.attribute("id").as_deref() == Some(id) {
             return Some(self.clone());
         }
-        self.0
-            .borrow()
-            .children
+        self.all_children()
             .iter()
             .find_map(|node| node.element_by_id(id))
     }
@@ -191,9 +265,17 @@ impl NodeHandle {
         Node {
             id: format!("view/{}", record.id.0),
             style: record.style.clone(),
-            text: record.text.clone(),
+            text: record
+                .text_override
+                .as_ref()
+                .map(|value| value.0.clone())
+                .or_else(|| record.text.clone()),
             on_click: record.handler,
-            children: record.children.iter().map(Self::snapshot).collect(),
+            children: if record.text_override.is_some() {
+                vec![]
+            } else {
+                record.children.iter().map(Self::snapshot).collect()
+            },
         }
     }
 }
@@ -227,7 +309,7 @@ impl super::selectors::SelectorTree for Tree {
         node.parent()
     }
     fn children(&self, node: &NodeHandle) -> Vec<NodeHandle> {
-        node.0.borrow().children.clone()
+        node.all_children()
     }
 }
 impl Tree {
@@ -254,7 +336,7 @@ impl Tree {
         if prepared.iter().any(|next| !next.slot.starts_with(prefix)) {
             return Err("child lies outside its structural slot".into());
         }
-        let old = parent.all_children();
+        let old = parent.0.borrow().children.clone();
         let mut replacements = Vec::with_capacity(prepared.len());
         for next in prepared {
             let current = old.iter().find(|node| node.slot() == next.slot).cloned();
@@ -274,7 +356,11 @@ impl Tree {
                 node.0.borrow_mut().parent = None;
             }
         }
+        let structural_change = parent.0.borrow().children != children;
         parent.0.borrow_mut().children = children;
+        if structural_change {
+            parent.reclaim_text_overrides();
+        }
         self.records.retain(|_, record| record.strong_count() > 0);
         Ok(replacements)
     }
@@ -338,6 +424,7 @@ impl Tree {
                     attributes: next.attributes.clone(),
                     classes: next.classes.clone(),
                     authored_text: next.text.clone(),
+                    text_override: None,
                     text: next.text.clone(),
                     style: next.style.clone(),
                     handler: next.handler,
@@ -388,14 +475,18 @@ impl Tree {
             }
         }
         record.authored_attributes = next.attributes;
-        record.patch_text(next.text);
+        let text_changed = record.patch_text(next.text);
         if record.handler != next.handler {
             record.handler = next.handler;
         }
-        if record.children != children {
+        let children_changed = record.children != children;
+        if children_changed {
             record.children = children;
         }
         drop(record);
+        if text_changed || children_changed {
+            node.reclaim_text_overrides();
+        }
         Ok(node)
     }
 }
