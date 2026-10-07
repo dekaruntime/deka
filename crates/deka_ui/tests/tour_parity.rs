@@ -449,7 +449,7 @@ fn newly_mounted_noop_handler_is_exercised() {
             UiApp::new(|| {
                 let open = deka_ui::signal(false);
                 deka_ui::view! {<view><button onClick={move |_| open.toggle()}>"Toggle"</button>
-                    {move || open.get().then(|| deka_ui::view!{<button onClick={|_| {}}>"Late"</button>})}
+                    {move || open.get().expect("open is live for the lesson").then(|| deka_ui::view!{<button onClick={|_| {}}>"Late"</button>})}
                 </view>}
             })
         },
