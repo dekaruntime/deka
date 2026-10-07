@@ -10,6 +10,9 @@ pub struct WireNode {
     pub tag: String,
     #[serde(default)]
     pub classes: String,
+    /// Authored scalar attributes retained independently of renderer snapshots.
+    #[serde(default)]
+    pub attributes: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]

@@ -2995,10 +2995,9 @@ impl<'a> Lower<'a> {
                 c.emit(Op::Const(Literal::String(element.tag.into())));
                 let mut names = vec!["tag".into()];
                 for attr in element.attributes {
-                    if !matches!(
-                        attr.name,
-                        "className" | "onClick" | "value" | "placeholder" | "onInput" | "onKeyDown"
-                    ) {
+                    if !crate::ui_contract::SCALAR_ATTRIBUTES.contains(&attr.name)
+                        && !crate::ui_contract::EVENT_ATTRIBUTES.contains(&attr.name)
+                    {
                         return Err(format!("unsupported VM UI attribute: {}", attr.name));
                     }
                     let value = attr.value.as_ref().ok_or("UI attribute requires a value")?;
@@ -3007,7 +3006,7 @@ impl<'a> Lower<'a> {
                     {
                         return Err("VM UI event handlers must be function literals".into());
                     }
-                    if matches!(attr.name, "className" | "value" | "placeholder")
+                    if crate::ui_contract::SCALAR_ATTRIBUTES.contains(&attr.name)
                         && !matches!(value, Expr::String { .. })
                     {
                         self.thunk("<ui attribute>", value, c)?;

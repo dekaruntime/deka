@@ -1,0 +1,48 @@
+# Reading the live view
+
+In a native app or canvas preview, `view` queries the Rust-owned tree of the
+current app. These reads share the same checked catalog on desktop and in
+WebAssembly; they do not query browser HTML.
+
+```deka
+export fn App() {
+    let output = "Click to read the greeting";
+    return (<view>
+        <p id="greeting">Hello, Deka!</p>
+        <button onClick={fn() {
+            output = match(view.getElementById("greeting")) {
+                Some(node) => node.textContent,
+                None => "Greeting missing"
+            };
+        }}>Read greeting</button>
+        <p>{output}</p>
+    </view>);
+}
+```
+
+Clicking the button displays `Hello, Deka!`. Before the app's first tree is
+rendered, queries find no nodes. Duplicate IDs resolve to the first attached
+element in tree order. Detached nodes do not appear in a query.
+
+| Read | Type | Behavior |
+| --- | --- | --- |
+| `view.getElementById(id)` | `Option<ViewElement>` | First attached element with that authored ID, or `None` |
+| `node.parentNode` | `Option<ViewNode>` | Weak parent link; root and detached nodes have no parent |
+| `node.textContent` | `string` | Text of the node and its descendants in order |
+| `element.children` | `Array<ViewElement>` | Snapshot of element children, excluding text nodes |
+| `element.getAttribute(name)` | `Option<string>` | Current scalar attribute, or `None` |
+| `element.classList` | `ViewClassList` | Opaque handle to that element's class tokens |
+
+Scalar attributes retained today are `id`, `className`, `value` and
+`placeholder`. `className` reads the same class string used for styling.
+Attributes containing event callbacks are not strings.
+
+`ViewNode`, `ViewElement` and `ViewClassList` are opaque Rust resources. You can
+hold them, pass them to functions and store them in collections. Record literals
+cannot manufacture one. A retained handle observes later updates to the same
+node and keeps a detached node alive until the VM releases the handle. Creating
+a replacement app starts a separate session, even if the host catalog is shared.
+
+`children`, `parentNode` and `classList` are read-only properties. Changing the
+returned children list does not change the tree. Selector queries, text and
+attribute writes, structure edits and listeners are subsequent API slices.
