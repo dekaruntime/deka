@@ -1,6 +1,0 @@
-COMMAND: ['python3', 'tools/deka-package/test_bundle.py', '.target/release/dvm-package', '.target/release/dvm-ui', 'crates/deka_vm/examples/packaged-counter/deka.json', '/Volumes/Projects/codex/.tmp-deka/aps74-view-package-tests']
-/Volumes/Projects/codex/.tmp-deka/aps74-view-package-tests/package-test-egq2dgqe/stage/bundle/macos/Relocation Test.app
-/Volumes/Projects/codex/.tmp-deka/aps74-view-package-tests/package-test-egq2dgqe/precompiled/bundle/macos/Relocation Test.app
-/Volumes/Projects/codex/.tmp-deka/aps74-view-package-tests/view-read-test-v45vgl22/stage/bundle/macos/View Read Test.app
-PASS: deka.json metadata/icon/resources, source change, relocated app handlers, signature, missing-payload failure
-PASS: compiler-free relocated view-read app, deleted source/staging, button reads retained tree

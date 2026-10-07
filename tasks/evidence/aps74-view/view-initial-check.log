@@ -1,3 +1,0 @@
-COMMAND: ['cargo', 'check', '--release', '--locked', '-p', 'deka-ui', '--all-targets', '--no-default-features']
-    Checking deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
-    Finished `release` profile [optimized] target(s) in 1.28s
