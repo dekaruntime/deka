@@ -118,7 +118,10 @@ impl fmt::Display for ReactiveError {
 }
 impl std::error::Error for ReactiveError {}
 fn report(scope: u64, error: ReactiveError) {
-    if let Ok(core) = resolve(scope) {
+    if let Some(core) = CURRENT
+        .with(|current| current.borrow().clone())
+        .or_else(|| resolve(scope).ok())
+    {
         let sink = core.error_sink.borrow().clone();
         if let Some(sink) = sink {
             sink(error);
