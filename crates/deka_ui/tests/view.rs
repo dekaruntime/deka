@@ -266,11 +266,8 @@ fn dropped_app_releases_scope_values_and_stale_signals_cannot_alias() {
     });
     drop(app);
     assert!(weak.upgrade().is_none());
-    assert!(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| held
-            .borrow()
-            .unwrap()
-            .get()))
-        .is_err()
+    assert_eq!(
+        held.borrow().unwrap().try_get(),
+        Err(deka_ui::reactive::ReactiveError::DroppedScope)
     );
 }
