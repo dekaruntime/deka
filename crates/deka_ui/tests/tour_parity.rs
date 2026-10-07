@@ -1,4 +1,5 @@
 //! Complete scene equality against the unchanged DekaScript tour/VM reference.
+use deka_native_ir::Node;
 use deka_native_ui::scene::{Renderer, Scene};
 use deka_ui::UiApp;
 use deka_vm::{Hosts, compiler, ui::UiSession};
@@ -152,43 +153,128 @@ impl Pair {
     }
     fn click(&mut self, handler: usize, time: f64) {
         let (scene, rust_scene) = self.frame(time);
-        let target = scene
+        let point = scene
             .targets
             .iter()
             .find(|target| target.handler == handler)
-            .unwrap_or_else(|| panic!("{}: missing handler {handler} at {time}", self.name));
-        let rect = target
-            .rect
-            .intersection(target.clip)
-            .expect("clickable target is clipped out");
-        // Resolve a real point through the same transformed/clipped hit tester
-        // used by the browser adapter, rather than assuming a numeric token.
-        let point = (0..10)
-            .flat_map(|y| {
-                (0..10).map(move |x| {
-                    (
-                        rect.x + rect.width * (x as f32 + 0.5) / 10.,
-                        rect.y + rect.height * (y as f32 + 0.5) / 10.,
-                    )
-                })
-            })
-            .find(|&(x, y)| scene.hit(x, y).is_some_and(|hit| hit.handler == handler))
-            .expect("target has no hittable point");
-        let vm_hit = scene.hit(point.0, point.1).unwrap();
-        let rust_hit = rust_scene
-            .hit(point.0, point.1)
-            .expect("Rust missed the same point");
-        assert_eq!(
-            (vm_hit.id.as_str(), vm_hit.handler),
-            (rust_hit.id.as_str(), rust_hit.handler)
-        );
-        self.vm.click(vm_hit.handler).unwrap();
-        self.rust.dispatch(rust_hit.handler);
+            .and_then(|target| target.rect.intersection(target.clip))
+            .and_then(|rect| {
+                (0..10)
+                    .flat_map(|y| {
+                        (0..10).map(move |x| {
+                            (
+                                rect.x + rect.width * (x as f32 + 0.5) / 10.,
+                                rect.y + rect.height * (y as f32 + 0.5) / 10.,
+                            )
+                        })
+                    })
+                    .find(|&(x, y)| scene.hit(x, y).is_some_and(|hit| hit.handler == handler))
+            });
+        if let Some((x, y)) = point {
+            let vm_hit = scene.hit(x, y).unwrap();
+            let rust_hit = rust_scene.hit(x, y).expect("Rust missed the same point");
+            assert_eq!(
+                (vm_hit.id.as_str(), vm_hit.handler),
+                (rust_hit.id.as_str(), rust_hit.handler)
+            );
+        } else {
+            // A clipped handler still needs event/effect coverage. Full-scene
+            // parity above proves the clipping; dispatch the retained route.
+            let vm = handler_nodes(self.vm.tree());
+            let rust = handler_nodes(&self.rust.tree());
+            let id = vm
+                .iter()
+                .find(|(_, token)| *token == handler)
+                .unwrap_or_else(|| panic!("{}: missing retained handler {handler}", self.name));
+            assert_eq!(rust.iter().find(|(_, token)| *token == handler), Some(id));
+        }
+        let vm_before = self.vm.tree().clone();
+        let rust_before = self.rust.tree();
+        self.vm.click(handler).unwrap();
+        assert!(self.rust.dispatch(handler));
+        self.assert_click_effect(&vm_before, self.vm.tree(), handler, "VM");
+        self.assert_click_effect(&rust_before, &self.rust.tree(), handler, "Rust");
         self.frame(time);
     }
+    fn assert_click_effect(&self, before: &Node, after: &Node, handler: usize, side: &str) {
+        let (width, height, scale) = self.viewport;
+        let (width, height) = (width.max(2048.), height.max(2048.));
+        // Two isolated renderer histories start with the exact same authored
+        // tree. Observe the clicked history against the unclicked history at
+        // equal timestamps. Normal motion makes keyframe toggles observable
+        // even in a reduced-motion configuration; the real histories above
+        // still prove exact parity with that configuration's motion policy.
+        let idle = Renderer::new();
+        let clicked = Renderer::new();
+        idle.render_at(before, width, height, scale, 0., false);
+        clicked.render_at(before, width, height, scale, 0., false);
+        clicked.render_at(after, width, height, scale, 0., false);
+        let changed = [0., 100., 350.].into_iter().any(|time| {
+            serialized(&idle.render_at(before, width, height, scale, time, false))
+                != serialized(&clicked.render_at(after, width, height, scale, time, false))
+        });
+        assert!(
+            changed,
+            "{}: {side} scripted click handler {handler} changed no scene",
+            self.name
+        );
+    }
 }
+fn handler_nodes(node: &Node) -> Vec<(String, usize)> {
+    fn visit(node: &Node, output: &mut Vec<(String, usize)>) {
+        if let Some(handler) = node.on_click {
+            output.push((node.id.clone(), handler));
+        }
+        for child in &node.children {
+            visit(child, output);
+        }
+    }
+    let mut output = vec![];
+    visit(node, &mut output);
+    output
+}
+// Counts describe real authored handlers across all lesson states, including
+// fade/menu close buttons and each item emitted by lists. Comments do not count.
+fn expected_handlers(name: &str) -> usize {
+    match name {
+        "bindings" | "lists" => 3,
+        "counter" | "comment-targets" | "fade" | "menu" | "transforms" | "late-handler"
+        | "clipped-handler" => 2,
+        "control-flow" | "functions" | "values" | "layout" | "layout-motion" | "grow" | "toast"
+        | "keyframes" | "spring" | "presence" | "stagger" | "no-op" | "missing-target" => 1,
+        "arrays" | "booleans" | "comments" | "components" | "decisions" | "first-function"
+        | "hello-world" | "named-values" | "numbers" | "strings" => 0,
+        _ => panic!("{name}: missing expected handler count"),
+    }
+}
+impl Pair {
+    fn exercise_discovered_handlers(&mut self, expected: usize) {
+        let mut exercised = BTreeSet::new();
+        for step in 0..64 {
+            // Rust's routes are refreshed by tree(); compare retained inventories
+            // even when the renderer omits a fully clipped target.
+            let vm = handler_nodes(self.vm.tree());
+            let rust = handler_nodes(&self.rust.tree());
+            assert_eq!(vm, rust, "{}: retained handlers differ", self.name);
+            let Some((id, handler)) = vm.into_iter().find(|(id, _)| !exercised.contains(id)) else {
+                assert!(
+                    exercised.len() >= expected,
+                    "{}: exercised {} handlers, expected at least {expected}",
+                    self.name,
+                    exercised.len()
+                );
+                return;
+            };
+            exercised.insert(id);
+            self.click(handler, 100. + step as f64 * 2000.);
+            // The next iteration collects again after this event, so newly
+            // mounted handlers enter the walk before any coverage assertion.
+        }
+        panic!("{}: handler discovery exceeded 64 clicks", self.name);
+    }
+}
+
 fn parity(name: &'static str, source: &str, app: fn() -> UiApp, motion: bool) {
-    let handlers = source.matches("onClick=").count();
     for (viewport, reduced) in [
         ((560., 480., 1.), false),
         ((360., 640., 2.), false),
@@ -205,23 +291,35 @@ fn parity(name: &'static str, source: &str, app: fn() -> UiApp, motion: bool) {
             reduced,
             comparisons: 0,
         };
-        pair.frame(0.);
+        let (scene, _) = pair.frame(0.);
+        let handlers: Vec<_> = scene
+            .targets
+            .iter()
+            .map(|target| target.handler)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let expected = expected_handlers(name);
+        assert!(
+            expected == 0 || !handlers.is_empty(),
+            "{name}: expected handlers but initial scene has no targets"
+        );
         pair.frame(16.);
-        if handlers > 0 {
+        if !handlers.is_empty() {
             if motion {
-                pair.click(0, 100.);
+                pair.click(handlers[0], 100.);
                 for t in [125., 220.] {
                     pair.frame(t);
                 }
-                pair.click(0, 220.); // Retarget before the first motion finishes.
+                pair.click(handlers[0], 220.); // Retarget before the first motion finishes.
                 for t in [225., 350., 600., 1200., 2000.] {
                     pair.frame(t);
                 }
-                pair.click(0, 2000.); // Re-enter after exit, preserving identity rules.
+                pair.click(handlers[0], 2000.); // Re-enter after exit, preserving identity rules.
                 for t in [2120., 2240., 2500., 3400., 4000.] {
                     pair.frame(t);
                 }
-                for handler in 1..handlers {
+                for &handler in handlers.iter().skip(1) {
                     let time = 5000. + handler as f64 * 2000.;
                     pair.click(handler, time);
                     for delta in [120., 350., 1000.] {
@@ -229,20 +327,38 @@ fn parity(name: &'static str, source: &str, app: fn() -> UiApp, motion: bool) {
                     }
                 }
             } else {
-                pair.click(0, 100.);
-                pair.click(0, 200.);
-                for handler in 0..handlers {
-                    pair.click(handler, 300. + handler as f64 * 100.);
-                }
-                for handler in (0..handlers).rev() {
-                    pair.click(handler, 1000. + (handlers - handler) as f64 * 100.);
+                // Selection lessons have intentionally idempotent buttons.
+                // Alternate targets instead of scripting same-value clicks.
+                for (step, &handler) in handlers
+                    .iter()
+                    .cycle()
+                    .take(2 * handlers.len() + 2)
+                    .enumerate()
+                {
+                    pair.click(handler, 100. + step as f64 * 100.);
                 }
             }
         }
         pair.frame(20000.);
+        // Start an independent coverage history so motion retarget scripts and
+        // intentionally idempotent reset/selection buttons keep their ordering.
+        let mut discovery = Pair {
+            name,
+            vm: UiSession::new(compiler::compile_entry(source, &Hosts::default(), "App").unwrap())
+                .unwrap(),
+            rust: app(),
+            vm_renderer: Renderer::new(),
+            rust_renderer: Renderer::new(),
+            viewport,
+            reduced,
+            comparisons: 0,
+        };
+        discovery.frame(0.);
+        discovery.exercise_discovered_handlers(expected);
         println!(
             "{name}: {:?}, reduced={reduced}, {} complete scene comparisons, every handler exercised",
-            viewport, pair.comparisons
+            viewport,
+            (pair.comparisons + discovery.comparisons)
         );
     }
 }
@@ -284,4 +400,76 @@ lessons! {
     toast: "toast" => true,
     transforms: "transforms" => true,
     values: "values" => false,
+}
+
+#[test]
+fn comments_cannot_inflate_the_rendered_handler_inventory() {
+    let source = include_str!("../../deka_fmt/tests/fixtures/tour/counter.dsx").to_owned()
+        + "\n// onClick= comment, not a handler\n// onClick= another comment\n";
+    parity(
+        "comment-targets",
+        &source,
+        || UiApp::new(counter::App),
+        false,
+    );
+}
+
+#[test]
+#[should_panic(expected = "scripted click handler 0 changed no scene")]
+fn matching_noop_handlers_on_both_sides_are_rejected() {
+    parity(
+        "no-op",
+        "export fn App(){return (<view><button onClick={fn(){}}>Same</button></view>);}",
+        || UiApp::new(|| deka_ui::view! {<view><button onClick={|_| {}}>"Same"</button></view>}),
+        false,
+    );
+}
+
+#[test]
+#[should_panic(expected = "initial scene has no targets")]
+fn authored_handlers_cannot_pass_with_an_empty_scene_inventory() {
+    parity(
+        "missing-target",
+        "export fn App(){return (<view><view className=\"h-0 overflow-hidden\"><button onClick={fn(){}}>Hidden</button></view></view>);}",
+        || {
+            UiApp::new(
+                || deka_ui::view! {<view><view className="h-0 overflow-hidden"><button onClick={|_| {}}>"Hidden"</button></view></view>},
+            )
+        },
+        false,
+    );
+}
+#[test]
+#[should_panic(expected = "scripted click handler 1 changed no scene")]
+fn newly_mounted_noop_handler_is_exercised() {
+    parity(
+        "late-handler",
+        "export fn App(){let open=0;return (<view><button onClick={fn(){open=1-open;}}>Toggle</button>{open==1 ? <button onClick={fn(){}}>Late</button> : None}</view>);}",
+        || {
+            UiApp::new(|| {
+                let open = deka_ui::signal(false);
+                deka_ui::view! {<view><button onClick={move |_| open.toggle()}>"Toggle"</button>
+                    {move || open.get().then(|| deka_ui::view!{<button onClick={|_| {}}>"Late"</button>})}
+                </view>}
+            })
+        },
+        false,
+    );
+}
+#[test]
+#[should_panic(expected = "scripted click handler 1 changed no scene")]
+fn clipped_noop_handler_is_exercised() {
+    parity(
+        "clipped-handler",
+        "export fn App(){let count=0;return (<view><button onClick={fn(){count+=1;}}>Count: {count}</button><view className=\"h-0 overflow-hidden\"><button onClick={fn(){}}>Hidden</button></view></view>);}",
+        || {
+            UiApp::new(|| {
+                let mut count = deka_ui::signal(0);
+                deka_ui::view! {<view><button onClick={move |_| count+=1}>"Count: {count}"</button>
+                    <view className="h-0 overflow-hidden"><button onClick={|_| {}}>"Hidden"</button></view>
+                </view>}
+            })
+        },
+        false,
+    );
 }
