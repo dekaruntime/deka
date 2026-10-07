@@ -160,7 +160,7 @@ export function mount(app, canvas) {
         input = document.createElement('input'); input.setAttribute('aria-label', 'Deka text input')
         input.style.cssText = 'position:absolute;box-sizing:border-box;font:inherit;color:inherit;background:transparent;border:1px solid currentColor;border-radius:4px;padding:4px;'
         input.addEventListener('input', () => { app.input(control.id, input.value); draw() })
-        input.addEventListener('keydown', event => { if (app.key_to(control.id,event.key)) event.preventDefault(); draw() })
+        input.addEventListener('keydown', event => { app.key_to(control.id,event.key); draw() })
         inputs.set(control.id,input); parent.append(input)
       }
       if (input.value !== control.value) {
