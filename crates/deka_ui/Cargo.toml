@@ -160,3 +160,7 @@ required-features = ["desktop"]
 name = "tour-values"
 path = "examples/tour/values.rs"
 required-features = ["desktop"]
+
+[[example]]
+name = "retained_tree"
+required-features = ["desktop"]

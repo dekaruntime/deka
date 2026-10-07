@@ -1,10 +1,11 @@
 //! Transient Rust builders and reactive bindings on the shared native store.
-use crate::{Derived, Effect, Scope, Signal, effect};
+use crate::{ComponentState, Derived, Effect, NodeRef, Scope, Signal, ViewTree, effect};
 use deka_native_ir::{
     Node, WireNode,
     tree::{NodeHandle, Tree},
 };
 use deka_native_ui::Application;
+use std::any::Any;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
@@ -76,6 +77,8 @@ enum Builder {
     Fragment(Vec<View>),
     Dynamic(Box<dyn FnMut() -> View>),
     Error(String),
+    Ref(Box<View>, NodeRef),
+    State(Box<View>, Rc<dyn Any>),
 }
 struct Element {
     tag: String,
@@ -90,6 +93,19 @@ impl View {
     pub fn interpolate<T: Clone + std::fmt::Display + 'static>(value: &T) -> Self {
         let value = value.clone();
         Self::live_text(move || format!("{value}"))
+    }
+    pub fn node_ref(self, reference: NodeRef) -> Self {
+        Self(Builder::Ref(Box::new(self), reference))
+    }
+    pub fn with_state<T: 'static>(self, state: ComponentState<T>) -> Self {
+        Self(Builder::State(Box::new(self), state.erase()))
+    }
+    fn single_root(&self) -> bool {
+        match &self.0 {
+            Builder::Element(_) | Builder::Text(_) => true,
+            Builder::Ref(view, _) | Builder::State(view, _) => view.single_root(),
+            _ => false,
+        }
     }
     pub fn from_child<V, M>(value: V) -> Self
     where
@@ -182,7 +198,10 @@ impl View {
         self
     }
     fn element_mut(&mut self) -> Option<&mut Element> {
-        if !matches!(self.0, Builder::Element(_)) {
+        if !matches!(
+            self.0,
+            Builder::Element(_) | Builder::Ref(_, _) | Builder::State(_, _)
+        ) {
             if !matches!(self.0, Builder::Error(_)) {
                 self.0 = Builder::Error("attributes/events/children require an element".into());
             }
@@ -190,6 +209,7 @@ impl View {
         }
         match &mut self.0 {
             Builder::Element(element) => Some(element),
+            Builder::Ref(view, _) | Builder::State(view, _) => view.element_mut(),
             _ => None,
         }
     }
@@ -320,7 +340,9 @@ impl LaunchOptions {
     }
 }
 
-type Anchor = Rc<RefCell<Option<NodeHandle>>>;
+pub(crate) type PublishedState = (Anchor, Rc<dyn Any>);
+pub(crate) type Anchor = Rc<RefCell<Option<NodeHandle>>>;
+
 type Callback = Rc<RefCell<Box<dyn FnMut(Event)>>>;
 struct Listener {
     anchor: Anchor,
@@ -328,17 +350,52 @@ struct Listener {
     callback: Callback,
 }
 #[derive(Default)]
-struct Context {
-    tree: RefCell<Tree>,
+pub(crate) struct Context {
+    pub(crate) tree: RefCell<Tree>,
+    pub(crate) scope_id: u64,
+    pub(crate) states: RefCell<BTreeMap<usize, PublishedState>>,
+    next_state: Cell<usize>,
     listeners: RefCell<BTreeMap<usize, Listener>>,
     next_listener: Cell<usize>,
     patches: Cell<usize>,
+    pending_frame: Cell<bool>,
     waker: RefCell<Option<deka_native_ui::Waker>>,
     errors: RefCell<Vec<String>>,
     error_sink: RefCell<Option<ErrorSink>>,
     error_location: RefCell<(Vec<usize>, String)>,
 }
 impl Context {
+    pub(crate) fn snapshot(&self) -> Node {
+        self.tree.borrow().snapshot().unwrap_or_else(|| Node {
+            id: "view/empty".into(),
+            style: Default::default(),
+            text: None,
+            on_click: None,
+            children: vec![],
+        })
+    }
+    pub(crate) fn is_attached(&self, node: &NodeHandle) -> bool {
+        let root = self.tree.borrow().root.clone();
+        let mut current = Some(node.clone());
+        while let Some(node) = current {
+            if root.as_ref().is_some_and(|root| root == &node) {
+                return true;
+            }
+            current = node.parent();
+        }
+        false
+    }
+    pub(crate) fn node_changed(&self, node: &NodeHandle, changed: bool) {
+        if changed && self.is_attached(node) {
+            self.changed(true);
+        }
+    }
+    fn publish(&self, anchor: Anchor, state: Rc<dyn Any>) -> usize {
+        let token = self.next_state.get();
+        self.next_state.set(token + 1);
+        self.states.borrow_mut().insert(token, (anchor, state));
+        token
+    }
     fn report(&self, path: &[usize], binding: &str, message: String) {
         let error = UiError {
             path: path.to_vec(),
@@ -377,6 +434,11 @@ impl Context {
     fn changed(&self, changed: bool) {
         if changed {
             self.patches.set(self.patches.get() + 1);
+            if !self.pending_frame.replace(true)
+                && let Some(waker) = self.waker.borrow().as_ref()
+            {
+                waker.wake();
+            }
         }
     }
     fn listen(&self, anchor: Anchor, kind: EventKind, event: Box<dyn FnMut(Event)>) -> usize {
@@ -398,6 +460,7 @@ impl Context {
 #[derive(Default)]
 struct Registrations {
     effects: Vec<Effect>,
+    states: Vec<usize>,
     reactive: Vec<crate::reactive::ReactiveOwner>,
     events: Vec<usize>,
     groups: Vec<Rc<RefCell<Registrations>>>,
@@ -406,6 +469,7 @@ struct Registrations {
 impl Registrations {
     fn extend(&mut self, mut other: Self) {
         self.effects.append(&mut other.effects);
+        self.states.append(&mut other.states);
         self.reactive.append(&mut other.reactive);
         self.events.append(&mut other.events);
         self.groups.append(&mut other.groups);
@@ -419,6 +483,9 @@ impl Drop for Registrations {
             let _ = effect.dispose();
         }
         if let Some(context) = self.context.upgrade() {
+            for token in self.states.drain(..) {
+                context.states.borrow_mut().remove(&token);
+            }
             for token in self.events.drain(..) {
                 context.listeners.borrow_mut().remove(&token);
             }
@@ -430,16 +497,21 @@ struct Prepared {
     slots: Vec<Vec<usize>>,
     anchors: Vec<(Vec<usize>, Anchor)>,
     registrations: Registrations,
+    root_anchors: Vec<Anchor>,
+    references: Vec<(NodeRef, Anchor)>,
 }
 impl Prepared {
     fn new(context: &Rc<Context>) -> Self {
         Self {
+            root_anchors: vec![],
+            references: vec![],
             wires: vec![],
             slots: vec![],
             anchors: vec![],
             registrations: Registrations {
                 context: Rc::downgrade(context),
                 effects: vec![],
+                states: vec![],
                 reactive: vec![],
                 events: vec![],
                 groups: vec![],
@@ -447,15 +519,17 @@ impl Prepared {
         }
     }
     fn extend(&mut self, mut child: Self) {
+        self.root_anchors.append(&mut child.root_anchors);
+        self.references.append(&mut child.references);
         self.wires.append(&mut child.wires);
         self.slots.append(&mut child.slots);
         self.anchors.append(&mut child.anchors);
         self.registrations.extend(child.registrations);
     }
-    fn attach(&self, roots: &[NodeHandle]) {
+    fn attach(&self, roots: &[NodeHandle], context: &Rc<Context>) {
         fn visit(node: &NodeHandle, nodes: &mut BTreeMap<Vec<usize>, NodeHandle>) {
             nodes.insert(node.slot(), node.clone());
-            for child in node.all_children() {
+            for child in node.0.borrow().children.clone() {
                 visit(&child, nodes);
             }
         }
@@ -470,6 +544,11 @@ impl Prepared {
                     .expect("missing mounted structural slot")
                     .clone(),
             );
+        }
+        for (reference, anchor) in &self.references {
+            if let Some(node) = anchor.borrow().clone() {
+                reference.capture(node, context);
+            }
         }
     }
 }
@@ -519,6 +598,25 @@ fn prepare(
     let mut prepared = Prepared::new(context);
     match view.0 {
         Builder::Error(error) => return Err(format!("node {path:?} builder: {error}")),
+        Builder::Ref(view, reference) => {
+            reference.check(context.scope_id)?;
+            let mut next = prepare(*view, path, parent, context)?;
+            if next.root_anchors.len() != 1 {
+                return Err("node_ref requires one retained root".into());
+            }
+            next.references
+                .push((reference, next.root_anchors[0].clone()));
+            return Ok(next);
+        }
+        Builder::State(view, state) => {
+            let mut next = prepare(*view, path, parent, context)?;
+            for anchor in &next.root_anchors {
+                next.registrations
+                    .states
+                    .push(context.publish(anchor.clone(), state.clone()));
+            }
+            return Ok(next);
+        }
         Builder::Fragment(children) => {
             for (index, child) in children.into_iter().enumerate() {
                 let mut slot = path.clone();
@@ -568,7 +666,7 @@ fn prepare(
                             return;
                         }
                     };
-                    next.attach(&roots);
+                    next.attach(&roots, &context);
                     *owner.borrow_mut() = next.registrations;
                     context.changed(true);
                 } else {
@@ -587,6 +685,7 @@ fn prepare(
         }
         Builder::Text(value) => {
             let anchor = Anchor::default();
+            prepared.root_anchors.push(anchor.clone());
             let text = bind(
                 value,
                 &path,
@@ -676,6 +775,7 @@ fn prepare(
                 wire.children.append(&mut child.wires);
                 prepared.extend(child);
             }
+            prepared.root_anchors = vec![anchor];
             prepared.wires.push(wire);
         }
     }
@@ -703,7 +803,11 @@ impl UiApp {
         A: BuildApp<M>,
     {
         let scope = Scope::new();
-        let context = Rc::new(Context::default());
+        let context = Rc::new(Context {
+            scope_id: scope.id(),
+            ..Context::default()
+        });
+        crate::retained::register(scope.id(), &context);
         context.error_sink.replace(sink);
         context.error_location.replace((vec![], "reactive".into()));
         let weak = Rc::downgrade(&context);
@@ -714,9 +818,10 @@ impl UiApp {
         });
         let registrations = scope.run(|| {
             let view = app.build();
-            let view = match view.0 {
-                Builder::Element(_) | Builder::Text(_) => view,
-                _ => View::element("view").child(view),
+            let view = if view.single_root() {
+                view
+            } else {
+                View::element("view").child(view)
             };
             let mut prepared = match prepare(view, vec![], Anchor::default(), &context) {
                 Ok(prepared) => prepared,
@@ -748,7 +853,7 @@ impl UiApp {
                 prepared = Prepared::new(&context);
             }
             if let Some(root) = context.tree.borrow().root.clone() {
-                prepared.attach(&[root]);
+                prepared.attach(&[root], &context);
             }
             prepared.registrations
         });
@@ -760,7 +865,7 @@ impl UiApp {
             patch_passes: Cell::new(0),
         }
     }
-    pub fn tree(&self) -> Node {
+    pub fn tree(&self) -> ViewTree {
         let mut tree = self
             .context
             .tree
@@ -785,7 +890,8 @@ impl UiApp {
         let mut tokens = vec![];
         routes(&mut tree, &mut tokens);
         *self.routes.borrow_mut() = tokens;
-        tree
+        self.context.pending_frame.set(false);
+        ViewTree::new(tree, &self.context)
     }
     pub fn dispatch(&self, handler: usize) -> bool {
         let token = self.routes.borrow().get(handler).copied();
@@ -833,9 +939,6 @@ impl UiApp {
         });
         if self.context.patches.get() != before {
             self.patch_passes.set(self.patch_passes.get() + 1);
-            if let Some(waker) = self.context.waker.borrow().as_ref() {
-                waker.wake();
-            }
         }
         true
     }
@@ -857,6 +960,8 @@ impl UiApp {
 impl Drop for UiApp {
     fn drop(&mut self) {
         self.scope.run(|| drop(self.registrations.take()));
+        self.context.waker.borrow_mut().take();
+        crate::retained::unregister(self.scope.id());
     }
 }
 impl Application for UiApp {
@@ -864,12 +969,15 @@ impl Application for UiApp {
         vec![]
     }
     fn render(&self, _: &[f64]) -> Node {
-        self.tree()
+        self.tree().snapshot()
     }
     fn event(&self, handler: usize, _: &mut [f64]) {
         self.dispatch(handler);
     }
     fn set_waker(&mut self, waker: deka_native_ui::Waker) {
+        if self.context.pending_frame.get() {
+            waker.wake();
+        }
         *self.context.waker.borrow_mut() = Some(waker);
     }
 }

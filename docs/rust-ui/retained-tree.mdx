@@ -1,0 +1,87 @@
+---
+title: Retained tree access from Rust
+---
+
+`node_ref()` creates a cloneable reference. Set `node_ref={reference.clone()}` on
+a native element, then call `reference.get()` to obtain its `ViewNode`. It returns
+`None` before mounting. A reference belongs to one app session; attempting to
+mount it into another app reports an error through `UiApp::take_errors()`.
+
+`UiApp::tree()` provides an immutable renderer snapshot with live query methods.
+Inside app construction, events and reactions, `tree()?` accesses the same
+session. Queries work before mounting and return no matches. Outside an app
+scope, `tree()` returns `ViewError::NoActiveApp`.
+
+```rust
+use deka_ui::prelude::*;
+
+#[derive(Clone)]
+struct CounterState { count: Signal<i32> }
+
+#[component]
+pub fn App() -> View {
+    let count = signal(0);
+    let message = node_ref();
+    view! {
+        <view className="p-4 gap-3">
+            <p id="message" node_ref={message.clone()}>"Count: {count}"</p>
+            <button onClick={move |_| {
+                let node = tree().unwrap().query("#message").unwrap().unwrap();
+                node.set_text_content("Hand edit").unwrap();
+                node.class_list().add("opacity-25").unwrap();
+            }}>"Edit"</button>
+            <button onClick={|_| {
+                let node = tree().unwrap().query("#message").unwrap().unwrap();
+                let mut count = node.component_state::<CounterState>().unwrap().count;
+                count += 1;
+            }}>"Add one"</button>
+        </view>
+    }.with_state(ComponentState::new(CounterState { count }))
+}
+```
+
+After Edit, the next frame shows **Hand edit** with lower opacity. Idle frames
+and unchanged binding results preserve it. Add one changes the text binding's
+authored value and restores the count text; the separate class edit remains.
+An authored class change would replace that class edit independently.
+
+`query` returns `Result<Option<ViewElement>, ViewError>`; `query_all` returns a
+snapshot `Vec<ViewElement>`. Supported selectors are tags, `#id`, `.class`,
+compounds, descendants and children. Unsupported syntax is an error. Queries
+always use effective live attributes/classes. `get_element_by_id` returns the
+first match or `None`; author ids do not define internal node identity.
+
+`ViewNode` provides `text_content`, `set_text_content`, `parent_node`,
+`child_nodes` and `as_element`. `ViewElement` adds element-only `children`,
+`get_attribute`, `set_attribute` and `class_list`. Child collections are snapshots
+of live handles. Attributes support `id`, `className`, `value` and `placeholder`;
+unknown writes and invalid utilities return errors before changing the tree.
+`ViewClassList` provides live `tokens`, `contains`, `add`, `remove` and `toggle`.
+
+Writing element text replaces its effective children. Bound authored children
+remain available for their next authored text or structural change to reclaim
+that property. Unchanged values and unrelated class/attribute changes preserve
+the override. Detached handles remain readable and writable after removal or app
+teardown; detached edits do not request frames. A handle never keeps its app or
+signal scope alive. `ViewTree::check_node` rejects another session's handle.
+
+An effective visible write schedules the next frame. Multiple writes coalesce
+until `UiApp::tree()` presents their snapshot. Unchanged writes and idle reads do
+not wake presentation. `ViewTree::snapshot()` explicitly clones its renderer
+Node; dereferencing the facade also exposes that immutable snapshot.
+
+Publish component state with `View::with_state(ComponentState::new(state))`.
+`node.component_state::<T>()` clones the nearest published state of that type,
+including the node's own component root. Use a Rust struct of Signal handles for
+mutable state. Other types and unpublished locals return `None`. Publishing adds
+no layout node, including components with multiple roots. Dropping Dynamic
+registrations releases their published state and signals.
+
+`NodeRef::get()` resolves only a node attached to the live app. After a Dynamic
+slot is removed, or the app drops, it returns `None`; an earlier copied
+`ViewNode` still owns its detached allocation. `set_text_content` remains valid
+on that allocation and never dirties or wakes the application frame.
+
+A changed binding reclaims text edits only on its target or direct text
+container. Changes inside a deeper descendant or an unrelated sibling leave
+an ancestor's hand edit intact. Equal authored values also preserve edits.

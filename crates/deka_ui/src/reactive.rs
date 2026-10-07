@@ -25,6 +25,9 @@ impl Default for Scope {
     }
 }
 impl Scope {
+    pub(crate) fn id(&self) -> u64 {
+        self.0.id
+    }
     pub fn new() -> Self {
         let id = NEXT_SCOPE.with(|next| {
             let id = next.get();
@@ -84,6 +87,9 @@ impl Drop for Batch {
             self.0.flush();
         }
     }
+}
+pub(crate) fn current_scope_id() -> Option<u64> {
+    CURRENT.with(|scope| scope.borrow().as_ref().map(|core| core.id))
 }
 fn current() -> Rc<Core> {
     CURRENT

@@ -67,7 +67,10 @@ and patch once per event.
 
 `onClick`, `onInput` and `onKeyDown` accept closures receiving the typed `Event`.
 The native window currently delivers clicks; input/key dispatch is available
-through `UiApp::dispatch_to` for integrations. Node refs belong to a later phase.
+through `UiApp::dispatch_to` for integrations. Capture an element with
+`node_ref={reference.clone()}`, where `reference` comes from `node_ref()`. Its
+`get()` returns `None` before mount and the retained node afterward; see
+[the retained tree](./retained-tree) for reads, writes, and component state.
 
 The parser uses rstml token streams and Rust expressions, preserving the user's
 markup spans. Unknown components, missing props and wrong prop types are checked
