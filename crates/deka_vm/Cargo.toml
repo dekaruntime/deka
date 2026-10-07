@@ -33,7 +33,7 @@ getrandom = { version = "0.2", optional = true }
 uuid = { version = "1", optional = true, default-features = false, features = ["std"] }
 deka_syntax = { path = "../deka_syntax", optional = true }
 bumpalo = { version = "3.16", optional = true }
-tokio = { version = "1", features = ["rt", "time", "macros", "sync"], optional = true }
+tokio = { version = "1", features = ["rt", "time", "macros", "sync", "net", "io-util"], optional = true }
 
 [[bin]]
 name = "dvmc"

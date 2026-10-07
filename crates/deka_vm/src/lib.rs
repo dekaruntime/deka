@@ -46,6 +46,8 @@ mod turn;
 mod ui_contract;
 pub use turn::Turn;
 #[cfg(feature = "host")]
+pub mod tcp;
+#[cfg(feature = "host")]
 pub mod time;
 #[cfg(feature = "host")]
 pub mod timers;

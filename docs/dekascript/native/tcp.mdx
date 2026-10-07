@@ -1,0 +1,66 @@
+# TCP connections
+
+Import `connect` and `listen` from `tcp`. Rust owns each socket; copying a
+connection or listener preserves its identity. Network failures are `Result`
+values. The API follows Deno's promise-based connections and accepts, with
+immutable `bytes` replacing mutable read buffers.
+
+```ds
+import { connect, listen } from "tcp";
+import { from_string, to_string, concat, len, slice } from "bytes";
+import { echo } from "io";
+
+async fn receive(listener: TcpListener) Promise<string> {
+    const conn = unwrap(await listener.accept()) or { return "accept failed"; };
+    let data = from_string("");
+    for (; len(data) < 4;) {
+        const chunk = unwrap(await conn.read(4)) or { return "read failed"; };
+        const value = unwrap(chunk) or { return "unexpected EOF"; };
+        data = concat(data, value);
+    }
+    conn.close();
+    return match to_string(data) { Ok(text) => text, Err(error) => error };
+}
+
+async fn main() {
+    const listener = unwrap(listen({ hostname: Some("127.0.0.1"), port: 0 })) or {
+        echo("listen failed"); return;
+    };
+    const received = receive(listener);
+    const conn = unwrap(await connect({ port: listener.addr.port })) or {
+        echo("connect failed"); return;
+    };
+    const data = from_string("Deka");
+    let sent = 0;
+    for (; sent < len(data);) {
+        const count = unwrap(await conn.write(slice(data, sent))) or { return; };
+        sent += count;
+    }
+    echo(await received);
+    conn.close();
+    listener.close();
+}
+```
+
+Output: `Deka`.
+
+- `connect({port, hostname?: Option<string>})` returns `Promise<Result<TcpConn,string>>`.
+  The hostname defaults to `127.0.0.1`; DNS resolution is asynchronous.
+- `listen({port, hostname?: Option<string>})` returns `Result<TcpListener,string>`
+  synchronously, like Deno. Its hostname is a literal IP, default `0.0.0.0`.
+  Port zero asks the OS for an available port. Connect ports are 1–65535.
+- `listener.accept()` returns `Promise<Result<TcpConn,string>>`.
+- `conn.read(max)` returns `Promise<Result<Option<bytes>,string>>`. `None` means
+  peer EOF. `max` is an integer from 1 to 16 MiB. A read can return fewer bytes.
+- `conn.write(data)` returns `Promise<Result<number,string>>`: the actual count
+  written. Callers loop over remaining bytes. Empty writes return zero.
+- `conn.close()` and `listener.close()` return `Result<void,string>` and are
+  idempotent. Close affects aliases and cancels pending reads/writes/accepts.
+- `conn.localAddr`, `conn.remoteAddr` and `listener.addr` are read-only snapshots
+  with `hostname`, `port` and `transport` (`"tcp"`).
+
+Reads and writes can run concurrently. Reads on one connection are serialized,
+as are writes. No implicit timeout is imposed; an idle socket can wait for its
+peer. Cancelling the VM drops its pending socket futures. Unreachable handles
+release their sockets through Rust ownership. Stream adapters come with the
+stream API.
