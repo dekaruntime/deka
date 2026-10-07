@@ -129,7 +129,7 @@ try {
   await page.getByRole('button',{name:'Add',exact:true}).focus();await page.keyboard.press('Enter');
   await page.waitForFunction(()=>document.querySelectorAll('canvas')[1].dekaScene.nodes.some(node=>node.text==='Second: 2'));
   await page.evaluate(()=>window.stop());assert.equal(await page.getByRole('button',{name:'Add',exact:true}).count(),0);
-  assert.deepEqual(await page.evaluate(()=>window.errors),[]);assert.deepEqual(errors,[]);
+  assert.deepEqual(await page.evaluate(()=>window.errors),[]);
   console.log('PASS: shared browser mounts repaint and survive closing the first mount');
   await page.goto(url+'/?fixture=.&inspect');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start('counter'))
   const canvas=page.locator('canvas');const before=await canvas.screenshot()
