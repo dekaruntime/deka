@@ -104,7 +104,10 @@ await input.pressSequentially('Sami')
   assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello clipboard 日本'));
   await input.press('ControlOrMeta+A');await input.press('ControlOrMeta+X');assert.equal(await input.inputValue(),'');
   await input.press('ControlOrMeta+V');assert.equal(await input.inputValue(),'clipboard 日本');
-  await page.getByRole('button',{name:'Clear',exact:true}).focus();
+  await input.focus();await page.keyboard.press('Tab');
+  assert.equal(await textarea.evaluate(element=>element===document.activeElement),true);
+  await page.keyboard.press('Tab');
+  assert.equal(await page.getByRole('button',{name:'Clear',exact:true}).evaluate(element=>element===document.activeElement),true);
   await page.keyboard.press('Enter');assert.equal(await input.inputValue(),'');
   const accessibilitySnapshot=await page.locator('body').ariaSnapshot();
   assert(accessibilitySnapshot.includes('textbox "Name"'));

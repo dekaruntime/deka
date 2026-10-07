@@ -189,6 +189,19 @@ impl<A: Application> Content for UiContent<A> {
     }
 
     fn input(&mut self, input: Input) -> bool {
+        // A handler can disable/remove a field before the next presented frame.
+        self.semantics = self.host.app.semantics();
+        if self.focused.as_ref().is_some_and(|id| !self.available(id)) {
+            if let Some(editor) = self
+                .focused
+                .as_ref()
+                .and_then(|id| self.editors.get_mut(id))
+            {
+                editor.cancel();
+            }
+            self.focused = None;
+            self.dragging = false;
+        }
         match input {
             Input::Press { x, y } => {
                 if let Some(id) = self
@@ -369,6 +382,7 @@ impl<A: Application> Content for UiContent<A> {
     }
     fn accessibility_event(&mut self, event: &accesskit_winit::WindowEvent) -> bool {
         use accesskit::{Action, ActionData};
+        self.semantics = self.host.app.semantics();
         let accesskit_winit::WindowEvent::ActionRequested(request) = event else {
             return false;
         };

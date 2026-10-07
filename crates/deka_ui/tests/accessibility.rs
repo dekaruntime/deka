@@ -111,7 +111,15 @@ fn tab_order_skips_disabled_hidden_and_negative_but_explicit_focus_works() {
     session.frame(400., 300., 1.);
     let semantics = session.app().semantics();
     let order = deka_native_ui::tab_order(&semantics);
-    assert_eq!(order.len(), 3);
+    assert_eq!(
+        order,
+        ["First", "Second", "Natural"].map(|name| semantics
+            .iter()
+            .find(|n| n.name == name)
+            .unwrap()
+            .id
+            .clone())
+    );
     for target in &order {
         session.keyboard(key(false));
         assert_eq!(session.focus(), Some(target.as_str()));
