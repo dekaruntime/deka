@@ -3,7 +3,6 @@
 
 use std::path::{Path, PathBuf};
 
-use super::super::compiler_cache_dir;
 use super::super::defer::{defer_script_tag, enforce_defer_lints, scan_server_defer};
 use super::super::document::{
     CLIENT_IMPORTMAP_PLACEHOLDER_TAG, DEKA_APP_HOLE, DEKA_HEAD_HOLE, DEKA_SCRIPTS_HOLE,
@@ -18,6 +17,7 @@ use super::super::routes::{
 };
 use super::api::write_api_router_entry;
 use super::defer::write_defer_router_entry;
+use super::super::compiler_cache_dir;
 use super::{
     alias, ensure_defer_secret, exports_head, json_str, pathdiff_dsx, session_cookie_name,
 };

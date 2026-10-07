@@ -1,8 +1,8 @@
-use crate::{InstallPayload, run_install};
 use anyhow::Result;
 use deka_cli_core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
 use deka_modules::module_spec::canonical_php_package_spec;
 use deka_modules::modules::MODULES_DIR;
+use crate::{InstallPayload, run_install};
 use std::path::{Path, PathBuf};
 use stdio;
 
@@ -642,4 +642,5 @@ mod shop_update_tests {
         assert_ne!(metadata["moduleGraph"]["hash"], "stale-module");
         assert_ne!(metadata["fsGraph"]["hash"], "stale-fs");
     }
+
 }

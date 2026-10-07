@@ -107,7 +107,9 @@ pub fn host_decl() -> String {
             let args: Vec<String> = action
                 .args
                 .iter()
-                .map(|host_arg| format!("{}: {}", host_arg.name, wire_type_to_ds(host_arg.wire)))
+                .map(|host_arg| {
+                    format!("{}: {}", host_arg.name, wire_type_to_ds(host_arg.wire))
+                })
                 .collect();
             let async_keyword = if action.r#async { "async " } else { "" };
             let ok_type = result_shape_to_ds(action.result);
@@ -217,11 +219,9 @@ mod tests {
             );
             let error_type = error_type_for_kind(kind_name);
             let expected_suffix = format!(", {error_type}>");
-            let ok_type = ok_type
-                .strip_suffix(expected_suffix.as_str())
-                .unwrap_or_else(|| {
-                    panic!("{key}: expected error type `{error_type}`, return was `{ok_type}>`")
-                });
+            let ok_type = ok_type.strip_suffix(expected_suffix.as_str()).unwrap_or_else(|| {
+                panic!("{key}: expected error type `{error_type}`, return was `{ok_type}>`")
+            });
             assert_eq!(
                 ok_type,
                 result_shape_to_ds(action.result),
@@ -230,7 +230,9 @@ mod tests {
             let expected_args: Vec<String> = action
                 .args
                 .iter()
-                .map(|host_arg| format!("{}: {}", host_arg.name, wire_type_to_ds(host_arg.wire)))
+                .map(|host_arg| {
+                    format!("{}: {}", host_arg.name, wire_type_to_ds(host_arg.wire))
+                })
                 .collect();
             assert_eq!(
                 args_part,

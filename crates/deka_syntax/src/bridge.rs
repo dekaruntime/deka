@@ -137,18 +137,12 @@ pub enum HostTypeDecl {
 /// resolving a type a bridge signature already names (`resolve_ast_type`),
 /// never as a standalone import surface.
 pub fn host_type(name: &str) -> Option<HostTypeDecl> {
-    catalog()
-        .program
-        .statements
-        .iter()
-        .find_map(|stmt| match stmt {
-            ast::Stmt::Struct { name: n, .. } if *n == name => Some(HostTypeDecl::Struct(stmt)),
-            ast::Stmt::Enum { name: n, .. } if *n == name => Some(HostTypeDecl::Enum(stmt)),
-            ast::Stmt::Interface { name: n, .. } if *n == name => {
-                Some(HostTypeDecl::Interface(stmt))
-            }
-            _ => None,
-        })
+    catalog().program.statements.iter().find_map(|stmt| match stmt {
+        ast::Stmt::Struct { name: n, .. } if *n == name => Some(HostTypeDecl::Struct(stmt)),
+        ast::Stmt::Enum { name: n, .. } if *n == name => Some(HostTypeDecl::Enum(stmt)),
+        ast::Stmt::Interface { name: n, .. } if *n == name => Some(HostTypeDecl::Interface(stmt)),
+        _ => None,
+    })
 }
 
 /// Whether the host dispatches `kind.action` asynchronously, i.e. the bridge
@@ -224,14 +218,8 @@ mod tests {
     #[test]
     fn host_type_finds_declared_struct_enum_and_interface() {
         assert!(matches!(host_type("FsError"), Some(HostTypeDecl::Enum(_))));
-        assert!(matches!(
-            host_type("FsPermission"),
-            Some(HostTypeDecl::Struct(_))
-        ));
-        assert!(matches!(
-            host_type("DirEntry"),
-            Some(HostTypeDecl::Interface(_))
-        ));
+        assert!(matches!(host_type("FsPermission"), Some(HostTypeDecl::Struct(_))));
+        assert!(matches!(host_type("DirEntry"), Some(HostTypeDecl::Interface(_))));
         assert!(host_type("NotAHostType").is_none());
     }
 

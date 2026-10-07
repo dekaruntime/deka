@@ -47,13 +47,14 @@ fn single_file_check_does_not_load_project_imports() {
         "import { answer } from \"./helper.ds\"\nexport fn main() number { return answer }\n",
     )
     .unwrap();
-    fs::write(project.path().join("helper.ds"), "export const =\n").unwrap();
+    fs::write(
+        project.path().join("helper.ds"),
+        "export const =\n",
+    )
+    .unwrap();
 
     let output = run_check(project.path(), &["check", "--single-file", "main.ds"]);
-    assert!(
-        !output.status.success(),
-        "standalone check unexpectedly resolved a local import"
-    );
+    assert!(!output.status.success(), "standalone check unexpectedly resolved a local import");
     // dsc 0.9.0 (dsc#111) reports the unresolvable import itself instead of
     // leaving the name as an unknown identifier; either way the import must
     // not resolve in --single-file mode.

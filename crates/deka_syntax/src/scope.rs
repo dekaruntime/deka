@@ -17,7 +17,7 @@
 //! their construct's body.
 
 use crate::ast::{
-    ExportDecl, Expr, ForInit, MatchArm, NewtypeRepr, Param, ParamBinding, Pattern, Program, Span,
+    Expr, ExportDecl, ForInit, MatchArm, NewtypeRepr, Param, ParamBinding, Pattern, Program, Span,
     Stmt, Type, TypeParam, UnwrapAlternative,
 };
 use std::collections::HashSet;
@@ -60,7 +60,10 @@ pub struct ScopeDeclaration<'a> {
 
 /// Every name visible at byte `offset` into the source `program` was parsed
 /// from. Offsets past the end answer with the end-of-file scope.
-pub fn names_in_scope_at_offset<'a>(program: &'a Program<'a>, offset: usize) -> Vec<ScopeItem<'a>> {
+pub fn names_in_scope_at_offset<'a>(
+    program: &'a Program<'a>,
+    offset: usize,
+) -> Vec<ScopeItem<'a>> {
     declarations_in_scope_at_offset(program, offset)
         .into_iter()
         .map(|decl| ScopeItem {
@@ -186,15 +189,14 @@ fn render_type(ty: &Type<'_>) -> String {
         Type::Named { name, .. } => (*name).to_string(),
         Type::Generic { base, args, .. } => format!(
             "{base}<{}>",
-            args.iter().map(render_type).collect::<Vec<_>>().join(", ")
+            args.iter()
+                .map(render_type)
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         Type::Function { params, ret, .. } => format!(
             "fn({}) {}",
-            params
-                .iter()
-                .map(render_type)
-                .collect::<Vec<_>>()
-                .join(", "),
+            params.iter().map(render_type).collect::<Vec<_>>().join(", "),
             render_type(ret)
         ),
         Type::Option { inner, .. } => format!("Option<{}>", render_type(inner)),
@@ -298,13 +300,17 @@ fn push_value_decl<'a>(stmt: &'a Stmt<'a>, collector: &mut Collector<'a>) {
             *span,
             function_signature(name, type_params, params, return_type.as_ref(), *is_async),
         ),
-        Stmt::Const { name, ty, span, .. } => collector.push(
+        Stmt::Const {
+            name, ty, span, ..
+        } => collector.push(
             name,
             ScopeItemKind::Const,
             *span,
             binding_detail("const", name, ty.as_ref()),
         ),
-        Stmt::Let { name, ty, span, .. } => collector.push(
+        Stmt::Let {
+            name, ty, span, ..
+        } => collector.push(
             name,
             ScopeItemKind::Variable,
             *span,
@@ -363,10 +369,7 @@ fn collect_module_item<'a>(stmt: &'a Stmt<'a>, collector: &mut Collector<'a>) {
             for spec in specifiers.iter() {
                 let type_prefix = if spec.is_type_only { "type " } else { "" };
                 let detail = if spec.imported == spec.local {
-                    format!(
-                        "import {{ {type_prefix}{} }} from '{source}'",
-                        spec.imported
-                    )
+                    format!("import {{ {type_prefix}{} }} from '{source}'", spec.imported)
                 } else {
                     format!(
                         "import {{ {type_prefix}{} as {} }} from '{source}'",
@@ -566,7 +569,9 @@ fn descend_stmt<'a>(stmt: &'a Stmt<'a>, offset: usize, collector: &mut Collector
                 descend_stmts(body, offset, collector);
             }
             ExportDecl::Const { value, .. } => descend_expr(value, offset, collector),
-            ExportDecl::NamedGroup { .. } | ExportDecl::Opaque { .. } | ExportDecl::Declare(_) => {}
+            ExportDecl::NamedGroup { .. }
+            | ExportDecl::Opaque { .. }
+            | ExportDecl::Declare(_) => {}
         },
         Stmt::Block { body, .. } => descend_stmts(body, offset, collector),
         Stmt::If {
@@ -608,7 +613,12 @@ fn descend_stmt<'a>(stmt: &'a Stmt<'a>, offset: usize, collector: &mut Collector
             if let Some(init) = init {
                 match init {
                     ForInit::Const { name, value } => {
-                        collector.push(name, ScopeItemKind::Const, *span, format!("const {name}"));
+                        collector.push(
+                            name,
+                            ScopeItemKind::Const,
+                            *span,
+                            format!("const {name}"),
+                        );
                         descend_expr(value, offset, collector);
                     }
                     ForInit::Let { name, value } => {
@@ -659,7 +669,8 @@ fn descend_stmt<'a>(stmt: &'a Stmt<'a>, offset: usize, collector: &mut Collector
         }
         Stmt::Expr { expr, .. } => descend_expr(expr, offset, collector),
         Stmt::Return {
-            value: Some(value), ..
+            value: Some(value),
+            ..
         } => descend_expr(value, offset, collector),
         _ => {}
     }
@@ -865,8 +876,7 @@ fn greeting(name: string) string {\n\
 }\n";
         let decls = scope_declarations(source, "/*cursor*/");
         let detail = |needle: &str| {
-            decls
-                .iter()
+            decls.iter()
                 .find(|(name, _, _, _)| name == needle)
                 .unwrap_or_else(|| panic!("{needle} in scope: {decls:?}"))
                 .3
@@ -915,8 +925,7 @@ fn greeting(name: string) string {\n\
 
     #[test]
     fn block_locals_do_not_leak_outward() {
-        let source =
-            "fn f() {\n    if (true) {\n        const inner = 1;\n    }\n    /*cursor*/\n}\n";
+        let source = "fn f() {\n    if (true) {\n        const inner = 1;\n    }\n    /*cursor*/\n}\n";
         let names = scope_names(source, "/*cursor*/");
         assert!(
             !names.iter().any(|(n, _)| n == "inner"),

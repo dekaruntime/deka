@@ -83,13 +83,13 @@ pub use defer::{
     DeferLint, DeferLintLevel, DeferredIsland, defer_script_tag, scan_defer_lints,
     scan_server_defer,
 };
-pub use document::{
-    CLIENT_IMPORTMAP_PLACEHOLDER_TAG, DEFAULT_INDEX_HARNESS, DEKA_APP_HOLE, DEKA_HEAD_HOLE,
-    DEKA_SCRIPTS_HOLE, FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY,
-};
 pub use islands::{
     ClientIsland, ISLANDS_SCRIPT_SRC, generate_islands_entry_js, islands_script_tag,
     scan_client_islands,
+};
+pub use document::{
+    CLIENT_IMPORTMAP_PLACEHOLDER_TAG, DEFAULT_INDEX_HARNESS, DEKA_APP_HOLE, DEKA_HEAD_HOLE,
+    DEKA_SCRIPTS_HOLE, FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY,
 };
 pub use manifest::{
     FrameworkEntry, FrameworkEntryKind, FrameworkManifest, collect_public_rel_paths,

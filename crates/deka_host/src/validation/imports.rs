@@ -685,9 +685,7 @@ console.log("after");"#;
             errors
         );
         assert!(
-            warnings
-                .iter()
-                .all(|w| !w.message.contains("Unused import")),
+            warnings.iter().all(|w| !w.message.contains("Unused import")),
             "side-effect import must not warn as unused: {:?}",
             warnings
         );

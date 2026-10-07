@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use deka_modules::module_spec::{
     ds_source_candidates, is_bare_module_specifier, module_spec_aliases, resolve_ds_source_file,
 };
-use deka_modules::modules::{MODULES_DIR, read_linked_modules};
+use deka_modules::modules::{read_linked_modules, MODULES_DIR};
 
 pub fn is_javascript_entry(path: &Path) -> bool {
     path.extension()
@@ -46,7 +46,8 @@ pub fn entry_wrapper_path(project_root: &Path) -> PathBuf {
 }
 
 pub fn entry_wrapper_path_with(project_root: &Path, dev_mode: bool) -> PathBuf {
-    runtime_core::dist::compiler_cache_dir_with(project_root, dev_mode).join("__deka_entry.js")
+    runtime_core::dist::compiler_cache_dir_with(project_root, dev_mode)
+        .join("__deka_entry.js")
 }
 
 pub(crate) fn parse_module_imports(source: &str) -> Vec<String> {
@@ -59,8 +60,7 @@ pub(crate) fn resolve_phpx_module_spec(
     specifier: &str,
 ) -> Option<PathBuf> {
     if deka_modules::module_spec::is_summoned_js_module_spec(specifier) {
-        return deka_modules::module_spec::resolve_summoned_js_module_file(project_root, specifier)
-            .ok();
+        return deka_modules::module_spec::resolve_summoned_js_module_file(project_root, specifier).ok();
     }
     // @/ is a project-root alias: @/src/pages/foo -> {project_root}/src/pages/foo.ds
     //
@@ -221,8 +221,8 @@ pub(crate) fn is_bare_specifier(spec: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_javascript_entry, resolve_import_path, resolve_phpx_module_spec, resolve_project_root,
-        resolve_public_source_candidates,
+        is_javascript_entry, resolve_import_path, resolve_phpx_module_spec,
+        resolve_project_root, resolve_public_source_candidates,
     };
     use crate::esm_loader::PhpxEsmLoader;
     use std::fs;
@@ -252,10 +252,7 @@ mod tests {
             resolve_import_path(root.path(), None, &referrer, "./legacy"),
             None
         );
-        assert_eq!(
-            resolve_phpx_module_spec(root.path(), None, "@/legacy"),
-            None
-        );
+        assert_eq!(resolve_phpx_module_spec(root.path(), None, "@/legacy"), None);
         assert_eq!(
             resolve_import_path(root.path(), None, &referrer, "./legacy.phpx"),
             None

@@ -755,43 +755,38 @@ impl WorkerThread {
         } else {
             None
         };
-        let (module_loader, entry_specifier, import_meta_loader) =
-            if let Some(entry) = handler_entry {
-                let entry_path = Path::new(entry).to_path_buf();
-                let project_root = match module_root {
-                    Some(root) => Path::new(root).to_path_buf(),
-                    None => resolve_project_root(&entry_path)?,
-                };
-                if !project_root.is_dir() {
-                    return Err(format!("invalid module root: {}", project_root.display()));
-                }
-                // Canonicalize for the wrapper specifier: the loader canonicalizes
-                // its own root (macOS /var vs /private/var), and the wrapper
-                // specifier computed here must spell the identical path or
-                // load_source never recognizes it.
-                let project_root = project_root.canonicalize().unwrap_or(project_root);
-                let wrapper_path = entry_wrapper_path_with(&project_root, self.config.dev_mode);
-                let wrapper_specifier = ModuleSpecifier::from_file_path(&wrapper_path)
-                    .map_err(|_| "invalid entry wrapper path".to_string())?;
-                let loader = PhpxEsmLoader::new(
-                    project_root.clone(),
-                    entry_path,
-                    None,
-                    self.config.host_grants.clone(),
-                    self.config.dsc.clone(),
-                    self.config.dev_mode,
-                )
-                .map_err(|err| err.to_string())?;
-                let import_meta_loader = loader.clone();
-                let loader: Rc<dyn deno_core::ModuleLoader> = Rc::new(loader);
-                (
-                    Some(loader),
-                    Some(wrapper_specifier),
-                    Some(import_meta_loader),
-                )
-            } else {
-                (None, None, None)
+        let (module_loader, entry_specifier, import_meta_loader) = if let Some(entry) = handler_entry {
+            let entry_path = Path::new(entry).to_path_buf();
+            let project_root = match module_root {
+                Some(root) => Path::new(root).to_path_buf(),
+                None => resolve_project_root(&entry_path)?,
             };
+            if !project_root.is_dir() {
+                return Err(format!("invalid module root: {}", project_root.display()));
+            }
+            // Canonicalize for the wrapper specifier: the loader canonicalizes
+            // its own root (macOS /var vs /private/var), and the wrapper
+            // specifier computed here must spell the identical path or
+            // load_source never recognizes it.
+            let project_root = project_root.canonicalize().unwrap_or(project_root);
+            let wrapper_path = entry_wrapper_path_with(&project_root, self.config.dev_mode);
+            let wrapper_specifier = ModuleSpecifier::from_file_path(&wrapper_path)
+                .map_err(|_| "invalid entry wrapper path".to_string())?;
+            let loader = PhpxEsmLoader::new(
+                project_root.clone(),
+                entry_path,
+                None,
+                self.config.host_grants.clone(),
+                self.config.dsc.clone(),
+                self.config.dev_mode,
+            )
+                .map_err(|err| err.to_string())?;
+            let import_meta_loader = loader.clone();
+            let loader: Rc<dyn deno_core::ModuleLoader> = Rc::new(loader);
+            (Some(loader), Some(wrapper_specifier), Some(import_meta_loader))
+        } else {
+            (None, None, None)
+        };
 
         let runtime = JsRuntime::new(RuntimeOptions {
             extensions,

@@ -22,6 +22,7 @@ mod ast_type;
 mod descriptor;
 mod exceptions;
 pub use exceptions::localize_export;
+mod expr;
 #[cfg(test)]
 mod arrow_tests;
 #[cfg(test)]
@@ -30,7 +31,6 @@ mod bridge_tests;
 mod console_tests;
 #[cfg(test)]
 mod contextual_tests;
-mod expr;
 mod hooks;
 #[cfg(test)]
 mod hooks_tests;
@@ -42,10 +42,8 @@ mod stmt;
 mod tuples_tests;
 mod types;
 
-pub use descriptor::{
-    DescriptorField, DescriptorTree, JsonCall, JsonDescriptor, JsonOperation, StaticTypeCall,
-};
-pub use hooks::{MemoKind, MemoSite, AMBIENT_REACT_BUILTINS};
+pub use descriptor::{DescriptorField, DescriptorTree, JsonCall, JsonDescriptor, JsonOperation, StaticTypeCall};
+pub use hooks::{AMBIENT_REACT_BUILTINS, MemoKind, MemoSite};
 pub use types::{
     ArrayAccess, NewtypeSide, NumberMath, OperatorRewrite, Type, UnionMemberTest, UnwrapKind,
 };
@@ -63,19 +61,15 @@ pub(super) fn with_union_narrowing_hint<'a>(
     expected: &Type<'a>,
     actual: &Type<'a>,
 ) -> String {
-    if matches!(
-        expected,
-        Type::Named { name: "Component" }
-            | Type::Generic {
-                base: "Component",
-                ..
-            }
-    ) {
+    if matches!(expected, Type::Named { name: "Component" } | Type::Generic { base: "Component", .. }) {
         return format!("{message}; Component is a props interface or struct → ReactNode function; use ReactNode for a JSX value or return type");
     }
 
     if actual.is_hook_fn() && matches!(expected, Type::Function { .. }) {
-        return format!("{message}; {}", hooks::HOOK_ASSIGN);
+        return format!(
+            "{message}; {}",
+            hooks::HOOK_ASSIGN
+        );
     }
 
     if matches!(actual, Type::Union { .. }) && !matches!(expected, Type::Union { .. }) {
@@ -1076,10 +1070,7 @@ pub fn refresh_module_export_values_with_native_declarations<'a>(
     for stmt in program.statements.iter() {
         let names: Vec<_> = match stmt {
             ast::Stmt::Export {
-                decl:
-                    ast::ExportDecl::Function {
-                        name, is_default, ..
-                    },
+                decl: ast::ExportDecl::Function { name, is_default, .. },
                 ..
             } => vec![(*name, if *is_default { "default" } else { *name })],
             ast::Stmt::Export {
@@ -1290,31 +1281,21 @@ fn substitute_opaques<'a>(ty: Type<'a>, opaques: &HashMap<&'a str, Type<'a>>) ->
 /// author's claim the function cannot throw, so it is returned unchanged.
 fn exception_default<'a>(ty: Type<'a>, total: bool) -> Type<'a> {
     fn is_exception(ty: &Type<'_>) -> bool {
-        matches!(
-            ty,
-            Type::Generic {
-                base: "Exception",
-                ..
-            }
-        )
+        matches!(ty, Type::Generic { base: "Exception", .. })
     }
     if total {
         return ty;
     }
     match ty {
-        Type::Generic {
-            base: "Promise",
-            args,
-        } if args.len() == 1 && !is_exception(&args[0]) => Type::Generic {
-            base: "Promise",
-            args: vec![Type::Generic {
-                base: "Exception",
-                args: vec![
-                    args.into_iter().next().unwrap(),
-                    Type::Named { name: "JsError" },
-                ],
-            }],
-        },
+        Type::Generic { base: "Promise", args } if args.len() == 1 && !is_exception(&args[0]) => {
+            Type::Generic {
+                base: "Promise",
+                args: vec![Type::Generic {
+                    base: "Exception",
+                    args: vec![args.into_iter().next().unwrap(), Type::Named { name: "JsError" }],
+                }],
+            }
+        }
         ty if is_exception(&ty) => ty,
         other => Type::Generic {
             base: "Exception",
@@ -1652,17 +1633,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     .collect(),
             },
             ast::Type::Record { fields, .. } => Type::Object {
-                fields: fields
-                    .iter()
-                    .map(|field| {
-                        (
-                            field.name,
-                            ast_type_to_export_type(
-                                &field.ty, structs, enums, aliases, newtypes, seen,
-                            ),
-                        )
-                    })
-                    .collect(),
+                fields: fields.iter().map(|field| (field.name, ast_type_to_export_type(&field.ty, structs, enums, aliases, newtypes, seen))).collect(),
             },
             ast::Type::Union { members, .. } => Type::Union {
                 members: members
@@ -2455,15 +2426,8 @@ impl<'a> Checker<'a> {
         // alias before looking at imported function signatures.
         let mut declaration_names = HashMap::new();
         for stmt in self.program.statements.iter() {
-            let ast::Stmt::Import {
-                source, specifiers, ..
-            } = stmt
-            else {
-                continue;
-            };
-            let Some(exports) = imports.get(source) else {
-                continue;
-            };
+            let ast::Stmt::Import { source, specifiers, .. } = stmt else { continue; };
+            let Some(exports) = imports.get(source) else { continue; };
             for spec in specifiers.iter() {
                 if let Some(identity) = exports.nominal_declarations.get(spec.imported) {
                     let canonical = *declaration_names.entry(*identity).or_insert(spec.local);
@@ -2519,21 +2483,12 @@ impl<'a> Checker<'a> {
                     self.receiver_methods.insert((local, *method), info.clone());
                 }
             }
-            let all_specifiers: Vec<_> = self
-                .program
-                .statements
-                .iter()
-                .filter_map(|stmt| match stmt {
-                    ast::Stmt::Import {
-                        source: other,
-                        specifiers,
-                        ..
-                    } if other == source => Some(*specifiers),
+            let all_specifiers: Vec<_> = self.program.statements.iter().filter_map(|stmt| {
+                match stmt {
+                    ast::Stmt::Import { source: other, specifiers, .. } if other == source => Some(*specifiers),
                     _ => None,
-                })
-                .flatten()
-                .cloned()
-                .collect();
+                }
+            }).flatten().cloned().collect();
             for spec in specifiers.iter() {
                 let imported = spec.imported;
                 let local = spec.local;
@@ -2713,11 +2668,7 @@ impl<'a> Checker<'a> {
         let name = self.nominal_aliases.get(name).copied().unwrap_or(name);
         let fallback = exceptions::rename_nominal_type(&fallback, &self.nominal_aliases);
         match self.aliases.get(name).cloned() {
-            Some(ty @ ast::Type::Named { name, .. })
-                if crate::native_brand::public_name(name) != name =>
-            {
-                self.resolve_ast_type(&ty)
-            }
+            Some(ty @ ast::Type::Named { name, .. }) if crate::native_brand::public_name(name) != name => self.resolve_ast_type(&ty),
             _ => fallback,
         }
     }
@@ -2894,7 +2845,12 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn unify_ternary_arms(&mut self, first: Type<'a>, next: Type<'a>, span: ast::Span) -> Type<'a> {
+    fn unify_ternary_arms(
+        &mut self,
+        first: Type<'a>,
+        next: Type<'a>,
+        span: ast::Span,
+    ) -> Type<'a> {
         self.unify_arm_types(&first, &next).unwrap_or_else(|| {
             self.error_span(
                 span,
@@ -2928,43 +2884,21 @@ impl<'a> Checker<'a> {
         }
         if matches!(expected, Type::Named { name: "Component" }) {
             return match actual.function_contract() {
-                Type::Function { params, ret, .. } => {
-                    params.len() == 1
-                        && matches!(params[0], Type::Interface { .. } | Type::Struct { .. })
-                        && self.is_assignable(&Type::react_node(), &ret)
-                }
+                Type::Function { params, ret, .. } => params.len() == 1
+                    && matches!(params[0], Type::Interface { .. } | Type::Struct { .. })
+                    && self.is_assignable(&Type::react_node(), &ret),
                 Type::Named { name: "Component" } => true,
                 _ => false,
             };
         }
-        if matches!(
-            expected,
-            Type::Generic {
-                base: "Component",
-                ..
-            }
-        ) || matches!(
-            actual,
-            Type::Generic {
-                base: "Component",
-                ..
-            }
-        ) {
+        if matches!(expected, Type::Generic { base: "Component", .. }) || matches!(actual, Type::Generic { base: "Component", .. }) {
             return self.is_assignable(&expected.function_contract(), &actual.function_contract());
         }
         if expected.is_react_node() {
-            if actual.is_react_node() {
-                return true;
-            }
+            if actual.is_react_node() { return true; }
             return match actual {
-                Type::Named {
-                    name: "string" | "number" | "boolean" | "void",
-                }
-                | Type::None
-                | Type::Never => true,
-                Type::Array { elem } => {
-                    matches!(**elem, Type::Var) || self.is_assignable(expected, elem)
-                }
+                Type::Named { name: "string" | "number" | "boolean" | "void" } | Type::None | Type::Never => true,
+                Type::Array { elem } => matches!(**elem, Type::Var) || self.is_assignable(expected, elem),
                 Type::Union { members } => members.iter().all(|m| self.is_assignable(expected, m)),
                 _ => false,
             };
@@ -3952,9 +3886,10 @@ mod tests {
             &arena,
         );
         assert!(
-            result.errors.iter().any(|e| e
-                .message
-                .contains("infers its type arguments from the field values")),
+            result
+                .errors
+                .iter()
+                .any(|e| e.message.contains("infers its type arguments from the field values")),
             "{:?}",
             result.errors
         );
@@ -3966,9 +3901,10 @@ mod tests {
             &arena,
         );
         assert!(
-            result.errors.iter().any(|e| e
-                .message
-                .contains("infers its type arguments from the field values")),
+            result
+                .errors
+                .iter()
+                .any(|e| e.message.contains("infers its type arguments from the field values")),
             "{:?}",
             result.errors
         );
@@ -4066,9 +4002,7 @@ mod tests {
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
-            errors[0]
-                .message
-                .contains("does not satisfy the bound `Bundle | Product`"),
+            errors[0].message.contains("does not satisfy the bound `Bundle | Product`"),
             "{}",
             errors[0].message
         );
@@ -4084,9 +4018,7 @@ mod tests {
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
-            errors[0]
-                .message
-                .contains("does not satisfy the bound `Named`"),
+            errors[0].message.contains("does not satisfy the bound `Named`"),
             "{}",
             errors[0].message
         );
@@ -4312,10 +4244,10 @@ mod tests {
 
     #[test]
     fn match_option_number_passes() {
-        assert!(typeck(
-            "const o = Some(5); const x: number = match o { Some(n) => n, None => 0 };"
-        )
-        .is_empty());
+        assert!(
+            typeck("const o = Some(5); const x: number = match o { Some(n) => n, None => 0 };")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -4364,14 +4296,8 @@ mod tests {
 
     #[test]
     fn option_struct_defaults_and_partial_literals() {
-        for field in [
-            "path?: string",
-            "path: string?",
-            "path: Option<string>",
-            "path: Maybe",
-        ] {
-            let source = format!(
-                r#"
+        for field in ["path?: string", "path: string?", "path: Option<string>", "path: Maybe"] {
+            let source = format!(r#"
                 alias Maybe = Option<string>;
                 interface Options {{ {field}; secure?: boolean }}
                 fn path(options: Options = {{}}) string {{
@@ -4388,8 +4314,7 @@ mod tests {
                 const partial_nested: Request = {{ options: {{ secure: Some(false) }}, child: Some({{}}) }};
                 struct Named {{ {field} }}
                 const named = Named {{}};
-            "#
-            );
+            "#);
             let errors = typeck(&source);
             assert!(errors.is_empty(), "{field}: {errors:?}");
         }
@@ -4441,9 +4366,7 @@ mod tests {
         assert!(typeck("const a: Option<number> = Some(0); const b: Option<boolean> = Some(false); const c: Option<string> = Some(\"\");").is_empty());
         let arena = bumpalo::Bump::new();
         let parsed = crate::parse("fn f(v: Option<number>) Option<number> { return match v { Some(x) => Some(x), None }; }", &arena);
-        assert!(parsed.errors.iter().any(|e| e
-            .message
-            .contains("bodyless arm requires a Result or Exception")));
+        assert!(parsed.errors.iter().any(|e| e.message.contains("bodyless arm requires a Result or Exception")));
     }
 
     #[test]
@@ -4520,9 +4443,9 @@ mod tests {
              const answer = match (value) { Point { x } => x, _ => 0 };",
         );
         assert!(
-            errors.iter().any(|error| error
-                .message
-                .contains("struct pattern `Point` does not match scrutinee type `string`")),
+            errors
+                .iter()
+                .any(|error| error.message.contains("struct pattern `Point` does not match scrutinee type `string`")),
             "{errors:?}"
         );
     }
@@ -4866,14 +4789,16 @@ mod tests {
         assert!(typeck("const n: number = 1; const t: Type = n.getType();").is_empty());
         assert!(typeck("const b: boolean = true; const t: Type = b.getType();").is_empty());
         assert!(typeck("struct Point { x: number } const p: Point = Point { x: 1 }; const t: Type = p.getType();").is_empty());
-        assert!(typeck(
-            "type Cents number; const c: Cents = Cents(5); const t: Type = c.getType();"
-        )
-        .is_empty());
-        assert!(typeck(
-            "enum Color { Red, Green } const c: Color = Color.Red; const t: Type = c.getType();"
-        )
-        .is_empty());
+        assert!(
+            typeck("type Cents number; const c: Cents = Cents(5); const t: Type = c.getType();")
+                .is_empty()
+        );
+        assert!(
+            typeck(
+                "enum Color { Red, Green } const c: Color = Color.Red; const t: Type = c.getType();"
+            )
+            .is_empty()
+        );
         assert!(typeck("const t: Type = [1, 2].getType();").is_empty());
         assert!(typeck("const t: Type = Some(1).getType();").is_empty());
         assert!(
@@ -4906,10 +4831,12 @@ mod tests {
 
     #[test]
     fn signature_describes_interface_declaration() {
-        assert!(typeck(
-            "interface Named { name: string } fn f(v: Named) Type { return v.signature(); }"
-        )
-        .is_empty());
+        assert!(
+            typeck(
+                "interface Named { name: string } fn f(v: Named) Type { return v.signature(); }"
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -5305,10 +5232,12 @@ mod tests {
     fn gettype_interface_member_shadows_builtin() {
         // An interface declaring `getType` dispatches dynamically, as with
         // any declared member.
-        assert!(typeck(
-            "interface Has { fn getType() string } fn f(v: Has) string { return v.getType(); }"
-        )
-        .is_empty());
+        assert!(
+            typeck(
+                "interface Has { fn getType() string } fn f(v: Has) string { return v.getType(); }"
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -5393,10 +5322,12 @@ mod tests {
             "fn (s string) toUpperCase() string { return s; } const u: string = \"x\".toUpperCase();"
         ).is_empty());
         // ...while the builtin property `length` is untouched.
-        assert!(typeck(
-            "fn (s string) slugify() string { return s; } const n: number = \"abc\".length;"
-        )
-        .is_empty());
+        assert!(
+            typeck(
+                "fn (s string) slugify() string { return s; } const n: number = \"abc\".length;"
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -5725,9 +5656,7 @@ mod tests {
         let lib_source = "export default fn Page() number { return 1; }";
         let lib_result = parse(lib_source, &arena);
         assert!(lib_result.errors.is_empty(), "{:?}", lib_result.errors);
-        let lib_program = lib_result
-            .program
-            .expect("library parse produced no program");
+        let lib_program = lib_result.program.expect("library parse produced no program");
         let exports = collect_module_exports(&lib_program, &arena);
         assert_eq!(exports.default_export_declared_name, Some("Page"));
 
@@ -5754,9 +5683,7 @@ mod tests {
         let arena = Bump::new();
         let lib_source = "export default fn Page() number { return 1; }";
         let lib_result = parse(lib_source, &arena);
-        let lib_program = lib_result
-            .program
-            .expect("library parse produced no program");
+        let lib_program = lib_result.program.expect("library parse produced no program");
         let exports = collect_module_exports(&lib_program, &arena);
 
         let main_source = "import Page from \"./page.ds\"; const n: number = Page();";
@@ -5832,10 +5759,12 @@ mod tests {
 
     #[test]
     fn return_on_both_branches_passes() {
-        assert!(typeck(
-            "fn both(x: number) string { if (x > 0) { return \"y\" } else { return \"n\" } }"
-        )
-        .is_empty());
+        assert!(
+            typeck(
+                "fn both(x: number) string { if (x > 0) { return \"y\" } else { return \"n\" } }"
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -5943,10 +5872,12 @@ mod tests {
 
     #[test]
     fn for_loop_break_continue_passes() {
-        assert!(typeck(
-            "for (let i = 0; i < 10; i = i + 1) { if (i == 5) { break } else { continue } }"
-        )
-        .is_empty());
+        assert!(
+            typeck(
+                "for (let i = 0; i < 10; i = i + 1) { if (i == 5) { break } else { continue } }"
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -6038,18 +5969,20 @@ mod tests {
 
     #[test]
     fn async_function_passes() {
-        assert!(typeck(
-            "async fn value() Promise<number> { return 1 } const p: Promise<number> = value();"
-        )
-        .is_empty());
+        assert!(
+            typeck(
+                "async fn value() Promise<number> { return 1 } const p: Promise<number> = value();"
+            )
+            .is_empty()
+        );
     }
 
     #[test]
     fn top_level_await_passes() {
-        assert!(typeck(
-            "async fn main() Promise<number> { return 1 } const n: number = await main();"
-        )
-        .is_empty());
+        assert!(
+            typeck("async fn main() Promise<number> { return 1 } const n: number = await main();")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -6077,8 +6010,9 @@ mod tests {
     fn infer_source_is_not_assignable_to_a_concrete_type() {
         // dsc#115: a value the checker could not type is not silently a
         // `string` (or any other concrete type).
-        let errors =
-            typeck("const x: string = match (unsafe { 1 }) { Ok(v) => v, Err(e) => \"e\" };");
+        let errors = typeck(
+            "const x: string = match (unsafe { 1 }) { Ok(v) => v, Err(e) => \"e\" };",
+        );
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
             errors[0].message.contains("<infer>"),
@@ -6086,9 +6020,7 @@ mod tests {
             errors[0].message
         );
         assert!(
-            errors[0]
-                .message
-                .contains("could not determine this value's type"),
+            errors[0].message.contains("could not determine this value's type"),
             "{}",
             errors[0].message
         );
@@ -6104,9 +6036,7 @@ mod tests {
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
-            errors[0]
-                .message
-                .contains("could not determine this value's type"),
+            errors[0].message.contains("could not determine this value's type"),
             "{}",
             errors[0].message
         );
@@ -6116,9 +6046,7 @@ mod tests {
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
-            errors[0]
-                .message
-                .contains("could not determine this value's type"),
+            errors[0].message.contains("could not determine this value's type"),
             "{}",
             errors[0].message
         );
@@ -6142,7 +6070,10 @@ mod tests {
         // dsc#115 / deka#468: unconstrained slots are `Var`, not `Infer`.
         // `Ok("y")` is `Result<string, Var>`; the unused error side must not
         // reject a `string` success type. `None` and `[]` are the same rule.
-        assert!(typeck("const x: Result<string, string> = Ok(\"y\");").is_empty());
+        assert!(typeck(
+            "const x: Result<string, string> = Ok(\"y\");"
+        )
+        .is_empty());
         assert!(typeck("const o: Option<string> = None;").is_empty());
         assert!(typeck(
             "const xs = [];\n\
@@ -6162,9 +6093,7 @@ mod tests {
             "const r = match (unsafe { JSON.parse(1) }) { Ok(v) => v, Err(e) => e.message };",
         );
         assert!(
-            errors
-                .iter()
-                .any(|e| e.message.contains("`string` has no field `message`")),
+            errors.iter().any(|e| e.message.contains("`string` has no field `message`")),
             "{:?}",
             errors
         );
@@ -6522,15 +6451,17 @@ mod tests {
     fn generic_function_declares_and_infers() {
         // rfd#56 phase 1: `Signal<T>`'s supporting shapes parse, check, and
         // infer at call sites.
-        assert!(typeck(
-            "struct Signal<T> { value: T }\n\
+        assert!(
+            typeck(
+                "struct Signal<T> { value: T }\n\
                  fn signal<T>(initial: T) Signal<T> { return Signal { value: initial } }\n\
                  fn first<T>(items: Array<T>) Option<T> { return items.first() }\n\
                  const count = signal(0);\n\
                  const n: number = count.value;\n\
                  const one: Option<number> = first([1, 2, 3]);"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
 
         // The concrete type is known at the call site: `signal("s")` gives
         // `T = string`, so `.value` is not `number`.
@@ -6562,37 +6493,39 @@ mod tests {
         let errors = typeck(source);
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
-            errors[0]
-                .message
-                .contains("expected argument type `number`"),
+            errors[0].message.contains("expected argument type `number`"),
             "{}",
             errors[0].message
         );
         assert_eq!((errors[0].line, errors[0].column), (6, 11));
 
         // The well-typed call passes and the return type substitutes too.
-        assert!(typeck(
-            "struct Signal<T> { value: T }\n\
+        assert!(
+            typeck(
+                "struct Signal<T> { value: T }\n\
                  fn (s Signal) get<T>() T { return s.value }\n\
                  fn signal<T>(initial: T) Signal<T> { return Signal { value: initial } }\n\
                  fn main() {\n\
                    let count = signal(0)\n\
                    const n: number = count.get()\n\
                  }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     #[test]
     fn generic_struct_literal_infers_type_arguments() {
         // Two parameters, inferred from two fields.
-        assert!(typeck(
-            "struct Pair<A, B> { first: A\n second: B }\n\
+        assert!(
+            typeck(
+                "struct Pair<A, B> { first: A\n second: B }\n\
                  const p = Pair { first: 1, second: \"s\" };\n\
                  const n: number = p.first;\n\
                  const s: string = p.second;"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
         // A field value that contradicts the annotation is a check-time error.
         let errors = typeck(
             "struct Pair<A, B> { first: A\n second: B }\n\
@@ -6604,8 +6537,9 @@ mod tests {
     #[test]
     fn generic_enum_substitutes_case_payload_types() {
         // The deka#372 path, now reachable from user code again (rfd#56).
-        assert!(typeck(
-            "enum Box<T> { Empty, Full(T) }\n\
+        assert!(
+            typeck(
+                "enum Box<T> { Empty, Full(T) }\n\
                  fn unwrap(b: Box<number>) number {\n\
                    return match (b) {\n\
                      Full(value) => value,\n\
@@ -6613,22 +6547,25 @@ mod tests {
                    }\n\
                  }\n\
                  const x = unwrap(Box.Full(5))"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     #[test]
     fn unbounded_type_parameter_passes_to_another_unbounded_slot() {
         // "Passing to another unbounded slot" is on the rfd#56 operation list.
-        assert!(typeck(
-            "fn sink<U>(y: U) {}\n\
+        assert!(
+            typeck(
+                "fn sink<U>(y: U) {}\n\
                  fn f<T>(x: T) { sink(x) }\n\
                  fn g<T>(x: T) T {\n\
                    let y = x\n\
                    return y\n\
                  }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -6729,9 +6666,7 @@ mod tests {
         let errors = typeck("const x = import.meta.bogus");
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
-            errors[0]
-                .message
-                .contains("import.meta` has no property `bogus`"),
+            errors[0].message.contains("import.meta` has no property `bogus`"),
             "{}",
             errors[0].message
         );

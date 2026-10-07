@@ -65,8 +65,7 @@ fn islands_in_source(src: &str, file: &Path) -> Vec<ClientIsland> {
     let stripped = strip_ds_comments(src);
     let mut out = Vec::new();
     for (name, directive) in client_tags(&stripped) {
-        let module =
-            resolve_island_module(&stripped, file, &name).unwrap_or_else(|| file.to_path_buf());
+        let module = resolve_island_module(&stripped, file, &name).unwrap_or_else(|| file.to_path_buf());
         out.push(ClientIsland {
             name,
             module,
@@ -86,10 +85,7 @@ fn client_tags(src: &str) -> Vec<(String, String)> {
         };
         let at = i + rel;
         let directive_start = at + "client:".len();
-        let directive = match src[directive_start..]
-            .split(|c: char| !c.is_ascii_alphabetic())
-            .next()
-        {
+        let directive = match src[directive_start..].split(|c: char| !c.is_ascii_alphabetic()).next() {
             Some("load") => "load",
             Some("idle") => "idle",
             Some("visible") => "visible",
@@ -304,7 +300,10 @@ mod tests {
         assert_eq!(islands.len(), 1);
         assert_eq!(islands[0].name, "ThemeToggle");
         assert_eq!(islands[0].directive, "load");
-        assert_eq!(islands[0].module, PathBuf::from("/proj/src/ui/Theme.dsx"));
+        assert_eq!(
+            islands[0].module,
+            PathBuf::from("/proj/src/ui/Theme.dsx")
+        );
     }
 
     #[test]

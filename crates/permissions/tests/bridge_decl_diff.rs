@@ -127,9 +127,7 @@ fn fs_0_3_0_async_drift_fails_with_named_diagnostics() {
             .collect();
         assert!(!matching.is_empty(), "no diagnostic for export {export}");
         assert!(
-            matching
-                .iter()
-                .any(|d| d.message.contains("sync/async mismatch")),
+            matching.iter().any(|d| d.message.contains("sync/async mismatch")),
             "{export}: no sync/async mismatch diagnostic; got {:?}",
             matching
         );

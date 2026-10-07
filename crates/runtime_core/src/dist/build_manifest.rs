@@ -314,8 +314,7 @@ fn validate_params_descriptor(
             .get("ty")
             .and_then(|ty| ty.get("node"))
             .and_then(|v| v.as_str());
-        if kind != Some("leaf")
-            || field.pointer("/ty/kind").and_then(|v| v.as_str()) != Some("string")
+        if kind != Some("leaf") || field.pointer("/ty/kind").and_then(|v| v.as_str()) != Some("string")
         {
             return Err(format!(
                 "route {template}: staticParams field `{name}` must be a string (route parameters are path segments)",
@@ -349,10 +348,8 @@ impl BuildManifest {
         api: &[FrameworkEntry],
     ) -> Result<Self, String> {
         validate_plans(planned)?;
-        let all_slots: Vec<&BuildPlanSlot> = planned
-            .iter()
-            .flat_map(|source| source.plan.slots.iter())
-            .collect();
+        let all_slots: Vec<&BuildPlanSlot> =
+            planned.iter().flat_map(|source| source.plan.slots.iter()).collect();
 
         // deka#718: `server:defer` islands on a page make an otherwise-static
         // route ◐ partial. Scan once and group component names by
@@ -573,9 +570,7 @@ impl BuildManifest {
         // Static and request-time routes claim their own template path.
         for route in &self.routes {
             if route.mode != RouteMode::StaticParams {
-                if let Some(existing) =
-                    output_claims.insert(route.template.clone(), route.template.clone())
-                {
+                if let Some(existing) = output_claims.insert(route.template.clone(), route.template.clone()) {
                     // Unreachable today (templates deduped in plan), kept as a
                     // guard for routes added by later phases.
                     return Err(format!(
@@ -601,12 +596,9 @@ impl BuildManifest {
                     route.template, slot_id
                 )
             })?;
-            let elements = value.as_array().ok_or_else(|| {
-                format!(
-                    "route {}: materialized staticParams is not an array",
-                    route.template
-                )
-            })?;
+            let elements = value
+                .as_array()
+                .ok_or_else(|| format!("route {}: materialized staticParams is not an array", route.template))?;
             let params = bracket_params(&route.template);
             let mut seen: BTreeSet<String> = BTreeSet::new();
             let mut instances: Vec<String> = Vec::new();
@@ -645,9 +637,7 @@ impl BuildManifest {
                         instance, route.template
                     ));
                 }
-                if let Some(existing) =
-                    output_claims.insert(instance.clone(), route.template.clone())
-                {
+                if let Some(existing) = output_claims.insert(instance.clone(), route.template.clone()) {
                     return Err(format!(
                         "route collision: `{instance}` from route `{}` collides with route `{existing}`",
                         route.template
@@ -679,8 +669,9 @@ impl BuildManifest {
         if staged_dist.is_dir() {
             let mut stack = vec![staged_dist.to_path_buf()];
             while let Some(dir) = stack.pop() {
-                let entries = std::fs::read_dir(&dir)
-                    .map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
+                let entries = std::fs::read_dir(&dir).map_err(|err| {
+                    format!("failed to read {}: {err}", dir.display())
+                })?;
                 for entry in entries {
                     let entry = entry.map_err(|err| format!("read_dir entry error: {err}"))?;
                     let path = entry.path();
@@ -779,7 +770,11 @@ impl BuildManifest {
                 ));
             } else {
                 for instance in &route.instances {
-                    rows.push((route.mode.glyph(), instance.clone(), route_detail(route)));
+                    rows.push((
+                        route.mode.glyph(),
+                        instance.clone(),
+                        route_detail(route),
+                    ));
                 }
             }
         }
@@ -795,6 +790,7 @@ impl BuildManifest {
         out
     }
 }
+
 
 #[cfg(test)]
 #[path = "build_manifest_tests.rs"]

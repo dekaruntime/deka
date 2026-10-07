@@ -107,7 +107,8 @@ thread_local! {
 /// created with no runtime in context — which is every caller outside a
 /// tokio worker thread, including libtest threads. Entering this runtime
 /// while the isolate is created keeps that registration valid. See deka#799.
-static JS_RUNTIME_TOKIO: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+static JS_RUNTIME_TOKIO: std::sync::OnceLock<tokio::runtime::Runtime> =
+    std::sync::OnceLock::new();
 
 fn runtime_tokio() -> &'static tokio::runtime::Runtime {
     JS_RUNTIME_TOKIO.get_or_init(|| {
@@ -119,7 +120,9 @@ fn runtime_tokio() -> &'static tokio::runtime::Runtime {
     })
 }
 
-fn create_js_runtime(create_params: Option<deno_core::v8::CreateParams>) -> JsRuntime {
+fn create_js_runtime(
+    create_params: Option<deno_core::v8::CreateParams>,
+) -> JsRuntime {
     let _guard = runtime_tokio().enter();
     let mut runtime = JsRuntime::new(RuntimeOptions {
         create_params,
@@ -149,8 +152,7 @@ where
 fn run_js_generator(html: &str, options_json: String) -> Result<String, String> {
     with_runtime(|runtime| {
         let escaped_html = serde_json::to_string(html).map_err(|e| e.to_string())?;
-        let escaped_registry =
-            serde_json::to_string(UTILITY_CSS_REGISTRY).map_err(|e| e.to_string())?;
+        let escaped_registry = serde_json::to_string(UTILITY_CSS_REGISTRY).map_err(|e| e.to_string())?;
         let script = format!(
             "globalThis.__dekaGenerateUtilityCss({}, {}, {})",
             escaped_html, escaped_registry, options_json
@@ -237,9 +239,7 @@ fn parse_config(contents: &str) -> UtilityCssConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        UtilityCssConfig, collect_classes, inject_utility_css, inject_utility_css_with_config,
-    };
+    use super::{collect_classes, inject_utility_css, inject_utility_css_with_config, UtilityCssConfig};
 
     fn default_config() -> UtilityCssConfig {
         UtilityCssConfig::default()
@@ -247,13 +247,9 @@ mod tests {
 
     #[test]
     fn utility_css_for_classes_emits_rules() {
-        let css =
-            super::utility_css_for_classes(&["p-4".to_string(), "bg-white".to_string()], false);
+        let css = super::utility_css_for_classes(&["p-4".to_string(), "bg-white".to_string()], false);
         assert!(css.contains(".p-4{padding:1rem;}"), "{css}");
-        assert!(
-            css.contains(".bg-white{background-color:#ffffff;}"),
-            "{css}"
-        );
+        assert!(css.contains(".bg-white{background-color:#ffffff;}"), "{css}");
         assert!(!css.contains("box-sizing:border-box"), "{css}");
     }
 

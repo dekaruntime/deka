@@ -25,11 +25,7 @@ fn errors_point_at_the_users_markup_lines() {
         String::from_utf8_lossy(&fetched.stdout)
     );
     for (case, line, message) in [
-        (
-            "unknown",
-            6,
-            "cannot find function, tuple struct or tuple variant `Missing` in this scope",
-        ),
+        ("unknown", 6, "cannot find function, tuple struct or tuple variant `Missing` in this scope"),
         (
             "missing",
             8,

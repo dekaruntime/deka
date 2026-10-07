@@ -24,10 +24,7 @@ use std::io::Read;
 use std::os::unix::io::RawFd;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use pool::{
-    ExecutionMode, ExecutionSecurity, HandlerKey, IsolatePool, PoolConfig, RequestData,
-    RequestParts,
-};
+use pool::{ExecutionMode, ExecutionSecurity, HandlerKey, IsolatePool, PoolConfig, RequestData, RequestParts};
 
 fn console_pool() -> IsolatePool {
     let config = PoolConfig {
@@ -104,8 +101,7 @@ fn strip_harness_noise(text: &str) -> String {
             if trimmed.is_empty() {
                 return false;
             }
-            if trimmed.starts_with("running ")
-                && (trimmed.ends_with(" test") || trimmed.ends_with(" tests"))
+            if trimmed.starts_with("running ") && (trimmed.ends_with(" test") || trimmed.ends_with(" tests"))
             {
                 return false;
             }
@@ -144,21 +140,12 @@ impl FdCapture {
         let (read_fd, write_fd) = (fds[0], fds[1]);
 
         let saved = unsafe { libc::dup(target_fd) };
-        assert!(
-            saved >= 0,
-            "dup({target_fd}) failed: {}",
-            std::io::Error::last_os_error()
-        );
+        assert!(saved >= 0, "dup({target_fd}) failed: {}", std::io::Error::last_os_error());
 
         // dup2 returns the new fd (== target_fd) on success, -1 on error —
         // not 0.
         let rc = unsafe { libc::dup2(write_fd, target_fd) };
-        assert_eq!(
-            rc,
-            target_fd,
-            "dup2 failed: {}",
-            std::io::Error::last_os_error()
-        );
+        assert_eq!(rc, target_fd, "dup2 failed: {}", std::io::Error::last_os_error());
         unsafe { libc::close(write_fd) };
 
         use std::os::unix::io::FromRawFd;
@@ -200,10 +187,7 @@ fn run_capturing_stdio(handler_code: &str) -> (String, String, pool::IsolateResp
     let pool = console_pool();
     let response = tokio::runtime::Runtime::new()
         .expect("tokio runtime")
-        .block_on(pool.execute(
-            HandlerKey::new("console_test"),
-            handler_request(handler_code),
-        ))
+        .block_on(pool.execute(HandlerKey::new("console_test"), handler_request(handler_code)))
         .expect("pool execution");
 
     let stdout = strip_harness_noise(&out_cap.finish());
@@ -235,48 +219,21 @@ globalThis.app = function(req) {
     let (stdout, stderr, response) = run_capturing_stdio(handler);
     ok_response(&response);
 
-    for token in [
-        "mark-log 1",
-        "mark-info",
-        "mark-debug",
-        "mark-dir",
-        "mark-dirxml",
-    ] {
-        assert!(
-            stdout.contains(token),
-            "stdout missing {token:?}: {stdout:?}"
-        );
+    for token in ["mark-log 1", "mark-info", "mark-debug", "mark-dir", "mark-dirxml"] {
+        assert!(stdout.contains(token), "stdout missing {token:?}: {stdout:?}");
     }
     for token in ["mark-warn", "mark-error", "Assertion failed: mark-assert"] {
-        assert!(
-            stderr.contains(token),
-            "stderr missing {token:?}: {stderr:?}"
-        );
+        assert!(stderr.contains(token), "stderr missing {token:?}: {stderr:?}");
     }
     // The condition-true assert call must be silent.
-    assert!(
-        !stderr.contains("mark-assert-silent"),
-        "assert(true, ...) must not print: {stderr:?}"
-    );
+    assert!(!stderr.contains("mark-assert-silent"), "assert(true, ...) must not print: {stderr:?}");
 
     // Separation: stdout-only tokens never land on stderr and vice versa.
-    for token in [
-        "mark-log",
-        "mark-info",
-        "mark-debug",
-        "mark-dir",
-        "mark-dirxml",
-    ] {
-        assert!(
-            !stderr.contains(token),
-            "{token:?} leaked onto stderr: {stderr:?}"
-        );
+    for token in ["mark-log", "mark-info", "mark-debug", "mark-dir", "mark-dirxml"] {
+        assert!(!stderr.contains(token), "{token:?} leaked onto stderr: {stderr:?}");
     }
     for token in ["mark-warn", "mark-error"] {
-        assert!(
-            !stdout.contains(token),
-            "{token:?} leaked onto stdout: {stdout:?}"
-        );
+        assert!(!stdout.contains(token), "{token:?} leaked onto stdout: {stdout:?}");
     }
 }
 
@@ -316,10 +273,7 @@ globalThis.app = function(req) {
         ],
         "structured console.log output mismatch: {stdout:?}"
     );
-    assert!(
-        !stdout.contains("[object Object]"),
-        "fell back to String(): {stdout:?}"
-    );
+    assert!(!stdout.contains("[object Object]"), "fell back to String(): {stdout:?}");
 }
 
 /// rfd#44 "Formatting erased values" (decided with Sami 2026-09-16).
@@ -414,24 +368,12 @@ globalThis.app = function(req) {
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines[0], "outer-1");
     assert_eq!(lines[1], "G");
-    assert_eq!(
-        lines[2], "  inner",
-        "group() must indent nested output: {stdout:?}"
-    );
-    assert_eq!(
-        lines[3], "outer-2",
-        "groupEnd() must restore indentation: {stdout:?}"
-    );
+    assert_eq!(lines[2], "  inner", "group() must indent nested output: {stdout:?}");
+    assert_eq!(lines[3], "outer-2", "groupEnd() must restore indentation: {stdout:?}");
     assert_eq!(lines[4], "default: 1");
     assert_eq!(lines[5], "default: 2");
-    assert_eq!(
-        lines[6], "default: 1",
-        "countReset() must zero the label: {stdout:?}"
-    );
-    assert!(
-        lines[7].starts_with("t: ") && lines[7].ends_with("ms"),
-        "timeEnd format: {stdout:?}"
-    );
+    assert_eq!(lines[6], "default: 1", "countReset() must zero the label: {stdout:?}");
+    assert!(lines[7].starts_with("t: ") && lines[7].ends_with("ms"), "timeEnd format: {stdout:?}");
 
     assert!(
         stderr.contains("Timer 'missing-timer' does not exist"),
@@ -470,11 +412,7 @@ globalThis.app = function(req) {
         .expect("body")
         .to_string();
     let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
-    assert_eq!(
-        parsed["missing"],
-        serde_json::json!([]),
-        "console is missing WHATWG methods: {body}"
-    );
+    assert_eq!(parsed["missing"], serde_json::json!([]), "console is missing WHATWG methods: {body}");
     assert_eq!(
         parsed["present"],
         serde_json::json!([]),

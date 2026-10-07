@@ -421,8 +421,8 @@ pub(super) fn normalize_rel_like(input: &str) -> String {
 #[cfg(test)]
 mod hint_tests {
     use super::{
-        ProjectKind, config_hint_for_request, normalize_rel_like, outside_project_hint,
-        rule_items_for_request, target_resolves_outside_project,
+        config_hint_for_request, normalize_rel_like, outside_project_hint,
+        rule_items_for_request, target_resolves_outside_project, ProjectKind,
     };
     use std::fs;
     use std::path::PathBuf;

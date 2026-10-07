@@ -76,10 +76,7 @@ fn plan_manifest(
 #[test]
 fn rejects_unsupported_plan_version() {
     let err = validate_plans(&[planned("app/x.ds", plan(3, vec![]))]).expect_err("v3 rejected");
-    assert!(
-        err.contains("unsupported dsc build plan version 3"),
-        "{err}"
-    );
+    assert!(err.contains("unsupported dsc build plan version 3"), "{err}");
     assert!(err.contains("1, 2"), "{err}");
     let err = validate_plans(&[planned("app/x.ds", plan(0, vec![]))]).expect_err("v0 rejected");
     assert!(err.contains("unsupported"), "{err}");
@@ -110,10 +107,7 @@ fn rejects_malformed_and_duplicate_slots() {
 fn static_and_api_routes_plan_without_instances() {
     let manifest = plan_manifest(
         &[],
-        &[
-            page("/", "app/page.dsx"),
-            page("/about", "app/about/page.ds"),
-        ],
+        &[page("/", "app/page.dsx"), page("/about", "app/about/page.ds")],
         &[api("/api/hello", "api/hello.ds")],
     )
     .expect("plan builds");
@@ -145,10 +139,7 @@ fn dynamic_route_with_v1_plan_fails_with_upgrade_hint() {
         &[],
     )
     .expect_err("v1 plan has no disposition");
-    assert!(
-        err.contains("neither staticParams nor prerender = false"),
-        "{err}"
-    );
+    assert!(err.contains("neither staticParams nor prerender = false"), "{err}");
 }
 
 #[test]
@@ -191,12 +182,7 @@ fn descriptor_mismatches_fail_by_name() {
     // Non-struct element.
     let p = plan(
         2,
-        vec![slot(
-            "s1",
-            "staticParams",
-            "app/posts/page.ds",
-            serde_json::json!({"node":"array","elem":{"node":"leaf","kind":"string"}}),
-        )],
+        vec![slot("s1", "staticParams", "app/posts/page.ds", serde_json::json!({"node":"array","elem":{"node":"leaf","kind":"string"}}))],
     );
     let err = plan_manifest(
         &[planned("app/posts/page.ds", p)],
@@ -314,10 +300,11 @@ fn instance_collisions_fail_naming_both_routes() {
         &[],
     )
     .expect("plan builds");
-    let values = BTreeMap::from([("s1".to_string(), serde_json::json!([{"slug": "hello"}]))]);
-    let err = manifest
-        .expand_static_params(&values)
-        .expect_err("collision");
+    let values = BTreeMap::from([(
+        "s1".to_string(),
+        serde_json::json!([{"slug": "hello"}]),
+    )]);
+    let err = manifest.expand_static_params(&values).expect_err("collision");
     assert!(err.contains("/posts/hello"), "{err}");
     assert!(err.contains("collides"), "{err}");
 }
@@ -343,9 +330,7 @@ fn duplicate_slug_within_params_fails() {
         "s1".to_string(),
         serde_json::json!([{"slug": "same"}, {"slug": "same"}]),
     )]);
-    let err = manifest
-        .expand_static_params(&values)
-        .expect_err("duplicate");
+    let err = manifest.expand_static_params(&values).expect_err("duplicate");
     assert!(err.contains("appears twice"), "{err}");
 }
 
@@ -369,7 +354,8 @@ fn unsafe_param_values_fail() {
     // "." and ".." are the dangerous cases: the filesystem normalizes them,
     // so they collide with sibling routes or escape dist/client entirely.
     for raw in ["a/b", "a\\b", "", ".", ".."] {
-        let values = BTreeMap::from([("s1".to_string(), serde_json::json!([{"slug": raw}]))]);
+        let values =
+            BTreeMap::from([("s1".to_string(), serde_json::json!([{"slug": raw}]))]);
         let err = manifest
             .expand_static_params(&values)
             .expect_err("value `{raw}` must be rejected");
@@ -460,7 +446,8 @@ fn record_artifacts_hashes_every_file_sorted() {
     std::fs::write(staged.join("client/posts/index.html"), b"post").expect("write");
     std::fs::write(staged.join("_redirects"), b"/* / 301").expect("write");
 
-    let mut manifest = plan_manifest(&[], &[page("/", "app/page.dsx")], &[]).expect("plan builds");
+    let mut manifest = plan_manifest(&[], &[page("/", "app/page.dsx")], &[])
+        .expect("plan builds");
     manifest.record_artifacts(staged).expect("records");
     assert_eq!(manifest.artifacts.len(), 3);
     let paths: Vec<&str> = manifest.artifacts.iter().map(|a| a.path.as_str()).collect();
@@ -469,30 +456,21 @@ fn record_artifacts_hashes_every_file_sorted() {
     assert_eq!(paths, sorted, "artifacts are sorted by path");
     let html = std::fs::read(staged.join("client/index.html")).expect("read");
     assert_eq!(
-        manifest
-            .artifacts
-            .iter()
-            .find(|a| a.path == "client/index.html")
-            .expect("row")
-            .digest,
+        manifest.artifacts.iter().find(|a| a.path == "client/index.html").expect("row").digest,
         sha256_hex(&html)
     );
     // Directory entries and the manifest's own cache file never live
     // under staged dist, but an empty tree must record no artifacts.
-    let mut empty = plan_manifest(&[], &[page("/", "app/page.dsx")], &[]).expect("plan builds");
-    empty
-        .record_artifacts(&staged.join("absent"))
-        .expect("records");
+    let mut empty = plan_manifest(&[], &[page("/", "app/page.dsx")], &[])
+        .expect("plan builds");
+    empty.record_artifacts(&staged.join("absent")).expect("records");
     assert!(empty.artifacts.is_empty());
 }
 
 #[test]
 fn project_relative_normalizes_spellings() {
     let root = Path::new("/project");
-    assert_eq!(
-        project_relative(root, "/project/app/page.ds"),
-        "app/page.ds"
-    );
+    assert_eq!(project_relative(root, "/project/app/page.ds"), "app/page.ds");
     assert_eq!(project_relative(root, "app/page.ds"), "app/page.ds");
     assert_eq!(project_relative(root, "./app/page.ds"), "app/page.ds");
     assert_eq!(
@@ -586,7 +564,8 @@ fn verify_artifacts_matches_and_reports_problems() {
     std::fs::write(dist.join("client/index.html"), b"<html/>").expect("write");
     std::fs::write(dist.join("_redirects"), b"/* / 301").expect("write");
 
-    let mut manifest = plan_manifest(&[], &[page("/", "app/page.dsx")], &[]).expect("plan builds");
+    let mut manifest = plan_manifest(&[], &[page("/", "app/page.dsx")], &[])
+        .expect("plan builds");
     manifest.record_artifacts(&dist).expect("records");
 
     // Clean tree: no problems.
@@ -669,10 +648,7 @@ fn static_params_record_one_entry_per_template() {
     let table = manifest.render_route_table();
     assert!(table.contains("● /posts/hello"), "{table}");
     assert!(table.contains("● /posts/world"), "{table}");
-    assert!(
-        table.lines().filter(|line| line.starts_with('●')).count() == 2,
-        "{table}"
-    );
+    assert!(table.lines().filter(|line| line.starts_with('●')).count() == 2, "{table}");
 }
 
 /// deka#718 Phase A: a real fixture project whose static page carries a
@@ -683,10 +659,14 @@ fn defer_fixture(page_src: &str) -> (tempfile::TempDir, String) {
     let page_file = project.path().join("app/dashboard/page.dsx");
     std::fs::create_dir_all(page_file.parent().expect("parent")).expect("mkdir");
     std::fs::write(&page_file, page_src).expect("write page");
-    (project, page_file.to_string_lossy().into_owned())
+    (
+        project,
+        page_file.to_string_lossy().into_owned(),
+    )
 }
 
-const DEFER_PAGE: &str = "export fn Page() {\n    return <Cart server:defer><CartSkeleton slot=\"fallback\" /></Cart>;\n}\n";
+const DEFER_PAGE: &str =
+    "export fn Page() {\n    return <Cart server:defer><CartSkeleton slot=\"fallback\" /></Cart>;\n}\n";
 
 #[test]
 fn server_defer_marks_otherwise_static_route_partial() {

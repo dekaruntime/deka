@@ -349,8 +349,8 @@ fn built_artifact_handler(
     handler_dir: &std::path::Path,
     serve_config: &ServeConfig,
 ) -> Result<Option<ResolvedHandler>, String> {
-    let Some(artifact_root) =
-        runtime_core::dist::resolve_authored_artifact_root(handler_dir).map_err(artifact_remedy)?
+    let Some(artifact_root) = runtime_core::dist::resolve_authored_artifact_root(handler_dir)
+        .map_err(artifact_remedy)?
     else {
         return Ok(None);
     };

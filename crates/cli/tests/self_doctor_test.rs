@@ -131,10 +131,7 @@ fn run_doctor(
 }
 
 fn write_npm_pin(project: &Path, version: &str) {
-    let npm = project
-        .join("node_modules")
-        .join("@dekaruntime")
-        .join("deka");
+    let npm = project.join("node_modules").join("@dekaruntime").join("deka");
     fs::create_dir_all(&npm).unwrap();
     fs::write(
         npm.join("package.json"),
@@ -154,11 +151,7 @@ fn doctor_lists_path_binaries_in_resolution_order_with_versions() {
     let cwd = tempfile::tempdir().unwrap();
 
     let run = run_doctor(&deka, cwd.path(), &[&first.dir, &second.dir], &[]);
-    assert!(
-        run.status.success(),
-        "tidy install must exit 0: {}",
-        run.output
-    );
+    assert!(run.status.success(), "tidy install must exit 0: {}", run.output);
 
     let first_deka = first.dir.join("deka").display().to_string();
     let second_deka = second.dir.join("deka").display().to_string();
@@ -170,9 +163,9 @@ fn doctor_lists_path_binaries_in_resolution_order_with_versions() {
         run.output
     );
     assert!(
-        run.output.contains(&format!(
-            "deka [version {version}]   <- first on PATH, wins"
-        )),
+        run
+            .output
+            .contains(&format!("deka [version {version}]   <- first on PATH, wins")),
         "winner marker missing:\n{}",
         run.output
     );
@@ -196,21 +189,16 @@ fn doctor_skips_non_executable_path_entries_when_crowning_the_winner() {
     let cwd = tempfile::tempdir().unwrap();
 
     let run = run_doctor(&deka, cwd.path(), &[&shadow, &real.dir], &[]);
+    assert!(run.status.success(), "untidy PATH must not fail: {}", run.output);
     assert!(
-        run.status.success(),
-        "untidy PATH must not fail: {}",
-        run.output
-    );
-    assert!(
-        run.output
-            .contains("(not executable, skipped by the shell)"),
+        run.output.contains("(not executable, skipped by the shell)"),
         "non-executable entry must be annotated:\n{}",
         run.output
     );
     assert!(
-        run.output.contains(&format!(
-            "deka [version {version}]   <- first on PATH, wins"
-        )),
+        run
+            .output
+            .contains(&format!("deka [version {version}]   <- first on PATH, wins")),
         "the executable entry, not the first file, must win:\n{}",
         run.output
     );
@@ -232,16 +220,12 @@ fn doctor_warns_that_a_path_only_dsc_is_invisible_to_isolate_compiles() {
         run.output
     );
     assert!(
-        run.output.contains(&format!(
-            "resolved: {} (via PATH)",
-            bin.dir.join("dsc").display()
-        )),
+        run.output.contains(&format!("resolved: {} (via PATH)", bin.dir.join("dsc").display())),
         "cli pairing must name the PATH winner:\n{}",
         run.output
     );
     assert!(
-        run.output
-            .contains("isolate (dev/serve/run compiles; sibling-only"),
+        run.output.contains("isolate (dev/serve/run compiles; sibling-only"),
         "isolate pairing section missing:\n{}",
         run.output
     );
@@ -274,11 +258,7 @@ fn doctor_fails_on_deka_dsc_version_mismatch() {
         &[],
         &[("DEKA_DSC", override_dir.dir.join("dsc").to_str().unwrap())],
     );
-    assert!(
-        !run.status.success(),
-        "mismatch must exit non-zero: {}",
-        run.output
-    );
+    assert!(!run.status.success(), "mismatch must exit non-zero: {}", run.output);
     assert!(
         run.output.contains("ERROR") && run.output.contains("mismatch"),
         "mismatch finding missing:\n{}",
@@ -306,16 +286,9 @@ fn doctor_prefers_deka_dsc_when_a_sibling_exists() {
         &[],
         &[("DEKA_DSC", override_dsc.to_str().unwrap())],
     );
+    assert!(run.status.success(), "valid DEKA_DSC must exit 0: {}", run.output);
     assert!(
-        run.status.success(),
-        "valid DEKA_DSC must exit 0: {}",
-        run.output
-    );
-    assert!(
-        run.output.contains(&format!(
-            "resolved: {} (via DEKA_DSC)",
-            override_dsc.display()
-        )),
+        run.output.contains(&format!("resolved: {} (via DEKA_DSC)", override_dsc.display())),
         "DEKA_DSC pairing missing:\n{}",
         run.output
     );
@@ -364,17 +337,8 @@ fn doctor_rejects_a_deka_dsc_that_is_not_a_file() {
     let missing = root.path().join("nope/dsc");
     let cwd = tempfile::tempdir().unwrap();
 
-    let run = run_doctor(
-        Path::new(cli_bin()),
-        cwd.path(),
-        &[],
-        &[("DEKA_DSC", missing.to_str().unwrap())],
-    );
-    assert!(
-        !run.status.success(),
-        "invalid DEKA_DSC must exit non-zero: {}",
-        run.output
-    );
+    let run = run_doctor(Path::new(cli_bin()), cwd.path(), &[], &[("DEKA_DSC", missing.to_str().unwrap())]);
+    assert!(!run.status.success(), "invalid DEKA_DSC must exit non-zero: {}", run.output);
     assert!(
         run.output.contains("not a file"),
         "invalid override finding missing:\n{}",
@@ -389,11 +353,7 @@ fn doctor_reports_no_dsc_resolvable_as_error() {
     let cwd = tempfile::tempdir().unwrap();
 
     let run = run_doctor(Path::new(cli_bin()), cwd.path(), &[&empty.dir], &[]);
-    assert!(
-        !run.status.success(),
-        "no dsc must exit non-zero: {}",
-        run.output
-    );
+    assert!(!run.status.success(), "no dsc must exit non-zero: {}", run.output);
     let cli_finding = run.output.matches("no dsc resolvable for cli").count();
     assert_eq!(
         cli_finding, 1,
@@ -417,11 +377,7 @@ fn doctor_reports_deka_no_dsc_as_a_disabled_warning_only() {
     let cwd = tempfile::tempdir().unwrap();
 
     let run = run_doctor(&deka, cwd.path(), &[&bin.dir], &[("DEKA_NO_DSC", "1")]);
-    assert!(
-        run.status.success(),
-        "DEKA_NO_DSC is deliberate, not a failure: {}",
-        run.output
-    );
+    assert!(run.status.success(), "DEKA_NO_DSC is deliberate, not a failure: {}", run.output);
     assert!(
         run.output.contains("disabled (DEKA_NO_DSC is set)"),
         "disabled pairing missing:\n{}",
@@ -438,14 +394,9 @@ fn doctor_fails_on_project_pin_skew_and_says_which_is_older() {
     write_npm_pin(project.path(), "0.99.0");
 
     let run = run_doctor(&deka, project.path(), &[], &[]);
+    assert!(!run.status.success(), "pin skew must exit non-zero: {}", run.output);
     assert!(
-        !run.status.success(),
-        "pin skew must exit non-zero: {}",
-        run.output
-    );
-    assert!(
-        run.output
-            .contains("node_modules/@dekaruntime/deka: 0.99.0"),
+        run.output.contains("node_modules/@dekaruntime/deka: 0.99.0"),
         "project pin must be reported:\n{}",
         run.output
     );
@@ -469,11 +420,7 @@ fn doctor_fails_on_deka_json_pin_skew() {
     .unwrap();
 
     let run = run_doctor(&deka, project.path(), &[], &[]);
-    assert!(
-        !run.status.success(),
-        "deka.json pin skew must exit non-zero: {}",
-        run.output
-    );
+    assert!(!run.status.success(), "deka.json pin skew must exit non-zero: {}", run.output);
     assert!(
         run.output.contains("deka.json \"deka\": 0.0.1"),
         "deka.json pin must be reported:\n{}",
@@ -495,11 +442,7 @@ fn doctor_passes_when_project_pin_matches_running_binary() {
     write_npm_pin(project.path(), &version);
 
     let run = run_doctor(&deka, project.path(), &[], &[]);
-    assert!(
-        run.status.success(),
-        "matching pin must exit 0: {}",
-        run.output
-    );
+    assert!(run.status.success(), "matching pin must exit 0: {}", run.output);
     assert!(
         run.output.contains("no problems found") || run.output.contains("0 error(s)"),
         "summary missing:\n{}",
@@ -515,11 +458,7 @@ fn doctor_without_a_project_is_a_clean_skip() {
     let cwd = tempfile::tempdir().unwrap();
 
     let run = run_doctor(&deka, cwd.path(), &[], &[]);
-    assert!(
-        run.status.success(),
-        "no project must exit 0: {}",
-        run.output
-    );
+    assert!(run.status.success(), "no project must exit 0: {}", run.output);
     assert!(
         run.output.contains("no project pin found"),
         "no-project note missing:\n{}",

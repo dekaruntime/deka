@@ -263,10 +263,7 @@ fn deka_add_delivers_grants_and_the_runtime_uses_them() {
     )
     .expect("move grant table away");
     let (success, output) = run_cli(&project, &["run", "main.ds"], registry.address, None);
-    assert!(
-        !success,
-        "deka run must fail without any grant table: {output}"
-    );
+    assert!(!success, "deka run must fail without any grant table: {output}");
     assert!(
         output.contains("not granted any host kinds"),
         "expected the RFD 27 no-grants load error: {output}"
@@ -293,7 +290,8 @@ fn deka_add_delivers_grants_and_the_runtime_uses_them() {
     // integrity check rejects the lockfile mismatch before boot, and the
     // loader's digest-keyed grant lookup would miss anyway.
     assert!(
-        output.contains("not granted any host kinds") || output.contains("failed integrity check"),
+        output.contains("not granted any host kinds")
+            || output.contains("failed integrity check"),
         "a grant for another digest must unlock nothing: {output}"
     );
 

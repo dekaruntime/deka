@@ -36,8 +36,7 @@ fn assert_one_error(source: &str, position: &str, needle: &str) {
     );
 }
 
-const APPLY: &str =
-    "fn apply(xs: Array<number>, f: fn(number) number) Array<number> { return xs.map(f) }\n";
+const APPLY: &str = "fn apply(xs: Array<number>, f: fn(number) number) Array<number> { return xs.map(f) }\n";
 const RUN: &str = "fn run(cb: fn() void) void { cb() }\nfn tick() void { }\n";
 
 #[test]
@@ -103,12 +102,9 @@ fn void_expression_body_in_a_void_slot() {
     // A non-void value in a `void` slot is not silently dropped: the
     // expression body is the return value, and the block spelling is how
     // to say it is not.
-    const EACH: &str =
-        "fn each(xs: Array<number>, f: fn(number) void) void { for (const x of xs) { f(x) } }\n\
+    const EACH: &str = "fn each(xs: Array<number>, f: fn(number) void) void { for (const x of xs) { f(x) } }\n\
                         let total = 0\n";
-    assert_ok(&format!(
-        "{EACH}each([1, 2], (x) => {{ total = total + x }})"
-    ));
+    assert_ok(&format!("{EACH}each([1, 2], (x) => {{ total = total + x }})"));
     assert_one_error(
         &format!("{EACH}each([1, 2], (x) => total = total + x)"),
         "3:21",

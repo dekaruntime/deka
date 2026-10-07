@@ -120,10 +120,7 @@ fn parameters_use_the_fn_grammar() {
 
 #[test]
 fn async_arrow() {
-    for source in [
-        "const f = async () => { return 1 }",
-        "const f = async (x) => x",
-    ] {
+    for source in ["const f = async () => { return 1 }", "const f = async (x) => x"] {
         with_first_value(source, |value| {
             let Expr::Function { is_async, form, .. } = value else {
                 panic!("expected a function literal, got {value:?}");
@@ -159,13 +156,7 @@ fn arrows_nest_and_take_full_expressions() {
             panic!("expected a call, got {object:?}");
         };
         assert!(
-            matches!(
-                args[0],
-                Expr::Function {
-                    form: FunctionForm::ArrowExpr,
-                    ..
-                }
-            ),
+            matches!(args[0], Expr::Function { form: FunctionForm::ArrowExpr, .. }),
             "{:?}",
             args[0]
         );
@@ -199,11 +190,7 @@ fn parenthesized_expressions_are_unchanged() {
         ("const a = c ? (x) : y", false),
     ] {
         with_first_value(source, |value| {
-            assert_eq!(
-                matches!(value, Expr::Paren { .. }),
-                is_paren,
-                "{source}: {value:?}"
-            );
+            assert_eq!(matches!(value, Expr::Paren { .. }), is_paren, "{source}: {value:?}");
             assert!(!contains_function(value), "{source}: {value:?}");
         });
     }

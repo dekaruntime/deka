@@ -210,7 +210,11 @@ fn cmd_login(context: &Context) {
         .get("--username")
         .cloned()
         .or_else(|| prompt_required("Username (@username): "));
-    let token_from_param = context.args.params.get("--token").cloned();
+    let token_from_param = context
+        .args
+        .params
+        .get("--token")
+        .cloned();
     let password = context
         .args
         .params

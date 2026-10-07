@@ -78,8 +78,7 @@ fn every_declared_console_method_is_recognized() {
 fn unknown_console_method_names_the_method_not_the_value_diagnostic() {
     let got = errors("console.nope(1);");
     assert!(
-        got.iter()
-            .any(|m| m.contains("console has no method `nope`")),
+        got.iter().any(|m| m.contains("console has no method `nope`")),
         "{got:?}"
     );
     assert!(
@@ -259,7 +258,9 @@ fn printable_accepts_a_struct() {
 
 #[test]
 fn printable_accepts_nested_option_array_tuple() {
-    assert_ok("let v: Option<Array<[number, string]>> = Some([[1, \"a\"]]); console.log(v);");
+    assert_ok(
+        "let v: Option<Array<[number, string]>> = Some([[1, \"a\"]]); console.log(v);",
+    );
 }
 
 #[test]

@@ -438,9 +438,10 @@ pub fn suggestion_candidates(
     token: &str,
 ) -> Vec<String> {
     let parsed = crate::Args::collect(vec![token.to_string()], registry);
-    parsed.errors.first().map_or_else(Vec::new, |error| {
-        expand_suggestions(ownership_index, &error.suggestions)
-    })
+    parsed
+        .errors
+        .first()
+        .map_or_else(Vec::new, |error| expand_suggestions(ownership_index, &error.suggestions))
 }
 
 /// Build the full usage message for an unknown subcommand, including

@@ -35,18 +35,11 @@ pub enum Type<'a> {
     /// The type of the literal `none`.
     None,
     /// A named scalar or user-defined type.
-    Named {
-        name: &'a str,
-    },
+    Named { name: &'a str },
     /// Nominal identity is the declaring AST node, preserved across imports.
-    Opaque {
-        name: &'a str,
-        identity: usize,
-    },
+    Opaque { name: &'a str, identity: usize },
     /// `Option<T>`.
-    Option {
-        inner: Box<Type<'a>>,
-    },
+    Option { inner: Box<Type<'a>> },
     /// Function type.
     Function {
         params: Vec<Type<'a>>,
@@ -56,14 +49,9 @@ pub enum Type<'a> {
         optional: usize,
     },
     /// Generic instantiation, e.g. `Result<number, string>`.
-    Generic {
-        base: &'a str,
-        args: Vec<Type<'a>>,
-    },
+    Generic { base: &'a str, args: Vec<Type<'a>> },
     /// A user-defined struct type.
-    Struct {
-        name: &'a str,
-    },
+    Struct { name: &'a str },
     /// An array type, e.g. `Array<number>` or `number[]`.
     Array {
         elem: Box<Type<'a>>,
@@ -72,49 +60,27 @@ pub enum Type<'a> {
         elements: Vec<Type<'a>>,
     },
     /// An object record type with known fields.
-    Object {
-        fields: Vec<(&'a str, Type<'a>)>,
-    },
+    Object { fields: Vec<(&'a str, Type<'a>)> },
     /// A declared interface type. Identity is its member slice in the shared
     /// AST arena; it selects origin-resolved metadata across module boundaries.
     /// Satisfaction remains structural rather than nominal.
-    Interface {
-        name: &'a str,
-        identity: usize,
-    },
+    Interface { name: &'a str, identity: usize },
     /// A boxed newtype over a primitive representation.
     Newtype {
         name: &'a str,
         repr: crate::ast::NewtypeRepr,
     },
     /// A type parameter, e.g. `T` inside a generic function or type.
-    Param {
-        name: &'a str,
-    },
+    Param { name: &'a str },
     /// A union of types whose members each have a decidable runtime
     /// predicate: primitives, named structs, enums, interfaces (rfd#42,
     /// deka#530).
-    Union {
-        members: Vec<Type<'a>>,
-    },
+    Union { members: Vec<Type<'a>> },
 }
 
 impl<'a> Type<'a> {
-    pub fn react_node() -> Self {
-        Type::Opaque {
-            name: "ReactNode",
-            identity: usize::MAX,
-        }
-    }
-    pub fn is_react_node(&self) -> bool {
-        matches!(
-            self,
-            Type::Opaque {
-                name: "ReactNode",
-                identity: usize::MAX
-            }
-        )
-    }
+    pub fn react_node() -> Self { Type::Opaque { name: "ReactNode", identity: usize::MAX } }
+    pub fn is_react_node(&self) -> bool { matches!(self, Type::Opaque { name: "ReactNode", identity: usize::MAX }) }
 
     /// Component is nominal in diagnostics and an ordinary function at calls.
     /// `Hook<fn...>` unwraps to the inner function so JSX and call checking
@@ -217,11 +183,7 @@ impl<'a> Type<'a> {
     /// is `OpenContext<T>` internally and still displays as `Context<T>`.
     pub fn context(value: Type<'a>, has_default: bool) -> Self {
         Type::Generic {
-            base: if has_default {
-                "Context"
-            } else {
-                "OpenContext"
-            },
+            base: if has_default { "Context" } else { "OpenContext" },
             args: vec![value],
         }
     }
@@ -282,10 +244,7 @@ impl<'a> Type<'a> {
 /// Lives in `types` (not `expr`) because the `super` descriptor walker
 /// (deka#529) substitutes struct/enum type arguments the same way call-site
 /// substitution does.
-pub fn substitute_type<'a>(
-    ty: &Type<'a>,
-    subst: &std::collections::HashMap<&'a str, Type<'a>>,
-) -> Type<'a> {
+pub fn substitute_type<'a>(ty: &Type<'a>, subst: &std::collections::HashMap<&'a str, Type<'a>>) -> Type<'a> {
     match ty {
         // The native function's own T is a separate binder; transporting it
         // through identity<R>, a record, or a module must retain that binder.
@@ -315,11 +274,7 @@ pub fn substitute_type<'a>(
         Type::Array { elem } => Type::Array {
             elem: Box::new(substitute_type(elem, subst)),
         },
-        Type::Function {
-            params,
-            ret,
-            optional,
-        } => Type::Function {
+        Type::Function { params, ret, optional } => Type::Function {
             params: params.iter().map(|p| substitute_type(p, subst)).collect(),
             ret: Box::new(substitute_type(ret, subst)),
             optional: *optional,
