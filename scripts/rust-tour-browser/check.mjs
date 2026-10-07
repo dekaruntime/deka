@@ -56,7 +56,8 @@ try {
         window.stop();window.scene=undefined;window.dekaFrameTimes=[];
         const canvas=document.querySelector('canvas');canvas.style.width=history.width+'px';canvas.style.height=history.height+'px';window.start(history.lesson)
       },history)
-      await page.waitForFunction(()=>window.scene)
+      await page.waitForFunction(()=>window.scene || window.errors.length)
+      assert.deepEqual(await page.evaluate(()=>window.errors),[],`${history.lesson} render errors`)
       for(const step of history.steps) {
         await canvas.evaluate((canvas,time)=>canvas.dispatchEvent(new CustomEvent('deka:clock',{detail:{time}})),step.time)
         if(step.point) {
@@ -93,6 +94,13 @@ try {
   await input.evaluate(input=>{input.value='日本';input.dispatchEvent(new CompositionEvent('compositionend',{data:'日本',bubbles:true}));});
   assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello 日本'));
   assert.equal(await textarea.inputValue(),'日本');
+  await page.context().grantPermissions(['clipboard-read','clipboard-write']);
+  await page.evaluate(()=>navigator.clipboard.writeText('clipboard 日本'));
+  await input.focus();await input.press('ControlOrMeta+A');await input.press('ControlOrMeta+V');
+  assert.equal(await input.inputValue(),'clipboard 日本');
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello clipboard 日本'));
+  await input.press('ControlOrMeta+A');await input.press('ControlOrMeta+X');assert.equal(await input.inputValue(),'');
+  await input.press('ControlOrMeta+V');assert.equal(await input.inputValue(),'clipboard 日本');
   await page.evaluate(()=>window.stop());assert.equal(await input.count(),0);assert.equal(await textarea.count(),0)
   console.log('PASS: native browser text/key input and teardown')
   await page.goto(url+'/?fixture=.&inspect');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start('counter'))

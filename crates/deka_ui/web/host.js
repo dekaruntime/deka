@@ -158,7 +158,7 @@ export function mount(app, canvas, inspect = false) {
       active.add(control.id)
       let input = inputs.get(control.id)
       if (!input) {
-        input = document.createElement(control.tag === 'textarea' ? 'textarea' : 'input'); input.setAttribute('aria-label', 'Deka text input')
+        input = document.createElement(control.tag === 'textarea' ? 'textarea' : 'input'); input.setAttribute('aria-label', control.tag === 'textarea' ? 'Deka text area' : 'Deka text input')
         input.style.cssText = 'position:absolute;box-sizing:border-box;font:inherit;color:inherit;background:transparent;border:1px solid currentColor;border-radius:4px;padding:4px;'
         input.addEventListener('compositionstart', () => { input.dekaComposing = true })
         input.addEventListener('compositionend', () => { input.dekaComposing = false; try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } })
@@ -183,7 +183,6 @@ export function mount(app, canvas, inspect = false) {
     cancelAnimationFrame(request); request = 0
     if (disposed || rendererLost) return
     try {
-      if (!input.dekaComposing) input.dekaObservedValue = value
       const bounds = canvas.getBoundingClientRect()
       const scale = Math.max(1, devicePixelRatio || 1)
       scene = JSON.parse(app.frame_at(bounds.width,bounds.height,scale,fixedClock ?? performance.now(),motion.matches))
