@@ -166,7 +166,7 @@ mod menus {
     impl MenuSpec {
         pub fn contains(&self, id: &MenuId) -> bool {
             self.entries.iter().any(|entry| match entry {
-                MenuEntry::Item(item) => &item.id == id,
+                MenuEntry::Item(item) => item.id == id,
                 MenuEntry::Submenu(_, menu) => menu.contains(id),
                 _ => false,
             })
