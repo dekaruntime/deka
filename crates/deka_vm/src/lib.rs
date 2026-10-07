@@ -44,6 +44,8 @@ mod stack;
 mod turn;
 pub use turn::Turn;
 #[cfg(feature = "host")]
+pub mod tcp;
+#[cfg(feature = "host")]
 pub mod time;
 #[cfg(feature = "host")]
 pub mod timers;
