@@ -7,6 +7,8 @@ on:
       - 'crates/deka_fmt/**'
       - 'crates/deka_native_ir/**'
       - 'crates/deka_native_ui/**'
+      - 'crates/deka_ui/**'
+      - 'crates/deka_ui_macros/**'
       - 'crates/deka_vm/**'
       - 'crates/deka_cli/**'
       - 'crates/deka_executable/**'
@@ -20,6 +22,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'run.sh'
+      - 'scripts/test-rust-ui.sh'
       - '.github/workflows/vm-experiment.yml'
 permissions:
   contents: read
@@ -47,6 +50,12 @@ jobs:
           cargo test --locked -p deka_native_ui --features gpu
           ./run.sh
           cargo test --locked --release -p deka_cli --no-default-features
+      - name: Check Rust UI and compare every tour lesson with the VM
+        run: |
+          cargo fmt -p deka-ui -p deka-ui-macros --check
+          cargo check --locked --release -p deka-ui -p deka-ui-macros --all-targets
+          cargo clippy --locked --release -p deka-ui -p deka-ui-macros --all-targets --all-features --no-deps -- -D warnings
+          ./scripts/test-rust-ui.sh
       - name: Compile source and execute without a compiler
         run: |
           cargo build --locked --release -p deka_vm --features compiler,host,ui

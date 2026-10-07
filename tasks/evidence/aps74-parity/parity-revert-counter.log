@@ -1,0 +1,58 @@
+COMMAND: ['cargo', 'test', '--release', '--locked', '-p', 'deka-ui', '--no-default-features', '--test', 'tour_parity', 'counter', '--', '--exact', '--nocapture']
+warning: unreachable pattern
+    --> crates/deka_syntax/src/typeck/expr.rs:4148:13
+     |
+4148 |             _ => {
+     |             ^ no value can reach this
+     |
+note: multiple earlier patterns match some of the same values
+    --> crates/deka_syntax/src/typeck/expr.rs:4148:13
+     |
+3724 |             Add => {
+     |             --- matches some of the same values
+...
+3760 |             Sub | Mul | Div | Mod => {
+     |             --------------------- matches some of the same values
+...
+3774 |             BitAnd | BitOr | BitXor | Shl | Shr => {
+     |             ----------------------------------- matches some of the same values
+...
+3783 |             Eq | Ne | Lt | Le | Gt | Ge => {
+     |             --------------------------- matches some of the same values
+...
+4148 |             _ => {
+     |             ^ ...and 4 other patterns collectively make this unreachable
+     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: `deka_syntax` (lib) generated 1 warning
+   Compiling deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+warning: field `major` is never read
+ --> crates/deka_ui/tests/../examples/tour/values.rs:5:9
+  |
+3 | pub struct Release {
+  |            ------- field in this struct
+4 |     pub minor: i32,
+5 |     pub major: i32,
+  |         ^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `deka-ui` (test "tour_parity") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 3.61s
+     Running tests/tour_parity.rs (.target/release/deps/tour_parity-1d6e584917d747d3)
+
+running 1 test
+
+thread 'counter' (5031751) panicked at crates/deka_ui/tests/tour_parity.rs:145:13:
+counter (560.0, 480.0, 1.0) reduced=false time=100ms: scene.images[47].height: VM=14 Rust=11
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test counter ... FAILED
+
+failures:
+
+failures:
+    counter
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p deka-ui --test tour_parity`

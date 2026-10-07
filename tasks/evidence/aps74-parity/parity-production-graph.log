@@ -1,0 +1,383 @@
+COMMAND: ['cargo', 'tree', '--locked', '-p', 'deka-ui', '-e', 'normal', '--prefix', 'none']
+deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+deka-ui-macros v0.1.0 (proc-macro) (/Volumes/Projects/codex/deka/crates/deka_ui_macros)
+deka_native_ir v0.61.0 (/Volumes/Projects/codex/deka/crates/deka_native_ir)
+proc-macro2 v1.0.107
+unicode-ident v1.0.24
+quote v1.0.47
+proc-macro2 v1.0.107 (*)
+rstml v0.13.1
+derive-where v1.7.0 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.5
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+unicode-ident v1.0.24
+proc-macro2 v1.0.107 (*)
+proc-macro2-diagnostics v0.11.0
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.5 (*)
+quote v1.0.47 (*)
+syn v3.0.5 (*)
+thiserror v2.0.20
+thiserror-impl v2.0.20 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.5 (*)
+syn v3.0.5 (*)
+deka_native_ir v0.61.0 (/Volumes/Projects/codex/deka/crates/deka_native_ir)
+deka_native_ui v0.61.0 (/Volumes/Projects/codex/deka/crates/deka_native_ui)
+deka_native_ir v0.61.0 (/Volumes/Projects/codex/deka/crates/deka_native_ir)
+fontique v0.11.1
+hashbrown v0.17.1
+foldhash v0.2.0
+linebender_resource_handle v0.1.1
+memmap2 v0.9.11
+libc v0.2.189
+objc2 v0.6.4
+objc2-encode v4.1.0
+objc2-core-foundation v0.3.2
+bitflags v2.13.2
+objc2 v0.6.4 (*)
+objc2-core-text v0.3.2
+bitflags v2.13.2
+objc2-core-foundation v0.3.2 (*)
+objc2-foundation v0.3.2
+bitflags v2.13.2
+objc2 v0.6.4 (*)
+objc2-core-foundation v0.3.2 (*)
+parlance v0.1.0
+read-fonts v0.41.0
+bytemuck v1.25.2
+bytemuck_derive v1.12.1 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.5 (*)
+font-types v0.12.5
+bytemuck v1.25.2 (*)
+once_cell v1.21.4
+smallvec v1.16.1
+libc v0.2.189
+num_cpus v1.17.0
+libc v0.2.189
+objc2 v0.6.4 (*)
+objc2-metal v0.3.2
+bitflags v2.13.2
+block2 v0.6.2
+objc2 v0.6.4 (*)
+objc2 v0.6.4 (*)
+objc2-foundation v0.3.2 (*)
+objc2-quartz-core v0.3.2
+bitflags v2.13.2
+objc2 v0.6.4 (*)
+objc2-core-foundation v0.3.2 (*)
+objc2-core-graphics v0.3.2
+objc2 v0.6.4 (*)
+objc2-core-foundation v0.3.2 (*)
+objc2-foundation v0.3.2 (*)
+objc2-metal v0.3.2 (*)
+parley v0.11.1
+fontique v0.11.1 (*)
+harfrust v0.12.0
+bitflags v2.13.2
+bytemuck v1.25.2 (*)
+read-fonts v0.41.0 (*)
+smallvec v1.16.1
+hashbrown v0.17.1 (*)
+icu_normalizer v2.3.0
+icu_collections v2.3.0
+displaydoc v0.2.7 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.5 (*)
+potential_utf v0.1.6
+writeable v0.6.4
+zerovec v0.11.8
+yoke v0.8.3
+stable_deref_trait v1.2.1
+yoke-derive v0.8.2 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+unicode-ident v1.0.24
+synstructure v0.13.2
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119 (*)
+zerofrom v0.1.8
+zerofrom-derive v0.1.7 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119 (*)
+synstructure v0.13.2 (*)
+zerofrom v0.1.8 (*)
+zerovec-derive v0.11.6 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.5 (*)
+utf8_iter v1.0.4
+yoke v0.8.3 (*)
+zerofrom v0.1.8 (*)
+zerovec v0.11.8 (*)
+icu_normalizer_data v2.3.0
+icu_provider v2.3.1
+displaydoc v0.2.7 (proc-macro) (*)
+icu_locale_core v2.3.0
+displaydoc v0.2.7 (proc-macro) (*)
+litemap v0.8.3
+tinystr v0.8.4
+displaydoc v0.2.7 (proc-macro) (*)
+zerovec v0.11.8 (*)
+writeable v0.6.4
+zerovec v0.11.8 (*)
+stable_deref_trait v1.2.1
+writeable v0.6.4
+yoke v0.8.3 (*)
+zerofrom v0.1.8 (*)
+zerotrie v0.2.5
+displaydoc v0.2.7 (proc-macro) (*)
+yoke v0.8.3 (*)
+zerofrom v0.1.8 (*)
+zerovec v0.11.8 (*)
+smallvec v1.16.1
+zerovec v0.11.8 (*)
+icu_properties v2.3.0
+displaydoc v0.2.7 (proc-macro) (*)
+icu_collections v2.3.0 (*)
+icu_locale_core v2.3.0 (*)
+icu_properties_data v2.3.0
+icu_provider v2.3.1 (*)
+zerotrie v0.2.5 (*)
+zerovec v0.11.8 (*)
+icu_segmenter v2.3.0
+icu_collections v2.3.0 (*)
+icu_locale_fallback v2.3.0
+icu_locale_core v2.3.0 (*)
+icu_locale_fallback_data v2.3.0
+icu_provider v2.3.1 (*)
+potential_utf v0.1.6 (*)
+tinystr v0.8.4 (*)
+zerovec v0.11.8 (*)
+icu_provider v2.3.1 (*)
+icu_segmenter_data v2.3.0
+potential_utf v0.1.6 (*)
+smallvec v1.16.1
+utf8_iter v1.0.4
+zerovec v0.11.8 (*)
+linebender_resource_handle v0.1.1
+parlance v0.1.0
+parley_data v0.11.1
+icu_properties v2.3.0 (*)
+skrifa v0.44.0
+bytemuck v1.25.2 (*)
+read-fonts v0.41.0 (*)
+pollster v0.4.0
+serde v1.0.229
+serde_core v1.0.229
+serde_derive v1.0.229 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.5 (*)
+swash v0.2.10
+skrifa v0.44.0 (*)
+yazi v0.2.1
+zeno v0.3.3
+taffy v0.9.0
+arrayvec v0.7.8
+slotmap v1.1.1
+vello_gpu v0.3.0 (/Volumes/Projects/codex/deka/vendor/vello_gpu)
+bytemuck v1.25.2 (*)
+hashbrown v0.17.1 (*)
+log v0.4.34
+rayon v1.12.0
+either v1.18.0
+rayon-core v1.13.0
+crossbeam-deque v0.8.8
+crossbeam-epoch v0.9.21
+crossbeam-utils v0.8.23
+crossbeam-utils v0.8.23
+crossbeam-utils v0.8.23
+thiserror v2.0.20
+thiserror-impl v2.0.20 (proc-macro) (*)
+vello_common v0.3.0
+bytemuck v1.25.2 (*)
+fearless_simd v0.7.0
+guillotiere v0.7.0
+euclid v0.22.14
+num-traits v0.2.19
+libm v0.2.16
+log v0.4.34
+peniko v0.6.1
+bytemuck v1.25.2 (*)
+color v0.3.3
+bytemuck v1.25.2 (*)
+kurbo v0.13.1
+arrayvec v0.7.8
+polycool v0.4.0
+arrayvec v0.7.8
+smallvec v1.16.1
+linebender_resource_handle v0.1.1
+smallvec v1.16.1
+smallvec v1.16.1
+thiserror v2.0.20 (*)
+vello_gpu_shaders v0.3.0 (/Volumes/Projects/codex/deka/vendor/vello_gpu_shaders)
+wgpu v30.0.1
+arrayvec v0.7.8
+bitflags v2.13.2
+bytemuck v1.25.2 (*)
+cfg-if v1.0.4
+document-features v0.2.12 (proc-macro)
+litrs v1.0.0
+hashbrown v0.17.1 (*)
+log v0.4.34
+parking_lot v0.12.5
+lock_api v0.4.14
+scopeguard v1.2.0
+parking_lot_core v0.9.12
+cfg-if v1.0.4
+libc v0.2.189
+smallvec v1.16.1
+profiling v1.0.18
+raw-window-handle v0.6.2
+smallvec v1.16.1
+static_assertions v1.1.0
+wgpu-core v30.0.1
+arrayvec v0.7.8
+bit-set v0.10.0
+bit-vec v0.9.1
+bit-vec v0.9.1
+bitflags v2.13.2
+bytemuck v1.25.2 (*)
+document-features v0.2.12 (proc-macro) (*)
+hashbrown v0.17.1 (*)
+indexmap v2.14.2
+equivalent v1.0.2
+hashbrown v0.17.1 (*)
+log v0.4.34
+naga v30.0.1
+arrayvec v0.7.8
+bit-set v0.10.0 (*)
+bitflags v2.13.2
+cfg-if v1.0.4
+codespan-reporting v0.13.1
+unicode-width v0.2.2
+half v2.7.1
+cfg-if v1.0.4
+num-traits v0.2.19 (*)
+zerocopy v0.8.57
+zerocopy-derive v0.8.57 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119 (*)
+hashbrown v0.17.1 (*)
+indexmap v2.14.2 (*)
+libm v0.2.16
+log v0.4.34
+naga-types v30.0.1
+hashbrown v0.17.1 (*)
+indexmap v2.14.2 (*)
+rustc-hash v1.1.0
+thiserror v2.0.20 (*)
+num-traits v0.2.19 (*)
+once_cell v1.21.4
+rustc-hash v1.1.0
+thiserror v2.0.20 (*)
+unicode-ident v1.0.24
+naga-types v30.0.1 (*)
+once_cell v1.21.4
+parking_lot v0.12.5 (*)
+profiling v1.0.18
+raw-window-handle v0.6.2
+rustc-hash v1.1.0
+smallvec v1.16.1
+thiserror v2.0.20 (*)
+wgpu-core-deps-apple v30.0.1
+wgpu-hal v30.0.1
+arrayvec v0.7.8
+bitflags v2.13.2
+block2 v0.6.2 (*)
+bytemuck v1.25.2 (*)
+cfg-if v1.0.4
+hashbrown v0.17.1 (*)
+libloading v0.8.9
+cfg-if v1.0.4
+log v0.4.34
+naga v30.0.1 (*)
+naga-types v30.0.1 (*)
+objc2 v0.6.4 (*)
+objc2-core-foundation v0.3.2 (*)
+objc2-core-graphics v0.3.2 (*)
+objc2-foundation v0.3.2 (*)
+objc2-metal v0.3.2 (*)
+objc2-quartz-core v0.3.2 (*)
+parking_lot v0.12.5 (*)
+profiling v1.0.18
+raw-window-handle v0.6.2
+raw-window-metal v1.1.0
+objc2 v0.6.4 (*)
+objc2-core-foundation v0.3.2 (*)
+objc2-foundation v0.3.2 (*)
+objc2-quartz-core v0.3.2 (*)
+smallvec v1.16.1
+static_assertions v1.1.0
+thiserror v2.0.20 (*)
+wgpu-naga-bridge v30.0.1
+naga v30.0.1 (*)
+wgpu-types v30.0.1
+bitflags v2.13.2
+bytemuck v1.25.2 (*)
+log v0.4.34
+naga-types v30.0.1 (*)
+raw-window-handle v0.6.2
+static_assertions v1.1.0
+wgpu-types v30.0.1 (*)
+wgpu-hal v30.0.1 (*)
+wgpu-naga-bridge v30.0.1 (*)
+wgpu-types v30.0.1 (*)
+wgpu-hal v30.0.1 (*)
+wgpu-types v30.0.1 (*)
+wgpu v30.0.1 (*)
+winit v0.30.13
+bitflags v2.13.2
+block2 v0.5.1
+objc2 v0.5.2
+objc-sys v0.3.5
+objc2-encode v4.1.0
+core-foundation v0.9.4
+core-foundation-sys v0.8.7
+libc v0.2.189
+core-graphics v0.23.2
+bitflags v1.3.2
+core-foundation v0.9.4 (*)
+core-graphics-types v0.1.3
+bitflags v1.3.2
+core-foundation v0.9.4 (*)
+libc v0.2.189
+foreign-types v0.5.0
+foreign-types-macros v0.2.4 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.5 (*)
+foreign-types-shared v0.3.1
+libc v0.2.189
+cursor-icon v1.2.0
+dpi v0.1.2
+objc2 v0.5.2 (*)
+objc2-app-kit v0.2.2
+bitflags v2.13.2
+objc2 v0.5.2 (*)
+objc2-foundation v0.2.2
+bitflags v2.13.2
+block2 v0.5.1 (*)
+dispatch v0.2.0
+objc2 v0.5.2 (*)
+objc2-foundation v0.2.2 (*)
+raw-window-handle v0.6.2
+smol_str v0.2.2
+tracing v0.1.44
+pin-project-lite v0.2.17
+tracing-core v0.1.36

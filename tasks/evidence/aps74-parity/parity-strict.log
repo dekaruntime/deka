@@ -1,0 +1,32 @@
+COMMAND: ['cargo', 'clippy', '--release', '--locked', '-p', 'deka-ui', '-p', 'deka-ui-macros', '--all-targets', '--all-features', '--no-deps', '--', '-D', 'warnings']
+   Compiling deka_native_ir v0.61.0 (/Volumes/Projects/codex/deka/crates/deka_native_ir)
+warning: unreachable pattern
+    --> crates/deka_syntax/src/typeck/expr.rs:4148:13
+     |
+4148 |             _ => {
+     |             ^ no value can reach this
+     |
+note: multiple earlier patterns match some of the same values
+    --> crates/deka_syntax/src/typeck/expr.rs:4148:13
+     |
+3724 |             Add => {
+     |             --- matches some of the same values
+...
+3760 |             Sub | Mul | Div | Mod => {
+     |             --------------------- matches some of the same values
+...
+3774 |             BitAnd | BitOr | BitXor | Shl | Shr => {
+     |             ----------------------------------- matches some of the same values
+...
+3783 |             Eq | Ne | Lt | Le | Gt | Ge => {
+     |             --------------------------- matches some of the same values
+...
+4148 |             _ => {
+     |             ^ ...and 4 other patterns collectively make this unreachable
+     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: `deka_syntax` (lib) generated 1 warning
+warning: `deka_syntax` (lib) generated 1 warning (1 duplicate)
+   Compiling deka-ui-macros v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui_macros)
+    Checking deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+    Finished `release` profile [optimized] target(s) in 3.62s

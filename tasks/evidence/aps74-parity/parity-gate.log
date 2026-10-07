@@ -1,0 +1,144 @@
+COMMAND: ['cargo', 'test', '--release', '--locked', '-p', 'deka-ui', '--no-default-features', '--test', 'tour_parity', '--', '--nocapture']
+warning: unreachable pattern
+    --> crates/deka_syntax/src/typeck/expr.rs:4148:13
+     |
+4148 |             _ => {
+     |             ^ no value can reach this
+     |
+note: multiple earlier patterns match some of the same values
+    --> crates/deka_syntax/src/typeck/expr.rs:4148:13
+     |
+3724 |             Add => {
+     |             --- matches some of the same values
+...
+3760 |             Sub | Mul | Div | Mod => {
+     |             --------------------- matches some of the same values
+...
+3774 |             BitAnd | BitOr | BitXor | Shl | Shr => {
+     |             ----------------------------------- matches some of the same values
+...
+3783 |             Eq | Ne | Lt | Le | Gt | Ge => {
+     |             --------------------------- matches some of the same values
+...
+4148 |             _ => {
+     |             ^ ...and 4 other patterns collectively make this unreachable
+     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: `deka_syntax` (lib) generated 1 warning
+   Compiling deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+    Finished `release` profile [optimized] target(s) in 3.72s
+     Running tests/tour_parity.rs (.target/release/deps/tour_parity-1d6e584917d747d3)
+
+running 28 tests
+test every_original_lesson_has_a_runnable_rust_twin_and_a_gate ... ok
+named-values: (560.0, 480.0, 1.0), reduced=false, 3 complete scene comparisons, every handler exercised
+hello-world: (560.0, 480.0, 1.0), reduced=false, 3 complete scene comparisons, every handler exercised
+first-function: (560.0, 480.0, 1.0), reduced=false, 3 complete scene comparisons, every handler exercised
+booleans: (560.0, 480.0, 1.0), reduced=false, 3 complete scene comparisons, every handler exercised
+decisions: (560.0, 480.0, 1.0), reduced=false, 3 complete scene comparisons, every handler exercised
+comments: (560.0, 480.0, 1.0), reduced=false, 3 complete scene comparisons, every handler exercised
+named-values: (360.0, 640.0, 2.0), reduced=false, 3 complete scene comparisons, every handler exercised
+hello-world: (360.0, 640.0, 2.0), reduced=false, 3 complete scene comparisons, every handler exercised
+arrays: (560.0, 480.0, 1.0), reduced=false, 3 complete scene comparisons, every handler exercised
+decisions: (360.0, 640.0, 2.0), reduced=false, 3 complete scene comparisons, every handler exercised
+hello-world: (560.0, 480.0, 1.0), reduced=true, 3 complete scene comparisons, every handler exercised
+named-values: (560.0, 480.0, 1.0), reduced=true, 3 complete scene comparisons, every handler exercised
+booleans: (360.0, 640.0, 2.0), reduced=false, 3 complete scene comparisons, every handler exercised
+test hello_world ... ok
+first-function: (360.0, 640.0, 2.0), reduced=false, 3 complete scene comparisons, every handler exercised
+comments: (360.0, 640.0, 2.0), reduced=false, 3 complete scene comparisons, every handler exercised
+test named_values ... ok
+decisions: (560.0, 480.0, 1.0), reduced=true, 3 complete scene comparisons, every handler exercised
+test decisions ... ok
+booleans: (560.0, 480.0, 1.0), reduced=true, 3 complete scene comparisons, every handler exercised
+test booleans ... ok
+comments: (560.0, 480.0, 1.0), reduced=true, 3 complete scene comparisons, every handler exercised
+test comments ... ok
+first-function: (560.0, 480.0, 1.0), reduced=true, 3 complete scene comparisons, every handler exercised
+test first_function ... ok
+components: (560.0, 480.0, 1.0), reduced=false, 3 complete scene comparisons, every handler exercised
+numbers: (560.0, 480.0, 1.0), reduced=false, 3 complete scene comparisons, every handler exercised
+strings: (560.0, 480.0, 1.0), reduced=false, 3 complete scene comparisons, every handler exercised
+lists: (560.0, 480.0, 1.0), reduced=false, 11 complete scene comparisons, every handler exercised
+arrays: (360.0, 640.0, 2.0), reduced=false, 3 complete scene comparisons, every handler exercised
+strings: (360.0, 640.0, 2.0), reduced=false, 3 complete scene comparisons, every handler exercised
+control-flow: (560.0, 480.0, 1.0), reduced=false, 11 complete scene comparisons, every handler exercised
+arrays: (560.0, 480.0, 1.0), reduced=true, 3 complete scene comparisons, every handler exercised
+test arrays ... ok
+strings: (560.0, 480.0, 1.0), reduced=true, 3 complete scene comparisons, every handler exercised
+test strings ... ok
+functions: (560.0, 480.0, 1.0), reduced=false, 11 complete scene comparisons, every handler exercised
+numbers: (360.0, 640.0, 2.0), reduced=false, 3 complete scene comparisons, every handler exercised
+components: (360.0, 640.0, 2.0), reduced=false, 3 complete scene comparisons, every handler exercised
+numbers: (560.0, 480.0, 1.0), reduced=true, 3 complete scene comparisons, every handler exercised
+test numbers ... ok
+layout: (560.0, 480.0, 1.0), reduced=false, 11 complete scene comparisons, every handler exercised
+components: (560.0, 480.0, 1.0), reduced=true, 3 complete scene comparisons, every handler exercised
+test components ... ok
+keyframes: (560.0, 480.0, 1.0), reduced=false, 21 complete scene comparisons, every handler exercised
+lists: (360.0, 640.0, 2.0), reduced=false, 11 complete scene comparisons, every handler exercised
+counter: (560.0, 480.0, 1.0), reduced=false, 15 complete scene comparisons, every handler exercised
+values: (560.0, 480.0, 1.0), reduced=false, 11 complete scene comparisons, every handler exercised
+spring: (560.0, 480.0, 1.0), reduced=false, 21 complete scene comparisons, every handler exercised
+toast: (560.0, 480.0, 1.0), reduced=false, 21 complete scene comparisons, every handler exercised
+layout-motion: (560.0, 480.0, 1.0), reduced=false, 21 complete scene comparisons, every handler exercised
+lists: (560.0, 480.0, 1.0), reduced=true, 11 complete scene comparisons, every handler exercised
+test lists ... ok
+menu: (560.0, 480.0, 1.0), reduced=false, 26 complete scene comparisons, every handler exercised
+stagger: (560.0, 480.0, 1.0), reduced=false, 21 complete scene comparisons, every handler exercised
+grow: (560.0, 480.0, 1.0), reduced=false, 21 complete scene comparisons, every handler exercised
+presence: (560.0, 480.0, 1.0), reduced=false, 21 complete scene comparisons, every handler exercised
+control-flow: (360.0, 640.0, 2.0), reduced=false, 11 complete scene comparisons, every handler exercised
+bindings: (560.0, 480.0, 1.0), reduced=false, 19 complete scene comparisons, every handler exercised
+functions: (360.0, 640.0, 2.0), reduced=false, 11 complete scene comparisons, every handler exercised
+fade: (560.0, 480.0, 1.0), reduced=false, 26 complete scene comparisons, every handler exercised
+control-flow: (560.0, 480.0, 1.0), reduced=true, 11 complete scene comparisons, every handler exercised
+test control_flow ... ok
+functions: (560.0, 480.0, 1.0), reduced=true, 11 complete scene comparisons, every handler exercised
+test functions ... ok
+values: (360.0, 640.0, 2.0), reduced=false, 11 complete scene comparisons, every handler exercised
+values: (560.0, 480.0, 1.0), reduced=true, 11 complete scene comparisons, every handler exercised
+test values ... ok
+layout: (360.0, 640.0, 2.0), reduced=false, 11 complete scene comparisons, every handler exercised
+keyframes: (360.0, 640.0, 2.0), reduced=false, 21 complete scene comparisons, every handler exercised
+spring: (360.0, 640.0, 2.0), reduced=false, 21 complete scene comparisons, every handler exercised
+counter: (360.0, 640.0, 2.0), reduced=false, 15 complete scene comparisons, every handler exercised
+toast: (360.0, 640.0, 2.0), reduced=false, 21 complete scene comparisons, every handler exercised
+layout-motion: (360.0, 640.0, 2.0), reduced=false, 21 complete scene comparisons, every handler exercised
+layout: (560.0, 480.0, 1.0), reduced=true, 11 complete scene comparisons, every handler exercised
+test layout ... ok
+transforms: (560.0, 480.0, 1.0), reduced=false, 26 complete scene comparisons, every handler exercised
+menu: (360.0, 640.0, 2.0), reduced=false, 26 complete scene comparisons, every handler exercised
+stagger: (360.0, 640.0, 2.0), reduced=false, 21 complete scene comparisons, every handler exercised
+keyframes: (560.0, 480.0, 1.0), reduced=true, 21 complete scene comparisons, every handler exercised
+test keyframes ... ok
+spring: (560.0, 480.0, 1.0), reduced=true, 21 complete scene comparisons, every handler exercised
+test spring ... ok
+counter: (560.0, 480.0, 1.0), reduced=true, 15 complete scene comparisons, every handler exercised
+test counter ... ok
+toast: (560.0, 480.0, 1.0), reduced=true, 21 complete scene comparisons, every handler exercised
+test toast ... ok
+grow: (360.0, 640.0, 2.0), reduced=false, 21 complete scene comparisons, every handler exercised
+presence: (360.0, 640.0, 2.0), reduced=false, 21 complete scene comparisons, every handler exercised
+layout-motion: (560.0, 480.0, 1.0), reduced=true, 21 complete scene comparisons, every handler exercised
+test layout_motion ... ok
+menu: (560.0, 480.0, 1.0), reduced=true, 26 complete scene comparisons, every handler exercised
+test menu ... ok
+stagger: (560.0, 480.0, 1.0), reduced=true, 21 complete scene comparisons, every handler exercised
+test stagger ... ok
+presence: (560.0, 480.0, 1.0), reduced=true, 21 complete scene comparisons, every handler exercised
+test presence ... ok
+grow: (560.0, 480.0, 1.0), reduced=true, 21 complete scene comparisons, every handler exercised
+test grow ... ok
+fade: (360.0, 640.0, 2.0), reduced=false, 26 complete scene comparisons, every handler exercised
+bindings: (360.0, 640.0, 2.0), reduced=false, 19 complete scene comparisons, every handler exercised
+bindings: (560.0, 480.0, 1.0), reduced=true, 19 complete scene comparisons, every handler exercised
+test bindings ... ok
+fade: (560.0, 480.0, 1.0), reduced=true, 26 complete scene comparisons, every handler exercised
+test fade ... ok
+transforms: (360.0, 640.0, 2.0), reduced=false, 26 complete scene comparisons, every handler exercised
+transforms: (560.0, 480.0, 1.0), reduced=true, 26 complete scene comparisons, every handler exercised
+test transforms ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+

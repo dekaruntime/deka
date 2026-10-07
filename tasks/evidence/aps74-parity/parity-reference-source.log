@@ -1,0 +1,1 @@
+COMMAND: ['git', 'diff', '--exit-code', 'codex/shared-store-aps74', '--', 'crates/deka_vm', 'tests/corpus-passing.txt', 'crates/deka_fmt/tests/fixtures/tour', 'run.sh']

@@ -1926,6 +1926,8 @@ dependencies = [
  "deka-ui-macros",
  "deka_native_ir",
  "deka_native_ui",
+ "deka_vm",
+ "serde_json",
 ]
 
 [[package]]

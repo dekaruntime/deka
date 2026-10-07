@@ -1,0 +1,20 @@
+use deka_ui::prelude::*;
+
+#[component]
+pub fn App() -> View {
+    let mut count = signal(0);
+    view! {<view className="flex flex-col gap-4 p-6 bg-[#F3EFE3] text-[#1A1611]">
+        <span className="text-2xl">"Deka, native."</span>
+        <span>"The same UI, inside your browser."</span>
+        <div className="flex flex-row gap-4">
+            <button className="p-4 rounded-lg bg-[#0C8B43] text-[#ffffff]" onClick={move |_| count += 1}>"Add one"</button>
+            <button className="p-4 rounded-lg bg-[#5946AD] text-[#ffffff]" onClick={move |_| count -= 1}>"Subtract one"</button>
+        </div>
+        <span className="text-xl">"Count: {count}"</span>
+    </view>}
+}
+
+#[cfg(not(test))]
+fn main() {
+    deka_ui::launch(App);
+}
