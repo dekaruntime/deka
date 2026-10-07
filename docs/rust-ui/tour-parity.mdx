@@ -43,3 +43,5 @@ re-entry at 2000ms, stagger boundaries, spring settling and repeated/alternated
 keyframes. The native CI workflow runs this gate when either authoring path or
 the renderer changes. A mismatch reports its lesson, viewport, timestamp and
 first differing scene field; the comparison does not relax visual differences.
+
+The gate inventories handlers from rendered scene targets. Every scripted click must change a complete scene independently on both sides: isolated clicked and unclicked renderer histories are compared at equal timestamps, so autonomous animation cannot disguise a no-op. This effect audit enables motion even for reduced-motion cases to observe intentional keyframe toggles; the main scene comparisons continue to use the actual configuration's motion policy. Selection lessons alternate buttons so each script step changes the selected value. Comments cannot inflate handler coverage.

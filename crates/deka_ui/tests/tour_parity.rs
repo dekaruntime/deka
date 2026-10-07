@@ -1,4 +1,5 @@
 //! Complete scene equality against the unchanged DekaScript tour/VM reference.
+use deka_native_ir::Node;
 use deka_native_ui::scene::{Renderer, Scene};
 use deka_ui::UiApp;
 use deka_vm::{Hosts, compiler, ui::UiSession};
@@ -182,13 +183,38 @@ impl Pair {
             (vm_hit.id.as_str(), vm_hit.handler),
             (rust_hit.id.as_str(), rust_hit.handler)
         );
+        let vm_before = self.vm.tree().clone();
+        let rust_before = self.rust.tree();
         self.vm.click(vm_hit.handler).unwrap();
-        self.rust.dispatch(rust_hit.handler);
+        assert!(self.rust.dispatch(rust_hit.handler));
+        self.assert_click_effect(&vm_before, self.vm.tree(), handler, "VM");
+        self.assert_click_effect(&rust_before, &self.rust.tree(), handler, "Rust");
         self.frame(time);
+    }
+    fn assert_click_effect(&self, before: &Node, after: &Node, handler: usize, side: &str) {
+        let (width, height, scale) = self.viewport;
+        // Two isolated renderer histories start with the exact same authored
+        // tree. Observe the clicked history against the unclicked history at
+        // equal timestamps. Normal motion makes keyframe toggles observable
+        // even in a reduced-motion configuration; the real histories above
+        // still prove exact parity with that configuration's motion policy.
+        let idle = Renderer::new();
+        let clicked = Renderer::new();
+        idle.render_at(before, width, height, scale, 0., false);
+        clicked.render_at(before, width, height, scale, 0., false);
+        clicked.render_at(after, width, height, scale, 0., false);
+        let changed = [0., 100., 350.].into_iter().any(|time| {
+            serialized(&idle.render_at(before, width, height, scale, time, false))
+                != serialized(&clicked.render_at(after, width, height, scale, time, false))
+        });
+        assert!(
+            changed,
+            "{}: {side} scripted click handler {handler} changed no scene",
+            self.name
+        );
     }
 }
 fn parity(name: &'static str, source: &str, app: fn() -> UiApp, motion: bool) {
-    let handlers = source.matches("onClick=").count();
     for (viewport, reduced) in [
         ((560., 480., 1.), false),
         ((360., 640., 2.), false),
@@ -205,23 +231,30 @@ fn parity(name: &'static str, source: &str, app: fn() -> UiApp, motion: bool) {
             reduced,
             comparisons: 0,
         };
-        pair.frame(0.);
+        let (scene, _) = pair.frame(0.);
+        let handlers: Vec<_> = scene
+            .targets
+            .iter()
+            .map(|target| target.handler)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         pair.frame(16.);
-        if handlers > 0 {
+        if !handlers.is_empty() {
             if motion {
-                pair.click(0, 100.);
+                pair.click(handlers[0], 100.);
                 for t in [125., 220.] {
                     pair.frame(t);
                 }
-                pair.click(0, 220.); // Retarget before the first motion finishes.
+                pair.click(handlers[0], 220.); // Retarget before the first motion finishes.
                 for t in [225., 350., 600., 1200., 2000.] {
                     pair.frame(t);
                 }
-                pair.click(0, 2000.); // Re-enter after exit, preserving identity rules.
+                pair.click(handlers[0], 2000.); // Re-enter after exit, preserving identity rules.
                 for t in [2120., 2240., 2500., 3400., 4000.] {
                     pair.frame(t);
                 }
-                for handler in 1..handlers {
+                for &handler in handlers.iter().skip(1) {
                     let time = 5000. + handler as f64 * 2000.;
                     pair.click(handler, time);
                     for delta in [120., 350., 1000.] {
@@ -229,14 +262,17 @@ fn parity(name: &'static str, source: &str, app: fn() -> UiApp, motion: bool) {
                     }
                 }
             } else {
-                pair.click(0, 100.);
-                pair.click(0, 200.);
-                for handler in 0..handlers {
-                    pair.click(handler, 300. + handler as f64 * 100.);
+                // Selection lessons have intentionally idempotent buttons.
+                // Alternate targets instead of scripting same-value clicks.
+                for (step, &handler) in handlers
+                    .iter()
+                    .cycle()
+                    .take(2 * handlers.len() + 2)
+                    .enumerate()
+                {
+                    pair.click(handler, 100. + step as f64 * 100.);
                 }
-                for handler in (0..handlers).rev() {
-                    pair.click(handler, 1000. + (handlers - handler) as f64 * 100.);
-                }
+
             }
         }
         pair.frame(20000.);
@@ -284,4 +320,27 @@ lessons! {
     toast: "toast" => true,
     transforms: "transforms" => true,
     values: "values" => false,
+}
+
+#[test]
+fn comments_cannot_inflate_the_rendered_handler_inventory() {
+    let source = include_str!("../../deka_fmt/tests/fixtures/tour/counter.dsx").to_owned()
+        + "\n// onClick= comment, not a handler\n// onClick= another comment\n";
+    parity(
+        "comment-targets",
+        &source,
+        || UiApp::new(counter::App),
+        false,
+    );
+}
+
+#[test]
+#[should_panic(expected = "scripted click handler 0 changed no scene")]
+fn matching_noop_handlers_on_both_sides_are_rejected() {
+    parity(
+        "no-op",
+        "export fn App(){return (<view><button onClick={fn(){}}>Same</button></view>);}",
+        || UiApp::new(|| deka_ui::view! {<view><button onClick={|_| {}}>"Same"</button></view>}),
+        false,
+    );
 }
