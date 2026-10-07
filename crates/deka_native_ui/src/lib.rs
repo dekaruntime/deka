@@ -86,6 +86,9 @@ pub trait Application: 'static {
     fn text_input(&self, _id: &str, _value: String) -> bool {
         false
     }
+    fn context_menu(&self, _id: &str, _x: f32, _y: f32) -> bool {
+        false
+    }
     fn key_input(&self, _id: &str, _key: String) -> bool {
         false
     }

@@ -19,6 +19,7 @@ enum Request {
         factory: Factory,
     },
     Close(WindowToken),
+    Service(deka_native_ui::window::ServiceRequest),
 }
 #[derive(Clone, Copy, PartialEq)]
 enum State {
@@ -28,6 +29,7 @@ enum State {
 }
 struct Manager {
     alive: Cell<bool>,
+    scope: crate::reactive::WeakScope,
     requests: RefCell<Vec<Request>>,
     states: RefCell<BTreeMap<WindowToken, State>>,
     windows: RefCell<BTreeMap<WindowToken, std::sync::Weak<NativeWindow>>>,
@@ -47,6 +49,70 @@ pub struct WindowHandle {
     manager: Weak<Manager>,
 }
 impl WindowHandle {
+    fn service(
+        &self,
+        make: impl FnOnce(crate::reactive::WeakScope) -> deka_native_ui::window::ServiceRequest,
+    ) -> Result<(), AppClosed> {
+        let manager = self
+            .manager
+            .upgrade()
+            .filter(|manager| manager.alive.get())
+            .ok_or(AppClosed)?;
+        if !manager
+            .states
+            .borrow()
+            .get(&self.id)
+            .is_some_and(|state| matches!(state, State::Pending | State::Open))
+        {
+            return Err(AppClosed);
+        }
+        manager
+            .requests
+            .borrow_mut()
+            .push(Request::Service(make(manager.scope.clone())));
+        manager.wake();
+        Ok(())
+    }
+    pub fn open_file(
+        &self,
+        options: deka_native_ui::window::FileDialogOptions,
+        complete: impl FnOnce(deka_native_ui::window::DialogResult) + 'static,
+    ) -> Result<(), AppClosed> {
+        self.file_dialog(deka_native_ui::window::DialogKind::Open, options, complete)
+    }
+    pub fn save_file(
+        &self,
+        options: deka_native_ui::window::FileDialogOptions,
+        complete: impl FnOnce(deka_native_ui::window::DialogResult) + 'static,
+    ) -> Result<(), AppClosed> {
+        self.file_dialog(deka_native_ui::window::DialogKind::Save, options, complete)
+    }
+    fn file_dialog(
+        &self,
+        kind: deka_native_ui::window::DialogKind,
+        options: deka_native_ui::window::FileDialogOptions,
+        complete: impl FnOnce(deka_native_ui::window::DialogResult) + 'static,
+    ) -> Result<(), AppClosed> {
+        self.service(|scope| {
+            let captured = crate::native_services::Captured::new(scope);
+            deka_native_ui::window::ServiceRequest::FileDialog {
+                window: self.id,
+                kind,
+                options,
+                complete: Box::new(move |result| {
+                    captured.run(|| complete(result));
+                }),
+            }
+        })
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub fn context_menu(&self, menu: crate::Menu, x: f32, y: f32) -> Result<(), AppClosed> {
+        self.service(|_| deka_native_ui::window::ServiceRequest::ContextMenu {
+            window: self.id,
+            menu: menu.0,
+            position: (x, y),
+        })
+    }
     pub fn id(&self) -> WindowToken {
         self.id
     }
@@ -76,6 +142,17 @@ impl WindowManager {
     /// Queue a window factory. The factory receives its own close capability.
     /// Signals allocated before window factories are shared app state; signals
     /// allocated inside a factory or handler belong to that window mount.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub fn app_menu(&self, menu: crate::Menu) -> Result<(), AppClosed> {
+        if !self.0.alive.get() {
+            return Err(AppClosed);
+        }
+        self.0.requests.borrow_mut().push(Request::Service(
+            deka_native_ui::window::ServiceRequest::AppMenu(menu.0),
+        ));
+        self.0.wake();
+        Ok(())
+    }
     pub fn open(
         &self,
         options: Options,
@@ -116,6 +193,7 @@ impl DesktopApp {
         let scope = Scope::new();
         let windows = WindowManager(Rc::new(Manager {
             alive: Cell::new(true),
+            scope: scope.downgrade(),
             requests: RefCell::new(vec![]),
             states: RefCell::new(BTreeMap::new()),
             windows: RefCell::new(BTreeMap::new()),
@@ -147,6 +225,7 @@ impl WindowController for DesktopApp {
                     }
                 }
                 Request::Close(id) => WindowRequest::Close(id),
+                Request::Service(request) => WindowRequest::Service(request),
             })
             .collect()
     }

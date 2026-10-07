@@ -113,6 +113,7 @@ try {
   await page.keyboard.press('Tab');
   assert.equal(await page.getByRole('button',{name:'Clear',exact:true}).evaluate(element=>element===document.activeElement),true);
   await page.keyboard.press('Enter');assert.equal(await input.inputValue(),'');
+  await input.click({button:'right'});assert((await page.evaluate(()=>window.scene.nodes)).some(node=>node.text==='Key: Context'),'DOM right click reaches the Rust context handler');
   const accessibilitySnapshot=await page.locator('body').ariaSnapshot();
   assert(accessibilitySnapshot.includes('textbox "Name"'));
   assert(accessibilitySnapshot.includes('textbox "Notes"'));

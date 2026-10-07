@@ -76,6 +76,30 @@ impl Scope {
         self.0.flush();
     }
 }
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+#[derive(Clone)]
+pub(crate) struct WeakScope(Weak<Core>);
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+impl WeakScope {
+    pub(crate) fn upgrade(&self) -> Option<Scope> {
+        self.0.upgrade().map(Scope)
+    }
+}
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+impl Scope {
+    pub(crate) fn downgrade(&self) -> WeakScope {
+        WeakScope(Rc::downgrade(&self.0))
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub(crate) fn current_weak() -> Option<WeakScope> {
+        CURRENT.with(|current| {
+            current
+                .borrow()
+                .as_ref()
+                .map(|core| WeakScope(Rc::downgrade(core)))
+        })
+    }
+}
 struct Context(Option<Rc<Core>>);
 impl Drop for Context {
     fn drop(&mut self) {

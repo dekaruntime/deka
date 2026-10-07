@@ -12,6 +12,9 @@ default = []
 # platform, so building needs no Metal, Vulkan or DirectX toolchain.
 gpu = [
     "dep:winit",
+    "dep:rfd",
+    "dep:muda",
+    "dep:windows-sys",
     "dep:arboard",
     "dep:accesskit",
     "dep:accesskit_winit",
@@ -44,6 +47,7 @@ serde = { version = "1", features = ["derive"] }
 taffy = { version = "=0.9.0", default-features = false, features = ["std", "taffy_tree", "flexbox"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd = { version = "=0.17.2", optional = true }
 rodio = { version = "=0.21.1", default-features = false, features = ["playback"], optional = true }
 unicode-segmentation = { version = "1.13", optional = true }
 accesskit = { version = "=0.24.1", optional = true }
@@ -70,3 +74,9 @@ libc = { version = "0.2", optional = true }
 [[example]]
 name = "portfolio-world"
 required-features = ["world-audio"]
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+muda = { version = "=0.21.1", default-features = false, optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"], optional = true }

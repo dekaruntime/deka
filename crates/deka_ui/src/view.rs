@@ -18,12 +18,14 @@ pub enum EventKind {
     Click,
     Input,
     KeyDown,
+    ContextMenu,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     Click,
     Input(String),
     KeyDown(String),
+    ContextMenu { x: f32, y: f32 },
 }
 impl Event {
     pub fn kind(&self) -> EventKind {
@@ -31,6 +33,7 @@ impl Event {
             Self::Click => EventKind::Click,
             Self::Input(_) => EventKind::Input,
             Self::KeyDown(_) => EventKind::KeyDown,
+            Self::ContextMenu { .. } => EventKind::ContextMenu,
         }
     }
 }
@@ -472,6 +475,25 @@ impl Context {
         let previous = self.error_location.replace((path.to_vec(), binding.into()));
         let _location = Location(self, Some(previous));
         crate::retained::with_session(self.session_id, run)
+    }
+    #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+    pub(crate) fn native_event<R>(&self, scope: &Scope, run: impl FnOnce() -> R) -> R {
+        self.owned_event(scope, &[], "native handler", run)
+    }
+    fn owned_event<R>(
+        &self,
+        scope: &Scope,
+        path: &[usize],
+        binding: &str,
+        run: impl FnOnce() -> R,
+    ) -> R {
+        let (result, owner) = self.at(path, binding, || {
+            scope.batch(|| crate::reactive::owned(run))
+        });
+        if !owner.is_empty() {
+            self.event_owners.borrow_mut().push(owner);
+        }
+        result
     }
     fn changed(&self, changed: bool) {
         if changed {
@@ -1036,13 +1058,8 @@ impl UiApp {
             .get(&token)
             .and_then(|listener| listener.anchor.borrow().as_ref().map(NodeHandle::slot))
             .unwrap_or_default();
-        let (_, owner) = self.context.at(&path, "event", || {
-            self.scope
-                .batch(|| crate::reactive::owned(|| callback.borrow_mut()(event)))
-        });
-        if !owner.is_empty() {
-            self.context.event_owners.borrow_mut().push(owner);
-        }
+        self.context
+            .owned_event(&self.scope, &path, "event", || callback.borrow_mut()(event));
         if self.context.patches.get() != before {
             self.patch_passes.set(self.patch_passes.get() + 1);
         }
@@ -1191,6 +1208,42 @@ impl Application for UiApp {
             });
         }
         controls
+    }
+    fn context_menu(&self, id: &str, x: f32, y: f32) -> bool {
+        if self
+            .semantics()
+            .iter()
+            .any(|node| node.id == id && (node.disabled || node.hidden))
+        {
+            return false;
+        }
+        fn find(node: &NodeHandle, id: &str) -> Option<NodeHandle> {
+            if node.renderer_id() == id {
+                return Some(node.clone());
+            }
+            node.all_children().iter().find_map(|node| find(node, id))
+        }
+        let mut node = self
+            .context
+            .tree
+            .borrow()
+            .root
+            .as_ref()
+            .and_then(|node| find(node, id));
+        while let Some(current) = node {
+            if current
+                .attribute("disabled")
+                .is_some_and(|value| value != "false")
+                || current.attribute("aria-hidden").as_deref() == Some("true")
+            {
+                return false;
+            }
+            if self.dispatch_to(&current.renderer_id(), Event::ContextMenu { x, y }) {
+                return true;
+            }
+            node = current.parent();
+        }
+        false
     }
     fn text_input(&self, id: &str, value: String) -> bool {
         fn find(node: &NodeHandle, id: &str) -> Option<NodeHandle> {
