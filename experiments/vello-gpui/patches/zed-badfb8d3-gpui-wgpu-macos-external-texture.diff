@@ -1,0 +1,507 @@
+diff --git a/crates/gpui/src/scene.rs b/crates/gpui/src/scene.rs
+index 160587a4ad..5b988070d2 100644
+--- a/crates/gpui/src/scene.rs
++++ b/crates/gpui/src/scene.rs
+@@ -770,7 +770,21 @@ pub struct PaintSurface {
+     pub bounds: Bounds<ScaledPixels>,
+     pub content_mask: ContentMask<ScaledPixels>,
+     #[cfg(any(target_os = "macos", target_os = "ios"))]
+-    pub image_buffer: core_video::pixel_buffer::CVPixelBuffer,
++    pub image_buffer: Option<core_video::pixel_buffer::CVPixelBuffer>,
++    /// A renderer-native texture (e.g. a `wgpu::TextureView` for gpui_wgpu),
++    /// drawn as premultiplied RGBA. Renderers that do not know the type skip it.
++    pub external_texture: Option<ExternalTexture>,
++}
++
++/// An opaque, renderer-native texture handed to GPUI by the application.
++/// The renderer downcasts it to its own type (gpui_wgpu: `wgpu::TextureView`).
++#[derive(Clone)]
++pub struct ExternalTexture(pub std::sync::Arc<dyn std::any::Any + Send + Sync>);
++
++impl std::fmt::Debug for ExternalTexture {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.write_str("ExternalTexture")
++    }
+ }
+ 
+ impl From<PaintSurface> for Primitive {
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 259a451ab1..7bdc70a6b3 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -5029,7 +5029,30 @@ impl Window {
+             order: 0,
+             bounds,
+             content_mask,
+-            image_buffer,
++            image_buffer: Some(image_buffer),
++            external_texture: None,
++        });
++    }
++
++    /// Paint a renderer-native texture (premultiplied RGBA) at the current z-index.
++    /// With gpui_wgpu the payload must be a `wgpu::TextureView` created on GPUI's
++    /// own device; other renderers ignore it.
++    ///
++    /// This method should only be called as part of the paint phase of element drawing.
++    pub fn paint_external_texture(&mut self, bounds: Bounds<Pixels>, texture: crate::ExternalTexture) {
++        use crate::PaintSurface;
++
++        self.invalidator.debug_assert_paint();
++
++        let bounds = self.snap_bounds(bounds);
++        let content_mask = self.snapped_content_mask();
++        self.next_frame.scene.insert_primitive(PaintSurface {
++            order: 0,
++            bounds,
++            content_mask,
++            #[cfg(any(target_os = "macos", target_os = "ios"))]
++            image_buffer: None,
++            external_texture: Some(texture),
+         });
+     }
+ 
+diff --git a/crates/gpui_apple/src/metal_renderer.rs b/crates/gpui_apple/src/metal_renderer.rs
+index a2a78ed303..c33a890097 100644
+--- a/crates/gpui_apple/src/metal_renderer.rs
++++ b/crates/gpui_apple/src/metal_renderer.rs
+@@ -1192,35 +1192,38 @@ impl MetalRenderer {
+         );
+ 
+         for (index, surface) in surfaces.iter().enumerate() {
++            let Some(image_buffer) = surface.image_buffer.as_ref() else {
++                continue;
++            };
+             let texture_size = size(
+-                DevicePixels::from(surface.image_buffer.get_width() as i32),
+-                DevicePixels::from(surface.image_buffer.get_height() as i32),
++                DevicePixels::from(image_buffer.get_width() as i32),
++                DevicePixels::from(image_buffer.get_height() as i32),
+             );
+ 
+             assert_eq!(
+-                surface.image_buffer.get_pixel_format(),
++                image_buffer.get_pixel_format(),
+                 kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+             );
+ 
+             let y_texture = self
+                 .core_video_texture_cache
+                 .create_texture_from_image(
+-                    surface.image_buffer.as_concrete_TypeRef(),
++                    image_buffer.as_concrete_TypeRef(),
+                     None,
+                     MTLPixelFormat::R8Unorm,
+-                    surface.image_buffer.get_width_of_plane(0),
+-                    surface.image_buffer.get_height_of_plane(0),
++                    image_buffer.get_width_of_plane(0),
++                    image_buffer.get_height_of_plane(0),
+                     0,
+                 )
+                 .unwrap();
+             let cb_cr_texture = self
+                 .core_video_texture_cache
+                 .create_texture_from_image(
+-                    surface.image_buffer.as_concrete_TypeRef(),
++                    image_buffer.as_concrete_TypeRef(),
+                     None,
+                     MTLPixelFormat::RG8Unorm,
+-                    surface.image_buffer.get_width_of_plane(1),
+-                    surface.image_buffer.get_height_of_plane(1),
++                    image_buffer.get_width_of_plane(1),
++                    image_buffer.get_height_of_plane(1),
+                     1,
+                 )
+                 .unwrap();
+diff --git a/crates/gpui_macos/Cargo.toml b/crates/gpui_macos/Cargo.toml
+index e3cb453515..cf26af8b26 100644
+--- a/crates/gpui_macos/Cargo.toml
++++ b/crates/gpui_macos/Cargo.toml
+@@ -19,6 +19,8 @@ test-support = ["gpui/test-support", "gpui_apple/test-support"]
+ runtime_shaders = ["gpui_apple/runtime_shaders"]
+ font-kit = ["dep:font-kit"]
+ screen-capture = ["gpui/screen-capture"]
++# Spike (deka): render through gpui_wgpu (wgpu, Metal backend).
++wgpu = ["dep:gpui_wgpu", "dep:metal", "dep:objc2-quartz-core"]
+ 
+ [dependencies]
+ gpui.workspace = true
+@@ -62,6 +64,9 @@ semver.workspace = true
+ smallvec.workspace = true
+ strum.workspace = true
+ uuid.workspace = true
++gpui_wgpu = { workspace = true, optional = true }
++metal = { workspace = true, optional = true }
++objc2-quartz-core = { workspace = true, optional = true }
+ 
+ # The macOS test-only window implementation depends on test-only APIs from both
+ # GPUI and the extracted renderer. A dependency does not inherit this crate's
+diff --git a/crates/gpui_macos/src/gpui_macos.rs b/crates/gpui_macos/src/gpui_macos.rs
+index 6e2d04dc81..58d6f26f94 100644
+--- a/crates/gpui_macos/src/gpui_macos.rs
++++ b/crates/gpui_macos/src/gpui_macos.rs
+@@ -14,7 +14,29 @@ mod system_notifications;
+ #[cfg(feature = "screen-capture")]
+ mod screen_capture;
+ 
++#[cfg(not(feature = "wgpu"))]
+ use gpui_apple::metal_renderer as renderer;
++// Spike (deka): GPUI on wgpu's Metal backend instead of the Metal renderer.
++#[cfg(feature = "wgpu")]
++mod wgpu_renderer_glue;
++#[cfg(feature = "wgpu")]
++use wgpu_renderer_glue as renderer;
++
++/// Spike (deka): wall time of each `renderer.draw(scene)` call in ms, drained
++/// by the caller. Used to compare GPUI's own frame cost on Metal vs wgpu.
++pub mod spike_draw_timings {
++    use std::sync::Mutex;
++    static TIMINGS: Mutex<Vec<f64>> = Mutex::new(Vec::new());
++    pub(crate) fn record(ms: f64) {
++        if let Ok(mut t) = TIMINGS.lock() {
++            t.push(ms);
++        }
++    }
++    /// Take all recorded draw timings (ms).
++    pub fn take() -> Vec<f64> {
++        TIMINGS.lock().map(|mut t| std::mem::take(&mut *t)).unwrap_or_default()
++    }
++}
+ 
+ pub mod metal_renderer {
+     pub use gpui_apple::metal_renderer::{PathRasterizationVertex, PathSprite, SurfaceBounds};
+diff --git a/crates/gpui_macos/src/wgpu_renderer_glue.rs b/crates/gpui_macos/src/wgpu_renderer_glue.rs
+new file mode 100644
+index 0000000000..1b7ea87589
+--- /dev/null
++++ b/crates/gpui_macos/src/wgpu_renderer_glue.rs
+@@ -0,0 +1,133 @@
++//! Spike (deka): render a macOS GPUI window through `gpui_wgpu` (wgpu on its
++//! Metal backend) instead of `gpui_apple::metal_renderer`. Selected by the
++//! `wgpu` feature; exposes the same surface the window code calls.
++//!
++//! The window's backing layer is a CAMetalLayer we create here (so
++//! `makeBackingLayer` can return it), and the wgpu surface is built from that
++//! layer. Creating the surface from the NSView instead would make
++//! raw-window-metal call `setWantsLayer:` before the window state exists.
++
++use std::ffi::c_void;
++use std::sync::Arc;
++
++use gpui::{DevicePixels, Scene, Size};
++use gpui_wgpu::{WgpuAtlas, WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
++use foreign_types::ForeignType;
++use metal::{CAMetalLayer, MetalLayer, MetalLayerRef};
++use parking_lot::Mutex;
++
++/// One wgpu context (device + queue) shared by every window of the app.
++pub type Context = Arc<Mutex<Option<WgpuContext>>>;
++
++pub struct Renderer {
++    layer: MetalLayer,
++    inner: WgpuRenderer,
++}
++
++/// # Safety
++/// Called by the window code with valid native handles (unused here).
++pub unsafe fn new_renderer(
++    context: Context,
++    _native_window: *mut c_void,
++    _native_view: *mut c_void,
++    bounds: Size<f32>,
++    transparent: bool,
++) -> Renderer {
++    let layer = MetalLayer::new();
++    layer.set_opaque(!transparent);
++    layer.set_maximum_drawable_count(3);
++    let objc2_layer: &objc2_quartz_core::CAMetalLayer = unsafe { &*layer.as_ptr().cast() };
++    objc2_layer.setAllowsNextDrawableTimeout(false);
++    objc2_layer.setNeedsDisplayOnBoundsChange(true);
++    objc2_layer.setAutoresizingMask(
++        objc2_quartz_core::CAAutoresizingMask::LayerWidthSizable
++            | objc2_quartz_core::CAAutoresizingMask::LayerHeightSizable,
++    );
++
++    let mut shared = context.lock();
++    let instance = shared
++        .as_ref()
++        .map(|c| c.instance.clone())
++        .unwrap_or_else(|| WgpuContext::instance(None));
++    let surface = match unsafe {
++        instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
++            layer.as_ptr() as *mut c_void,
++        ))
++    } {
++        Ok(surface) => surface,
++        Err(error) => fatal(&format!("wgpu surface from CAMetalLayer: {error}")),
++    };
++    let wgpu_context = match shared.as_ref() {
++        Some(c) => c.clone(),
++        None => match WgpuContext::new(instance, &surface, None) {
++            Ok(c) => {
++                *shared = Some(c.clone());
++                c
++            }
++            Err(error) => fatal(&format!("wgpu context: {error:#}")),
++        },
++    };
++    drop(shared);
++    let config = WgpuSurfaceConfig {
++        // Real drawable size arrives with the first update_drawable_size.
++        size: gpui::size(
++            DevicePixels(bounds.width.max(1.0) as i32),
++            DevicePixels(bounds.height.max(1.0) as i32),
++        ),
++        transparent,
++        preferred_present_mode: None,
++    };
++    let inner = match WgpuRenderer::new_from_surface(&wgpu_context, surface, config) {
++        Ok(r) => r,
++        Err(error) => fatal(&format!("wgpu renderer: {error:#}")),
++    };
++    Renderer { layer, inner }
++}
++
++/// Same policy as the Metal renderer: no usable GPU is fatal, but exit
++/// cleanly (a panic here would abort inside an Objective-C callback).
++fn fatal(message: &str) -> ! {
++    log::error!("{message}");
++    eprintln!("gpui_macos (wgpu): {message}");
++    std::process::exit(1);
++}
++
++impl Renderer {
++    pub fn layer(&self) -> Option<&MetalLayerRef> {
++        Some(&self.layer)
++    }
++
++    pub fn layer_ptr(&self) -> *mut CAMetalLayer {
++        self.layer.as_ptr()
++    }
++
++    pub fn sprite_atlas(&self) -> &Arc<WgpuAtlas> {
++        self.inner.sprite_atlas()
++    }
++
++    /// wgpu presents with `presentDrawable`; transactional presentation (used
++    /// by GPUI during live resize) is not wired up in this spike.
++    pub fn set_presents_with_transaction(&mut self, _presents_with_transaction: bool) {}
++
++    pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
++        self.inner.update_drawable_size(size);
++    }
++
++    pub fn update_transparency(&mut self, transparent: bool) {
++        self.layer.set_opaque(!transparent);
++        self.inner.update_transparency(transparent);
++    }
++
++    pub fn destroy(&mut self) {
++        self.inner.destroy();
++    }
++
++    pub fn draw(&mut self, scene: &Scene) {
++        self.inner.draw(scene);
++    }
++
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn render_to_image(&mut self, _scene: &Scene) -> anyhow::Result<image::RgbaImage> {
++        anyhow::bail!("render_to_image is not implemented for the wgpu spike renderer")
++    }
++}
+diff --git a/crates/gpui_macos/src/window.rs b/crates/gpui_macos/src/window.rs
+index 81d16f7bc0..081cec20d7 100644
+--- a/crates/gpui_macos/src/window.rs
++++ b/crates/gpui_macos/src/window.rs
+@@ -2112,7 +2112,9 @@ impl PlatformWindow for MacWindow {
+ 
+     fn draw(&self, scene: &gpui::Scene) {
+         let mut this = self.0.lock();
++        let start = std::time::Instant::now();
+         this.renderer.draw(scene);
++        crate::spike_draw_timings::record(start.elapsed().as_secs_f64() * 1000.0);
+     }
+ 
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+diff --git a/crates/gpui_platform/Cargo.toml b/crates/gpui_platform/Cargo.toml
+index daf154f0f1..9b2d9ee92d 100644
+--- a/crates/gpui_platform/Cargo.toml
++++ b/crates/gpui_platform/Cargo.toml
+@@ -20,6 +20,8 @@ inspector = ["gpui/inspector"]
+ test-support = ["gpui/test-support", "gpui_macos/test-support", "gpui_windows/test-support", "gpui_wgpu/test-support"]
+ screen-capture = ["gpui/screen-capture", "gpui_macos/screen-capture", "gpui_windows/screen-capture", "gpui_linux/screen-capture"]
+ runtime_shaders = ["gpui_macos/runtime_shaders"]
++# Spike (deka): macOS renders through gpui_wgpu.
++macos-wgpu = ["gpui_macos/wgpu"]
+ wayland = ["gpui_linux/wayland"]
+ x11 = ["gpui_linux/x11"]
+ 
+diff --git a/crates/gpui_wgpu/src/shaders.wgsl b/crates/gpui_wgpu/src/shaders.wgsl
+index 718cb7595d..290c9f26a7 100644
+--- a/crates/gpui_wgpu/src/shaders.wgsl
++++ b/crates/gpui_wgpu/src/shaders.wgsl
+@@ -1360,3 +1360,12 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
+ 
+     return ycbcr_to_RGB * y_cb_cr;
+ }
++
++// App-provided premultiplied RGBA texture (bound as t_y).
++@fragment
++fn fs_external_texture(input: SurfaceVarying) -> @location(0) vec4<f32> {
++    if (any(input.clip_distances < vec4<f32>(0.0))) {
++        return vec4<f32>(0.0);
++    }
++    return textureSampleLevel(t_y, s_surface, input.texture_position, 0.0);
++}
+diff --git a/crates/gpui_wgpu/src/wgpu_context.rs b/crates/gpui_wgpu/src/wgpu_context.rs
+index 4c55ef18e1..dba1318a05 100644
+--- a/crates/gpui_wgpu/src/wgpu_context.rs
++++ b/crates/gpui_wgpu/src/wgpu_context.rs
+@@ -827,3 +827,19 @@ mod tests {
+         );
+     }
+ }
++
++thread_local! {
++    static CURRENT_CONTEXT: std::cell::RefCell<Option<WgpuContext>> = const { std::cell::RefCell::new(None) };
++}
++
++pub(crate) fn set_current_context(context: WgpuContext) {
++    CURRENT_CONTEXT.with(|c| *c.borrow_mut() = Some(context));
++}
++
++/// The wgpu context (instance, adapter, device, queue) GPUI's renderer uses on
++/// this thread, once a window has been created. Apps that render with wgpu
++/// themselves (e.g. vello) create their textures on this device and hand them
++/// to `Window::paint_external_texture`.
++pub fn current_context() -> Option<WgpuContext> {
++    CURRENT_CONTEXT.with(|c| c.borrow().clone())
++}
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+index 8387528acb..87fef8dc2c 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -132,6 +132,8 @@ struct WgpuPipelines {
+     mono_sprites: wgpu::RenderPipeline,
+     subpixel_sprites: Option<wgpu::RenderPipeline>,
+     poly_sprites: wgpu::RenderPipeline,
++    /// App-provided premultiplied RGBA textures (`Window::paint_external_texture`).
++    external_textures: wgpu::RenderPipeline,
+     #[allow(dead_code)]
+     surfaces: wgpu::RenderPipeline,
+ }
+@@ -360,7 +362,6 @@ impl WgpuRenderer {
+         Self::new_from_surface(context, surface, config)
+     }
+ 
+-    #[cfg(target_family = "wasm")]
+     #[allow(clippy::arc_with_non_send_sync)]
+     pub fn new_from_surface(
+         context: &WgpuContext,
+@@ -379,6 +380,7 @@ impl WgpuRenderer {
+         compositor_gpu: Option<CompositorGpuHint>,
+         atlas: Arc<WgpuAtlas>,
+     ) -> anyhow::Result<Self> {
++        crate::wgpu_context::set_current_context(context.clone());
+         let surface_caps = surface.get_capabilities(&context.adapter);
+         let preferred_formats = [
+             wgpu::TextureFormat::Bgra8Unorm,
+@@ -930,6 +932,23 @@ impl WgpuRendererCore {
+             &shader_module,
+         );
+ 
++        let external_textures = create_pipeline(
++            "external_textures",
++            "vs_surface",
++            "fs_external_texture",
++            &layouts.globals,
++            &layouts.surfaces,
++            None,
++            wgpu::PrimitiveTopology::TriangleStrip,
++            &[Some(wgpu::ColorTargetState {
++                format: surface_format,
++                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
++                write_mask: wgpu::ColorWrites::ALL,
++            })],
++            1,
++            &shader_module,
++        );
++
+         WgpuPipelines {
+             quads,
+             shadows,
+@@ -939,6 +958,7 @@ impl WgpuRendererCore {
+             mono_sprites,
+             subpixel_sprites,
+             poly_sprites,
++            external_textures,
+             surfaces,
+         }
+     }
+@@ -1609,9 +1629,63 @@ impl WgpuRendererCore {
+                             &mut pass,
+                         )?;
+                     }
+-                    // Surfaces are macOS-only for video playback and are not
+-                    // implemented by the WGPU renderer.
+-                    PrimitiveBatch::Surfaces(_surfaces) => {}
++                    // CoreVideo surfaces (macOS video) are not implemented here;
++                    // app-provided wgpu textures are drawn directly. Same device,
++                    // same queue: the app's earlier submissions are ordered before
++                    // this one, so no fence is needed.
++                    PrimitiveBatch::Surfaces(range) => {
++                        for surface in &scene.surfaces[range] {
++                            let Some(view) = surface
++                                .external_texture
++                                .as_ref()
++                                .and_then(|t| t.0.downcast_ref::<wgpu::TextureView>())
++                            else {
++                                continue;
++                            };
++                            let resources = self.resources();
++                            let params = SurfaceParams {
++                                bounds: surface.bounds.into(),
++                                content_mask: surface.content_mask.bounds.into(),
++                            };
++                            let buffer = wgpu::util::DeviceExt::create_buffer_init(
++                                resources.device.as_ref(),
++                                &wgpu::util::BufferInitDescriptor {
++                                    label: Some("external_texture_params"),
++                                    contents: bytemuck::bytes_of(&params),
++                                    usage: wgpu::BufferUsages::UNIFORM,
++                                },
++                            );
++                            let bind_group =
++                                resources.device.create_bind_group(&wgpu::BindGroupDescriptor {
++                                    label: Some("external_texture"),
++                                    layout: &resources.bind_group_layouts.surfaces,
++                                    entries: &[
++                                        wgpu::BindGroupEntry {
++                                            binding: 0,
++                                            resource: buffer.as_entire_binding(),
++                                        },
++                                        wgpu::BindGroupEntry {
++                                            binding: 1,
++                                            resource: wgpu::BindingResource::TextureView(view),
++                                        },
++                                        wgpu::BindGroupEntry {
++                                            binding: 2,
++                                            resource: wgpu::BindingResource::TextureView(view),
++                                        },
++                                        wgpu::BindGroupEntry {
++                                            binding: 3,
++                                            resource: wgpu::BindingResource::Sampler(
++                                                &resources.atlas_sampler,
++                                            ),
++                                        },
++                                    ],
++                                });
++                            pass.set_pipeline(&resources.pipelines.external_textures);
++                            pass.set_bind_group(0, &resources.globals_bind_group, &[]);
++                            pass.set_bind_group(1, &bind_group, &[]);
++                            pass.draw(0..4, 0..1);
++                        }
++                    }
+                 }
+             }
+         }
