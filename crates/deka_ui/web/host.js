@@ -140,6 +140,13 @@ export {
   WebGLRenderer
 };
 
+let nextMount = 1
+const mounts = new Map(), pending = new Set()
+export function wake(id) {
+  if (!mounts.has(id) || pending.has(id)) return
+  pending.add(id)
+  queueMicrotask(() => { pending.delete(id); mounts.get(id)?.() })
+}
 export function mount(app, canvas, inspect = false) {
   if (!(canvas instanceof HTMLCanvasElement)) { app.free(); throw new TypeError('launch requires an HTML canvas') }
   let renderer
@@ -265,9 +272,10 @@ export function mount(app, canvas, inspect = false) {
   let dpr
   const watchDpr = () => { dpr?.removeEventListener('change',changedDpr); dpr=matchMedia(`(resolution: ${devicePixelRatio}dppx)`);dpr.addEventListener('change',changedDpr) }
   const changedDpr = () => { watchDpr(); draw() }; watchDpr()
+  const mountId = nextMount++; mounts.set(mountId, draw); app.wake_on(mountId)
   draw()
   return {dispose() {
-    if(disposed) return; disposed=true; cancelAnimationFrame(request);observer.disconnect()
+    if(disposed) return; disposed=true; mounts.delete(mountId); pending.delete(mountId); cancelAnimationFrame(request);observer.disconnect()
     window.removeEventListener('resize',draw);motion.removeEventListener('change',draw);dpr.removeEventListener('change',changedDpr)
     canvas.removeEventListener('pointerup',pointer);canvas.removeEventListener('keydown',key);canvas.removeEventListener('blur',blur)
     canvas.removeEventListener('webglcontextlost',lost);canvas.removeEventListener('webglcontextrestored',restored);canvas.removeEventListener('deka:clock',command)

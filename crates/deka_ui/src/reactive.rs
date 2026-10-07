@@ -67,6 +67,11 @@ impl Scope {
     pub fn on_error(&self, sink: impl Fn(ReactiveError) + 'static) {
         self.0.error_sink.replace(Some(Rc::new(sink)));
     }
+    pub(crate) fn ensure_error_sink(&self, sink: impl Fn(ReactiveError) + 'static) {
+        if self.0.error_sink.borrow().is_none() {
+            self.on_error(sink);
+        }
+    }
     pub fn flush(&self) {
         self.0.flush();
     }
@@ -416,7 +421,11 @@ struct Core {
     depth: Cell<usize>,
     flushing: Cell<bool>,
 }
-fn observe(kind: Kind, run: impl FnMut() + 'static) -> Effect {
+fn observe(kind: Kind, mut run: impl FnMut() + 'static) -> Effect {
+    // Reactions retain the window context in which they were registered,
+    // even when another window's event triggers this shared app scope.
+    let context = crate::retained::active_context();
+    let run = move || crate::retained::with_active(context.clone(), &mut run);
     let core = current();
     let slot = if let Some(slot) = core.free_observers.borrow_mut().pop() {
         core.observer_generations.borrow_mut()[slot] += 1;
@@ -591,6 +600,11 @@ struct Owned {
 pub(crate) struct ReactiveOwner {
     core: Weak<Core>,
     owned: Owned,
+}
+impl ReactiveOwner {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.owned.values.is_empty() && self.owned.effects.is_empty()
+    }
 }
 impl Drop for ReactiveOwner {
     fn drop(&mut self) {

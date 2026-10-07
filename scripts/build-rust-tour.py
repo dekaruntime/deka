@@ -53,9 +53,11 @@ def main():
     subprocess.run(['wasm-bindgen',str(target/'wasm32-unknown-unknown/native/deka_ui_tour.wasm'),'--target','web','--omit-default-module-path','--out-dir',str(out/'test-fixture')],check=True)
     cargo('build','--locked','--profile','native','--target','wasm32-unknown-unknown','-p','deka-ui-tour','--features','web-test','--example','web_input')
     subprocess.run(['wasm-bindgen',str(target/'wasm32-unknown-unknown/native/examples/web_input.wasm'),'--target','web','--omit-default-module-path','--out-dir',str(out/'input-fixture')],check=True)
+    cargo('build','--locked','--profile','native','--target','wasm32-unknown-unknown','-p','deka-ui-tour','--features','web-test','--example','web_shared')
+    subprocess.run(['wasm-bindgen',str(target/'wasm32-unknown-unknown/native/examples/web_shared.wasm'),'--target','web','--omit-default-module-path','--out-dir',str(out/'shared-fixture')],check=True)
     # wasm-bindgen copies its directly referenced module, not that module's
     # relative imports. Test-only wrappers share the exact production host.
-    for fixture in ['test-fixture', 'input-fixture']:
+    for fixture in ['test-fixture', 'input-fixture', 'shared-fixture']:
         for wrapper in (out/fixture).rglob('test-host.js'):
             shutil.copyfile(ROOT/'crates/deka_ui/web/host.js',wrapper.parent/'host.js')
     shutil.copyfile(ROOT/'crates/deka_native_ui/assets/OFL.txt',out/'font-OFL.txt')

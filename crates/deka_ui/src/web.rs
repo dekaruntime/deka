@@ -28,6 +28,12 @@ impl BrowserApp {
 }
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl BrowserApp {
+    #[cfg(target_arch = "wasm32")]
+    pub fn wake_on(&mut self, id: u32) {
+        use deka_native_ui::Application;
+        self.app
+            .set_waker(deka_native_ui::Waker::new(move || wake(id)));
+    }
     pub fn frame_at(
         &mut self,
         width: f32,
@@ -179,6 +185,8 @@ impl BrowserApp {
 #[cfg_attr(feature = "web-test", wasm_bindgen(module = "/web/test-host.js"))]
 #[cfg_attr(not(feature = "web-test"), wasm_bindgen(module = "/web/host.js"))]
 extern "C" {
+    #[wasm_bindgen(js_name = wake)]
+    fn wake(id: u32);
     #[wasm_bindgen(catch, js_name = mount)]
     fn mount(app: BrowserApp, canvas: &JsValue) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = reportPanic)]
