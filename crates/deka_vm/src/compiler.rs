@@ -664,6 +664,11 @@ fn lower_module<'a>(
         .iter()
         .map(|(site, op)| (*site as usize, (*op).to_owned()))
         .collect();
+    lower.native_property_setter_calls = checked
+        .native_property_setter_calls
+        .iter()
+        .map(|(site, op)| (*site as usize, (*op).to_owned()))
+        .collect();
     lower.number_math_calls = checked
         .number_math_calls
         .keys()
@@ -1066,6 +1071,23 @@ fn compile_modules(
         host_exports.native_properties.insert(
             (identity, arena.alloc_str(property)),
             (*operation, *ret.clone()),
+        );
+    }
+    for op in hosts.setters() {
+        let (_, property) = op.receiver_setter.as_ref().expect("host setter");
+        let (operation, ty) = host_exports
+            .values
+            .get_key_value(op.name.as_str())
+            .expect("host declaration");
+        let deka_syntax::typeck::Type::Function { params, .. } = ty else {
+            return Err("host setter declaration is not callable".into());
+        };
+        let deka_syntax::typeck::Type::Opaque { identity, .. } = params[0] else {
+            return Err("host setter needs an opaque receiver".into());
+        };
+        host_exports.native_property_setters.insert(
+            (identity, arena.alloc_str(property)),
+            (*operation, params[1].clone()),
         );
     }
     for op in hosts.methods().filter(|op| op.json_body) {
@@ -1497,6 +1519,7 @@ fn compile_modules(
         method_decls: BTreeMap::new(),
         struct_embeds: BTreeMap::new(),
         native_property_calls: Default::default(),
+        native_property_setter_calls: Default::default(),
         number_math_calls: Default::default(),
         type_of_calls: Default::default(),
         exception_forms: HashMap::new(),
@@ -1842,6 +1865,7 @@ struct Lower<'a> {
     /// The host registry supplies the output sink and its wire signature.
     console_outputs: std::collections::BTreeSet<&'static str>,
     native_property_calls: HashMap<usize, String>,
+    native_property_setter_calls: HashMap<usize, String>,
     number_math_calls: std::collections::BTreeSet<usize>,
     type_of_calls: std::collections::BTreeSet<usize>,
     exception_forms: HashMap<usize, ExceptionEmit>,
@@ -3125,7 +3149,24 @@ impl<'a> Lower<'a> {
                         Expr::FieldAccess { object, field, .. } if *op == BinOp::Assign => {
                             self.expr(object, c)?;
                             self.expr(right, c)?;
-                            c.emit(Op::FieldSet((*field).into()));
+                            if let Some(operation) = self
+                                .native_property_setter_calls
+                                .get(&(e as *const Expr as usize))
+                                .cloned()
+                            {
+                                let slot =
+                                    c.bind(&format!("<host setter value {}>", c.function.locals));
+                                c.emit(Op::Dup);
+                                c.emit(Op::Store(slot));
+                                c.emit(Op::Host {
+                                    operation,
+                                    arguments: 2,
+                                });
+                                c.emit(Op::Pop);
+                                c.emit(Op::Load(slot));
+                            } else {
+                                c.emit(Op::FieldSet((*field).into()));
+                            }
                         }
                         Expr::IndexAccess { object, index, .. } if *op == BinOp::Assign => {
                             self.expr(object, c)?;

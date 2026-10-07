@@ -1,0 +1,41 @@
+# Typed host property setters
+
+Rust hosts can expose writable properties on opaque resources. A setter grants a
+write to the resource; it does not make ordinary DekaScript fields mutable.
+A `const` resource handle can therefore update a registered property:
+
+```ts
+import { open } from "vm:host";
+
+fn main() string {
+    const resource = open();
+    const assigned = (resource.text = "Hello");
+    return assigned;
+}
+```
+
+This example requires a host that declares `open` and the `text` property. These
+are application host operations, not new standard-library globals.
+
+The assigned value is the assignment expression's result. The receiver evaluates
+first, then the right-hand side; both evaluate once. Aliases refer to the same
+Rust resource and observe its updated state. Writing a property never invokes
+its getter implicitly.
+
+## One declaration for checking and dispatch
+
+`HostOp::with_receiver_setter("Resource", "text")` marks an operation whose schema
+is exactly `[HostType::Handle("Resource"), value_type] -> HostType::Unit`.
+The existing registry generates its declaration, supplies the checker's writable
+property metadata, and dispatches the compiler's host-call instruction. The
+checker uses the opaque receiver's nominal identity, including imported aliases.
+Records or other opaque brands cannot acquire the setter by matching a shape.
+
+Setters must be synchronous, total operations. Async, Result, Exception, default
+arguments, global/namespace bindings and receiver-method combinations are rejected
+at registration. A paired getter must declare the same total value type;
+registration checks that agreement in either order. Getter-only properties stay
+read-only. Source type checking rejects a wrong assigned value before execution.
+
+Ordinary immutable fields retain their existing rules. This foundation does not
+add generic untyped property mutation or make every host handle writable.

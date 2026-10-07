@@ -3584,7 +3584,21 @@ impl<'a> Checker<'a> {
         right: &ast::Expr<'a>,
         span: ast::Span,
     ) -> Type<'a> {
-        let left_type = self.check_expr(left);
+        let native_setter = match (op, left) {
+            (ast::BinOp::Assign, ast::Expr::FieldAccess { object, field, .. }) => {
+                match self.check_expr(object) {
+                    Type::Opaque { identity, .. } => {
+                        self.native_property_setters.get(&(identity, field)).cloned()
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let left_type = native_setter.as_ref().map_or_else(
+            || self.check_expr(left),
+            |(_, value)| value.clone(),
+        );
         // Pipe checks its right-hand side specially (it desugars into a call),
         // so avoid the generic check_expr here.
         let saved_flow = self.index_flow.clone();
@@ -4056,21 +4070,27 @@ impl<'a> Checker<'a> {
                         }
                     }
                     ast::Expr::FieldAccess { object, field, .. } => {
-                        let object_type = self.check_expr(object);
-                        let is_native_property = matches!(
-                            &object_type,
-                            Type::Opaque { identity, .. }
-                                if self.native_properties.contains_key(&(*identity, field))
-                        );
-                        if is_native_property {
-                            self.error_span(
-                                span,
-                                format!("cannot assign to read-only host property `{field}`"),
+                        if let Some((operation, _)) = &native_setter {
+                            // Const binds a resource handle, not the resource's
+                            // state. Only a declared setter grants this write.
+                            self.native_property_setter_calls.insert(expr as *const ast::Expr<'a>, operation);
+                        } else {
+                            let object_type = self.check_expr(object);
+                            let is_native_property = matches!(
+                                &object_type,
+                                Type::Opaque { identity, .. }
+                                    if self.native_properties.contains_key(&(*identity, field))
                             );
-                        }
-                        let field_mutable = self.field_is_mutable(&object_type, field);
-                        if !self.is_mutable_expr(object) && !field_mutable {
-                            self.error_at_expr(left, self.immutable_field_message(object, field));
+                            if is_native_property {
+                                self.error_span(
+                                    span,
+                                    format!("cannot assign to read-only host property `{field}`"),
+                                );
+                            }
+                            let field_mutable = self.field_is_mutable(&object_type, field);
+                            if !self.is_mutable_expr(object) && !field_mutable {
+                                self.error_at_expr(left, self.immutable_field_message(object, field));
+                            }
                         }
                     }
                     _ => {

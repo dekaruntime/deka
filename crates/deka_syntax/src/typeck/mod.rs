@@ -155,6 +155,8 @@ pub struct TypeckResult<'a> {
     pub super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
     /// Read-only opaque property call sites, dispatched through the host registry.
     pub native_property_calls: HashMap<*const ast::Expr<'a>, &'a str>,
+    /// Checked opaque property assignment sites dispatched to total host setters.
+    pub native_property_setter_calls: HashMap<*const ast::Expr<'a>, &'a str>,
     /// `.toJSON()` and `.parseJSON<T>()` call sites specialized to a static shape.
     pub json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
     /// Native JWT calls specialize complete claims/options through checked JSON schemas.
@@ -276,6 +278,8 @@ pub struct ModuleExports<'a> {
     pub nominal_names: HashMap<&'a str, &'a str>,
     /// Compiler-supplied opaque property signatures, derived from host functions.
     pub native_properties: NativeProperties<'a>,
+    /// Host setter operation and assigned value type, from the same declaration.
+    pub native_property_setters: NativeProperties<'a>,
     /// Opaque receiver identity and method -> async raw string-body host op.
     pub native_json_bodies: HashMap<(usize, &'a str), &'a str>,
     pub receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
@@ -325,6 +329,7 @@ impl<'a> Default for ModuleExports<'a> {
             nominal_names: HashMap::new(),
             receiver_methods: HashMap::new(),
             native_properties: HashMap::new(),
+            native_property_setters: HashMap::new(),
             native_json_bodies: HashMap::new(),
             values: HashMap::new(),
             default_export_declared_name: None,
@@ -887,6 +892,7 @@ pub fn check_program_with_native_declarations<'a>(
         static_type_calls: checker.static_type_calls,
         super_trees: checker.super_trees,
         native_property_calls: checker.native_property_calls,
+        native_property_setter_calls: checker.native_property_setter_calls,
         json_calls: checker.json_calls,
         jwt_calls: checker.jwt_calls,
         array_builtin_calls: checker.array_builtin_calls,
@@ -2177,8 +2183,10 @@ struct Checker<'a> {
     super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
     native_receiver_methods: HashMap<(usize, &'a str), MethodInfo<'a>>,
     native_properties: NativeProperties<'a>,
+    native_property_setters: NativeProperties<'a>,
     native_json_bodies: HashMap<(usize, &'a str), &'a str>,
     native_property_calls: HashMap<*const ast::Expr<'a>, &'a str>,
+    native_property_setter_calls: HashMap<*const ast::Expr<'a>, &'a str>,
     json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
     jwt_calls: HashMap<*const ast::Expr<'a>, jwt::JwtCall<'a>>,
     /// Builtin `Array.first()`/`Array.last()`/`Array.pop()`/`Array.shift()`
@@ -2317,9 +2325,11 @@ impl<'a> Checker<'a> {
             static_type_calls: HashMap::new(),
             super_trees: HashMap::new(),
             native_properties: HashMap::new(),
+            native_property_setters: HashMap::new(),
             native_json_bodies: HashMap::new(),
             native_receiver_methods: HashMap::new(),
             native_property_calls: HashMap::new(),
+            native_property_setter_calls: HashMap::new(),
             json_calls: HashMap::new(),
             jwt_calls: HashMap::new(),
             index_flow: indexing::IndexFlow::default(),
@@ -2592,6 +2602,7 @@ impl<'a> Checker<'a> {
         self.signature_calls.clear();
         self.static_type_calls.clear();
         self.native_property_calls.clear();
+        self.native_property_setter_calls.clear();
         self.json_calls.clear();
         self.jwt_calls.clear();
         self.array_builtin_calls.clear();
@@ -2640,6 +2651,8 @@ impl<'a> Checker<'a> {
             self.enums.extend(declarations.enums.clone());
             self.native_properties
                 .extend(declarations.native_properties.clone());
+            self.native_property_setters
+                .extend(declarations.native_property_setters.clone());
             self.native_json_bodies
                 .extend(declarations.native_json_bodies.clone());
             for ((owner, method), info) in &declarations.build_receiver_methods {
