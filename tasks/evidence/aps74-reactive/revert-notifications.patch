@@ -1,0 +1,13 @@
+--- a/crates/deka_ui/src/reactive.rs
++++ b/crates/deka_ui/src/reactive.rs
+@@ -320,9 +320,7 @@
+             .checked_add(1)
+             .expect("signal revision exhausted");
+         drop(revisions);
+-        self.dirty
+-            .borrow_mut()
+-            .extend(self.subscribers.borrow()[slot].iter().copied());
++
+         if !std::thread::panicking() {
+             self.flush();
+         }

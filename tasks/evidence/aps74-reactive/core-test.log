@@ -1,0 +1,33 @@
+   Compiling deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+    Finished `release` profile [optimized] target(s) in 2.65s
+     Running unittests src/lib.rs (.target/release/deps/deka_ui-2fe225b82e82f454)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/reactive.rs (.target/release/deps/reactive-1e4ec7a6e973a0d0)
+
+running 13 tests
+test copy_handles_events_arithmetic_toggle_and_display_are_reactive ... ok
+test dependencies_follow_branches_and_unobserved_signals_do_no_work ... ok
+test derived_unchanged_values_do_not_notify_downstream_effects ... ok
+test derived_values_cache_suppress_equal_results_and_settle_diamonds ... ok
+test handles_are_copy_even_for_non_copy_values_and_update_returns_a_result ... ok
+test effects_registered_before_a_later_derived_value_still_see_settled_state ... ok
+test effect_writes_during_first_execution_reschedule_until_settled ... ok
+test event_effect_can_update_another_signal_without_reentrant_borrows ... ok
+test nested_batches_and_nested_reactions_preserve_the_outer_read_capture ... ok
+test separate_scopes_cannot_accidentally_alias_or_cross_subscribe ... ok
+test effect_disposal_and_scope_drop_release_reactions_and_values ... ok
+test panic_restores_context_batch_depth_and_pending_reactions ... ok
+test a_cycle_reports_failure_and_the_scope_can_recover ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests deka_ui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

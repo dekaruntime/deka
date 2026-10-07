@@ -1,0 +1,19 @@
+--- a/crates/deka_ui/src/reactive.rs
++++ b/crates/deka_ui/src/reactive.rs
+@@ -353,15 +353,7 @@
+             let next = {
+                 let dirty = self.dirty.borrow();
+                 let observers = self.observers.borrow();
+-                dirty
+-                    .iter()
+-                    .find(|slot| {
+-                        observers[**slot]
+-                            .as_ref()
+-                            .is_some_and(|o| o.kind == Kind::Derived)
+-                    })
+-                    .or_else(|| dirty.first())
+-                    .copied()
++                dirty.first().copied()
+             };
+             let Some(slot) = next else {
+                 break;

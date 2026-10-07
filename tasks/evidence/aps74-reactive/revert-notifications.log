@@ -1,0 +1,24 @@
+   Compiling deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+    Finished `release` profile [optimized] target(s) in 2.85s
+     Running tests/reactive.rs (.target/release/deps/reactive-1e4ec7a6e973a0d0)
+
+running 1 test
+test dependencies_follow_branches_and_unobserved_signals_do_no_work ... FAILED
+
+failures:
+
+---- dependencies_follow_branches_and_unobserved_signals_do_no_work stdout ----
+
+thread 'dependencies_follow_branches_and_unobserved_signals_do_no_work' (4719644) panicked at crates/deka_ui/tests/reactive.rs:56:5:
+assertion `left == right` failed
+  left: [1]
+ right: [1, 2, 20, 21]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dependencies_follow_branches_and_unobserved_signals_do_no_work
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p deka-ui --test reactive`

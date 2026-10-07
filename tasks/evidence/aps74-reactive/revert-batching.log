@@ -1,0 +1,33 @@
+   Compiling deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+warning: struct `Batch` is never constructed
+  --> crates/deka_ui/src/reactive.rs:75:8
+   |
+75 | struct Batch(Rc<Core>);
+   |        ^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `deka-ui` (lib) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 2.75s
+     Running tests/reactive.rs (.target/release/deps/reactive-1e4ec7a6e973a0d0)
+
+running 1 test
+test copy_handles_events_arithmetic_toggle_and_display_are_reactive ... FAILED
+
+failures:
+
+---- copy_handles_events_arithmetic_toggle_and_display_are_reactive stdout ----
+
+thread 'copy_handles_events_arithmetic_toggle_and_display_are_reactive' (4719990) panicked at crates/deka_ui/tests/reactive.rs:25:5:
+assertion `left == right` failed
+  left: ["0:false", "3:false", "2:false", "2:true"]
+ right: ["0:false", "2:true"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    copy_handles_events_arithmetic_toggle_and_display_are_reactive
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p deka-ui --test reactive`

@@ -1,0 +1,13 @@
+--- a/crates/deka_ui/src/reactive.rs
++++ b/crates/deka_ui/src/reactive.rs
+@@ -397,9 +397,7 @@
+         let dependencies: BTreeSet<_> = reads.keys().copied().collect();
+         if let Some(observer) = self.core.observers.borrow_mut()[self.slot].as_mut() {
+             let mut subscribers = self.core.subscribers.borrow_mut();
+-            for old in observer.dependencies.difference(&dependencies) {
+-                subscribers[*old].remove(&self.slot);
+-            }
++
+             for new in dependencies.difference(&observer.dependencies) {
+                 subscribers[*new].insert(self.slot);
+             }

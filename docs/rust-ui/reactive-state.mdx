@@ -1,0 +1,72 @@
+---
+title: Reactive state in Rust
+---
+
+`deka-ui` is deka's Rust UI library under APS 74, licensed Apache-2.0. The
+initial reactive slice is unpublished (`publish = false`). It provides signals,
+derived values and effects. Retained View construction and desktop launch are
+pending the shared native store integration.
+
+```rust
+use deka_ui::prelude::*;
+
+let scope = Scope::new();
+let mut count = scope.run(|| {
+    let count = signal(0);
+    let doubled = derived(move || count.get() * 2);
+    effect(move || println!("Count: {count}, doubled: {doubled}"));
+    count
+});
+
+scope.batch(|| {
+    count += 1;
+    count += 1;
+});
+count -= 1;
+```
+
+Output:
+
+```text
+Count: 0, doubled: 0
+Count: 2, doubled: 4
+Count: 1, doubled: 2
+```
+
+A `Signal<T>` is a Copy handle, including when `T` is a `String`. `get()` clones
+its current value and records a dependency when a reaction is running. Formatting
+a signal with `Display` records the same read. `set(value)` replaces the value;
+`update(|value| ...)` changes it in place. Boolean signals provide `toggle()`;
+numeric signals support `+=` and `-=`.
+
+`derived(move || ...)` computes immediately and caches its result. It follows
+only the signals read during that computation. If a condition switches branches,
+the next evaluation replaces the old dependencies. Equal computed values do not
+notify downstream reactions. A derived handle is read-only and provides `get()`
+and tracked `Display`.
+
+`effect(move || ...)` runs immediately and again when one of its observed signals
+changes. Changes to other signals do no effect work. The returned `Effect` is a
+Copy registration handle: call `dispose()` to remove it early. Disposing twice
+is harmless while its scope lives. Otherwise the scope owns the reaction.
+
+An explicit signal write notifies subscribers even if the new value is equal.
+Derived values suppress unchanged results. Effects that write a signal they have
+read are scheduled again until settled; a cycle that exceeds 10,000 reactions in
+one flush panics with a diagnostic.
+
+`scope.batch(...)` coalesces all writes, including nested `batch(...)` calls,
+into a reaction pass after the outer batch ends. Derived computations settle
+before effects, so an effect reading both a signal and its derived values sees
+the final values. Use a batch around each event's writes.
+
+Create signals and reactions inside `Scope::run` or `Scope::batch`. A scope owns
+their values and closures. Dropping its last clone releases them; Copy signal
+handles do not retain the scope. Using a handle after that point panics instead
+of aliasing a later application's state. Signals and scopes stay on their UI
+thread; a reaction cannot subscribe to a different scope's signals.
+
+When an update or batch panics, read tracking, context and batch depth are restored.
+Partial writes stay queued without executing reactions during unwinding. After
+catching the panic, `scope.flush()` resumes pending work. Applications should
+handle their errors at the event boundary.

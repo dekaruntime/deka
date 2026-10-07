@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/deka_ui",
     "crates/deka_syntax",
     "crates/deka_fmt",
     "crates/deka_native_ir",

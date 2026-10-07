@@ -1,0 +1,5 @@
+    Finished `release` profile [optimized] target(s) in 0.23s
+     Running `.target/release/examples/reactive_counter`
+Count: 0, doubled: 0
+Count: 2, doubled: 4
+Count: 1, doubled: 2
