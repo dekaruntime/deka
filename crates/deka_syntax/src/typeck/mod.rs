@@ -276,6 +276,8 @@ pub struct ModuleExports<'a> {
     /// Declaring spelling behind an exported nominal type. Barrel export keys
     /// may change without changing the names inside origin factory signatures.
     pub nominal_names: HashMap<&'a str, &'a str>,
+    /// Declaring AST identity, preserved across renamed and barrel exports.
+    pub nominal_declarations: HashMap<&'a str, usize>,
     /// Compiler-supplied opaque property signatures, derived from host functions.
     pub native_properties: NativeProperties<'a>,
     /// Host setter operation and assigned value type, from the same declaration.
@@ -327,6 +329,7 @@ impl<'a> Default for ModuleExports<'a> {
             opaques: HashMap::new(),
             newtypes: HashMap::new(),
             nominal_names: HashMap::new(),
+            nominal_declarations: HashMap::new(),
             receiver_methods: HashMap::new(),
             native_properties: HashMap::new(),
             native_property_setters: HashMap::new(),
@@ -1312,8 +1315,14 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
     // own signature can name a sibling opaque declared in the same file
     // (rfd#39 2026-09-16 amendment).
     let mut declared_opaques: HashMap<&'a str, Type<'a>> = HashMap::new();
+    let mut declared_nominals = HashMap::new();
     for stmt in program.statements.iter() {
         match stmt {
+            ast::Stmt::Struct { name, .. }
+            | ast::Stmt::Enum { name, .. }
+            | ast::Stmt::Newtype { name, .. } => {
+                declared_nominals.insert(*name, stmt as *const _ as usize);
+            }
             ast::Stmt::Opaque { name, .. } => {
                 declared_opaques.insert(
                     *name,
@@ -1946,6 +1955,9 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                             },
                         );
                     }
+                    if let Some(identity) = declared_nominals.get(local) {
+                        exports.nominal_declarations.insert(external, *identity);
+                    }
                     if let Some(info) = declared_structs.get(local) {
                         exports.structs.insert(external, info.clone());
                         exports.nominal_names.insert(external, local);
@@ -2133,6 +2145,8 @@ struct Checker<'a> {
     /// normally for type positions (structs, enums, aliases, …), but a value
     /// reference to one of these names is a typeck error naming the fix.
     type_only_imports: HashSet<&'a str>,
+    /// All local spellings of one imported declaration use its first binding.
+    nominal_aliases: HashMap<&'a str, &'a str>,
     /// User-defined type aliases without type parameters.
     aliases: HashMap<&'a str, ast::Type<'a>>,
     /// User-defined enums.
@@ -2308,6 +2322,7 @@ impl<'a> Checker<'a> {
             interactive_component_depth: 0,
             globals: HashMap::new(),
             type_only_imports: HashSet::new(),
+            nominal_aliases: HashMap::new(),
             aliases: HashMap::new(),
             enums: HashMap::new(),
             case_to_enum: HashMap::new(),
@@ -2406,6 +2421,22 @@ impl<'a> Checker<'a> {
     }
 
     fn seed_imports(&mut self, imports: &HashMap<&str, &ModuleExports<'a>>) {
+        // Identity comes from the declaration, never from its spelling or
+        // shape (even empty declarations must remain distinct). Seed every
+        // alias before looking at imported function signatures.
+        let mut declaration_names = HashMap::new();
+        for stmt in self.program.statements.iter() {
+            let ast::Stmt::Import { source, specifiers, .. } = stmt else { continue; };
+            let Some(exports) = imports.get(source) else { continue; };
+            for spec in specifiers.iter() {
+                if let Some(identity) = exports.nominal_declarations.get(spec.imported) {
+                    let canonical = *declaration_names.entry(*identity).or_insert(spec.local);
+                    if spec.local != canonical {
+                        self.nominal_aliases.insert(spec.local, canonical);
+                    }
+                }
+            }
+        }
         for stmt in self.program.statements.iter() {
             let ast::Stmt::Import {
                 specifiers, source, ..
@@ -2634,6 +2665,8 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn canonical_nominal_type(&mut self, name: &'a str, fallback: Type<'a>) -> Type<'a> {
+        let name = self.nominal_aliases.get(name).copied().unwrap_or(name);
+        let fallback = exceptions::rename_nominal_type(&fallback, &self.nominal_aliases);
         match self.aliases.get(name).cloned() {
             Some(ty @ ast::Type::Named { name, .. }) if crate::native_brand::public_name(name) != name => self.resolve_ast_type(&ty),
             _ => fallback,

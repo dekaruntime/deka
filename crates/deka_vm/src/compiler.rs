@@ -1212,6 +1212,11 @@ fn compile_modules(
                     deka_syntax::typeck::localize_export(ty, &specs, &source),
                 );
             }
+            if let Some(identity) = source.nominal_declarations.get(original.as_str()) {
+                exports
+                    .nominal_declarations
+                    .insert(arena.alloc_str(external), *identity);
+            }
             if source.nominal_names.contains_key(original.as_str()) {
                 // Values above are now in the barrel's namespace. Do not
                 // retain an origin basename here: another forwarded factory
