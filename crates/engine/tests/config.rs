@@ -115,7 +115,11 @@ fn package_json_main_is_ignored_for_handler_resolution() {
 #[test]
 fn missing_entry_file_returns_error() {
     let dir = temp_dir("engine_test_missing_entry");
-    fs::write(dir.join("deka.json"), r#"{"serve":{"entry":"nonexistent.js"}}"#).unwrap();
+    fs::write(
+        dir.join("deka.json"),
+        r#"{"serve":{"entry":"nonexistent.js"}}"#,
+    )
+    .unwrap();
     let result = resolve_handler_path(dir.to_str().unwrap());
     if let Err(err) = result {
         assert!(err.contains("Entry file not found"));
@@ -218,7 +222,10 @@ fn app_router_project_rejects_incompatible_serve_mode_at_startup() {
     fs::write(dir.join("deka.json"), r#"{"serve": {"mode": "static"}}"#).unwrap();
     let err = resolve_handler_path(dir.to_str().unwrap())
         .expect_err("static mode on an app-router project must fail to resolve");
-    assert!(err.contains("app/"), "error should name the app/ directory: {err}");
+    assert!(
+        err.contains("app/"),
+        "error should name the app/ directory: {err}"
+    );
     assert!(
         err.contains("static"),
         "error should name the conflicting mode: {err}"

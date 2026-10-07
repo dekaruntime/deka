@@ -52,10 +52,7 @@ pub fn publish(project_root: &Path, staged: &StagedDist) -> Result<(), String> {
     if dist.exists() {
         if let Err(err) = fs::rename(&dist, &backup) {
             if !backup.exists() {
-                return Err(format!(
-                    "failed to move {} aside: {err}",
-                    dist.display()
-                ));
+                return Err(format!("failed to move {} aside: {err}", dist.display()));
             }
             fs::remove_dir_all(&backup)
                 .map_err(|err| format!("failed to remove stale {}: {err}", backup.display()))?;
@@ -176,7 +173,6 @@ pub fn build_artifact_manifest(
         ArtifactRoute, ArtifactServer, ArtifactSlot, ArtifactWorker, MODULE_FORMAT, RUNTIME_ABI,
         RouteMode, client_output_path, server_entries,
     };
-
 
     let routes: Vec<ArtifactRoute> = manifest
         .routes
@@ -353,7 +349,11 @@ mod tests {
                 if path.is_dir() {
                     stack.push(path);
                 } else {
-                    let rel = path.strip_prefix(dir).expect("rel").to_string_lossy().into_owned();
+                    let rel = path
+                        .strip_prefix(dir)
+                        .expect("rel")
+                        .to_string_lossy()
+                        .into_owned();
                     out.insert(rel, fs::read(&path).expect("read"));
                 }
             }
@@ -372,13 +372,19 @@ mod tests {
 
         let dist = project.path().join("dist");
         assert_eq!(fs::read(dist.join("new.txt")).unwrap(), b"new");
-        assert!(!dist.join("old.txt").exists(), "staged tree must fully replace dist");
+        assert!(
+            !dist.join("old.txt").exists(),
+            "staged tree must fully replace dist"
+        );
         assert!(!project.path().join(".deka-dist-stage").exists());
         assert!(
             fs::read_dir(project.path())
                 .unwrap()
                 .flatten()
-                .all(|entry| !entry.file_name().to_string_lossy().starts_with("dist.prev-")),
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("dist.prev-")),
             "backup must be removed after a successful publish"
         );
     }
@@ -424,7 +430,10 @@ mod tests {
             fs::read_dir(project.path())
                 .unwrap()
                 .flatten()
-                .all(|entry| !entry.file_name().to_string_lossy().starts_with("dist.prev-")),
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("dist.prev-")),
             "a restored backup must be consumed"
         );
     }
@@ -440,7 +449,10 @@ mod tests {
             fs::read_dir(project.path())
                 .unwrap()
                 .flatten()
-                .all(|entry| !entry.file_name().to_string_lossy().starts_with("dist.prev-")),
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("dist.prev-")),
             "recovered backup must be consumed"
         );
     }
@@ -451,7 +463,10 @@ mod tests {
         write(project.path(), "dist.prev-1/old.txt", "older");
         write(project.path(), "dist.prev-2/newer.txt", "newest");
         // Deterministic mtimes: 2020 for the older tree, 2021 for the newer.
-        for (dir, stamp) in [("dist.prev-1", "202001010000"), ("dist.prev-2", "202101010000")] {
+        for (dir, stamp) in [
+            ("dist.prev-1", "202001010000"),
+            ("dist.prev-2", "202101010000"),
+        ] {
             let status = std::process::Command::new("touch")
                 .args(["-t", stamp])
                 .arg(project.path().join(dir))
@@ -475,7 +490,11 @@ mod tests {
         recover_interrupted_publish(project.path());
         assert!(project.path().join("dist").join("current.txt").exists());
         assert!(
-            project.path().join("dist.prev-1").join("stale.txt").exists(),
+            project
+                .path()
+                .join("dist.prev-1")
+                .join("stale.txt")
+                .exists(),
             "stray backups must be left alone while dist exists"
         );
     }
@@ -509,7 +528,11 @@ mod tests {
             .iter()
             .find(|route| route.template == "/dashboard")
             .expect("route recorded");
-        assert_eq!(route.mode, RouteMode::PartialDefer, "fixture must classify ◐");
+        assert_eq!(
+            route.mode,
+            RouteMode::PartialDefer,
+            "fixture must classify ◐"
+        );
 
         let artifact = build_artifact_manifest(
             &manifest,
@@ -543,5 +566,4 @@ mod tests {
             "the descriptor must carry the deferred island names"
         );
     }
-
 }

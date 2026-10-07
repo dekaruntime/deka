@@ -10,10 +10,10 @@ use engine::{RuntimeEngine, config as runtime_config, set_engine};
 use platform::Platform;
 use platform_server::ServerPlatform;
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
-use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
 use run::handler::{
     handler_input_with, is_deka_entry, is_html_entry, is_js_entry, normalize_handler_path_with,
 };
+use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
 use runtime_core::process::parse_exit_code;
 use serve::validation::validate_deka_handler_with;
 

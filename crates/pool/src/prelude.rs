@@ -5,10 +5,8 @@
 //! bridges and user code agree. These strings are the host copy of that ABI
 //! and must stay byte-identical to dsc's pool prelude / to_result helper.
 
-const RESULT_OK: &str =
-    r#"(value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value })"#;
-const RESULT_ERR: &str =
-    r#"(error) => ({ __enum: "Result", __case: "Err", name: "Err", error })"#;
+const RESULT_OK: &str = r#"(value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value })"#;
+const RESULT_ERR: &str = r#"(error) => ({ __enum: "Result", __case: "Err", name: "Err", error })"#;
 const OPTION_SOME: &str =
     r#"(value) => ({ __enum: "Option", __case: "Some", name: "Some", value })"#;
 const OPTION_NONE: &str = r#"({ __enum: "Option", __case: "None", name: "None" })"#;

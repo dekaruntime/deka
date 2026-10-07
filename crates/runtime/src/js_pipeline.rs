@@ -344,8 +344,9 @@ mod tests {
         )
         .expect("module");
 
-        let err = ensure_project_layout(tmp.path(), Some(tmp.path()), &["@deka/crypto".to_string()])
-            .expect_err("missing lockfile must be rejected even with DEKA_MODULE_ROOT set");
+        let err =
+            ensure_project_layout(tmp.path(), Some(tmp.path()), &["@deka/crypto".to_string()])
+                .expect_err("missing lockfile must be rejected even with DEKA_MODULE_ROOT set");
         assert!(
             err.contains("deka.lock"),
             "expected lockfile rejection, got: {err}"

@@ -364,10 +364,12 @@ fn assert_jsx_runtime_bundle(fixture: &str, extra_assertions: &str) {
     let bundle = fs::read_to_string(&out).expect("emitted bundle");
     assert!(bundle.contains("__deka_js_builtins[\"react/jsx-runtime\"]"));
     assert!(!bundle.contains("__deka_js_builtin_react_jsx_runtime"));
-    assert!(!root
-        .path()
-        .join("__deka_js_builtin_react_jsx_runtime.ds")
-        .exists());
+    assert!(
+        !root
+            .path()
+            .join("__deka_js_builtin_react_jsx_runtime.ds")
+            .exists()
+    );
     let runner = root.path().join("run-manual.mjs");
     fs::write(
         &runner,

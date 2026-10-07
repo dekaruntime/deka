@@ -10,9 +10,7 @@ use std::path::PathBuf;
 use super::serve::{path_condition, wrap_layouts};
 use super::{alias, exports_head, session_cookie_name};
 use crate::dist::manifest::{FrameworkEntry, FrameworkEntryKind};
-use crate::dist::{
-    write_app_router_entry, write_defer_router_entry, write_worker_router_entry,
-};
+use crate::dist::{write_app_router_entry, write_defer_router_entry, write_worker_router_entry};
 
 fn tmp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(

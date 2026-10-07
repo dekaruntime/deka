@@ -18,17 +18,13 @@ mod tests {
         let json = parse(&payload);
         assert_eq!(json["type"], "html-update");
         assert_eq!(json["selector"], "#app");
-        assert_eq!(
-            json["html"],
-            "<h1 id=\"server-title\">hello refreshed</h1>"
-        );
+        assert_eq!(json["html"], "<h1 id=\"server-title\">hello refreshed</h1>");
         assert_eq!(json["paths"][0], "app/page.dsx");
     }
 
     #[test]
     fn island_reload_payload_is_a_full_reload() {
-        let payload =
-            crate::websocket::island_reload_payload(&["src/ui/Counter.dsx".to_string()]);
+        let payload = crate::websocket::island_reload_payload(&["src/ui/Counter.dsx".to_string()]);
         let json = parse(&payload);
         assert_eq!(json["type"], "reload");
         assert_eq!(json["reason"], "island-source");
@@ -272,10 +268,7 @@ mod tests {
         assert_eq!(json["ops"].as_array().map(|v| v.len()), Some(1));
         assert_eq!(json["ops"][0]["island"], "Badge");
         assert_eq!(json["ops"][0]["occurrence"], 1);
-        assert_eq!(
-            json["ops"][0]["html"],
-            defer_body_b
-        );
+        assert_eq!(json["ops"][0]["html"], defer_body_b);
     }
 
     #[test]

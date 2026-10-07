@@ -10,9 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use stdio;
 
-use crate::update::{
-    UpdateConfig, UpdateResult, run_update, validate_managed_unit_name,
-};
+use crate::update::{UpdateConfig, UpdateResult, run_update, validate_managed_unit_name};
 
 #[derive(Debug, Clone)]
 pub struct MonitorConfig {
@@ -122,8 +120,8 @@ pub fn cmd(context: &Context) {
 
 #[doc(hidden)]
 pub fn load_monitor_config(context: &Context) -> Result<MonitorConfig, String> {
-    let registry_url = get_param(context, "--registry-url")
-        .unwrap_or_else(|| "http://localhost:9418".to_string());
+    let registry_url =
+        get_param(context, "--registry-url").unwrap_or_else(|| "http://localhost:9418".to_string());
 
     let token = get_param(context, "--token");
 

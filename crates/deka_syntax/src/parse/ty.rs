@@ -112,13 +112,22 @@ impl<'a> Parser<'a> {
                 let name = self.expect_identifier()?;
                 self.expect(TokenKind::Colon)?;
                 let ty = self.parse_type()?;
-                fields.push(crate::ast::RecordField { name, ty, span: self.span_from(field_start.0, field_start.1) });
+                fields.push(crate::ast::RecordField {
+                    name,
+                    ty,
+                    span: self.span_from(field_start.0, field_start.1),
+                });
                 self.skip_newlines();
-                if !self.eat(TokenKind::Comma) { break; }
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
                 self.skip_newlines();
             }
             self.expect(TokenKind::RBrace)?;
-            Some(Type::Record { fields: alloc_slice(self.arena, fields), span: self.span_from(start, start_byte) })
+            Some(Type::Record {
+                fields: alloc_slice(self.arena, fields),
+                span: self.span_from(start, start_byte),
+            })
         } else if self.eat(TokenKind::LBracket) {
             let mut elements = Vec::new();
             self.skip_newlines();

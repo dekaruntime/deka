@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use crate::ast;
 use crate::diagnostics::Diagnostic;
 
-use super::Checker;
 use super::types::Type;
+use super::Checker;
 
 impl<'a> Checker<'a> {
     pub(super) fn checked_option(&mut self, inner: Type<'a>, span: ast::Span) -> Type<'a> {
@@ -15,7 +15,9 @@ impl<'a> Checker<'a> {
             Type::Option { .. } | Type::None => self.error_span(span, "`Option<Option<T>>` is ambiguous under erasure: Some(None) and None both become undefined; model the distinct states with a purpose-built enum"),
             _ => {}
         }
-        Type::Option { inner: Box::new(inner) }
+        Type::Option {
+            inner: Box::new(inner),
+        }
     }
 
     /// Instantiation may put an unrepresentable Option below a container.
@@ -32,14 +34,20 @@ impl<'a> Checker<'a> {
             }
             Type::Array { elem } => self.validate_option_erasure(elem, span),
             Type::Generic { args, .. } | Type::Union { members: args } => {
-                for arg in args { self.validate_option_erasure(arg, span); }
+                for arg in args {
+                    self.validate_option_erasure(arg, span);
+                }
             }
             Type::Function { params, ret, .. } => {
-                for param in params { self.validate_option_erasure(param, span); }
+                for param in params {
+                    self.validate_option_erasure(param, span);
+                }
                 self.validate_option_erasure(ret, span);
             }
             Type::Object { fields } => {
-                for (_, ty) in fields { self.validate_option_erasure(ty, span); }
+                for (_, ty) in fields {
+                    self.validate_option_erasure(ty, span);
+                }
             }
             _ => {}
         }
@@ -62,7 +70,14 @@ impl<'a> Checker<'a> {
     fn register_host_type(&mut self, name: &'a str, decl: crate::bridge::HostTypeDecl) -> Type<'a> {
         match decl {
             crate::bridge::HostTypeDecl::Struct(stmt) => {
-                let ast::Stmt::Struct { fields, embeds, type_params, is_super, .. } = stmt else {
+                let ast::Stmt::Struct {
+                    fields,
+                    embeds,
+                    type_params,
+                    is_super,
+                    ..
+                } = stmt
+                else {
                     unreachable!("host_type only returns the variant it was built from")
                 };
                 self.structs.entry(name).or_insert(super::StructInfo {
@@ -74,15 +89,24 @@ impl<'a> Checker<'a> {
                 Type::Struct { name }
             }
             crate::bridge::HostTypeDecl::Enum(stmt) => {
-                let ast::Stmt::Enum { cases, type_params, is_super, .. } = stmt else {
+                let ast::Stmt::Enum {
+                    cases,
+                    type_params,
+                    is_super,
+                    ..
+                } = stmt
+                else {
                     unreachable!("host_type only returns the variant it was built from")
                 };
                 if !self.enums.contains_key(name) {
-                    self.enums.insert(name, super::EnumInfo {
-                        cases: *cases,
-                        type_params: *type_params,
-                        is_super: *is_super,
-                    });
+                    self.enums.insert(
+                        name,
+                        super::EnumInfo {
+                            cases: *cases,
+                            type_params: *type_params,
+                            is_super: *is_super,
+                        },
+                    );
                     for case in cases.iter() {
                         self.case_to_enum.entry(case.name).or_insert(name);
                     }
@@ -90,17 +114,20 @@ impl<'a> Checker<'a> {
                 Type::Named { name }
             }
             crate::bridge::HostTypeDecl::Interface(stmt) => {
-                let ast::Stmt::Interface { members, type_params, span, .. } = stmt else {
+                let ast::Stmt::Interface {
+                    members,
+                    type_params,
+                    span,
+                    ..
+                } = stmt
+                else {
                     unreachable!("host_type only returns the variant it was built from")
                 };
-                let info = self
-                    .interfaces
-                    .entry(name)
-                    .or_insert(super::InterfaceInfo {
-                        members: *members,
-                        type_params: *type_params,
-                        span: *span,
-                    });
+                let info = self.interfaces.entry(name).or_insert(super::InterfaceInfo {
+                    members: *members,
+                    type_params: *type_params,
+                    span: *span,
+                });
                 Type::Interface {
                     name,
                     identity: info.members.as_ptr() as usize,
@@ -139,7 +166,10 @@ impl<'a> Checker<'a> {
                     Type::Error
                 }
                 "Setter" => {
-                    self.error_span(*span, "Setter requires a type argument, e.g. Setter<number>");
+                    self.error_span(
+                        *span,
+                        "Setter requires a type argument, e.g. Setter<number>",
+                    );
                     Type::Error
                 }
                 "Ref" => {
@@ -176,7 +206,10 @@ impl<'a> Checker<'a> {
                             identity: info.members.as_ptr() as usize,
                         }
                     } else if let Some(info) = self.newtypes.get(name).cloned() {
-                        Type::Newtype { name, repr: info.repr }
+                        Type::Newtype {
+                            name,
+                            repr: info.repr,
+                        }
                     } else if let Some(alias) = self.aliases.get(name).cloned() {
                         if !seen.insert(name) {
                             self.error_span(*span, format!("cyclic type alias `{name}`"));
@@ -209,14 +242,20 @@ impl<'a> Checker<'a> {
             ast::Type::Generic { base, args, span } => {
                 if base == &"Component" {
                     if args.len() != 1 {
-                        self.error_span(*span, "Component takes one props interface or struct: Component<Props>");
+                        self.error_span(
+                            *span,
+                            "Component takes one props interface or struct: Component<Props>",
+                        );
                         return Type::Error;
                     }
                     let props = self.resolve_ast_type_rec(&args[0], seen);
                     if !matches!(props, Type::Interface { .. } | Type::Struct { .. }) {
                         self.error_span(*span, "Component props are a checked interface or struct; declare Props and use Component<Props>");
                     }
-                    Type::Generic { base: "Component", args: vec![props] }
+                    Type::Generic {
+                        base: "Component",
+                        args: vec![props],
+                    }
                 } else if base == &"Option" {
                     if args.len() == 1 {
                         let inner = self.resolve_ast_type_rec(&args[0], seen);
@@ -256,7 +295,9 @@ impl<'a> Checker<'a> {
                             | Type::Error
                             | Type::Infer
                             | Type::Generic { base: "Hook", .. }
-                            | Type::Generic { base: "Component", .. } => {}
+                            | Type::Generic {
+                                base: "Component", ..
+                            } => {}
                             _ => {
                                 self.error_span(
                                     *span,
@@ -320,7 +361,7 @@ impl<'a> Checker<'a> {
             ast::Type::Option { inner, span } => {
                 let inner = self.resolve_ast_type_rec(inner, seen);
                 self.checked_option(inner, *span)
-            },
+            }
 
             // Membership and overlap validation live in `check_union_members`
             // (rfd#42, deka#530); members resolve individually so aliases and
@@ -341,8 +382,11 @@ impl<'a> Checker<'a> {
                     .collect(),
             },
             ast::Type::Record { fields, .. } => Type::Object {
-                fields: fields.iter().map(|field| (field.name, self.resolve_ast_type_rec(&field.ty, seen))).collect(),
-            }
+                fields: fields
+                    .iter()
+                    .map(|field| (field.name, self.resolve_ast_type_rec(&field.ty, seen)))
+                    .collect(),
+            },
         }
     }
 

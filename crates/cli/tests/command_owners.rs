@@ -6,11 +6,9 @@ use std::fs;
 use std::path::PathBuf;
 
 fn manifest() -> BTreeMap<String, String> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../scripts/command-owners.txt");
-    let raw = fs::read_to_string(&path).unwrap_or_else(|err| {
-        panic!("failed to read {}: {err}", path.display())
-    });
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/command-owners.txt");
+    let raw = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
     let mut map = BTreeMap::new();
     for line in raw.lines() {
         let line = line.trim();
@@ -49,10 +47,7 @@ fn every_command_declares_its_owner() {
             command.name
         );
     }
-    assert!(
-        !seen.is_empty(),
-        "registry registered no commands"
-    );
+    assert!(!seen.is_empty(), "registry registered no commands");
 }
 
 #[test]
@@ -156,7 +151,8 @@ fn help_snapshot_command_names_and_summaries() {
         )
     });
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "help snapshot mismatch (UPDATE_HELP_SNAPSHOT=1 to refresh {})\nactual:\n{actual}",
         path.display()
     );

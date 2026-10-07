@@ -81,8 +81,12 @@ fn prepare_run_context(context: &Context) -> Result<PreparedRun, String> {
     // user-global cache and run the materialized artifact — never write
     // build output into the user's directory (deka#765).
     if deka_cache::is_loose_source_file(&resolved.path) {
-        let materialized = deka_cache::materialize_loose(&resolved.path)
-            .map_err(|err| format!("failed to materialize {} into the user cache: {err}", resolved.path.display()))?;
+        let materialized = deka_cache::materialize_loose(&resolved.path).map_err(|err| {
+            format!(
+                "failed to materialize {} into the user cache: {err}",
+                resolved.path.display()
+            )
+        })?;
         // So the module loader can map the cache artifact it executes back
         // to the real source file for `import.meta.url`/`dirname`/
         // `filename` (rfd#12 amendment, deka#1139) — never the cache copy.
@@ -90,10 +94,8 @@ fn prepare_run_context(context: &Context) -> Result<PreparedRun, String> {
             compiled_root: materialized.compiled_root.clone(),
             original_root: materialized.original_root.clone(),
         });
-        let mut prepared = deka_cache::rewrite_context_for_artifact(
-            context,
-            &materialized.artifact,
-        )?;
+        let mut prepared =
+            deka_cache::rewrite_context_for_artifact(context, &materialized.artifact)?;
         let mut positionals = vec![materialized.artifact.to_string_lossy().into_owned()];
         positionals.extend(extra_args.iter().cloned());
         prepared.args.positionals = positionals;
@@ -115,8 +117,7 @@ fn prepare_run_context(context: &Context) -> Result<PreparedRun, String> {
 fn split_run_positionals(positionals: &[String]) -> (Option<&str>, &[String]) {
     match positionals.split_first() {
         Some((first, rest))
-            if run::entry::has_run_source_ext(first)
-                || run::entry::looks_like_file_arg(first) =>
+            if run::entry::has_run_source_ext(first) || run::entry::looks_like_file_arg(first) =>
         {
             (Some(first.as_str()), rest)
         }

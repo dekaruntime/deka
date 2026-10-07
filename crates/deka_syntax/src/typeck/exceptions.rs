@@ -1,5 +1,5 @@
 //! Frame-local exception consumption and escape judgment (rfd#62).
-use super::{Checker, ExceptionEmit, types::Type};
+use super::{types::Type, Checker, ExceptionEmit};
 use crate::ast;
 use std::collections::{HashMap, HashSet};
 
@@ -38,7 +38,10 @@ fn channels<'a>(ty: &Type<'a>, channel: &str) -> Option<(Type<'a>, Type<'a>)> {
     }
 }
 
-pub(super) fn rename_nominal_type<'a>(ty: &Type<'a>, names: &HashMap<&'a str, &'a str>) -> Type<'a> {
+pub(super) fn rename_nominal_type<'a>(
+    ty: &Type<'a>,
+    names: &HashMap<&'a str, &'a str>,
+) -> Type<'a> {
     let name = |n: &'a str| names.get(n).copied().unwrap_or(n);
     match ty {
         Type::Struct { name: n } => Type::Struct { name: name(n) },
@@ -56,13 +59,19 @@ pub(super) fn rename_nominal_type<'a>(ty: &Type<'a>, names: &HashMap<&'a str, &'
             args: args.iter().map(|t| rename_nominal_type(t, names)).collect(),
         },
         Type::Union { members } => Type::Union {
-            members: members.iter().map(|t| rename_nominal_type(t, names)).collect(),
+            members: members
+                .iter()
+                .map(|t| rename_nominal_type(t, names))
+                .collect(),
         },
         Type::Option { inner } => Type::Option {
             inner: Box::new(rename_nominal_type(inner, names)),
         },
         Type::Tuple { elements } => Type::Tuple {
-            elements: elements.iter().map(|t| rename_nominal_type(t, names)).collect(),
+            elements: elements
+                .iter()
+                .map(|t| rename_nominal_type(t, names))
+                .collect(),
         },
         Type::Array { elem } => Type::Array {
             elem: Box::new(rename_nominal_type(elem, names)),
@@ -72,12 +81,18 @@ pub(super) fn rename_nominal_type<'a>(ty: &Type<'a>, names: &HashMap<&'a str, &'
             ret,
             optional,
         } => Type::Function {
-            params: params.iter().map(|t| rename_nominal_type(t, names)).collect(),
+            params: params
+                .iter()
+                .map(|t| rename_nominal_type(t, names))
+                .collect(),
             ret: Box::new(rename_nominal_type(ret, names)),
             optional: *optional,
         },
         Type::Object { fields } => Type::Object {
-            fields: fields.iter().map(|(n, t)| (*n, rename_nominal_type(t, names))).collect(),
+            fields: fields
+                .iter()
+                .map(|(n, t)| (*n, rename_nominal_type(t, names)))
+                .collect(),
         },
         other => other.clone(),
     }

@@ -199,7 +199,11 @@ fn loose_run_executes_from_user_cache_and_leaves_cwd_byte_identical() {
         "materialized artifact missing at {}",
         artifact.display()
     );
-    assert_eq!(transpile_count(tooling.path()), 1, "cold path compiles once");
+    assert_eq!(
+        transpile_count(tooling.path()),
+        1,
+        "cold path compiles once"
+    );
 }
 
 #[test]
@@ -265,7 +269,14 @@ fn project_run_is_unchanged_and_gets_no_advisory() {
     // installed nothing -- that's the actual invariant
     // deka_host::validation::modules::has_installed_modules protects.
     assert!(
-        project.path().join("ds_modules").join(".cache").join("prod").join("dsc-modules").join("app.js").is_file(),
+        project
+            .path()
+            .join("ds_modules")
+            .join(".cache")
+            .join("prod")
+            .join("dsc-modules")
+            .join("app.js")
+            .is_file(),
         "project compile cache missing; project behavior changed"
     );
     let ds_modules_entries: Vec<_> = fs::read_dir(project.path().join("ds_modules"))
@@ -380,7 +391,8 @@ fn loose_serve_materializes_into_cache_and_leaves_cwd_clean() {
     let tooling = tempfile::tempdir().expect("tooling dir");
     let dsc = write_dsc_stub(tooling.path());
     let (dir, _source) = loose_dir_with("app.ds", "export const ok = true\n");
-    let scratch = tempfile::tempdir().expect("scratch dir (serve log lives outside the source dir)");
+    let scratch =
+        tempfile::tempdir().expect("scratch dir (serve log lives outside the source dir)");
     let before = snapshot_dir(dir.path());
     let port = free_port();
     let log_path = scratch.path().join("serve.log");
@@ -388,7 +400,13 @@ fn loose_serve_materializes_into_cache_and_leaves_cwd_clean() {
 
     let child = env
         .command(dir.path(), &dsc, "1.0.0")
-        .args(["serve", "app.ds", "--port", &port.to_string(), "--no-prompt"])
+        .args([
+            "serve",
+            "app.ds",
+            "--port",
+            &port.to_string(),
+            "--no-prompt",
+        ])
         .stdout(Stdio::from(log.try_clone().expect("clone log")))
         .stderr(Stdio::from(log))
         .spawn()

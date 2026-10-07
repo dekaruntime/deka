@@ -300,11 +300,7 @@ fn fresh_scaffold_installs_two_packages_and_resolves_the_import() {
     );
     let rewritten = format!(
         "import {{ greet }} from \"@deka/greet\"\n\n{}",
-        original.replacen(
-            "<h1>Deka App</h1>",
-            "<h1>{greet()}</h1>",
-            1,
-        )
+        original.replacen("<h1>Deka App</h1>", "<h1>{greet()}</h1>", 1,)
     );
     fs::write(&page, rewritten).expect("write page.dsx with stdlib import");
 
@@ -418,7 +414,10 @@ fn caret_range_resolves_to_highest_published_compatible_version_through_real_ins
     .expect("write manifest");
 
     let (success, output) = run_cli(&project, &["install"], registry.address);
-    assert!(success, "a `^`-range install against a real multi-version registry must succeed: {output}");
+    assert!(
+        success,
+        "a `^`-range install against a real multi-version registry must succeed: {output}"
+    );
 
     let lock: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(project.join("deka.lock")).unwrap()).unwrap();
@@ -572,20 +571,36 @@ fn failed_install_restores_prior_state_and_leaves_no_backup_litter() {
 
     let (success, output) = run_cli(&project, &["install", "fs"], registry.address);
     assert!(success, "initial install must succeed: {output}");
-    assert!(project.join("deka.grants.json").is_file(), "grant table must be written");
+    assert!(
+        project.join("deka.grants.json").is_file(),
+        "grant table must be written"
+    );
 
     let lock_before = fs::read_to_string(project.join("deka.lock")).expect("lock before");
     let manifest_before = fs::read_to_string(project.join("deka.json")).expect("manifest before");
-    let grants_before = fs::read_to_string(project.join("deka.grants.json")).expect("grants before");
-    assert_eq!(count_root_backups(&project), 0, "clean before the failing call");
-    assert_eq!(count_cache_entries(&project), 0, "clean before the failing call");
+    let grants_before =
+        fs::read_to_string(project.join("deka.grants.json")).expect("grants before");
+    assert_eq!(
+        count_root_backups(&project),
+        0,
+        "clean before the failing call"
+    );
+    assert_eq!(
+        count_cache_entries(&project),
+        0,
+        "clean before the failing call"
+    );
 
     // "does-not-exist" maps to @deka/does-not-exist (bare names map to
     // @deka/*) and the fixture registry serves no such package, so the
     // installer resolves an empty/source-less artifact and rejects it --
     // after "fs" (already locked) has run through the same per-package loop
     // and opened a transaction ahead of it.
-    let (success, output) = run_cli(&project, &["install", "fs", "does-not-exist"], registry.address);
+    let (success, output) = run_cli(
+        &project,
+        &["install", "fs", "does-not-exist"],
+        registry.address,
+    );
     assert!(
         !success,
         "install with a missing package should fail after a partial successful install: {output}"

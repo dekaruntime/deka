@@ -1,15 +1,15 @@
 //! Statement parsing.
 
 use crate::ast::{
-    BridgeAction, EnumCase, ExportDecl, Expr, ForInit, InterfaceMember, NewtypeRepr, Param,
-    ParamBinding, Pos, Program, Stmt, StructField, TemplatePart, Type, TypeParam, alloc,
-    alloc_slice,
+    alloc, alloc_slice, BridgeAction, EnumCase, ExportDecl, Expr, ForInit, InterfaceMember,
+    NewtypeRepr, Param, ParamBinding, Pos, Program, Stmt, StructField, TemplatePart, Type,
+    TypeParam,
 };
 use crate::diagnostics::Diagnostic;
 use crate::lexer::TokenKind;
 
-use super::Parser;
 use super::util::token_name;
+use super::Parser;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_program(&mut self) -> Option<Program<'a>> {
@@ -527,7 +527,7 @@ impl<'a> Parser<'a> {
 
     fn parse_for_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
         self.advance(); // `for`
-        // rfd#65 range spelling lowers to the existing counting-loop AST.
+                        // rfd#65 range spelling lowers to the existing counting-loop AST.
         if self.at(TokenKind::Identifier) {
             let name = self.expect_identifier()?;
             let keyword = self.expect_identifier()?;
@@ -1691,11 +1691,7 @@ impl<'a> Parser<'a> {
                 None
             };
             let span = self.span_from(name_span.start, name_span.byte_start);
-            params.push(TypeParam {
-                name,
-                bound,
-                span,
-            });
+            params.push(TypeParam { name, bound, span });
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -1842,7 +1838,9 @@ pub fn expr_has_top_level_await(expr: &Expr<'_>) -> bool {
         | Expr::Safe { expr: object, .. }
         | Expr::Paren { expr: object, .. }
         | Expr::Spread { expr: object, .. } => expr_has_top_level_await(object),
-        Expr::IndexAccess { object, index, .. } => expr_has_top_level_await(object) || expr_has_top_level_await(index),
+        Expr::IndexAccess { object, index, .. } => {
+            expr_has_top_level_await(object) || expr_has_top_level_await(index)
+        }
         Expr::StructLiteral { fields, .. } => {
             fields.iter().any(|f| expr_has_top_level_await(&f.value))
         }

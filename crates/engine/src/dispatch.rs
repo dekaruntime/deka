@@ -28,7 +28,8 @@ async fn execute_request_data(
     state: Arc<RuntimeState>,
     request_data: RequestData,
 ) -> Result<ResponseEnvelope, String> {
-    let handler_key = handler_key_for_entry(&state.handler_key, request_data.handler_entry.as_deref());
+    let handler_key =
+        handler_key_for_entry(&state.handler_key, request_data.handler_entry.as_deref());
     let pool_response = state
         .engine
         .execute(handler_key, request_data)
@@ -154,7 +155,11 @@ fn read_trailing_slash(project_root: &Path) -> bool {
     };
     value
         .get("serve")
-        .and_then(|serve| serve.get("trailingSlash").or_else(|| serve.get("trailing_slash")))
+        .and_then(|serve| {
+            serve
+                .get("trailingSlash")
+                .or_else(|| serve.get("trailing_slash"))
+        })
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }

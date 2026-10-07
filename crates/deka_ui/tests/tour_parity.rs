@@ -272,7 +272,6 @@ fn parity(name: &'static str, source: &str, app: fn() -> UiApp, motion: bool) {
                 {
                     pair.click(handler, 100. + step as f64 * 100.);
                 }
-
             }
         }
         pair.frame(20000.);

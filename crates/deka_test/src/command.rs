@@ -56,18 +56,15 @@ fn run_tests(context: &Context) -> Result<(), String> {
         return Ok(());
     }
 
-    stdio::log(
-        "test",
-        &format!("[runtime] {} test file(s)", files.len()),
-    );
+    stdio::log("test", &format!("[runtime] {} test file(s)", files.len()));
     for file in &files {
         let rel = file.strip_prefix(&cwd).unwrap_or(file).to_string_lossy();
         stdio::log("test", &format!("[deka:{}]", rel));
     }
 
     let _workspace = TestWorkspace::prepare(&cwd, &files, &pattern)?;
-    let exe = std::env::current_exe()
-        .map_err(|err| format!("failed to resolve executable: {}", err))?;
+    let exe =
+        std::env::current_exe().map_err(|err| format!("failed to resolve executable: {}", err))?;
     let mut cmd = Command::new(&exe);
     cmd.arg("run")
         .arg(&_workspace.runner)
@@ -256,7 +253,8 @@ fn vendor_test_lib(cwd: &Path) -> Result<VendorGuard, String> {
 
 fn declare_test_dependency(manifest_path: &Path) -> Result<(), String> {
     let raw = if manifest_path.exists() {
-        fs::read_to_string(manifest_path).map_err(|err| format!("failed to read deka.json: {err}"))?
+        fs::read_to_string(manifest_path)
+            .map_err(|err| format!("failed to read deka.json: {err}"))?
     } else {
         String::from("{}")
     };
@@ -272,7 +270,8 @@ fn declare_test_dependency(manifest_path: &Path) -> Result<(), String> {
         .insert(TEST_PACKAGE.to_string(), serde_json::json!("0.1.0"));
     fs::write(
         manifest_path,
-        serde_json::to_string_pretty(&manifest).map_err(|err| format!("failed to serialize deka.json: {err}"))?,
+        serde_json::to_string_pretty(&manifest)
+            .map_err(|err| format!("failed to serialize deka.json: {err}"))?,
     )
     .map_err(|err| format!("failed to write deka.json: {err}"))
 }
@@ -466,7 +465,10 @@ fn should_skip_dir(path: &Path) -> bool {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    matches!(name, "target" | "dist" | ".git" | "ds_modules" | "php_modules")
+    matches!(
+        name,
+        "target" | "dist" | ".git" | "ds_modules" | "php_modules"
+    )
 }
 
 fn is_test_file(path: &Path) -> bool {

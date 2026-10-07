@@ -23,7 +23,10 @@ pub fn cmd(context: &Context) {
 
 pub fn run_dev(context: &Context) {
     if !cfg!(feature = "dev-server") {
-        stdio::error("dev", "this build lacks the dev server; rebuild with --features dev-server");
+        stdio::error(
+            "dev",
+            "this build lacks the dev server; rebuild with --features dev-server",
+        );
         std::process::exit(1);
     }
     // Loose file or unbuilt loose directory (no deka.json anywhere above the
@@ -40,12 +43,10 @@ pub fn run_dev(context: &Context) {
         // Dev build-slot support (deka#725): materialize the project's build
         // slots up front so pages render without a prior `deka build`, and
         // register the watcher callback that rematerializes affected slots.
-        crate::build_watch::set_build_slot_refresh(
-            deka_build::make_dev_refresh_callback(
-                context.args.flags.clone(),
-                context.args.params.clone(),
-            ),
-        );
+        crate::build_watch::set_build_slot_refresh(deka_build::make_dev_refresh_callback(
+            context.args.flags.clone(),
+            context.args.params.clone(),
+        ));
         deka_build::ensure_dev_build_slots(
             &context.args.flags,
             &context.args.params,

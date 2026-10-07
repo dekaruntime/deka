@@ -1,5 +1,5 @@
-use deka_cli_core::{CommandSpec, Context, Registry};
 use crate::{link_package_at, unlink_package_at};
+use deka_cli_core::{CommandSpec, Context, Registry};
 use std::path::{Path, PathBuf};
 use stdio;
 

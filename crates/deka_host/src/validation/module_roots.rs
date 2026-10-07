@@ -153,8 +153,12 @@ mod tests {
             .expect("create compiler cache dir");
         let entry = local.join("app").join("main.phpx");
         fs::create_dir_all(entry.parent().expect("entry parent")).expect("mkdir app");
-        fs::write(&entry, "import { foo } from 'a'
-").expect("write entry");
+        fs::write(
+            &entry,
+            "import { foo } from 'a'
+",
+        )
+        .expect("write entry");
 
         let global = temp_dir("resolve_cache_only_global");
         fs::write(global.join("deka.lock"), "{}").expect("write global lockfile");

@@ -90,8 +90,7 @@ fn build_phase_policy_is_not_observable_by_other_threads() {
     use ::security::security_context::{SecurityContext, set_security_context};
 
     let target = "data/secret.txt";
-    let ordinary_policy =
-        r#"{"security":{"allow":{"read":["/nonexistent-deka-ordinary-canary"]},"deny":{},"prompt":false}}"#;
+    let ordinary_policy = r#"{"security":{"allow":{"read":["/nonexistent-deka-ordinary-canary"]},"deny":{},"prompt":false}}"#;
     let build_policy = r#"{"security":{"allow":{"read":["./"]},"deny":{},"prompt":false}}"#;
     let deny_read = |policy: &'static str| {
         std::thread::spawn(move || {

@@ -1,7 +1,7 @@
 //! Bounds facts are deliberately local and conservative. Calls may mutate aliases;
 //! writes, suspension and opaque JS kill every fact. Branch joins intersect, never
 //! restore a snapshot (which could resurrect a proof killed in either branch).
-use super::{Checker, types::ArrayAccess};
+use super::{types::ArrayAccess, Checker};
 use crate::ast::{BinOp, Expr, ForInit, Span};
 use std::collections::HashSet;
 

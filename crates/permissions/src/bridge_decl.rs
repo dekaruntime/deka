@@ -334,13 +334,7 @@ fn render_catalog_signature(kind: &str, action: &HostAction) -> String {
     let args: Vec<String> = action
         .args
         .iter()
-        .map(|host_arg| {
-            format!(
-                "{}: {}",
-                host_arg.name,
-                wire_type_to_ds(host_arg.wire)
-            )
-        })
+        .map(|host_arg| format!("{}: {}", host_arg.name, wire_type_to_ds(host_arg.wire)))
         .collect();
     let result = format!("Result<{}>", result_shape_to_ds(action.result));
     format!(
@@ -563,7 +557,9 @@ mod tests {
         );
         assert_eq!(check.diagnostics.len(), 1);
         assert!(
-            check.diagnostics[0].message.contains("return shape mismatch"),
+            check.diagnostics[0]
+                .message
+                .contains("return shape mismatch"),
             "message: {}",
             check.diagnostics[0].message
         );
@@ -605,7 +601,9 @@ mod tests {
         );
         assert_eq!(check.diagnostics.len(), 1);
         assert!(
-            check.diagnostics[0].message.contains("return shape mismatch"),
+            check.diagnostics[0]
+                .message
+                .contains("return shape mismatch"),
             "message: {}",
             check.diagnostics[0].message
         );

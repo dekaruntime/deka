@@ -192,11 +192,7 @@ mod tests {
     fn finish_reports_backup_cleanup_failures_without_failing_install() {
         let tmp = tempfile::tempdir().expect("tmp");
         let lock_path = tmp.path().join("deka.lock");
-        fs::write(
-            &lock_path,
-            "{\"lockfileVersion\":1,\"packages\":{}}\n",
-        )
-        .expect("write lockfile");
+        fs::write(&lock_path, "{\"lockfileVersion\":1,\"packages\":{}}\n").expect("write lockfile");
         fs::write(
             tmp.path().join("deka.json"),
             "{\"name\":\"probe\",\"dependencies\":{}}\n",
@@ -224,26 +220,27 @@ mod tests {
             let dir = lock_backup
                 .parent()
                 .expect("backup file is always in cache");
-            let mut permissions = fs::metadata(dir)
-                .expect("cache metadata")
-                .permissions();
+            let mut permissions = fs::metadata(dir).expect("cache metadata").permissions();
             use std::os::unix::fs::PermissionsExt;
             permissions.set_mode(0o555);
             fs::set_permissions(dir, permissions).expect("make cache read-only");
         }
 
-        let warnings = transaction
-            .finish()
-            .expect("finish");
+        let warnings = transaction.finish().expect("finish");
         assert!(!warnings.is_empty(), "expected backup cleanup warning");
         assert!(
-            warnings.iter().any(|warning| warning.contains(&lock_backup.display().to_string())),
+            warnings
+                .iter()
+                .any(|warning| warning.contains(&lock_backup.display().to_string())),
             "expected warning to include backup path"
         );
         emit_cleanup_warnings(&warnings);
 
         let lock_backup_still_exists = lock_backup.exists();
-        assert!(lock_backup_still_exists, "expected stubborn lock backup to remain");
+        assert!(
+            lock_backup_still_exists,
+            "expected stubborn lock backup to remain"
+        );
 
         #[cfg(target_os = "macos")]
         {
@@ -259,9 +256,7 @@ mod tests {
             let dir = lock_backup
                 .parent()
                 .expect("backup file is always in cache");
-            let mut permissions = fs::metadata(dir)
-                .expect("cache metadata")
-                .permissions();
+            let mut permissions = fs::metadata(dir).expect("cache metadata").permissions();
             use std::os::unix::fs::PermissionsExt;
             permissions.set_mode(0o755);
             fs::set_permissions(dir, permissions).expect("restore cache permissions");

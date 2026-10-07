@@ -736,7 +736,9 @@ mod tests {
         let _guard = ENV_TEST_GUARD.lock().expect("env test guard");
 
         // Clear any stale value from a previously interrupted run.
-        unsafe { std::env::remove_var("DEKA_SELF_MANAGED_UNITS"); }
+        unsafe {
+            std::env::remove_var("DEKA_SELF_MANAGED_UNITS");
+        }
 
         // no env -> empty
         assert!(managed_units_from_env().unwrap().is_empty());

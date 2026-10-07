@@ -193,11 +193,7 @@ fn ident_len(s: &str) -> usize {
 
 fn take_ident(s: &str) -> Option<&str> {
     let n = ident_len(s);
-    if n == 0 {
-        None
-    } else {
-        Some(&s[..n])
-    }
+    if n == 0 { None } else { Some(&s[..n]) }
 }
 
 fn is_pascal_case(name: &str) -> bool {
@@ -218,11 +214,7 @@ fn return_type_before_brace(s: &str) -> Option<&str> {
     let s = s.strip_prefix(':').map(str::trim_start).unwrap_or(s);
     let brace = s.find('{')?;
     let ty = s[..brace].trim();
-    if ty.is_empty() {
-        None
-    } else {
-        Some(ty)
-    }
+    if ty.is_empty() { None } else { Some(ty) }
 }
 
 fn skip_balanced<'a>(s: &'a str, open: char, close: char) -> &'a str {

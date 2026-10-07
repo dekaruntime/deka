@@ -223,8 +223,11 @@ fn publish_command_rejects_artifact_with_appledouble_files() {
     fs::write(root.join("index.phpx"), "export const released = true;\n")
         .expect("write package source");
     // macOS AppleDouble sidecar committed into the tree (dekaruntime/deka#587).
-    fs::write(root.join("._index.phpx"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
-        .expect("write AppleDouble sidecar");
+    fs::write(
+        root.join("._index.phpx"),
+        b"\x00\x05\x16\x07\x00\x02\x00\x00",
+    )
+    .expect("write AppleDouble sidecar");
 
     git(root, &["add", "."]);
     git(root, &["commit", "-m", "package fixture"]);
