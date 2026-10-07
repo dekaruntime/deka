@@ -86,17 +86,19 @@ try {
   const input=page.getByRole('textbox',{name:'Name',exact:true});
   assert.equal(await page.getByRole('textbox',{name:'Notes',exact:true}).count(),1);
   assert.equal(await page.getByRole('button',{name:'Clear',exact:true}).count(),1);
-await input.pressSequentially('Sami')
+  await input.pressSequentially('Sami')
   assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello Sami'))
   await input.press('Enter');assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Key: Enter'))
   assert.equal(await input.inputValue(),'Confirmed');
   const textarea=page.locator('textarea');assert.equal(await textarea.inputValue(),'Confirmed');
   await textarea.fill('line one\nline two');assert.equal(await input.inputValue(),'line oneline two');
+  const editsBefore=await page.evaluate(()=>Number(window.scene.nodes.find(n=>n.text?.startsWith("Edits: ")).text.slice(7)));
   await input.evaluate(input=>{input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.value='にほん';input.dispatchEvent(new InputEvent('input',{data:'にほん',isComposing:true,bubbles:true}));});
   assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello line one\nline two'),'preedit must not update signal');
-  await input.evaluate(input=>{input.value='日本';input.dispatchEvent(new CompositionEvent('compositionend',{data:'日本',bubbles:true}));});
+  await input.evaluate(input=>{input.value='日本';input.dispatchEvent(new CompositionEvent('compositionend',{data:'日本',bubbles:true}));input.dispatchEvent(new InputEvent('input',{data:'日本',isComposing:false,bubbles:true}));});
   assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello 日本'));
   assert.equal(await textarea.inputValue(),'日本');
+  assert.equal(await page.evaluate(()=>Number(window.scene.nodes.find(n=>n.text?.startsWith("Edits: ")).text.slice(7))),editsBefore+1,'compositionend and final input form one committed edit');
   await page.context().grantPermissions(['clipboard-read','clipboard-write']);
   await page.evaluate(()=>navigator.clipboard.writeText('clipboard 日本'));
   await input.focus();await input.press('ControlOrMeta+A');await input.press('ControlOrMeta+V');
