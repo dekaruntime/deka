@@ -251,6 +251,11 @@ fn literal_offsets(source: &str) -> Vec<usize> {
         let offset = index;
         let ch = source[index..].chars().next().unwrap();
         index += ch.len_utf8();
+        // Rust normalizes a physical CRLF to one decoded newline in both
+        // ordinary and raw string literals; keep one source-offset entry.
+        if ch == '\r' && source.as_bytes().get(index) == Some(&b'\n') {
+            index += 1;
+        }
         if !raw && ch == '\\' && index < end {
             let escaped = source[index..].chars().next().unwrap();
             index += escaped.len_utf8();
@@ -529,6 +534,22 @@ fn expand_component(mut function: ItemFn) -> syn::Result<Tokens> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn physical_crlf_diagnostics_point_at_the_decoded_brace() {
+        for source in ["\"First\r\nprefix {a.b}\"", "r#\"First\r\nprefix {a.b}\"#"] {
+            let literal: LitStr = syn::parse_str(source).unwrap();
+            // Index 13 is the brace after the compiler decodes physical CRLF
+            // as one newline. The unit-test fallback parser retains raw CRLF.
+            let error =
+                interpolation_error(&literal, 13, "text interpolation requires an identifier");
+            assert!(
+                error.to_string().contains("brace at line 2, column 8"),
+                "{error}"
+            );
+            assert_eq!(error.span().start().line, 2);
+            assert_eq!(error.span().start().column, 7);
+        }
+    }
     #[test]
     fn interpolation_errors_locate_the_brace_through_raw_strings_and_escapes() {
         for source in [
