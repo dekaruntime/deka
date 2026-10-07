@@ -26,7 +26,7 @@ async fn execute(program: Program, hosts: Hosts) -> HostValue {
 async fn crypto_import_and_alias_dispatch_known_digest_bytes() {
     let h = hosts();
     let p=compiler::compile(r#"import {sha256 as hash} from "crypto";
-    async fn main() Promise<bytes> {const value=unwrap(await hash(TextEncoder().encode("abc"))) or{return TextEncoder().encode("failed");};return value;}"#,&h).unwrap();
+    fn main() bytes {const value=unwrap(hash(TextEncoder().encode("abc"))) or{return TextEncoder().encode("failed");};return value;}"#,&h).unwrap();
     assert_eq!(
         execute(p, h).await,
         HostValue::Bytes(vec![
@@ -50,7 +50,7 @@ async fn prefixed_operations_are_scoped_and_first_class() {
 #[test]
 fn signatures_reject_wrong_arguments_and_cross_module_leaks() {
     for source in [
-        r#"import {sha256} from "crypto"; async fn main(){await sha256("abc");}"#,
+        r#"import {sha256} from "crypto"; fn main(){sha256("abc");}"#,
         r#"import {sha256} from "bytes"; fn main(){return sha256;}"#,
         r#"import {sleep} from "crypto"; fn main(){return sleep;}"#,
         r#"import {sample} from "io"; fn main(){return sample;}"#,
@@ -78,7 +78,7 @@ async fn builtin_barrels_preserve_typed_host_dispatch_after_source_deletion() {
     let barrel = dir.path().join("hash.ds");
     std::fs::write(&barrel, r#"export {sha256 as hash} from "crypto";"#).unwrap();
     std::fs::write(&entry,r#"import {hash} from "./hash.ds";
-    async fn main() Promise<number>{const data=unwrap(await hash(TextEncoder().encode("abc"))) or{return 0;};return data[0];}"#).unwrap();
+    fn main() number{const data=unwrap(hash(TextEncoder().encode("abc"))) or{return 0;};return data[0];}"#).unwrap();
     let h = hosts();
     let program = compiler::compile_file(&entry, &h, Some("main")).unwrap();
     assert_eq!(compiler::source_files(&entry).unwrap().len(), 2);

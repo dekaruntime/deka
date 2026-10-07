@@ -353,7 +353,11 @@ impl<'a> Lower<'a> {
         }
         Ok(true)
     }
-    fn json_factory_record(&self, shape: &crate::JsonShape, c: &mut Context) -> Result<()> {
+    pub(super) fn json_factory_record(
+        &self,
+        shape: &crate::JsonShape,
+        c: &mut Context,
+    ) -> Result<()> {
         let mut factories = Default::default();
         factory_ids(shape, &mut factories);
         for identity in &factories {
