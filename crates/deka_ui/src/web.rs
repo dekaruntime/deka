@@ -11,6 +11,7 @@ pub struct BrowserApp {
     renderer: Renderer,
     scene: Scene,
     focus: Option<String>,
+    focus_visible: bool,
     sent_images: HashSet<String>,
 }
 impl BrowserApp {
@@ -20,6 +21,7 @@ impl BrowserApp {
             renderer: Renderer::new(),
             scene: Scene::default(),
             focus: None,
+            focus_visible: false,
             sent_images: HashSet::new(),
         }
     }
@@ -38,7 +40,9 @@ impl BrowserApp {
         self.scene = self
             .renderer
             .render_at(&tree, width, height, scale, milliseconds, reduced);
-        if let Some(id) = &self.focus {
+        if let Some(id) = &self.focus
+            && self.focus_visible
+        {
             self.scene.focus_ring(id);
         }
         let errors = self.app.take_errors();
@@ -75,6 +79,7 @@ impl BrowserApp {
         result
     }
     pub fn pointer(&mut self, x: f32, y: f32) -> bool {
+        self.focus_visible = false;
         if let Some(target) = self.scene.hit(x, y) {
             self.focus = Some(target.id.clone());
             return self.activate(&target.id);
@@ -91,6 +96,7 @@ impl BrowserApp {
     /// Tab follows rendered controls; boundaries let focus leave the canvas.
     pub fn key(&mut self, key: &str, backwards: bool) -> bool {
         if key == "Tab" {
+            self.focus_visible = true;
             use deka_native_ui::Application;
             let targets = deka_native_ui::tab_order(&self.app.semantics());
             let current = targets
@@ -131,7 +137,7 @@ impl BrowserApp {
         })).collect();
         serde_json::to_string(&nodes).map_err(|e| e.to_string())
     }
-    pub fn focus_node(&mut self, id: &str) -> bool {
+    pub fn focus_node(&mut self, id: &str, visible: bool) -> bool {
         use deka_native_ui::Application;
         if self
             .app
@@ -140,6 +146,7 @@ impl BrowserApp {
             .any(|n| n.id == id && n.tab_index.is_some() && !n.disabled && !n.hidden)
         {
             self.focus = Some(id.into());
+            self.focus_visible = visible;
             true
         } else {
             false

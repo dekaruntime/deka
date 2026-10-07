@@ -1062,11 +1062,16 @@ impl Application for UiApp {
             output: &mut Vec<SemanticNode>,
         ) {
             let tag = node.tag_name();
+            let clickable = node.has_click_handler();
             let role = match tag.as_deref() {
                 Some("button") => SemanticRole::Button,
                 Some("input") => SemanticRole::TextInput,
                 Some("textarea") => SemanticRole::MultilineTextInput,
                 None => SemanticRole::Label,
+                _ if clickable => SemanticRole::Button,
+                _ if node.all_children().is_empty() && !node.text_content().is_empty() => {
+                    SemanticRole::Label
+                }
                 _ => SemanticRole::Group,
             };
             let hidden = hidden || node.attribute("aria-hidden").as_deref() == Some("true");
@@ -1074,7 +1079,6 @@ impl Application for UiApp {
                 || node
                     .attribute("disabled")
                     .is_some_and(|v| !matches!(v.as_str(), "false" | "0"));
-            let clickable = node.has_click_handler();
             let natural = matches!(
                 role,
                 SemanticRole::Button | SemanticRole::TextInput | SemanticRole::MultilineTextInput

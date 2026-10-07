@@ -8,7 +8,7 @@ use std::{cell::Cell, rc::Rc};
 // Requests use the adapter's public event type, handled by the same Content
 // ingress as winit's user_event callback; no application handler is called here.
 use deka_native_ui::window::accesskit_events::{
-    Action, ActionData, ActionRequest, NodeId, TreeId, WindowEvent,
+    Action, ActionData, ActionRequest, NodeId, Role, TreeId, WindowEvent,
 };
 fn action(action: Action, target: NodeId, data: Option<ActionData>) -> WindowEvent {
     WindowEvent::ActionRequested(ActionRequest {
@@ -68,6 +68,7 @@ fn adapter_actions_change_rendered_signal_value_and_focus() {
     );
     let updated = session.accessibility(2.);
     let node = &updated.nodes.iter().find(|(id, _)| *id == input).unwrap().1;
+    assert_eq!(node.role(), Role::TextInput);
     assert_eq!(node.value(), Some("日本"));
     assert!(node.text_selection().is_some());
     assert!(!node.children().is_empty());

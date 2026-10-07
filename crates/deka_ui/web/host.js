@@ -148,7 +148,7 @@ export function mount(app, canvas, inspect = false) {
   const motion = matchMedia('(prefers-reduced-motion: reduce)')
   const inputs = new Map()
   const semantics = new Map()
-  const previousTabIndex = canvas.tabIndex
+  const previousTabIndex = canvas.getAttribute("tabindex")
   const previousAriaHidden = canvas.getAttribute("aria-hidden")
   canvas.tabIndex = -1; canvas.setAttribute("aria-hidden", "true")
   const parent = canvas.parentElement
@@ -168,7 +168,7 @@ export function mount(app, canvas, inspect = false) {
         input.addEventListener('compositionend', () => { input.dekaComposing = false; try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } })
         input.addEventListener('input', () => { if (!input.dekaComposing) { try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } } })
         input.addEventListener('keydown', event => { if(event.isComposing) return; try { app.key_to(control.id,event.key); draw() } catch(error) { fail(error) } })
-        input.addEventListener('focus', () => { try { app.focus_node(control.id); draw() } catch(error) { fail(error) } })
+        input.addEventListener('focus', () => { try { app.focus_node(control.id, input.matches(":focus-visible")); draw() } catch(error) { fail(error) } })
         input.addEventListener('blur', () => { app.blur(); draw() })
         inputs.set(control.id,input); parent.append(input)
       }
@@ -199,7 +199,7 @@ export function mount(app, canvas, inspect = false) {
           element.style.cssText='position:absolute;opacity:0;pointer-events:none;'
           element.addEventListener('click', () => { try { app.activate(node.id); draw() } catch(error) { fail(error) } })
         } else element.style.cssText='position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);'
-        element.addEventListener('focus', () => { try { app.focus_node(node.id); draw() } catch(error) { fail(error) } })
+        element.addEventListener('focus', () => { try { app.focus_node(node.id, element.matches(":focus-visible")); draw() } catch(error) { fail(error) } })
         element.addEventListener('blur', () => { app.blur(); draw() })
         semantics.set(node.id, element)
       }
@@ -272,7 +272,7 @@ export function mount(app, canvas, inspect = false) {
     canvas.removeEventListener('pointerup',pointer);canvas.removeEventListener('keydown',key);canvas.removeEventListener('blur',blur)
     canvas.removeEventListener('webglcontextlost',lost);canvas.removeEventListener('webglcontextrestored',restored);canvas.removeEventListener('deka:clock',command)
     for(const input of inputs.values()) input.remove(); for(const element of semantics.values()) element.remove()
-    canvas.tabIndex=previousTabIndex
+    if (previousTabIndex === null) canvas.removeAttribute("tabindex"); else canvas.setAttribute("tabindex",previousTabIndex)
     if (previousAriaHidden === null) canvas.removeAttribute('aria-hidden'); else canvas.setAttribute('aria-hidden',previousAriaHidden)
     renderer.dispose(); app.free()
   }}

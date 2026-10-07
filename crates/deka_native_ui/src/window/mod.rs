@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 pub use ui::{DesktopSession, TextClipboard};
 /// Public adapter event payloads for platform integration and event tests.
 pub mod accesskit_events {
-    pub use accesskit::{Action, ActionData, ActionRequest, NodeId, TreeId};
+    pub use accesskit::{Action, ActionData, ActionRequest, NodeId, Role, TreeId};
     pub use accesskit_winit::WindowEvent;
 }
 use winit::application::ApplicationHandler;
