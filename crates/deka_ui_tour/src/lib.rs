@@ -11,21 +11,6 @@ mod browser {
     /// Replace the current lesson without loading a second wasm instance.
     #[wasm_bindgen]
     pub fn start(lesson_id: &str, canvas: &JsValue) -> Result<(), JsValue> {
-        #[cfg(feature = "counter-only")]
-        let app = {
-            if lesson_id != "counter" {
-                return Err(JsValue::from_str("Unknown lesson"));
-            }
-            deka_ui::UiApp::new(tour::counter::App)
-        };
-        #[cfg(all(not(feature = "counter-only"), feature = "largest-only"))]
-        let app = {
-            if lesson_id != "layout" {
-                return Err(JsValue::from_str("Unknown lesson"));
-            }
-            deka_ui::UiApp::new(tour::layout::App)
-        };
-        #[cfg(not(any(feature = "counter-only", feature = "largest-only")))]
         let app = (tour::LESSONS
             .iter()
             .find(|l| l.id == lesson_id)

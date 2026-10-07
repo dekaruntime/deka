@@ -1,6 +1,7 @@
 //! Browser sessions use the same retained tree, events and renderer as desktop.
 use crate::{Event, UiApp};
 use deka_native_ui::scene::{Renderer, Scene};
+use std::collections::HashSet;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -10,6 +11,7 @@ pub struct BrowserApp {
     renderer: Renderer,
     scene: Scene,
     focus: Option<String>,
+    sent_images: HashSet<String>,
 }
 impl BrowserApp {
     pub fn new(app: UiApp) -> Self {
@@ -18,6 +20,7 @@ impl BrowserApp {
             renderer: Renderer::new(),
             scene: Scene::default(),
             focus: None,
+            sent_images: HashSet::new(),
         }
     }
 }
@@ -39,7 +42,24 @@ impl BrowserApp {
         if !errors.is_empty() {
             return Err(errors.join("\n"));
         }
-        serde_json::to_string(&self.scene).map_err(|e| e.to_string())
+        // The renderer retains glyph textures by id. Send each bitmap only once
+        // while it is live; keep the full scene for Rust hit testing.
+        let active: HashSet<_> = self
+            .scene
+            .images
+            .iter()
+            .map(|image| image.id.clone())
+            .collect();
+        self.sent_images.retain(|id| active.contains(id));
+        let images = std::mem::take(&mut self.scene.images);
+        self.scene.images = images
+            .iter()
+            .filter(|image| self.sent_images.insert(image.id.clone()))
+            .cloned()
+            .collect();
+        let result = serde_json::to_string(&self.scene).map_err(|e| e.to_string());
+        self.scene.images = images;
+        result
     }
     pub fn pointer(&mut self, x: f32, y: f32) -> bool {
         if let Some(target) = self.scene.hit(x, y) {
@@ -97,19 +117,33 @@ impl BrowserApp {
     pub fn focus(&self) -> Option<String> {
         self.focus.clone()
     }
-    pub fn inputs(&self) -> String {
+    pub fn inputs(&self) -> Result<String, String> {
         let tree = self.app.tree();
-        let inputs: Vec<_> = tree.query_all("input").unwrap_or_default().into_iter().chain(tree.query_all("textarea").unwrap_or_default())
-            .map(|element| serde_json::json!({"id":element.renderer_id(),"value":element.get_attribute("value").unwrap_or_default()})).collect();
-        serde_json::to_string(&inputs).expect("input strings")
+        let controls = tree
+            .query_all("input")
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .chain(tree.query_all("textarea").map_err(|e| e.to_string())?);
+        let mut inputs = Vec::new();
+        for element in controls {
+            // Absence is a valid empty HTML input, not a selector/serialization error.
+            let value = element
+                .get_attribute("value")
+                .map_or_else(String::new, |value| value);
+            inputs.push(serde_json::json!({"id": element.renderer_id(), "value": value}));
+        }
+        serde_json::to_string(&inputs).map_err(|e| e.to_string())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(module = "/web/host.js")]
+#[cfg_attr(feature = "web-test", wasm_bindgen(module = "/web/test-host.js"))]
+#[cfg_attr(not(feature = "web-test"), wasm_bindgen(module = "/web/host.js"))]
 extern "C" {
     #[wasm_bindgen(catch, js_name = mount)]
     fn mount(app: BrowserApp, canvas: &JsValue) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_name = reportPanic)]
+    fn report_panic(message: &str);
     #[wasm_bindgen(js_name = unmount)]
     fn unmount(handle: &JsValue);
 }
@@ -124,6 +158,12 @@ impl Drop for WebHandle {
 }
 #[cfg(target_arch = "wasm32")]
 pub fn mount_app(app: UiApp, canvas: &JsValue) -> Result<WebHandle, JsValue> {
+    // No extra dependency is needed to turn Rust panic payloads into readable
+    // browser diagnostics. The hook runs before wasm reports "unreachable".
+    static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
+    PANIC_HOOK.call_once(|| {
+        std::panic::set_hook(Box::new(|info| report_panic(&info.to_string())));
+    });
     mount(BrowserApp::new(app), canvas).map(WebHandle)
 }
 /// Launch precompiled Rust into an existing HTML canvas. Drop the handle to stop.

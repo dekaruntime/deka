@@ -48,7 +48,7 @@ fn input_dispatch_updates_the_same_bound_text_and_disposal_frees_signals() {
         view! {<view><input id="name" value={move ||text.get().unwrap()} onInput={move |event|if let Event::Input(value)=event {text.set(value);}}/><p>"Hello {text}"</p></view>}
     }));
     scene(&mut app);
-    let inputs: Value = serde_json::from_str(&app.inputs()).unwrap();
+    let inputs: Value = serde_json::from_str(&app.inputs().unwrap()).unwrap();
     assert_eq!(inputs.as_array().unwrap().len(), 1);
     assert!(app.input(inputs[0]["id"].as_str().unwrap(), "Sami"));
     assert!(
@@ -60,4 +60,27 @@ fn input_dispatch_updates_the_same_bound_text_and_disposal_frees_signals() {
     );
     drop(app);
     assert!(state.get().unwrap().get().is_err());
+}
+
+#[test]
+fn unchanged_glyphs_are_sent_once_and_new_text_supplies_new_bitmaps() {
+    let mut count = None;
+    let mut app = BrowserApp::new(UiApp::new(|| {
+        let state = signal(0);
+        count = Some(state);
+        view! {<p>"Count: {state}"</p>}
+    }));
+    let first = scene(&mut app);
+    assert!(!first["images"].as_array().unwrap().is_empty());
+    assert!(scene(&mut app)["images"].as_array().unwrap().is_empty());
+    count.unwrap().set(42);
+    let changed = scene(&mut app);
+    assert!(!changed["images"].as_array().unwrap().is_empty());
+    assert!(
+        changed["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["text"] == "Count: 42")
+    );
 }

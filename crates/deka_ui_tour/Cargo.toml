@@ -9,8 +9,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [features]
-counter-only = []
-largest-only = []
+web-test = ["deka-ui/web-test"]
 
 [dependencies]
 deka-ui = { path = "../deka_ui", default-features = false, features = ["web", "tour"] }

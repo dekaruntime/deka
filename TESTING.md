@@ -112,7 +112,14 @@ assertions can be removed.
 
 ## Browser and release evidence
 
-The website owns browser tests for its tour. The Rust tour shows read-only
+The producer CI runs `scripts/rust-tour-browser/check.mjs` against the built
+production tour and a separate `web-test` fixture in headless Chromium. It
+exercises all 27 shared lesson histories, actual canvas pixels and input, plus
+stop cleanup. The shipped bundle ignores `?inspect` and `deka:clock`.
+`cargo test -p deka-ui` fails without both `tour,web` features; use
+`./scripts/test-rust-ui.sh` for the full suite. CI also compares sha256 of two
+complete rebuilt packages. The website separately tests source/navigation,
+artifact integrity, recovery, focus, themes and responsive layout. The Rust tour shows read-only
 repository source beside a precompiled wasm result. Its browser gate exercises
 all 27 shared Rust lesson constructors and parity scripts, real pointer/key/input
 events, renderer scenes and visible canvas pixels; it also checks lesson switching

@@ -1,3 +1,4 @@
+#![cfg(feature = "tour")]
 //! Complete scene equality against the unchanged DekaScript tour/VM reference.
 use deka_native_ir::Node;
 use deka_native_ui::scene::{Renderer, Scene};

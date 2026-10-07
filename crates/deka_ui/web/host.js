@@ -89,7 +89,7 @@ class WebGLRenderer {
     gl.uniform2f(uniform("viewport"), scene.width, scene.height);
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform1i(uniform("glyph"), 0);
-    const active = new Set(scene.images.map((image) => image.id));
+    const active = new Set(scene.paint.flatMap((paint) => paint.image ? [paint.image] : []));
     for (const [id, texture] of this.textures)
       if (!active.has(id)) {
         gl.deleteTexture(texture);
@@ -140,15 +140,16 @@ export {
   WebGLRenderer
 };
 
-export function mount(app, canvas) {
+export function mount(app, canvas, inspect = false) {
   if (!(canvas instanceof HTMLCanvasElement)) { app.free(); throw new TypeError('launch requires an HTML canvas') }
   let renderer
   try { renderer = new WebGLRenderer(canvas) } catch (error) { app.free(); throw error }
-  let disposed = false, request = 0, scene, fixedClock = new URLSearchParams(location.search).has('inspect') ? 0 : undefined
+  let disposed = false, request = 0, scene, fixedClock = inspect ? 0 : undefined
   const motion = matchMedia('(prefers-reduced-motion: reduce)')
   const inputs = new Map()
   const parent = canvas.parentElement
-  const fail = error => canvas.dispatchEvent(new CustomEvent('deka:error', { detail: String(error), bubbles: true }))
+  const fail = error => { console.error('Deka browser render failed:', error); canvas.dispatchEvent(new CustomEvent('deka:error', { detail: String(error), bubbles: true })) }
+  const inspectedImages = new Map()
   const syncInputs = () => {
     const active = new Set()
     for (const control of JSON.parse(app.inputs())) {
@@ -159,8 +160,8 @@ export function mount(app, canvas) {
       if (!input) {
         input = document.createElement('input'); input.setAttribute('aria-label', 'Deka text input')
         input.style.cssText = 'position:absolute;box-sizing:border-box;font:inherit;color:inherit;background:transparent;border:1px solid currentColor;border-radius:4px;padding:4px;'
-        input.addEventListener('input', () => { app.input(control.id, input.value); draw() })
-        input.addEventListener('keydown', event => { app.key_to(control.id,event.key); draw() })
+        input.addEventListener('input', () => { try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } })
+        input.addEventListener('keydown', event => { try { app.key_to(control.id,event.key); draw() } catch(error) { fail(error) } })
         inputs.set(control.id,input); parent.append(input)
       }
       if (input.value !== control.value) {
@@ -181,7 +182,12 @@ export function mount(app, canvas) {
       const scale = Math.max(1, devicePixelRatio || 1)
       scene = JSON.parse(app.frame_at(bounds.width,bounds.height,scale,fixedClock ?? performance.now(),motion.matches))
       renderer.draw(scene,scale); syncInputs()
-      if (new URLSearchParams(location.search).has('inspect')) canvas.dispatchEvent(new CustomEvent('deka:native-frame',{detail:scene,bubbles:true}))
+      if (inspect) {
+        const active = new Set(scene.paint.flatMap(paint => paint.image ? [paint.image] : []))
+        for (const id of inspectedImages.keys()) if (!active.has(id)) inspectedImages.delete(id)
+        for (const image of scene.images) inspectedImages.set(image.id, image)
+        canvas.dispatchEvent(new CustomEvent('deka:native-frame',{detail:{...scene,images:[...inspectedImages.values()].sort((a,b)=>a.id.localeCompare(b.id))},bubbles:true}))
+      }
       if (scene.animating && fixedClock === undefined) request = requestAnimationFrame(draw)
     } catch (error) { fail(error) }
   }
@@ -191,17 +197,17 @@ export function mount(app, canvas) {
   const pointer = event => {
     if (event.button !== 0) return
     canvas.focus(); const bounds=canvas.getBoundingClientRect()
-    app.pointer(event.clientX-bounds.left,event.clientY-bounds.top); draw()
+    try { app.pointer(event.clientX-bounds.left,event.clientY-bounds.top); draw() } catch(error) { fail(error) }
   }
-  const key = event => { if(app.key(event.key,event.shiftKey)) event.preventDefault(); draw() }
+  const key = event => { try { if(app.key(event.key,event.shiftKey)) event.preventDefault(); draw() } catch(error) { fail(error) }
   const blur = () => { app.blur(); draw() }
   // Explicit deterministic presentation clock for the same scripts as the native gate.
   const command = event => {
-    if (!new URLSearchParams(location.search).has('inspect')) return
+    if (!inspect) return
     const {time} = event.detail; fixedClock=time; draw()
   }
   canvas.addEventListener('pointerup',pointer); canvas.addEventListener('keydown',key); canvas.addEventListener('blur',blur)
-  canvas.addEventListener('webglcontextlost',lost); canvas.addEventListener('webglcontextrestored',restored); canvas.addEventListener('deka:clock',command)
+  canvas.addEventListener('webglcontextlost',lost); canvas.addEventListener('webglcontextrestored',restored); if (inspect) canvas.addEventListener('deka:clock',command)
   const observer = new ResizeObserver(draw); observer.observe(canvas)
   window.addEventListener('resize',draw); motion.addEventListener('change',draw)
   // A monitor change can change DPR without changing CSS dimensions.
@@ -218,3 +224,5 @@ export function mount(app, canvas) {
   }}
 }
 export function unmount(handle) { handle.dispose() }
+
+export function reportPanic(message) { console.error(`Deka Rust panic: ${message}`) }
