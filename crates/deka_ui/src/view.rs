@@ -84,6 +84,18 @@ struct Element {
     children: Vec<View>,
 }
 impl View {
+    /// Capture a Display value for a live quoted-text interpolation.
+    /// Cloning also supports owned values reused in more than one text binding.
+    pub fn interpolate<T: Clone + std::fmt::Display + 'static>(value: &T) -> Self {
+        let value = value.clone();
+        Self::live_text(move || format!("{value}"))
+    }
+    pub fn from_child<V, M>(value: V) -> Self
+    where
+        V: IntoView<M>,
+    {
+        value.into_view()
+    }
     pub fn element(tag: impl Into<String>) -> Self {
         Self(Builder::Element(Element {
             tag: tag.into(),

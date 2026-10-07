@@ -1,0 +1,26 @@
+COMMAND: ['cargo', 'test', '--release', '--locked', '--no-default-features', '-p', 'deka-ui', '--test', 'macros', 'default_props_support_launch_style_functions_and_root_expression_fragments', '--', '--exact']
+   Compiling deka-ui-macros v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui_macros)
+   Compiling deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+    Finished `release` profile [optimized] target(s) in 5.08s
+     Running tests/macros.rs (.target/release/deps/macros-52954e609ddd90e8)
+
+running 1 test
+test default_props_support_launch_style_functions_and_root_expression_fragments ... FAILED
+
+failures:
+
+---- default_props_support_launch_style_functions_and_root_expression_fragments stdout ----
+
+thread 'default_props_support_launch_style_functions_and_root_expression_fragments' (4997318) panicked at crates/deka_ui/tests/macros.rs:111:5:
+assertion `left == right` failed
+  left: "00"
+ right: "07"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    default_props_support_launch_style_functions_and_root_expression_fragments
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p deka-ui --test macros`

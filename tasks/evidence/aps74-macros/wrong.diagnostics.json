@@ -1,0 +1,158 @@
+[
+  {
+    "reason": "compiler-message",
+    "package_id": "path+file:///Volumes/Projects/codex/deka/crates/deka_ui_macros/tests/ui#deka-ui-diagnostics@0.1.0",
+    "manifest_path": "/Volumes/Projects/codex/deka/crates/deka_ui_macros/tests/ui/Cargo.toml",
+    "target": {
+      "kind": [
+        "bin"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "wrong",
+      "src_path": "/Volumes/Projects/codex/deka/crates/deka_ui_macros/tests/ui/src/bin/wrong.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "message": {
+      "rendered": "error[E0308]: mismatched types\n --> src/bin/wrong.rs:9:28\n  |\n9 |                     title={123}\n  |                     -----  ^^^ expected `String`, found integer\n  |                     |\n  |                     arguments to this method are incorrect\n  |\nnote: method defined here\n --> src/bin/wrong.rs:3:9\n  |\n3 | fn Card(title: String) -> View { view! { <p>{title}</p> } }\n  |         ^^^^^--------\nhelp: try using a conversion method\n  |\n9 |                     title={123.to_string()}\n  |                               ++++++++++++\n\n",
+      "$message_type": "diagnostic",
+      "children": [
+        {
+          "children": [],
+          "code": null,
+          "level": "note",
+          "message": "method defined here",
+          "rendered": null,
+          "spans": [
+            {
+              "byte_end": 59,
+              "byte_start": 46,
+              "column_end": 22,
+              "column_start": 9,
+              "expansion": null,
+              "file_name": "src/bin/wrong.rs",
+              "is_primary": false,
+              "label": "",
+              "line_end": 3,
+              "line_start": 3,
+              "suggested_replacement": null,
+              "suggestion_applicability": null,
+              "text": [
+                {
+                  "highlight_end": 22,
+                  "highlight_start": 9,
+                  "text": "fn Card(title: String) -> View { view! { <p>{title}</p> } }"
+                }
+              ]
+            },
+            {
+              "byte_end": 51,
+              "byte_start": 46,
+              "column_end": 14,
+              "column_start": 9,
+              "expansion": null,
+              "file_name": "src/bin/wrong.rs",
+              "is_primary": true,
+              "label": null,
+              "line_end": 3,
+              "line_start": 3,
+              "suggested_replacement": null,
+              "suggestion_applicability": null,
+              "text": [
+                {
+                  "highlight_end": 14,
+                  "highlight_start": 9,
+                  "text": "fn Card(title: String) -> View { view! { <p>{title}</p> } }"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "children": [],
+          "code": null,
+          "level": "help",
+          "message": "try using a conversion method",
+          "rendered": null,
+          "spans": [
+            {
+              "byte_end": 228,
+              "byte_start": 228,
+              "column_end": 31,
+              "column_start": 31,
+              "expansion": null,
+              "file_name": "src/bin/wrong.rs",
+              "is_primary": true,
+              "label": null,
+              "line_end": 9,
+              "line_start": 9,
+              "suggested_replacement": ".to_string()",
+              "suggestion_applicability": "MaybeIncorrect",
+              "text": [
+                {
+                  "highlight_end": 31,
+                  "highlight_start": 31,
+                  "text": "                    title={123}"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "level": "error",
+      "message": "mismatched types",
+      "spans": [
+        {
+          "byte_end": 228,
+          "byte_start": 225,
+          "column_end": 31,
+          "column_start": 28,
+          "expansion": null,
+          "file_name": "src/bin/wrong.rs",
+          "is_primary": true,
+          "label": "expected `String`, found integer",
+          "line_end": 9,
+          "line_start": 9,
+          "suggested_replacement": null,
+          "suggestion_applicability": null,
+          "text": [
+            {
+              "highlight_end": 31,
+              "highlight_start": 28,
+              "text": "                    title={123}"
+            }
+          ]
+        },
+        {
+          "byte_end": 223,
+          "byte_start": 218,
+          "column_end": 26,
+          "column_start": 21,
+          "expansion": null,
+          "file_name": "src/bin/wrong.rs",
+          "is_primary": false,
+          "label": "arguments to this method are incorrect",
+          "line_end": 9,
+          "line_start": 9,
+          "suggested_replacement": null,
+          "suggestion_applicability": null,
+          "text": [
+            {
+              "highlight_end": 26,
+              "highlight_start": 21,
+              "text": "                    title={123}"
+            }
+          ]
+        }
+      ],
+      "code": {
+        "code": "E0308",
+        "explanation": "Expected type did not match the received type.\n\nErroneous code examples:\n\n```compile_fail,E0308\nfn plus_one(x: i32) -> i32 {\n    x + 1\n}\n\nplus_one(\"Not a number\");\n//       ^^^^^^^^^^^^^^ expected `i32`, found `&str`\n\nif \"Not a bool\" {\n// ^^^^^^^^^^^^ expected `bool`, found `&str`\n}\n\nlet x: f32 = \"Not a float\";\n//     ---   ^^^^^^^^^^^^^ expected `f32`, found `&str`\n//     |\n//     expected due to this\n```\n\nThis error occurs when an expression was used in a place where the compiler\nexpected an expression of a different type. It can occur in several cases, the\nmost common being when calling a function and passing an argument which has a\ndifferent type than the matching type in the function declaration.\n"
+      }
+    }
+  }
+]

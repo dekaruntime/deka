@@ -1,0 +1,10 @@
+[package]
+name = "deka-ui-diagnostics"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+deka-ui = { path = "../../../deka_ui", default-features = false }

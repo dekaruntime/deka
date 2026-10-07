@@ -1923,8 +1923,23 @@ dependencies = [
 name = "deka-ui"
 version = "0.1.0"
 dependencies = [
+ "deka-ui-macros",
  "deka_native_ir",
  "deka_native_ui",
+]
+
+[[package]]
+name = "deka-ui-macros"
+version = "0.1.0"
+dependencies = [
+ "bumpalo",
+ "deka_native_ir",
+ "deka_syntax",
+ "proc-macro2",
+ "quote",
+ "rstml",
+ "serde_json",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -3055,6 +3070,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d0a1bd7eeab72097740967d03d53db5fbaf8e3c0dd471ebdefa43ce445a20a6"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "derive-where"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e2b94854e8576378ccda7c8de8a66ed8b4e8acbd2c50ec3418ea6c8aaf4b567"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -7774,6 +7800,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro2-diagnostics"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df921e1ef974ebc8dd9effdb0c037a96928ae8cbf871438e02d6fd67204b595e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
+ "version_check",
+]
+
+[[package]]
 name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8487,6 +8525,20 @@ dependencies = [
  "spki 0.7.3",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rstml"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6bd1bfba3c4c0b57aae906204d9e5744f3f65800ce6c75bd4cc162f2c26f3aa"
+dependencies = [
+ "derive-where",
+ "proc-macro2",
+ "proc-macro2-diagnostics",
+ "quote",
+ "syn 3.0.5",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

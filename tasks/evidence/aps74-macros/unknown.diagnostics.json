@@ -1,0 +1,108 @@
+[
+  {
+    "reason": "compiler-message",
+    "package_id": "path+file:///Volumes/Projects/codex/deka/crates/deka_ui_macros/tests/ui#deka-ui-diagnostics@0.1.0",
+    "manifest_path": "/Volumes/Projects/codex/deka/crates/deka_ui_macros/tests/ui/Cargo.toml",
+    "target": {
+      "kind": [
+        "bin"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "unknown",
+      "src_path": "/Volumes/Projects/codex/deka/crates/deka_ui_macros/tests/ui/src/bin/unknown.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "message": {
+      "rendered": "error[E0425]: cannot find value `Missing` in this scope\n --> src/bin/unknown.rs:6:18\n  |\n6 |                 <Missing title=\"Unknown\" />\n  |                  ^^^^^^^ not found in this scope\n\n",
+      "$message_type": "diagnostic",
+      "children": [],
+      "level": "error",
+      "message": "cannot find value `Missing` in this scope",
+      "spans": [
+        {
+          "byte_end": 127,
+          "byte_start": 120,
+          "column_end": 25,
+          "column_start": 18,
+          "expansion": null,
+          "file_name": "src/bin/unknown.rs",
+          "is_primary": true,
+          "label": "not found in this scope",
+          "line_end": 6,
+          "line_start": 6,
+          "suggested_replacement": null,
+          "suggestion_applicability": null,
+          "text": [
+            {
+              "highlight_end": 25,
+              "highlight_start": 18,
+              "text": "                <Missing title=\"Unknown\" />"
+            }
+          ]
+        }
+      ],
+      "code": {
+        "code": "E0425",
+        "explanation": "An unresolved name was used.\n\nErroneous code examples:\n\n```compile_fail,E0425\nsomething_that_doesnt_exist::foo;\n// error: unresolved name `something_that_doesnt_exist::foo`\n\n// or:\n\ntrait Foo {\n    fn bar() {\n        Self; // error: unresolved name `Self`\n    }\n}\n\n// or:\n\nlet x = unknown_variable;  // error: unresolved name `unknown_variable`\n```\n\nPlease verify that the name wasn't misspelled and ensure that the\nidentifier being referred to is valid for the given situation. Example:\n\n```\nenum something_that_does_exist {\n    Foo,\n}\n```\n\nOr:\n\n```\nmod something_that_does_exist {\n    pub static foo : i32 = 0i32;\n}\n\nsomething_that_does_exist::foo; // ok!\n```\n\nOr:\n\n```\nlet unknown_variable = 12u32;\nlet x = unknown_variable; // ok!\n```\n\nIf the item is not defined in the current module, it must be imported using a\n`use` statement, like so:\n\n```\n# mod foo { pub fn bar() {} }\n# fn main() {\nuse foo::bar;\nbar();\n# }\n```\n\nIf the item you are importing is not defined in some super-module of the\ncurrent module, then it must also be declared as public (e.g., `pub fn`).\n"
+      }
+    }
+  },
+  {
+    "reason": "compiler-message",
+    "package_id": "path+file:///Volumes/Projects/codex/deka/crates/deka_ui_macros/tests/ui#deka-ui-diagnostics@0.1.0",
+    "manifest_path": "/Volumes/Projects/codex/deka/crates/deka_ui_macros/tests/ui/Cargo.toml",
+    "target": {
+      "kind": [
+        "bin"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "unknown",
+      "src_path": "/Volumes/Projects/codex/deka/crates/deka_ui_macros/tests/ui/src/bin/unknown.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "message": {
+      "rendered": "error[E0425]: cannot find function, tuple struct or tuple variant `Missing` in this scope\n --> src/bin/unknown.rs:6:18\n  |\n6 |                 <Missing title=\"Unknown\" />\n  |                  ^^^^^^^ not found in this scope\n\n",
+      "$message_type": "diagnostic",
+      "children": [],
+      "level": "error",
+      "message": "cannot find function, tuple struct or tuple variant `Missing` in this scope",
+      "spans": [
+        {
+          "byte_end": 127,
+          "byte_start": 120,
+          "column_end": 25,
+          "column_start": 18,
+          "expansion": null,
+          "file_name": "src/bin/unknown.rs",
+          "is_primary": true,
+          "label": "not found in this scope",
+          "line_end": 6,
+          "line_start": 6,
+          "suggested_replacement": null,
+          "suggestion_applicability": null,
+          "text": [
+            {
+              "highlight_end": 25,
+              "highlight_start": 18,
+              "text": "                <Missing title=\"Unknown\" />"
+            }
+          ]
+        }
+      ],
+      "code": {
+        "code": "E0425",
+        "explanation": "An unresolved name was used.\n\nErroneous code examples:\n\n```compile_fail,E0425\nsomething_that_doesnt_exist::foo;\n// error: unresolved name `something_that_doesnt_exist::foo`\n\n// or:\n\ntrait Foo {\n    fn bar() {\n        Self; // error: unresolved name `Self`\n    }\n}\n\n// or:\n\nlet x = unknown_variable;  // error: unresolved name `unknown_variable`\n```\n\nPlease verify that the name wasn't misspelled and ensure that the\nidentifier being referred to is valid for the given situation. Example:\n\n```\nenum something_that_does_exist {\n    Foo,\n}\n```\n\nOr:\n\n```\nmod something_that_does_exist {\n    pub static foo : i32 = 0i32;\n}\n\nsomething_that_does_exist::foo; // ok!\n```\n\nOr:\n\n```\nlet unknown_variable = 12u32;\nlet x = unknown_variable; // ok!\n```\n\nIf the item is not defined in the current module, it must be imported using a\n`use` statement, like so:\n\n```\n# mod foo { pub fn bar() {} }\n# fn main() {\nuse foo::bar;\nbar();\n# }\n```\n\nIf the item you are importing is not defined in some super-module of the\ncurrent module, then it must also be declared as public (e.g., `pub fn`).\n"
+      }
+    }
+  }
+]
