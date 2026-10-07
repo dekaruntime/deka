@@ -160,13 +160,8 @@ fn expected_handlers(name: &str) -> usize {
         return lesson.handlers;
     }
     match name {
-        "bindings" | "lists" => 3,
-        "counter" | "comment-targets" | "fade" | "menu" | "transforms" | "late-handler"
-        | "clipped-handler" => 2,
-        "control-flow" | "functions" | "values" | "layout" | "layout-motion" | "grow" | "toast"
-        | "keyframes" | "spring" | "presence" | "stagger" | "no-op" | "missing-target" => 1,
-        "arrays" | "booleans" | "comments" | "components" | "decisions" | "first-function"
-        | "hello-world" | "named-values" | "numbers" | "strings" => 0,
+        "comment-targets" | "late-handler" | "clipped-handler" => 2,
+        "no-op" | "missing-target" => 1,
         _ => panic!("{name}: missing expected handler count"),
     }
 }
