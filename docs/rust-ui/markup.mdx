@@ -1,0 +1,74 @@
+---
+title: Rust UI markup
+---
+
+`deka-ui` provides `view!` and `#[component]` for Rust applications. Import
+`deka_ui::prelude::*`. Markup creates the same retained native nodes as the
+View builder; signal reads in live bindings patch those nodes.
+
+```rust
+use deka_ui::prelude::*;
+
+#[component]
+fn App() -> View {
+    let mut count = signal(0);
+    view! {
+        <view className="p-4 gap-3">
+            <p>"Count: {count}"</p>
+            <button onClick={move |_| count += 1}>"Add one"</button>
+        </view>
+    }
+}
+
+fn main() { deka_ui::launch(App); }
+```
+
+Run `cargo run --release -p deka-ui --example counter_macro -- --exercise 3`.
+The event exercise prints `Count:  3 Add one`.
+
+Lowercase tags name native elements: `view`, `div`, `span`, `p`, `button`, and
+`input`. Quoted `className` literals are checked against the native utility
+catalog. Unknown native tags, attributes and utilities report a markup error.
+Capitalized tags call Rust functions in scope, including imported functions and
+qualified paths. Ordinary Rust name resolution and prop types apply.
+
+```rust
+#[component]
+fn Card(title: String, #[prop(default = 2)] copies: usize, children: Children) -> View {
+    view! {
+        <div className="p-4">
+            {(0..copies).map(move |_| view! { <p>"{title}"</p> })}
+            {children()}
+        </div>
+    }
+}
+// Inside an application:
+// view! { <Card title="Counter" copies={1}><p>"Child"</p></Card> }
+```
+
+The component attribute generates `CardProps` and a typed builder. Required
+props must be supplied; missing props fail to compile on the component tag.
+`#[prop(default)]` uses `Default`, and `#[prop(default = expression)]` evaluates
+that expression when the prop is omitted. `Children` is an optional, single-use
+closure returning a View. An absent child list produces an empty fragment.
+Components with only defaulted props can be passed directly to `launch`.
+Component functions currently require owned, named, non-generic parameters and
+a `View` return type.
+
+Quoted text uses `{ident}` interpolation. The interpolation is a live binding,
+so a Signal's tracked Display updates it. `{{` and `}}` produce literal braces.
+`{expression}` children accept Views, scalars, `Option<View>` and iterators of
+Views; use a closure for live computed or conditional children.
+
+`attr={value}` is static; `attr={move || expression}` is live. Supported scalar
+attributes are `id`, `className`, `value`, and `placeholder`. Boolean classes
+use `class:rounded={signal_or_closure}`. Class bindings compose with className
+and patch once per event.
+
+`onClick`, `onInput` and `onKeyDown` accept closures receiving the typed `Event`.
+The native window currently delivers clicks; input/key dispatch is available
+through `UiApp::dispatch_to` for integrations. Node refs belong to a later phase.
+
+The parser uses rstml token streams and Rust expressions, preserving the user's
+markup spans. Unknown components, missing props and wrong prop types are checked
+with compile-fail fixtures that assert the primary diagnostic's source line.

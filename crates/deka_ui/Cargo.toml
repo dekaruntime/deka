@@ -10,9 +10,14 @@ default = ["desktop"]
 desktop = ["deka_native_ui/gpu"]
 
 [dependencies]
+deka-ui-macros = { path = "../deka_ui_macros" }
 deka_native_ir = { path = "../deka_native_ir" }
 deka_native_ui = { path = "../deka_native_ui" }
 
 [[example]]
 name = "counter"
+required-features = ["desktop"]
+
+[[example]]
+name = "counter_macro"
 required-features = ["desktop"]
