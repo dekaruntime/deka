@@ -1,4 +1,0 @@
-COMMAND: ['cargo', 'run', '--release', '--locked', '-p', 'deka-ui', '--example', 'counter_macro', '--', '--exercise', '3']
-    Finished `release` profile [optimized] target(s) in 0.36s
-     Running `.target/release/examples/counter_macro --exercise 3`
-Count:  3 Add one

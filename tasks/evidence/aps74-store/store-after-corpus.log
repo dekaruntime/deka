@@ -1,2 +1,0 @@
-COMMAND: ['.target/release/corpus-gate', '/Volumes/Projects/codex/.tmp-deka/corpus/testsuite-corpus-v0.53.7/corpus', 'tests/corpus-passing.txt', '.target/release/deka']
-corpus-gate: 747 of 747 listed cases match their expectation

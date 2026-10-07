@@ -1,1 +1,0 @@
-COMMAND: ['cargo', 'fmt', '-p', 'deka-ui', '-p', 'deka_native_ir', '--check']
