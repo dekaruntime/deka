@@ -4,7 +4,6 @@ import argparse
 import gzip
 import hashlib
 import json
-import os
 import re
 from pathlib import Path
 import shutil
@@ -29,7 +28,8 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     if subprocess.check_output(['wasm-bindgen','--version'], text=True).strip() != 'wasm-bindgen 0.2.128':
         raise SystemExit('wasm-bindgen-cli 0.2.128 is required')
-    target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / '.target')).resolve()
+    # Ask cargo where it builds: CARGO_TARGET_DIR, .cargo/config or the default target/.
+    target = Path(json.loads(subprocess.check_output(['cargo','+1.96.0','metadata','--format-version','1','--no-deps'],cwd=ROOT,text=True))['target_directory'])
     def cargo(*args):
         subprocess.run(['cargo','+1.96.0',*args], cwd=ROOT, check=True)
     tree = subprocess.check_output(['cargo','+1.96.0','tree','--locked','-p','deka-ui-tour','--target','wasm32-unknown-unknown','--edges','normal'],cwd=ROOT,text=True)
