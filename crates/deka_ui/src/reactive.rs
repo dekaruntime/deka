@@ -61,6 +61,9 @@ impl Scope {
         })
     }
     /// Resume pending reactions after a caught panic or an explicit batch.
+    pub fn on_error(&self, sink: impl Fn(ReactiveError) + 'static) {
+        self.0.error_sink.replace(Some(Rc::new(sink)));
+    }
     pub fn flush(&self) {
         self.0.flush();
     }
@@ -114,8 +117,14 @@ impl fmt::Display for ReactiveError {
     }
 }
 impl std::error::Error for ReactiveError {}
-fn report(error: ReactiveError) {
-    // Operators cannot return Result; report their failure without unwinding.
+fn report(scope: u64, error: ReactiveError) {
+    if let Ok(core) = resolve(scope) {
+        let sink = core.error_sink.borrow().clone();
+        if let Some(sink) = sink {
+            sink(error);
+            return;
+        }
+    }
     eprintln!("deka reactive: {error}");
 }
 
@@ -182,7 +191,7 @@ impl<T: 'static> Signal<T> {
     }
     /// Read a live value, or return an error after disposal/teardown. Reads in
     /// reactions subscribe only after the handle has been validated.
-    pub fn get(self) -> Result<T, ReactiveError>
+    pub fn try_get(self) -> Result<T, ReactiveError>
     where
         T: Clone,
     {
@@ -211,6 +220,15 @@ impl<T: 'static> Signal<T> {
         }
         Ok(next)
     }
+    /// Checked convenience read also reports a failure to the host sink.
+    /// Use try_get to handle a failure without reporting it automatically.
+    pub fn get(self) -> Result<T, ReactiveError>
+    where
+        T: Clone,
+    {
+        self.try_get()
+            .inspect_err(|error| report(self.scope, *error))
+    }
     /// Checked writes notify even for equal values. Retained property bindings
     /// compare their authored values before patching.
     pub fn try_set(self, value: T) -> Result<(), ReactiveError> {
@@ -227,7 +245,7 @@ impl<T: 'static> Signal<T> {
     /// Use try_set when the caller needs to handle the error itself.
     pub fn set(self, value: T) {
         if let Err(error) = self.try_set(value) {
-            report(error);
+            report(self.scope, error);
         }
     }
     pub fn update<R>(self, update: impl FnOnce(&mut T) -> R) -> Result<R, ReactiveError> {
@@ -258,21 +276,21 @@ impl Drop for Write {
 impl Signal<bool> {
     pub fn toggle(self) {
         if let Err(error) = self.update(|value| *value = !*value) {
-            report(error);
+            report(self.scope, error);
         }
     }
 }
 impl<T: AddAssign<T> + 'static> AddAssign<T> for Signal<T> {
     fn add_assign(&mut self, rhs: T) {
         if let Err(error) = self.update(|value| *value += rhs) {
-            report(error);
+            report(self.scope, error);
         }
     }
 }
 impl<T: SubAssign<T> + 'static> SubAssign<T> for Signal<T> {
     fn sub_assign(&mut self, rhs: T) {
         if let Err(error) = self.update(|value| *value -= rhs) {
-            report(error);
+            report(self.scope, error);
         }
     }
 }
@@ -280,7 +298,7 @@ impl<T: Clone + fmt::Display> fmt::Display for Signal<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.get() {
             Ok(value) => value.fmt(f),
-            Err(error) => write!(f, "<signal error: {error}>"),
+            Err(_) => Ok(()),
         }
     }
 }
@@ -294,6 +312,9 @@ impl<T> Clone for Derived<T> {
     }
 }
 impl<T: Clone> Derived<T> {
+    pub fn try_get(self) -> Result<T, ReactiveError> {
+        self.0.try_get()
+    }
     pub fn get(self) -> Result<T, ReactiveError> {
         self.0.get()
     }
@@ -302,7 +323,7 @@ impl<T: Clone + fmt::Display> fmt::Display for Derived<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.get() {
             Ok(value) => value.fmt(f),
-            Err(error) => write!(f, "<signal error: {error}>"),
+            Err(_) => Ok(()),
         }
     }
 }
@@ -361,14 +382,17 @@ enum Kind {
     Effect,
 }
 type Callback = Rc<RefCell<Box<dyn FnMut()>>>;
+type ReactiveSink = Rc<dyn Fn(ReactiveError)>;
 struct Observer {
     callback: Callback,
     dependencies: BTreeSet<usize>,
     kind: Kind,
+    run_owner: Option<ReactiveOwner>,
 }
 #[derive(Default)]
 struct Core {
     id: u64,
+    error_sink: RefCell<Option<ReactiveSink>>,
     values: RefCell<Vec<Option<Rc<dyn Any>>>>,
     free_values: RefCell<Vec<usize>>,
     value_generations: RefCell<Vec<u64>>,
@@ -399,6 +423,7 @@ fn observe(kind: Kind, run: impl FnMut() + 'static) -> Effect {
         callback: Rc::new(RefCell::new(Box::new(run))),
         dependencies: BTreeSet::new(),
         kind,
+        run_owner: None,
     });
     if let Some(owner) = core.owners.borrow_mut().last_mut() {
         owner.effects.push(Effect {
@@ -422,8 +447,8 @@ impl Core {
     fn dispose_observer(&self, slot: usize) {
         let observer = self.observers.borrow_mut()[slot].take();
         if let Some(observer) = observer {
-            for dependency in observer.dependencies {
-                self.subscribers.borrow_mut()[dependency].remove(&slot);
+            for dependency in &observer.dependencies {
+                self.subscribers.borrow_mut()[*dependency].remove(&slot);
             }
             self.dirty.borrow_mut().remove(&slot);
             self.free_observers.borrow_mut().push(slot);
@@ -443,22 +468,35 @@ impl Core {
         }
     }
     fn evaluate(self: &Rc<Self>, slot: usize) {
-        let callback = self.observers.borrow()[slot]
-            .as_ref()
-            .map(|o| o.callback.clone());
-        let Some(callback) = callback else {
+        let execution = self.observers.borrow_mut()[slot]
+            .as_mut()
+            .map(|o| (o.callback.clone(), o.run_owner.take()));
+        let Some((callback, previous_owner)) = execution else {
             return;
         };
-        Scope(self.clone()).run(|| {
-            self.reads.borrow_mut().push(BTreeMap::new());
-            let _capture = Capture {
-                core: self.clone(),
-                slot,
-                generation: self.observer_generations.borrow()[slot],
-            };
-            callback.borrow_mut()();
+        drop(previous_owner);
+        let generation = self.observer_generations.borrow()[slot];
+        let (_, owner) = Scope(self.clone()).run(|| {
+            owned(|| {
+                self.reads.borrow_mut().push(BTreeMap::new());
+                let _capture = Capture {
+                    core: self.clone(),
+                    slot,
+                    generation,
+                };
+                callback.borrow_mut()();
+            })
         });
+        if self.observer_generations.borrow()[slot] == generation {
+            let mut observers = self.observers.borrow_mut();
+            if let Some(observer) = observers[slot].as_mut() {
+                observer.run_owner = Some(owner);
+                return;
+            }
+        }
+        drop(owner);
     }
+
     fn flush(self: &Rc<Self>) {
         if self.depth.get() != 0 || self.flushing.replace(true) {
             return;
@@ -535,7 +573,7 @@ impl Drop for Capture {
 }
 
 // Dynamic children own allocations created while building their registrations.
-// Ordinary nested effects retain the scope lifetime unless explicitly disposed.
+// Each reaction execution owns its allocations until rerun or disposal.
 #[derive(Default)]
 struct Owned {
     values: Vec<usize>,
@@ -551,11 +589,20 @@ impl Drop for ReactiveOwner {
             return;
         };
         for effect in self.owned.effects.drain(..) {
+            // Idempotent disposal; DroppedScope means the whole scope is
+            // already gone, so teardown has no live error to report.
             let _ = effect.dispose();
         }
         for slot in self.owned.values.drain(..) {
             core.values.borrow_mut()[slot] = None;
+            core.revisions.borrow_mut()[slot] = 0;
             core.subscribers.borrow_mut()[slot].clear();
+            for observer in core.observers.borrow_mut().iter_mut().flatten() {
+                observer.dependencies.remove(&slot);
+            }
+            for reads in core.reads.borrow_mut().iter_mut() {
+                reads.remove(&slot);
+            }
             core.free_values.borrow_mut().push(slot);
         }
     }
@@ -592,6 +639,88 @@ pub(crate) fn owned<R>(run: impl FnOnce() -> R) -> (R, ReactiveOwner) {
 mod slot_tests {
     use super::*;
     use crate::{UiApp, View};
+    #[test]
+    fn outlived_dynamic_signal_reports_without_panicking() {
+        let handle = Rc::new(Cell::new(None));
+        let captured = handle.clone();
+        let app = UiApp::new(move || {
+            View::dynamic(move || {
+                let value = signal(7);
+                captured.set(Some(value));
+                View::text("child")
+            })
+        });
+        let stale = handle.get().unwrap();
+        drop(app);
+        assert_eq!(stale.try_get(), Err(ReactiveError::DroppedScope));
+        assert_eq!(stale.try_set(9), Err(ReactiveError::DroppedScope));
+        assert_eq!(stale.get(), Err(ReactiveError::DroppedScope));
+        stale.set(9);
+        let scope = Scope::new();
+        let errors = Rc::new(RefCell::new(Vec::new()));
+        let output = errors.clone();
+        scope.on_error(move |error| output.borrow_mut().push(error));
+        let (stale, owner) = scope.run(|| owned(|| signal(7)));
+        drop(owner);
+        assert_eq!(stale.try_get(), Err(ReactiveError::DisposedSignal));
+        assert_eq!(stale.try_set(9), Err(ReactiveError::DisposedSignal));
+        assert_eq!(stale.get(), Err(ReactiveError::DisposedSignal));
+        stale.set(9);
+        assert_eq!(*errors.borrow(), [ReactiveError::DisposedSignal; 2]);
+    }
+    #[test]
+    fn released_slots_remove_outer_dependencies_and_reset_revisions() {
+        let scope = Scope::new();
+        let (child, owner) = scope.run(|| owned(|| signal(7)));
+        let calls = Rc::new(Cell::new(0));
+        let output = calls.clone();
+        let observer = scope.run(|| {
+            effect(move || {
+                let _ = child.try_get();
+                output.set(output.get() + 1);
+            })
+        });
+        child.set(8);
+        drop(owner);
+        assert_eq!(scope.0.revisions.borrow()[child.slot], 0);
+        assert!(
+            !scope.0.observers.borrow()[observer.slot]
+                .as_ref()
+                .unwrap()
+                .dependencies
+                .contains(&child.slot)
+        );
+        let next = scope.run(|| signal(10));
+        assert_eq!(next.slot, child.slot);
+        next.set(11);
+        assert_eq!(calls.get(), 2);
+    }
+    #[test]
+    fn effect_rerun_allocations_are_bounded_and_released_with_owner() {
+        let scope = Scope::new();
+        let trigger = scope.run(|| signal(0));
+        let last = Rc::new(Cell::new(None));
+        let output = last.clone();
+        let (_, owner) = scope.run(|| {
+            owned(|| {
+                effect(move || {
+                    trigger.get().unwrap();
+                    output.set(Some(signal(42)));
+                })
+            })
+        });
+        for n in 1..100 {
+            let previous = last.get().unwrap();
+            trigger.set(n);
+            assert_eq!(previous.try_get(), Err(ReactiveError::DisposedSignal));
+            assert!(scope.0.values.borrow().len() <= 2);
+        }
+        drop(owner);
+        assert_eq!(
+            last.get().unwrap().try_get(),
+            Err(ReactiveError::DisposedSignal)
+        );
+    }
     #[test]
     fn disposed_signal_returns_error_even_after_its_slot_is_reused() {
         let scope = Scope::new();
