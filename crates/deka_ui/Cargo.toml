@@ -21,3 +21,142 @@ required-features = ["desktop"]
 [[example]]
 name = "counter_macro"
 required-features = ["desktop"]
+
+[dev-dependencies]
+deka_vm = { path = "../deka_vm", features = ["compiler", "host", "ui"] }
+serde_json = "1"
+
+[[example]]
+name = "tour-arrays"
+path = "examples/tour/arrays.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-bindings"
+path = "examples/tour/bindings.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-booleans"
+path = "examples/tour/booleans.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-comments"
+path = "examples/tour/comments.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-components"
+path = "examples/tour/components.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-control-flow"
+path = "examples/tour/control-flow.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-counter"
+path = "examples/tour/counter.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-decisions"
+path = "examples/tour/decisions.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-fade"
+path = "examples/tour/fade.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-first-function"
+path = "examples/tour/first-function.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-functions"
+path = "examples/tour/functions.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-grow"
+path = "examples/tour/grow.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-hello-world"
+path = "examples/tour/hello-world.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-keyframes"
+path = "examples/tour/keyframes.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-layout-motion"
+path = "examples/tour/layout-motion.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-layout"
+path = "examples/tour/layout.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-lists"
+path = "examples/tour/lists.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-menu"
+path = "examples/tour/menu.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-named-values"
+path = "examples/tour/named-values.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-numbers"
+path = "examples/tour/numbers.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-presence"
+path = "examples/tour/presence.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-spring"
+path = "examples/tour/spring.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-stagger"
+path = "examples/tour/stagger.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-strings"
+path = "examples/tour/strings.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-toast"
+path = "examples/tour/toast.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-transforms"
+path = "examples/tour/transforms.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "tour-values"
+path = "examples/tour/values.rs"
+required-features = ["desktop"]

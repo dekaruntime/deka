@@ -1,0 +1,45 @@
+---
+title: Rust tour scene parity
+---
+
+All 27 native tour lessons have runnable Rust examples under
+`crates/deka_ui/examples/tour/`. Each uses ordinary Rust functions, signals,
+`#[component]` and `view!` while preserving the original lesson's displayed
+text, classes and events.
+
+Run a lesson in the existing desktop window:
+
+```sh
+cargo run --release --locked -p deka-ui --example tour-counter
+cargo run --release --locked -p deka-ui --example tour-presence
+```
+
+After clicking Add one three times, the counter displays `Count: 3`. The
+presence lesson mounts its card on entry and keeps an inert visual during exit.
+The motion classes use the existing renderer's transitions and animator.
+
+The headless gate compiles each unchanged DekaScript fixture through the
+existing VM and mounts its Rust twin on the shared native store. Both trees go
+through independent instances of the same `Renderer::render_at`. It compares
+the complete serialized scenes: node identities, text, layout, clips, paint,
+glyph images and bytes, hit targets and animation state. Only the unordered
+glyph-cache image collection is sorted by id; no fields, values or nodes are
+discarded, and numeric comparisons are exact.
+
+```sh
+./scripts/test-rust-ui.sh
+cargo test --release --locked -p deka-ui --no-default-features --test tour_parity -- --nocapture
+```
+
+The tour target has 28 tests: one inventory guard and one for each lesson.
+The inventory guard requires exactly the same 27 original fixtures and runnable
+Rust twins. Tests compare at rest and after every event, resolving the same
+real pointer point through the renderer's transformed and clipped hit tester.
+Every click handler is exercised. Comparisons cover 560×480 at scale 1,
+360×640 at scale 2, and reduced motion.
+
+Motion is sampled at fixed times, including mid-transition reversal at 220ms,
+re-entry at 2000ms, stagger boundaries, spring settling and repeated/alternated
+keyframes. The native CI workflow runs this gate when either authoring path or
+the renderer changes. A mismatch reports its lesson, viewport, timestamp and
+first differing scene field; the comparison does not relax visual differences.

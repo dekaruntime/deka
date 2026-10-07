@@ -1,0 +1,21 @@
+use deka_ui::prelude::*;
+
+fn twice(value: i32) -> i32 {
+    value * 2
+}
+
+#[component]
+pub fn App() -> View {
+    let mut value = signal(3);
+    view! {<view className="p-6 gap-3 bg-[#F3EFE3] text-[#1A1611]">
+        <p className="text-xl">"Functions calculate values"</p>
+        <p>"Input: {value}"</p>
+        <p>"Doubled: "{move || twice(value.get())}</p>
+        <button onClick={move |_| value += 1}>"Next number"</button>
+    </view>}
+}
+
+#[cfg(not(test))]
+fn main() {
+    deka_ui::launch(App);
+}

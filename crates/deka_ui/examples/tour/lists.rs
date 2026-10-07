@@ -1,0 +1,19 @@
+use deka_ui::prelude::*;
+
+#[component]
+pub fn App() -> View {
+    let projects = ["Deka", "Zega", "My next idea"];
+    let selected = signal("Choose a project");
+    view! {<view className="p-6 gap-3 bg-[#F3EFE3] text-[#1A1611]">
+        <p className="text-xl">"{selected}"</p>
+        {projects.into_iter().map(move |name| view! {
+            <button className={move || if selected.get() == name {"p-3 bg-[#0C8B43] text-[#ffffff]"} else {"p-3 bg-[#E2DCCF]"}}
+                onClick={move |_| selected.set(name)}>"{name}"</button>
+        })}
+    </view>}
+}
+
+#[cfg(not(test))]
+fn main() {
+    deka_ui::launch(App);
+}
