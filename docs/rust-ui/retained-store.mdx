@@ -26,3 +26,5 @@ id, class, child and descendant queries.
 The store's raw resource bridge is an internal, unpublished contract. Rust
 application authoring is provided by `deka-ui`; stable public tree-editing APIs
 are developed separately.
+
+Structural replacement indexes old child slots once and merges ordered child sequences. Matching, path cloning and removal checks are linear in the number of children on the authored path. Unordered caller-supplied paths retain the same sorting semantics with a comparison-sort fallback.
