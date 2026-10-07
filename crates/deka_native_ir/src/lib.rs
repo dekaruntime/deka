@@ -233,3 +233,10 @@ mod style;
 pub use style::{apply as apply_classes, for_element as element_style};
 
 mod motion;
+
+#[doc(hidden)]
+pub mod selectors;
+#[doc(hidden)]
+pub mod tree;
+mod wire;
+pub use wire::WireNode;
