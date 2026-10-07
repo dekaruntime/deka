@@ -41,6 +41,16 @@ fn errors_point_at_the_users_markup_lines() {
             4,
             "text interpolation requires an identifier (brace at line 4, column 40)",
         ),
+        (
+            "crlf",
+            3,
+            "text interpolation requires an identifier (brace at line 4, column 8)",
+        ),
+        (
+            "raw_crlf",
+            3,
+            "text interpolation requires an identifier (brace at line 4, column 8)",
+        ),
     ] {
         let output = Command::new(env!("CARGO"))
             .args([

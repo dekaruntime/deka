@@ -74,3 +74,6 @@ markup spans. Unknown components, missing props and wrong prop types are checked
 with compile-fail fixtures that assert the primary diagnostic's source line.
 
 Missing required props produce an error naming both the prop and component. Generated component argument bindings use macro hygiene, so an author prop named `__deka_props` is valid. Interpolation diagnostics include the exact source brace line and column, including raw literals and escapes. The brace subspan is used when Rust provides `Literal::subspan`; stable Rust currently underlines the containing literal because that API is nightly-only. The macro diagnostic test fetches its separate fixture dependencies and needs network on a cold cache; its compile checks run offline.
+
+Interpolation diagnostics preserve the offending brace's line and column in
+multiline ordinary and raw strings, including sources saved with CRLF newlines.

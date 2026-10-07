@@ -4,3 +4,5 @@ tooling/tree-sitter-phpx/**/scanner.c linguist-generated=true
 
 # Treat PHPX source as PHP for GitHub linguist classification.
 *.phpx linguist-language=PHP
+# These compiler diagnostics require physical CRLF bytes, without normalization.
+crates/deka_ui_macros/tests/ui/src/bin/*crlf.rs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
