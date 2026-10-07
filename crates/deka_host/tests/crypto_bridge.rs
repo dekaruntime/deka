@@ -21,9 +21,8 @@ async fn crypto_bcrypt_verify_bridge_returns_bool_result() {
         }
     "#;
 
-    let test_module =
-        ModuleSpecifier::parse("file:///deka_test/crypto_bcrypt_verify_bridge_test.js")
-            .expect("parse bcrypt bridge test module specifier");
+    let test_module = ModuleSpecifier::parse("file:///deka_test/crypto_bcrypt_verify_bridge_test.js")
+        .expect("parse bcrypt bridge test module specifier");
     let test_module_id = runtime
         .load_side_es_module_from_code(&test_module, ModuleCodeString::from(script.to_string()))
         .await

@@ -46,9 +46,7 @@ mod transforms;
 pub use graph_hash::hash_module_graph;
 pub use import_meta::{SourceOverrideHint, install_source_override_hint};
 pub use policy::ensure_project_layout;
-pub use resolver::{
-    entry_wrapper_path, entry_wrapper_path_with, is_javascript_entry, resolve_project_root,
-};
+pub use resolver::{entry_wrapper_path, entry_wrapper_path_with, is_javascript_entry, resolve_project_root};
 pub use transforms::entry_wrapper_source;
 
 use grants::{
@@ -122,9 +120,8 @@ impl PhpxEsmLoader {
         }
         let entry_specifier = ModuleSpecifier::from_file_path(&entry_path)
             .map_err(|_| JsErrorBox::generic("invalid entry module path"))?;
-        let wrapper_specifier =
-            ModuleSpecifier::from_file_path(entry_wrapper_path_with(&project_root, dev_mode))
-                .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
+        let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path_with(&project_root, dev_mode))
+            .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
 
         // RFD 27 (deka#797): an explicit caller table wins; otherwise the
         // project-installed table is the production source. A process-wide
@@ -372,7 +369,10 @@ impl PhpxEsmLoader {
         {
             return None;
         }
-        let path = self.cache_dir.join("build-values").join(format!("{id}.js"));
+        let path = self
+            .cache_dir
+            .join("build-values")
+            .join(format!("{id}.js"));
         if path.is_file() {
             return Some(path);
         }
@@ -539,10 +539,7 @@ impl PhpxEsmLoader {
                 )));
             }
             let code = self.load_js_source(&path)?;
-            let mut code = prepend_host_bindings(
-                prepend_import_meta(code, &self.import_meta_prelude(specifier, &path)),
-                &self.kinds_for_path(&path),
-            );
+            let mut code = prepend_host_bindings(prepend_import_meta(code, &self.import_meta_prelude(specifier, &path)), &self.kinds_for_path(&path));
             if specifier == &self.entry_specifier {
                 code = append_entry_footer(code);
             }
@@ -584,10 +581,7 @@ impl PhpxEsmLoader {
             "ds" | "dsx" => self.load_ds_source(&path)?,
             _ => self.load_js_source(&path)?,
         };
-        let mut code = prepend_host_bindings(
-            prepend_import_meta(code, &self.import_meta_prelude(specifier, &path)),
-            &self.kinds_for_path(&path),
-        );
+        let mut code = prepend_host_bindings(prepend_import_meta(code, &self.import_meta_prelude(specifier, &path)), &self.kinds_for_path(&path));
         if specifier == &self.entry_specifier {
             code = append_entry_footer(code);
         }
@@ -688,8 +682,9 @@ mod tests {
         let root = tempfile::tempdir().expect("temp project");
         let entry = root.path().join("handler.js");
         fs::write(&entry, "export default {};\n").expect("write js handler");
-        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false)
-            .expect("loader");
+        let loader =
+            PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false)
+                .expect("loader");
 
         let resolved = loader
             .resolve(
@@ -731,15 +726,9 @@ mod tests {
     #[test]
     fn source_extensions_have_distinct_cache_paths() {
         let root = tempfile::tempdir().expect("temp project");
-        let loader = PhpxEsmLoader::new(
-            root.path().to_path_buf(),
-            root.path().join("main.ds"),
-            None,
-            None,
-            None,
-            false,
-        )
-        .expect("loader");
+        let loader =
+            PhpxEsmLoader::new(root.path().to_path_buf(), root.path().join("main.ds"), None, None, None, false)
+                .expect("loader");
 
         let ds = loader.cache_path_for(&root.path().join("main.ds"));
         let js = loader.cache_path_for(&root.path().join("main.js"));
@@ -747,6 +736,7 @@ mod tests {
         assert!(ds.ends_with("main.ds.js"));
         assert!(js.ends_with("main.js.js"));
     }
+
 
     #[test]
     fn artifact_loader_accepts_its_synthetic_wrapper_as_the_entrypoint() {
@@ -761,8 +751,7 @@ mod tests {
         // not a server payload, but Deno resolves it as the main module
         // before the wrapper imports the verified entry.
         let mut loader =
-            PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false)
-                .expect("loader");
+            PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false).expect("loader");
         loader.artifact_server_root = Some(server.clone());
         let wrapper = loader.wrapper_specifier.clone();
 
@@ -812,15 +801,8 @@ mod tests {
             r#"[{"name":"@deka/crypto","version":"1.0.0","digest":"sha256:aaa","kinds":["crypto"]}]"#,
         )
         .expect("grant table");
-        let loader = PhpxEsmLoader::new(
-            root.path().to_path_buf(),
-            entry,
-            None,
-            Some(table),
-            None,
-            false,
-        )
-        .expect("loader");
+        let loader =
+            PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, Some(table), None, false).expect("loader");
 
         assert_eq!(loader.kinds_for_path(&module), vec!["crypto".to_string()]);
         // Root-owned sources get no kinds (this fixture root declares none).
@@ -865,8 +847,7 @@ mod tests {
         )
         .expect("deka.grants.json");
 
-        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false)
-            .expect("loader");
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false).expect("loader");
 
         assert_eq!(loader.kinds_for_path(&module), vec!["fs".to_string()]);
     }
@@ -904,8 +885,7 @@ mod tests {
         )
         .expect("deka.grants.json");
 
-        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false)
-            .expect("loader");
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None, None, None, false).expect("loader");
 
         assert!(
             loader.kinds_for_path(&module).is_empty(),
@@ -946,8 +926,9 @@ mod tests {
             r#"[{"name":"@deka/crypto","version":"1.0.0","digest":"sha256:aaa","kinds":["crypto"]}]"#,
         )
         .expect("grant table");
-        let loader = PhpxEsmLoader::new(root.to_path_buf(), entry, None, Some(table), None, false)
-            .expect("loader");
+        let loader =
+            PhpxEsmLoader::new(root.to_path_buf(), entry, None, Some(table), None, false)
+                .expect("loader");
 
         let legacy_canon = legacy_module.canonicalize().expect("legacy module");
         assert_eq!(loader.dependency_package_root(&legacy_canon), None);

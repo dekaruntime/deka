@@ -22,8 +22,8 @@ use serde::Serialize;
 
 use crate::ast;
 
-use super::types::Type;
 use super::Checker;
+use super::types::Type;
 
 /// A fully-resolved static type descriptor.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

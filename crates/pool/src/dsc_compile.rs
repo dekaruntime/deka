@@ -55,7 +55,8 @@ pub fn compile_graph_with_dsc(
     if out.exists() {
         let _ = fs::remove_dir_all(&out);
     }
-    fs::create_dir_all(&out).map_err(|err| format!("failed to create {}: {err}", out.display()))?;
+    fs::create_dir_all(&out)
+        .map_err(|err| format!("failed to create {}: {err}", out.display()))?;
 
     let output = Command::new(dsc)
         .current_dir(compile_root)
@@ -66,8 +67,7 @@ pub fn compile_graph_with_dsc(
                 .to_str()
                 .ok_or_else(|| "entry path is not UTF-8".to_string())?,
             "--out",
-            out.to_str()
-                .ok_or_else(|| "cache path is not UTF-8".to_string())?,
+            out.to_str().ok_or_else(|| "cache path is not UTF-8".to_string())?,
         ])
         .output()
         .map_err(|err| format!("failed to exec {}: {err}", dsc.display()))?;
@@ -104,7 +104,10 @@ pub fn compile_graph_with_dsc(
 
 /// JS for `source` from a graph dump, trying canonical and macOS `/var`
 /// vs `/private/var` aliases so dump keys match isolate loads.
-pub fn lookup_js<'a>(modules: &'a HashMap<PathBuf, String>, source: &Path) -> Option<&'a String> {
+pub fn lookup_js<'a>(
+    modules: &'a HashMap<PathBuf, String>,
+    source: &Path,
+) -> Option<&'a String> {
     let key = fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
     if let Some(js) = modules.get(&key).or_else(|| modules.get(source)) {
         return Some(js);
@@ -162,8 +165,8 @@ fn collect_js_inner(
     source_root: &Path,
     modules: &mut HashMap<PathBuf, String>,
 ) -> Result<(), String> {
-    let entries =
-        fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
+    let entries = fs::read_dir(dir)
+        .map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
         let path = entry.path();
@@ -263,7 +266,10 @@ mod tests {
         );
         // Path is not on disk, so canonicalize leaves /private/var/... and
         // the /private prefix strip hits the map key.
-        let hit = lookup_js(&modules, Path::new("/private/var/folders/x/pkg/index.ds"));
+        let hit = lookup_js(
+            &modules,
+            Path::new("/private/var/folders/x/pkg/index.ds"),
+        );
         assert_eq!(hit.map(String::as_str), Some("export const n = 1"));
     }
 }

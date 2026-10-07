@@ -44,7 +44,10 @@ describe("math", fn() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.status.success(), "deka test failed: {combined}");
+    assert!(
+        output.status.success(),
+        "deka test failed: {combined}"
+    );
     assert!(
         combined.contains("[pass] math > adds"),
         "missing pass line: {combined}"
@@ -114,7 +117,10 @@ describe("math", fn() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!output.status.success(), "expected failure: {combined}");
+    assert!(
+        !output.status.success(),
+        "expected failure: {combined}"
+    );
     assert!(
         combined.contains("[fail] math > adds"),
         "missing fail line: {combined}"
@@ -212,7 +218,9 @@ fn deka_test_ignores_hats_fixtures() {
     let project = tempfile::tempdir().expect("project");
     fs::write(project.path().join("deka.json"), "{}\n").expect("manifest");
     fs::write(project.path().join("deka.lock"), EMPTY_DEKA_LOCK).expect("lock");
-    let hats = project.path().join("corpus/functions/pipe_operator");
+    let hats = project
+        .path()
+        .join("corpus/functions/pipe_operator");
     fs::create_dir_all(&hats).expect("hats dir");
     fs::write(hats.join("pipe_operator.pass.ds"), "console.log(1)\n").expect("hats file");
 

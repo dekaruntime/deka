@@ -48,8 +48,7 @@ fn write(root: &Path, rel: &str, body: &str) {
 /// Write a `deka.lock` entry pinning `dep` (a package directory under
 /// `project/ds_modules`) exactly as `deka install` would.
 fn pin_lock(project: &Path, dep: &Path, name: &str) {
-    let integrity =
-        deka_host::integrity::compute_package_integrity(dep).expect("package integrity");
+    let integrity = deka_host::integrity::compute_package_integrity(dep).expect("package integrity");
     let lock = serde_json::json!({
         "lockfileVersion": 1,
         "packages": {
@@ -145,11 +144,7 @@ async fn safe_returns_declared_type_and_failures_are_values() {
         return;
     }
     let project = tempfile::tempdir().expect("tempdir");
-    write(
-        project.path(),
-        "deka.json",
-        r#"{"name":"@deka/catalogtest"}"#,
-    );
+    write(project.path(), "deka.json", r#"{"name":"@deka/catalogtest"}"#);
     write(project.path(), "deka.lock", EMPTY_DEKA_LOCK);
     write(
         project.path(),
@@ -337,11 +332,7 @@ async fn closed_catalog_rejects_unknown_helpers_and_wrong_arity() {
         ),
     ] {
         let project = tempfile::tempdir().expect("tempdir");
-        write(
-            project.path(),
-            "deka.json",
-            r#"{"name":"@deka/catalogneg"}"#,
-        );
+        write(project.path(), "deka.json", r#"{"name":"@deka/catalogneg"}"#);
         write(project.path(), "deka.lock", EMPTY_DEKA_LOCK);
         write(project.path(), "main.ds", source);
         let entry = project.path().join("main.ds");
@@ -355,10 +346,7 @@ async fn closed_catalog_rejects_unknown_helpers_and_wrong_arity() {
             .await
             .expect("pool execution");
         let error = error_of(&response);
-        assert!(
-            error.contains(needle),
-            "{name}: expected {needle:?} in {error}"
-        );
+        assert!(error.contains(needle), "{name}: expected {needle:?} in {error}");
         assert!(
             error.contains("2:28:") || error.contains("2:21:"),
             "{name}: diagnostic should carry a source location: {error}"
@@ -429,11 +417,7 @@ async fn unofficial_dependency_catalog_use_is_rejected() {
         r#"{"name":"my-app","dependencies":{"@acme/evil":"1.0.0"}}"#,
     );
     let dep = project.path().join("ds_modules/@acme/evil");
-    write(
-        &dep,
-        "deka.json",
-        r#"{"name":"@acme/evil","version":"1.0.0"}"#,
-    );
+    write(&dep, "deka.json", r#"{"name":"@acme/evil","version":"1.0.0"}"#);
     write(
         &dep,
         "index.ds",
@@ -483,11 +467,7 @@ async fn stdlib_dependency_safe_calls_serve_app_imports() {
         r#"{"name":"my-app","dependencies":{"@deka/bytestest":"1.0.0"}}"#,
     );
     let dep = project.path().join("ds_modules/@deka/bytestest");
-    write(
-        &dep,
-        "deka.json",
-        r#"{"name":"@deka/bytestest","version":"1.0.0"}"#,
-    );
+    write(&dep, "deka.json", r#"{"name":"@deka/bytestest","version":"1.0.0"}"#);
     write(
         &dep,
         "index.ds",
@@ -532,11 +512,7 @@ async fn safe_helpers_do_not_throw_on_typed_edge_inputs() {
         return;
     }
     let project = tempfile::tempdir().expect("tempdir");
-    write(
-        project.path(),
-        "deka.json",
-        r#"{"name":"@deka/catalogedge"}"#,
-    );
+    write(project.path(), "deka.json", r#"{"name":"@deka/catalogedge"}"#);
     write(project.path(), "deka.lock", EMPTY_DEKA_LOCK);
     write(
         project.path(),
@@ -744,14 +720,7 @@ export fn from_base64(value: string) Option<bytes> {
 "#;
     // Pin the "no arbitrary unsafe JavaScript" rule: the only `unsafe` in
     // the implementation is the catalog door `unsafe { deka.* }`.
-    for needle in [
-        "unsafe<",
-        "Uint8Array",
-        "TextEncoder",
-        "TextDecoder",
-        "parseInt",
-        "new ",
-    ] {
+    for needle in ["unsafe<", "Uint8Array", "TextEncoder", "TextDecoder", "parseInt", "new "] {
         assert!(
             !package_ds.contains(needle),
             "package implementation path must not contain arbitrary unsafe JS: {needle}"
@@ -765,11 +734,7 @@ export fn from_base64(value: string) Option<bytes> {
         r#"{"name":"my-app","dependencies":{"@deka/bytes":"1.0.0"}}"#,
     );
     let dep = project.path().join("ds_modules/@deka/bytes");
-    write(
-        &dep,
-        "deka.json",
-        r#"{"name":"@deka/bytes","version":"1.0.0"}"#,
-    );
+    write(&dep, "deka.json", r#"{"name":"@deka/bytes","version":"1.0.0"}"#);
     write(&dep, "index.ds", package_ds);
     pin_lock(project.path(), &dep, "@deka/bytes");
     write(
@@ -860,38 +825,24 @@ async fn emitted_catalog_js_runs_without_bootstrap_helpers() {
         return;
     }
     let project = tempfile::tempdir().expect("tempdir");
-    write(
-        project.path(),
-        "deka.json",
-        r#"{"name":"@deka/catalogemitted"}"#,
-    );
+    write(project.path(), "deka.json", r#"{"name":"@deka/catalogemitted"}"#);
     write(project.path(), "deka.lock", EMPTY_DEKA_LOCK);
-    write(
-        project.path(),
-        "main.ds",
-        r#"
+    write(project.path(), "main.ds", r#"
 export fn app(req: string) string {
   const b: bytes = safe { deka.bytes.from_string("deka") }
   return safe { deka.bytes.to_hex(b) }
 }
-"#,
-    );
+"#);
     let source = project.path().join("main.ds");
     let modules = pool::dsc_compile::compile_graph(project.path(), &source)
         .expect("compile original graph")
         .0;
     let js = pool::dsc_compile::lookup_js(&modules, &source).expect("emitted entry");
-    assert!(
-        js.contains("const __dsc_catalog ="),
-        "compiler must bundle catalog helpers"
-    );
+    assert!(js.contains("const __dsc_catalog ="), "compiler must bundle catalog helpers");
     write(project.path(), "compiled.js", js);
     let entry = project.path().join("compiled.js");
     let response = catalog_pool()
-        .execute(
-            HandlerKey::new("catalog_emitted_js"),
-            module_request(&entry, project.path()),
-        )
+        .execute(HandlerKey::new("catalog_emitted_js"), module_request(&entry, project.path()))
         .await
         .expect("pool execution");
     assert_eq!(body_of(&response), "64656b61");

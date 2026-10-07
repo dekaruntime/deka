@@ -3,8 +3,8 @@
 use crate::ast::{MatchArm, Pattern, PatternField};
 use crate::lexer::TokenKind;
 
-use super::util::token_name;
 use super::Parser;
+use super::util::token_name;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_match_arms(&mut self) -> Option<&'a [MatchArm<'a>]> {
@@ -88,10 +88,7 @@ impl<'a> Parser<'a> {
                 } => {
                     let (binding, payload_span) = match **payload {
                         Pattern::Identifier { name, span } => (name, span),
-                        _ => (
-                            self.bump_str(&format!("$__deka_passthrough_{start_byte}")),
-                            *span,
-                        ),
+                        _ => (self.bump_str(&format!("$__deka_passthrough_{start_byte}")), *span),
                     };
                     crate::ast::Expr::EnumConstructor {
                         shared_ok: *name == "Ok",
@@ -112,9 +109,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 _ => {
-                    self.error(
-                        "a bodyless arm requires a Result or Exception variant with a payload",
-                    );
+                    self.error("a bodyless arm requires a Result or Exception variant with a payload");
                     return None;
                 }
             }

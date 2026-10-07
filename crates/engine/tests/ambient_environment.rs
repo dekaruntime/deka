@@ -50,7 +50,10 @@ fn runtime_config_ignores_contradictory_ambient_environment() {
     ));
     std::fs::write(&offered, "[code_cache]\nenabled = true\n").expect("write offered config");
 
-    assert_eq!(run(Some(offered.to_str().expect("utf-8 path"))), run(None));
+    assert_eq!(
+        run(Some(offered.to_str().expect("utf-8 path"))),
+        run(None)
+    );
 
     std::fs::remove_file(&offered).ok();
 }
@@ -61,20 +64,17 @@ fn ambient_environment_child() {
     // cwd is an empty dir: no cwd-relative config candidate can load. Any
     // DEKA_RUNTIME_CONFIG the parent sets points at a config that would turn
     // the code cache on; the proof lines must show it was not read.
-    let cwd = std::env::temp_dir().join(format!("deka_engine_ambient_cwd_{}", std::process::id()));
+    let cwd = std::env::temp_dir().join(format!(
+        "deka_engine_ambient_cwd_{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&cwd).expect("mkdir");
     std::env::set_current_dir(&cwd).expect("chdir");
 
     let loaded = engine::config::RuntimeConfig::load();
     println!("ambient-proof:code-cache={:?}", loaded.code_cache_enabled());
-    println!(
-        "ambient-proof:retention={}",
-        loaded.introspect_retention_days()
-    );
-    println!(
-        "ambient-proof:profiling={}",
-        loaded.introspect_profiling_enabled()
-    );
+    println!("ambient-proof:retention={}", loaded.introspect_retention_days());
+    println!("ambient-proof:profiling={}", loaded.introspect_profiling_enabled());
 
     std::fs::remove_dir_all(&cwd).ok();
 }

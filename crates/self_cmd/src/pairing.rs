@@ -42,7 +42,10 @@ pub fn resolve_tool(arg: &str, tool: &str) -> Result<PathBuf, String> {
         Err(format!(
             "--{} points at {}, but no {} build was found there \
              (expected a binary or a checkout with target/release/{})",
-            tool, arg, tool, tool
+            tool,
+            arg,
+            tool,
+            tool
         ))
     }
 }
@@ -93,16 +96,15 @@ fn copy_fresh(src: &Path, dest: &Path) -> Result<(), String> {
     let fresh = match (fs::metadata(src), fs::metadata(dest)) {
         (Ok(src_meta), Ok(dest_meta)) => {
             dest_meta.len() == src_meta.len()
-                && dest_meta
-                    .modified()
-                    .ok()
-                    .zip(src_meta.modified().ok())
-                    .is_some_and(|(dest_mtime, src_mtime)| dest_mtime >= src_mtime)
+                && dest_meta.modified().ok().zip(src_meta.modified().ok()).is_some_and(
+                    |(dest_mtime, src_mtime)| dest_mtime >= src_mtime,
+                )
         }
         _ => false,
     };
     if !fresh {
-        fs::copy(src, dest).map_err(|err| format!("failed to copy {}: {}", src.display(), err))?;
+        fs::copy(src, dest)
+            .map_err(|err| format!("failed to copy {}: {}", src.display(), err))?;
     }
     #[cfg(unix)]
     {
@@ -222,11 +224,7 @@ mod tests {
         executable(&pairing.cli);
         let wrapper = checkout.path().join("target/release/dsc");
         let text = fs::read_to_string(&wrapper).unwrap();
-        assert!(
-            text.contains("add|install"),
-            "wrapper forwards add: {}",
-            text
-        );
+        assert!(text.contains("add|install"), "wrapper forwards add: {}", text);
         assert!(text.contains(dsc_src.to_str().unwrap()));
         assert!(text.contains(pairing.cli.to_str().unwrap()));
 

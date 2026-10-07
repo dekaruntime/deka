@@ -36,8 +36,7 @@ fn assert_one_error(source: &str, position: &str, needle: &str) {
     );
 }
 
-const APPLY: &str =
-    "fn apply(xs: Array<number>, f: fn(number) number) Array<number> { return xs.map(f) }\n";
+const APPLY: &str = "fn apply(xs: Array<number>, f: fn(number) number) Array<number> { return xs.map(f) }\n";
 
 #[test]
 fn call_argument_infers_parameter_and_return() {
@@ -137,9 +136,7 @@ fn annotated_binding_is_contextually_typed() {
 
 #[test]
 fn parenthesized_literal_is_contextually_typed() {
-    assert_ok(&format!(
-        "{APPLY}const ys = apply([1], (fn(x) {{ return x }}))"
-    ));
+    assert_ok(&format!("{APPLY}const ys = apply([1], (fn(x) {{ return x }}))"));
 }
 
 #[test]
@@ -211,8 +208,7 @@ fn arity_error_does_not_swallow_callback_body_errors() {
     );
     assert_eq!(got.len(), 2, "{got:?}");
     assert!(
-        got.iter()
-            .any(|m| m.contains("expected 2 arguments, found 1")),
+        got.iter().any(|m| m.contains("expected 2 arguments, found 1")),
         "{got:?}"
     );
     assert!(

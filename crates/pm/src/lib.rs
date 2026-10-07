@@ -1,5 +1,6 @@
 #![allow(clippy::all)]
 
+pub mod init;
 #[cfg(not(target_arch = "wasm32"))]
 mod cli_install;
 #[cfg(not(target_arch = "wasm32"))]
@@ -10,7 +11,6 @@ mod cli_pkg;
 mod cli_release;
 #[cfg(not(target_arch = "wasm32"))]
 mod cli_summon;
-pub mod init;
 
 pub mod cache;
 pub mod grants;

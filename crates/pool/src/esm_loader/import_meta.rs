@@ -165,8 +165,7 @@ impl PhpxEsmLoader {
             dirname = serde_json::to_string(&dirname).unwrap_or_else(|_| "\"\"".to_string()),
             filename = serde_json::to_string(&filename).unwrap_or_else(|_| "\"\"".to_string()),
             main = main,
-            raw_specifier =
-                serde_json::to_string(&raw_specifier).unwrap_or_else(|_| "\"\"".to_string()),
+            raw_specifier = serde_json::to_string(&raw_specifier).unwrap_or_else(|_| "\"\"".to_string()),
         )
     }
 }
@@ -185,15 +184,8 @@ mod tests {
         let root = tempfile::tempdir().expect("temp project");
         let entry = root.path().join("main.js");
         fs::write(&entry, "export const x = 1;\n").expect("write entry");
-        let loader = PhpxEsmLoader::new(
-            root.path().to_path_buf(),
-            entry.clone(),
-            None,
-            None,
-            None,
-            false,
-        )
-        .expect("loader");
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry.clone(), None, None, None, false)
+            .expect("loader");
 
         let entry_specifier = loader.entry_specifier.clone();
         // `load_source` always derives its `path` argument from the (already
@@ -220,15 +212,8 @@ mod tests {
         let helper = root.path().join("helper.js");
         fs::write(&entry, "import { h } from \"./helper.js\";\n").expect("write entry");
         fs::write(&helper, "export const h = 1;\n").expect("write helper");
-        let loader = PhpxEsmLoader::new(
-            root.path().to_path_buf(),
-            entry.clone(),
-            None,
-            None,
-            None,
-            false,
-        )
-        .expect("loader");
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry.clone(), None, None, None, false)
+            .expect("loader");
 
         let helper_specifier =
             deno_core::ModuleSpecifier::from_file_path(helper.canonicalize().expect("canon"))
@@ -255,23 +240,13 @@ mod tests {
         // report their real `.ds` path, never the compiled `.js` one.
         let original_root = tempfile::tempdir().expect("original root");
         let compiled_root = tempfile::tempdir().expect("compiled root");
-        fs::write(
-            original_root.path().join("main.ds"),
-            "import {} from \"./helper.ds\";\n",
-        )
-        .expect("write original entry");
-        fs::write(
-            original_root.path().join("helper.ds"),
-            "export const h = 1;\n",
-        )
-        .expect("write original helper");
-        fs::write(compiled_root.path().join("main.js"), "export {};\n")
-            .expect("write compiled entry");
-        fs::write(
-            compiled_root.path().join("helper.js"),
-            "export const h = 1;\n",
-        )
-        .expect("write compiled helper");
+        fs::write(original_root.path().join("main.ds"), "import {} from \"./helper.ds\";\n")
+            .expect("write original entry");
+        fs::write(original_root.path().join("helper.ds"), "export const h = 1;\n")
+            .expect("write original helper");
+        fs::write(compiled_root.path().join("main.js"), "export {};\n").expect("write compiled entry");
+        fs::write(compiled_root.path().join("helper.js"), "export const h = 1;\n")
+            .expect("write compiled helper");
 
         let compiled_entry = compiled_root.path().join("main.js");
         let mut loader = PhpxEsmLoader::new(
@@ -328,11 +303,7 @@ mod tests {
             deno_core::ModuleSpecifier::from_file_path(&compiled_helper).unwrap();
         let helper_prelude = loader.import_meta_prelude(&helper_specifier, &compiled_helper);
         let expected_helper_url = deno_core::ModuleSpecifier::from_file_path(
-            original_root
-                .path()
-                .canonicalize()
-                .expect("canon")
-                .join("helper.ds"),
+            original_root.path().canonicalize().expect("canon").join("helper.ds"),
         )
         .unwrap()
         .to_string();
@@ -353,15 +324,8 @@ mod tests {
         let sibling = root.path().join("sibling.js");
         fs::write(&entry, "import {} from \"./sibling.js\";\n").expect("write entry");
         fs::write(&sibling, "export const s = 1;\n").expect("write sibling");
-        let loader = PhpxEsmLoader::new(
-            root.path().to_path_buf(),
-            entry.clone(),
-            None,
-            None,
-            None,
-            false,
-        )
-        .expect("loader");
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry.clone(), None, None, None, false)
+            .expect("loader");
 
         let referrer = loader.entry_specifier.to_string();
         let resolved = loader
@@ -383,17 +347,11 @@ mod tests {
         let original_root = tempfile::tempdir().expect("original root");
         let compiled_root = tempfile::tempdir().expect("compiled root");
         fs::write(original_root.path().join("main.ds"), "").expect("write original entry");
-        fs::write(
-            original_root.path().join("sibling.ds"),
-            "export const s = 1;\n",
-        )
-        .expect("write original sibling");
+        fs::write(original_root.path().join("sibling.ds"), "export const s = 1;\n")
+            .expect("write original sibling");
         fs::write(compiled_root.path().join("main.js"), "").expect("write compiled entry");
-        fs::write(
-            compiled_root.path().join("sibling.js"),
-            "export const s = 1;\n",
-        )
-        .expect("write compiled sibling");
+        fs::write(compiled_root.path().join("sibling.js"), "export const s = 1;\n")
+            .expect("write compiled sibling");
 
         let compiled_entry = compiled_root.path().join("main.js");
         let mut loader = PhpxEsmLoader::new(
@@ -415,11 +373,7 @@ mod tests {
             .resolve_for_import_meta("./sibling.js", &referrer)
             .expect("resolves");
         let expected = deno_core::ModuleSpecifier::from_file_path(
-            original_root
-                .path()
-                .canonicalize()
-                .expect("canon")
-                .join("sibling.ds"),
+            original_root.path().canonicalize().expect("canon").join("sibling.ds"),
         )
         .unwrap()
         .to_string();

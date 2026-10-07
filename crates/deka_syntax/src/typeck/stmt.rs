@@ -1154,10 +1154,16 @@ impl<'a> Checker<'a> {
         for stmt in self.program.statements {
             match stmt {
                 ast::Stmt::TupleBinding {
-                    names, ty, value, ..
+                    names,
+                    ty,
+                    value,
+                    ..
                 } if ty.is_none() => {
-                    let actual =
-                        self.check_exception_use(value, super::exceptions::Use::Value, None);
+                    let actual = self.check_exception_use(
+                        value,
+                        super::exceptions::Use::Value,
+                        None,
+                    );
                     if let Type::Tuple { elements } = actual {
                         for (i, name) in names.iter().enumerate() {
                             if matches!(self.scopes[0].get(name), Some(Type::Infer)) {
@@ -1169,11 +1175,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 ast::Stmt::UnwrapLet {
-                    name,
-                    ty: None,
-                    scrutinee,
-                    span,
-                    ..
+                    name, ty: None, scrutinee, span, ..
                 } => {
                     // The initializer still runs in source order. Function
                     // bodies may inspect the seed's type before it runs.
@@ -1671,7 +1673,8 @@ impl<'a> Checker<'a> {
 
         let declared = ty.map(|ty| self.resolve_ast_type(ty));
         if let Some(declared) = &declared {
-            if !self.is_assignable(declared, &bound) && !matches!(bound, Type::Error) {
+            if !self.is_assignable(declared, &bound) && !matches!(bound, Type::Error)
+            {
                 self.error_span(
                     span,
                     super::with_union_narrowing_hint(

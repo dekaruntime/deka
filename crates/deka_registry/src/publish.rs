@@ -1,4 +1,4 @@
-use anyhow::{Context as AnyhowContext, Result, bail};
+use anyhow::{bail, Context as AnyhowContext, Result};
 use deka_cli_core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
 use deka_modules::modules::is_modules_dir_name;
 use serde_json::json;
@@ -268,7 +268,10 @@ fn reject_publish_tree_appledouble(git_ref: &str) -> Result<()> {
 /// (`._<name>` sibling). These are filesystem metadata, not source; a release
 /// that ships them breaks integrity computation for every consumer on every OS
 /// (dekaruntime/deka#587).
-fn reject_publish_tree_appledouble_at(repo: Option<&std::path::Path>, git_ref: &str) -> Result<()> {
+fn reject_publish_tree_appledouble_at(
+    repo: Option<&std::path::Path>,
+    git_ref: &str,
+) -> Result<()> {
     let mut command = Command::new("git");
     if let Some(repo) = repo {
         command.current_dir(repo);
@@ -336,9 +339,11 @@ fn vendored_php_modules_path(entries: &[u8]) -> Option<String> {
         let mode = entry.split(|byte| *byte == b' ').next()?;
         let is_symlink = mode == b"120000";
         if is_symlink
-            || path.split('/').any(|segment| {
-                is_modules_dir_name(segment) || segment.eq_ignore_ascii_case("php_modules")
-            })
+            || path
+                .split('/')
+                .any(|segment| {
+                    is_modules_dir_name(segment) || segment.eq_ignore_ascii_case("php_modules")
+                })
         {
             Some(path.to_string())
         } else {
@@ -708,9 +713,7 @@ fn prepare_release_tag(tag: &str, version: &str, dry_run: bool) -> Result<String
 fn ensure_clean_pushed_default_head() -> Result<()> {
     let status = git_output(&["status", "--porcelain"])?;
     if !status.is_empty() {
-        bail!(
-            "publish requires a clean working tree; commit, stash, or remove local changes before releasing"
-        );
+        bail!("publish requires a clean working tree; commit, stash, or remove local changes before releasing");
     }
     let head = git_output(&["rev-parse", "HEAD^{commit}"])?;
     let default_branch = default_branch_from_origin()?;
@@ -799,36 +802,26 @@ mod tests {
             vec!["config", "user.email", "test@tana.gg"],
             vec!["config", "user.name", "test"],
         ] {
-            assert!(
-                Command::new("git")
-                    .current_dir(repo)
-                    .args(&args)
-                    .status()
-                    .expect("git")
-                    .success()
-            );
+            assert!(Command::new("git")
+                .current_dir(repo)
+                .args(&args)
+                .status()
+                .expect("git")
+                .success());
         }
         fs::write(repo.join("index.phpx"), "export const x = 1;").expect("module");
-        fs::write(
-            repo.join("._index.phpx"),
-            b"\x00\x05\x16\x07\x00\x02\x00\x00",
-        )
-        .expect("top-level AppleDouble");
+        fs::write(repo.join("._index.phpx"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
+            .expect("top-level AppleDouble");
         fs::create_dir_all(repo.join("lib")).expect("lib dir");
-        fs::write(
-            repo.join("lib/._helper.phpx"),
-            b"\x00\x05\x16\x07\x00\x02\x00\x00",
-        )
-        .expect("nested AppleDouble");
+        fs::write(repo.join("lib/._helper.phpx"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
+            .expect("nested AppleDouble");
         for args in [vec!["add", "."], vec!["commit", "-m", "appledouble"]] {
-            assert!(
-                Command::new("git")
-                    .current_dir(repo)
-                    .args(&args)
-                    .status()
-                    .expect("git")
-                    .success()
-            );
+            assert!(Command::new("git")
+                .current_dir(repo)
+                .args(&args)
+                .status()
+                .expect("git")
+                .success());
         }
 
         // A tree containing AppleDouble entries must be refused, with the
@@ -842,71 +835,58 @@ mod tests {
         // ... and after removing the AppleDouble files, the same ref passes.
         fs::remove_file(repo.join("._index.phpx")).expect("remove top-level");
         fs::remove_file(repo.join("lib/._helper.phpx")).expect("remove nested");
-        assert!(
-            Command::new("git")
-                .current_dir(repo)
-                .args(["add", "-A"])
-                .status()
-                .expect("add")
-                .success()
-        );
-        assert!(
-            Command::new("git")
-                .current_dir(repo)
-                .args(["commit", "-m", "clean"])
-                .status()
-                .expect("commit")
-                .success()
-        );
-        reject_publish_tree_appledouble_at(Some(repo), "HEAD").expect("clean tree must publish");
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .args(["add", "-A"])
+            .status()
+            .expect("add")
+            .success());
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .args(["commit", "-m", "clean"])
+            .status()
+            .expect("commit")
+            .success());
+        reject_publish_tree_appledouble_at(Some(repo), "HEAD")
+            .expect("clean tree must publish");
     }
 
     #[test]
     fn publish_artifact_rejects_case_variant_and_symlinked_php_modules() {
         let temp = tempfile::tempdir().expect("temp repo");
         let repo = temp.path();
-        assert!(
-            Command::new("git")
-                .current_dir(repo)
-                .arg("init")
-                .status()
-                .expect("git")
-                .success()
-        );
-        assert!(
-            Command::new("git")
-                .current_dir(repo)
-                .args(["config", "user.email", "test@tana.gg"])
-                .status()
-                .expect("git")
-                .success()
-        );
-        assert!(
-            Command::new("git")
-                .current_dir(repo)
-                .args(["config", "user.name", "test"])
-                .status()
-                .expect("git")
-                .success()
-        );
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .arg("init")
+            .status()
+            .expect("git")
+            .success());
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .args(["config", "user.email", "test@tana.gg"])
+            .status()
+            .expect("git")
+            .success());
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .args(["config", "user.name", "test"])
+            .status()
+            .expect("git")
+            .success());
         fs::create_dir_all(repo.join("Php_Modules")).expect("case directory");
         fs::write(repo.join("Php_Modules/module.phpx"), "export const x = 1;").expect("module");
-        assert!(
-            Command::new("git")
-                .current_dir(repo)
-                .args(["add", "."])
-                .status()
-                .expect("add")
-                .success()
-        );
-        assert!(
-            Command::new("git")
-                .current_dir(repo)
-                .args(["commit", "-m", "case variant"])
-                .status()
-                .expect("commit")
-                .success()
-        );
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .args(["add", "."])
+            .status()
+            .expect("add")
+            .success());
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .args(["commit", "-m", "case variant"])
+            .status()
+            .expect("commit")
+            .success());
         let err = reject_publish_tree_php_modules_at(Some(repo), "HEAD").unwrap_err();
         assert!(err.to_string().contains("Php_Modules"), "{err}");
 
@@ -915,22 +895,18 @@ mod tests {
         std::os::unix::fs::symlink("outside", repo.join(MODULES_DIR)).expect("symlink");
         #[cfg(not(unix))]
         panic!("publish artifact symlink test requires unix");
-        assert!(
-            Command::new("git")
-                .current_dir(repo)
-                .args(["add", "-A"])
-                .status()
-                .expect("add")
-                .success()
-        );
-        assert!(
-            Command::new("git")
-                .current_dir(repo)
-                .args(["commit", "-m", "symlink"])
-                .status()
-                .expect("commit")
-                .success()
-        );
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .args(["add", "-A"])
+            .status()
+            .expect("add")
+            .success());
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .args(["commit", "-m", "symlink"])
+            .status()
+            .expect("commit")
+            .success());
         let err = reject_publish_tree_php_modules_at(Some(repo), "HEAD").unwrap_err();
         assert!(err.to_string().contains("php_modules"), "{err}");
     }

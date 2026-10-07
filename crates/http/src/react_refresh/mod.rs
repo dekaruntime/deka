@@ -10,8 +10,8 @@ use engine::RuntimeState;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use compile::{RefreshContext, compile_abs, compile_relative, dsc_supports_dev, install};
-pub use transform::{Component, detect_components, is_refreshable_path, wrap_module};
+pub use compile::{compile_abs, compile_relative, dsc_supports_dev, install, RefreshContext};
+pub use transform::{detect_components, is_refreshable_path, wrap_module, Component};
 
 const MODULE_PREFIX: &str = "/_deka/hmr/module/";
 const VENDOR_PREFIX: &str = "/_deka/react/";
@@ -237,7 +237,7 @@ pub fn import_map_json() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::js_update_payload;
-    use crate::react_refresh::{RefreshContext, install};
+    use crate::react_refresh::{install, RefreshContext};
     use std::fs;
     use std::path::PathBuf;
 
@@ -271,10 +271,7 @@ mod tests {
         assert_eq!(json["type"], "js-update");
         assert_eq!(json["modules"][0]["id"], "Label.js");
         assert_eq!(json["modules"][0]["url"], "/_deka/hmr/module/Label.js");
-        assert_eq!(
-            json["modules"][0]["families"],
-            serde_json::json!(["Label.js Label"])
-        );
+        assert_eq!(json["modules"][0]["families"], serde_json::json!(["Label.js Label"]));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -298,7 +295,10 @@ mod tests {
         // prelude router.rs injects ahead of the client bundle; supply the
         // same bytes from the single grammar definition.
         let output = std::process::Command::new("node")
-            .env("DEKA_ISLAND_MARKERS_JS", crate::island_markers::JS_PRELUDE)
+            .env(
+                "DEKA_ISLAND_MARKERS_JS",
+                crate::island_markers::JS_PRELUDE,
+            )
             .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/morph_client.mjs"))
             .output()
             .expect("run morph client contract");

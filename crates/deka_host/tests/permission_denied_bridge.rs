@@ -39,10 +39,7 @@ fn denied_fs_read_op_throws_permission_denied_wire_message() {
         "#
     );
     runtime
-        .execute_script(
-            "permission_denied_bridge.js",
-            ModuleCodeString::from(script),
-        )
+        .execute_script("permission_denied_bridge.js", ModuleCodeString::from(script))
         .expect("the denied read must throw inside the try/catch, not fail the script");
 
     let value = runtime

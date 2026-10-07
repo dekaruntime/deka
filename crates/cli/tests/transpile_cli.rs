@@ -1,7 +1,7 @@
 use std::fs;
+use std::process::Command;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::process::Command;
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
@@ -60,13 +60,7 @@ fn transpile_help_describes_output_modes() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    for expected in [
-        "--preserve",
-        "--bundle",
-        "--treeshake",
-        "--client",
-        "Examples:",
-    ] {
+    for expected in ["--preserve", "--bundle", "--treeshake", "--client", "Examples:"] {
         assert!(text.contains(expected), "missing {expected}: {text}");
     }
 }

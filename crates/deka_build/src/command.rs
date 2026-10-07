@@ -139,14 +139,15 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // publication step below builds the deployment descriptor from them —
     // the same source walks the manifest was planned from, never fresh ones
     // (deka#719).
-    let app_scans = if runtime_core::dist::is_source_app_router_project(&project_root) {
-        Some((
-            runtime_core::dist::scan_app_dir(&app_dir),
-            runtime_core::dist::scan_api_dir(&api_dir),
-        ))
-    } else {
-        None
-    };
+    let app_scans =
+        if runtime_core::dist::is_source_app_router_project(&project_root) {
+            Some((
+                runtime_core::dist::scan_app_dir(&app_dir),
+                runtime_core::dist::scan_api_dir(&api_dir),
+            ))
+        } else {
+            None
+        };
     let mut manifest = app_scans
         .as_ref()
         .map(|(app_manifest, api_entries)| {
@@ -196,23 +197,29 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // dist/server as source-free, loader-ready modules. The compiled entries
     // are what `deka serve` loads — serve no longer generates
     // .cache/dekascript/serve-entry.dsx for built projects.
-    crate::server_entries::emit_server_entries(&crate::server_entries::ServerEntriesPlan {
-        project_root: &project_root,
-        staging_root,
-        entries_dir: &entries_dir,
-        dist_server: &dist_server,
-        has_manifest: manifest.is_some(),
-        emitted_src,
-        emitted_api,
-        dsc: &dsc,
-    })?;
+    crate::server_entries::emit_server_entries(
+        &crate::server_entries::ServerEntriesPlan {
+            project_root: &project_root,
+            staging_root,
+            entries_dir: &entries_dir,
+            dist_server: &dist_server,
+            has_manifest: manifest.is_some(),
+            emitted_src,
+            emitted_api,
+            dsc: &dsc,
+        },
+    )?;
 
     copy_dir_recursive(&public_dir, &dist_client)?;
 
     let islands_logical = dist_client.join("assets").join("islands.js");
     if pool::islands::emit_islands_bundle(&project_root, &dsc, &islands_logical)? {
-        let bytes = fs::read(&islands_logical)
-            .map_err(|err| format!("failed to read {}: {err}", islands_logical.display()))?;
+        let bytes = fs::read(&islands_logical).map_err(|err| {
+            format!(
+                "failed to read {}: {err}",
+                islands_logical.display()
+            )
+        })?;
         let digest = runtime_core::dist::sha256_hex(&bytes);
         let hash = digest.get(..10).unwrap_or(&digest);
         let hashed = dist_client
@@ -365,15 +372,20 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // verify every server-module relative specifier resolves inside
     // dist/server. Bare ui/* specifiers are paused-framework imports: they
     // are intentionally left unrewritten here.
-    crate::server_graph::publish_build_values(&project_root, &dist_root, &dist_server, &planned)?;
+    crate::server_graph::publish_build_values(
+        &project_root,
+        &dist_root,
+        &dist_server,
+        &planned,
+    )?;
 
     // The deployment descriptor (manifest v2): routes, server entries, slots,
     // and every payload with its digest, anchored by the sha256 sidecar.
     // Server-entry provenance is the plan-time scans carried since the
     // manifest was planned — publication does not re-scan sources (deka#719).
     let artifact = match (manifest.as_ref(), app_scans.as_ref()) {
-        (Some(plan), Some((app_manifest, api_entries))) => {
-            Some(build_publish::build_artifact_manifest(
+        (Some(plan), Some((app_manifest, api_entries))) => Some(
+            build_publish::build_artifact_manifest(
                 plan,
                 &project_root,
                 &dist_root,
@@ -381,8 +393,8 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
                 want_trailing,
                 app_manifest,
                 api_entries,
-            )?)
-        }
+            )?,
+        ),
         _ => None,
     };
 
@@ -400,11 +412,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         project_root.display(),
         dist_client.display(),
         dist_server.display(),
-        if hydration_enabled {
-            "enabled"
-        } else {
-            "disabled"
-        }
+        if hydration_enabled { "enabled" } else { "disabled" }
     );
     stdio::success(&report);
     Ok(())
@@ -687,6 +695,7 @@ export default {{
     Ok(())
 }
 
+
 /// Rewrite unhashed `/assets/...` URLs in every dist HTML file to the
 /// content-hashed names emitted next to them, and wire the client import map
 /// into documents that load hashed chunks.
@@ -760,3 +769,4 @@ fn rewrite_html_asset_urls(
     }
     Ok(())
 }
+

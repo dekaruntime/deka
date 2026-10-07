@@ -72,8 +72,6 @@ mod tests {
         let hashes = get("HASHES").expect("HASHES").body;
         assert!(hashes.contains("react@19.1.1"));
         assert!(hashes.contains("react-refresh@0.17.0"));
-        assert!(
-            hashes.contains("c3140127dd572acd866efa06e63c5c27f79daa5879e4c39af5c91644f8574751")
-        );
+        assert!(hashes.contains("c3140127dd572acd866efa06e63c5c27f79daa5879e4c39af5c91644f8574751"));
     }
 }

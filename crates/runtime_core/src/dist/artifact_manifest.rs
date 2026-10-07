@@ -21,9 +21,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::build_manifest::{FsObservation, RouteMode, sha256_hex};
+use super::build_manifest::{sha256_hex, FsObservation, RouteMode};
 use super::manifest::{
-    FrameworkEntry, FrameworkEntryKind, FrameworkManifest, exported_http_methods,
+    exported_http_methods, FrameworkEntry, FrameworkEntryKind, FrameworkManifest,
 };
 
 /// The `format` value every v2 manifest carries; unknown formats are

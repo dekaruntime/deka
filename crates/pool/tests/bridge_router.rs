@@ -710,7 +710,10 @@ globalThis.app = function() {
 };
 "#;
     let res = pool
-        .execute(HandlerKey::new("url_polyfill_whatwg"), test_request(code))
+        .execute(
+            HandlerKey::new("url_polyfill_whatwg"),
+            test_request(code),
+        )
         .await;
     let response = res.expect("pool execution should succeed");
     assert!(response.success, "execution failed: {:?}", response.error);
@@ -724,18 +727,17 @@ globalThis.app = function() {
             "input={input} body={body}"
         );
     }
-    assert_eq!(
-        parsed["parsed"]["http:///path"], "http: path",
-        "body={body}"
-    );
+    assert_eq!(parsed["parsed"]["http:///path"], "http: path", "body={body}");
     assert_eq!(parsed["parsed"]["a://"], "a: ", "body={body}");
     assert_eq!(parsed["parsed"]["a://b"], "a: b", "body={body}");
     assert_eq!(
-        parsed["parsed"]["mailto:user@example.com"], "mailto: ",
+        parsed["parsed"]["mailto:user@example.com"],
+        "mailto: ",
         "body={body}"
     );
     assert_eq!(
-        parsed["parsed"]["http://example.com/path?x#y"], "http: example.com",
+        parsed["parsed"]["http://example.com/path?x#y"],
+        "http: example.com",
         "body={body}"
     );
 }

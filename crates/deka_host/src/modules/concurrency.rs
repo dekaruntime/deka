@@ -1,9 +1,9 @@
 use super::*;
 use std::collections::{HashMap, VecDeque};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::{Mutex, oneshot};
-use tokio::time::{Duration, timeout};
+use std::sync::OnceLock;
+use tokio::sync::{oneshot, Mutex};
+use tokio::time::{timeout, Duration};
 
 /// Runtime-scoped named lock.
 ///
@@ -211,7 +211,9 @@ mod tests {
         let token1 = first.get("token").and_then(|v| v.as_u64()).unwrap();
 
         let name2 = name.clone();
-        let pending = tokio::spawn(async move { lock_acquire_impl(name2, 2000).await });
+        let pending = tokio::spawn(async move {
+            lock_acquire_impl(name2, 2000).await
+        });
 
         // Give the pending task time to enter the queue.
         tokio::time::sleep(Duration::from_millis(50)).await;

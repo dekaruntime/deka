@@ -163,9 +163,7 @@ fn docs_link_for_kind(kind: ErrorKind) -> Option<String> {
         ErrorKind::JsxError => "docs/phpx/jsx",
         ErrorKind::StructError => "docs/phpx/structs",
         ErrorKind::EnumError | ErrorKind::PatternError => "docs/phpx/enums",
-        ErrorKind::TypeError | ErrorKind::TypeMismatch | ErrorKind::UnknownType => {
-            "docs/phpx/types"
-        }
+        ErrorKind::TypeError | ErrorKind::TypeMismatch | ErrorKind::UnknownType => "docs/phpx/types",
         ErrorKind::CypherError => return None,
     };
     Some(path.to_string())

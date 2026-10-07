@@ -41,7 +41,10 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn cmd(_context: &Context) {
-    error("db", "missing subcommand. use: deka db migrate|info|flush");
+    error(
+        "db",
+        "missing subcommand. use: deka db migrate|info|flush",
+    );
     // Missing subcommand is a usage error (deka#1010): the CLI's documented
     // convention is exit 2 for usage/parse errors, 1 for runtime failures.
     // This handler previously fell through and returned 0 on the exact
