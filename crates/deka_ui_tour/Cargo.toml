@@ -1,0 +1,34 @@
+[package]
+name = "deka-ui-tour"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+web-test = ["deka-ui/web-test"]
+
+[dependencies]
+deka-ui = { path = "../deka_ui", default-features = false, features = ["web", "tour"] }
+serde_json = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.128"
+
+[dev-dependencies]
+deka_native_ui = { path = "../deka_native_ui" }
+
+[[example]]
+name = "web_input"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "size_counter"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "size_layout"
+crate-type = ["cdylib"]

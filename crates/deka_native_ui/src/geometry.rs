@@ -140,7 +140,13 @@ pub(crate) fn paint(
                     - (paint.rect.width / 2. - radius);
                 let dy = (ly - (paint.rect.y + paint.rect.height / 2.)).abs()
                     - (paint.rect.height / 2. - radius);
-                let distance = dx.max(0.).hypot(dy.max(0.)) + dx.max(dy).min(0.) - radius;
+                // Viewport-bounded distances cannot overflow. Scalar f32 arithmetic
+                // uses the same rounding on native and wasm; platform hypotf
+                // differed by one alpha unit at a rounded corner at DPR 2.
+                let outer_x = dx.max(0.);
+                let outer_y = dy.max(0.);
+                let distance =
+                    (outer_x * outer_x + outer_y * outer_y).sqrt() + dx.max(dy).min(0.) - radius;
                 let alpha = (0.5 - distance * scale).clamp(0., 1.);
                 out.copy_from_slice(&[
                     (paint.color >> 16) as u8,

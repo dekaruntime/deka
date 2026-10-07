@@ -1,0 +1,103 @@
+// Execute the built wasm in a real headless browser, independently of website CI.
+import { chromium } from 'playwright'
+import { createServer } from 'node:http'
+import { readFileSync } from 'node:fs'
+import { resolve, extname } from 'node:path'
+import assert from 'node:assert/strict'
+const root = resolve(process.argv[2])
+const histories = JSON.parse(readFileSync(resolve(root, 'expectations.json')))
+const sources = JSON.parse(readFileSync(resolve(root, 'sources.json')))
+function difference(actual, expected, path = 'scene') {
+  if (typeof expected === 'number') return typeof actual === 'number' && Math.abs(actual-expected)<.005 ? undefined : `${path}: ${actual} != ${expected}`
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual) || actual.length !== expected.length) return `${path}: array lengths differ`
+    for (let i=0; i<expected.length; i++) { const diff=difference(actual[i],expected[i],`${path}[${i}]`); if(diff) return diff }
+    return
+  }
+  if (expected && typeof expected==='object') {
+    if (!actual || JSON.stringify(Object.keys(actual).sort())!==JSON.stringify(Object.keys(expected).sort())) return `${path}: object keys differ`
+    for (const [key,value] of Object.entries(expected)) { const diff=difference(actual[key],value,`${path}.${key}`); if(diff) return diff }
+    return
+  }
+  return actual===expected ? undefined : `${path}: ${actual} != ${expected}`
+}
+const server = createServer((req,res)=>{
+  const path=new URL(req.url,'http://localhost').pathname
+  if (path==='/favicon.ico') {res.writeHead(204);res.end();return}
+  if(path==='/') {
+    res.setHeader('Content-Type','text/html');res.end(`<!doctype html><div style="position:relative"><canvas tabindex="0" style="width:560px;height:480px"></canvas></div><script type="module">
+      const fixture=new URLSearchParams(location.search).get('fixture')||'test-fixture';
+      const file=fixture==='input-fixture'?'web_input':'deka_ui_tour';
+      window.errors=[];window.frames=0;window.dekaFrameTimes=[];
+      window.addEventListener('deka:error',event=>window.errors.push(event.detail));
+      window.addEventListener('deka:native-frame',event=>{window.scene=event.detail;window.frames++});
+      const module=await import('/'+fixture+'/'+file+'.js');await module.default({module_or_path:'/'+fixture+'/'+file+'_bg.wasm'});
+      window.start=lesson=>fixture==='input-fixture'?module.start(document.querySelector('canvas')):module.start(lesson,document.querySelector('canvas'));
+      window.stop=module.stop;window.ready=true;
+      </script>`);return
+  }
+  const file=resolve(root,'.'+path)
+  if (!file.startsWith(root+'/')) {res.writeHead(404);res.end();return}
+  try {res.setHeader('Content-Type',extname(file)==='.wasm'?'application/wasm':'application/javascript');res.end(readFileSync(file))}catch{res.writeHead(404);res.end()}
+})
+await new Promise(done=>server.listen(0,'127.0.0.1',done))
+const url=`http://127.0.0.1:${server.address().port}`
+const browser=await chromium.launch({executablePath:process.env.RUST_TOUR_CHROME})
+const metrics=[]
+try {
+  for(const [scale,reduced] of [[1,false],[2,false],[1,true]]) {
+    const context=await browser.newContext({deviceScaleFactor:scale,reducedMotion:reduced?'reduce':'no-preference',viewport:{width:1200,height:900}})
+    const page=await context.newPage();page.setDefaultTimeout(30000);const errors=[]
+    page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+    await page.goto(url);await page.waitForFunction(()=>window.ready)
+    const canvas=page.locator('canvas');const blank=await canvas.screenshot()
+    for(const history of histories.filter(h=>h.scale===scale&&h.reduced===reduced)) {
+      await page.evaluate(history=>{
+        window.stop();window.scene=undefined;window.dekaFrameTimes=[];
+        const canvas=document.querySelector('canvas');canvas.style.width=history.width+'px';canvas.style.height=history.height+'px';window.start(history.lesson)
+      },history)
+      await page.waitForFunction(()=>window.scene)
+      for(const step of history.steps) {
+        await canvas.evaluate((canvas,time)=>canvas.dispatchEvent(new CustomEvent('deka:clock',{detail:{time}})),step.time)
+        if(step.point) {
+          assert.equal(difference(await snapshot(page),step.before),undefined,`${history.lesson} before input`)
+          const bounds=await canvas.boundingBox();await page.mouse.click(bounds.x+step.point[0],bounds.y+step.point[1])
+        }
+        assert.equal(difference(await snapshot(page),step.scene),undefined,`${history.lesson} rendered frame at ${step.time}`)
+      }
+      assert.notDeepEqual(await canvas.screenshot(),blank,`${history.lesson} must paint visible pixels`)
+      // Measure warm frames, including all serialisation across the wasm boundary.
+      await page.evaluate(()=>{window.dekaFrameTimes=[];for(let i=0;i<120;i++)document.querySelector('canvas').dispatchEvent(new CustomEvent('deka:clock',{detail:{time:30000+i*16}}))})
+      const times=await page.evaluate(()=>window.dekaFrameTimes)
+      metrics.push({lesson:history.lesson,scale,reduced,ms:times.map(t=>t.ms),bytes:times.map(t=>t.bytes)})
+      await page.evaluate(()=>window.stop());const frames=await page.evaluate(()=>window.frames)
+      await canvas.dispatchEvent('pointerup',{button:0,clientX:20,clientY:20})
+      await canvas.evaluate(canvas=>canvas.dispatchEvent(new CustomEvent('deka:clock',{detail:{time:99999}})))
+      assert.equal(await page.evaluate(()=>window.frames),frames,`${history.lesson} stop removes listeners`)
+      assert.deepEqual(await page.evaluate(()=>window.errors),[])
+    }
+    assert.deepEqual(errors,[])
+    console.log(`PASS: all 27 lessons, shared histories, input, pixels and stop; DPR ${scale}, reduced motion ${reduced}`)
+    await context.close()
+  }
+  const page=await browser.newPage();page.setDefaultTimeout(30000)
+  await page.goto(url+'/?fixture=input-fixture');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start())
+  const input=page.getByLabel('Deka text input');await input.pressSequentially('Sami')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello Sami'))
+  await input.press('Enter');assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Key: Enter'))
+  assert.equal(await input.inputValue(),'Confirmed');await page.evaluate(()=>window.stop());assert.equal(await input.count(),0)
+  console.log('PASS: native browser text/key input and teardown')
+  await page.goto(url+'/?fixture=.&inspect');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start('counter'))
+  const canvas=page.locator('canvas');const before=await canvas.screenshot()
+  await canvas.focus();await page.keyboard.press('Tab');await page.keyboard.press('Enter');assert.notDeepEqual(await canvas.screenshot(),before)
+  await canvas.evaluate(canvas=>canvas.dispatchEvent(new CustomEvent('deka:clock',{detail:{time:0}})))
+  assert.equal(await page.evaluate(()=>window.frames),0,'production ignores inspect and deterministic clock')
+  console.log('PASS: shipped bundle input changes pixels; ?inspect has no effect')
+  const largest=sources.reduce((a,b)=>a.source.length>b.source.length?a:b)
+  const samples=metrics.filter(m=>m.lesson===largest.id&&m.scale===1&&!m.reduced).flatMap(m=>m.ms).sort((a,b)=>a-b)
+  const worst=metrics.reduce((a,b)=>mean(a.ms)>mean(b.ms)?a:b)
+  console.log(JSON.stringify({largestSource:largest.id,meanMs:mean(samples),p95Ms:samples[Math.floor(samples.length*.95)],worstMeanLesson:worst.lesson,worstMeanMs:mean(worst.ms),samples:samples.length}))
+  assert(mean(samples)<5,'largest lesson must stay below 5ms/frame')
+} finally {await browser.close();await new Promise(done=>server.close(done))}
+function mean(numbers){return numbers.reduce((a,b)=>a+b,0)/numbers.length}
+async function snapshot(page) {return page.evaluate(()=>({...window.scene,images:window.scene.images.map(({rgba,...image})=>({...image,hash:rgba.reduce((hash,byte)=>(Math.imul(hash,33)^byte)>>>0,5381)})).sort((a,b)=>a.id.localeCompare(b.id))}))}

@@ -322,14 +322,14 @@ pub type ErrorSink = Rc<dyn Fn(&UiError)>;
 const ERROR_BUFFER_LIMIT: usize = 128;
 
 /// Host launch configuration. The default sink logs errors to stderr.
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub struct LaunchOptions {
     pub window: deka_native_ui::window::Options,
     pub reduced_motion: bool,
     pub error_sink: Option<ErrorSink>,
 }
 
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 impl LaunchOptions {
     pub fn new(window: deka_native_ui::window::Options) -> Self {
         Self {
@@ -981,7 +981,7 @@ impl Application for UiApp {
         *self.context.waker.borrow_mut() = Some(waker);
     }
 }
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub fn launch<A, M>(app: A)
 where
     A: BuildApp<M>,
@@ -990,7 +990,7 @@ where
 }
 
 /// Launch with the existing window's explicit options and motion preference.
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub fn launch_with<A, M>(app: A, options: deka_native_ui::window::Options, reduced_motion: bool)
 where
     A: BuildApp<M>,
@@ -1006,14 +1006,14 @@ where
 }
 
 /// Launch with a host callback installed before any bindings are evaluated.
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub fn launch_with_options<A, M>(app: A, options: LaunchOptions)
 where
     A: BuildApp<M>,
 {
     launch_configured(app, options, deka_native_ui::window::run_with);
 }
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 fn launch_configured<A, M, R>(
     app: A,
     options: LaunchOptions,
@@ -1031,7 +1031,7 @@ mod tests {
     use super::*;
     use crate::signal;
 
-    #[cfg(feature = "desktop")]
+    #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
     #[test]
     fn launch_option_sink_receives_running_binding_error() {
         let errors = Rc::new(RefCell::new(Vec::new()));

@@ -138,6 +138,10 @@ impl ViewNode {
             context: Rc::downgrade(context),
         }
     }
+    #[cfg(feature = "web")]
+    pub(crate) fn renderer_id(&self) -> String {
+        self.node.snapshot().id
+    }
     pub fn as_element(&self) -> Option<ViewElement> {
         self.node.is_element().then(|| ViewElement(self.clone()))
     }

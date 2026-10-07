@@ -1927,7 +1927,9 @@ dependencies = [
  "deka_native_ir",
  "deka_native_ui",
  "deka_vm",
+ "serde",
  "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1942,6 +1944,16 @@ dependencies = [
  "rstml",
  "serde_json",
  "syn 3.0.5",
+]
+
+[[package]]
+name = "deka-ui-tour"
+version = "0.1.0"
+dependencies = [
+ "deka-ui",
+ "deka_native_ui",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

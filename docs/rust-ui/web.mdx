@@ -1,0 +1,41 @@
+# Run a Rust UI in the browser
+
+Enable `deka-ui`'s `web` feature and compile your application to
+`wasm32-unknown-unknown`. No compiler or interpreter ships with the application.
+The browser and desktop consume the same retained tree and Rust renderer.
+
+On wasm, `deka_ui::launch(App, &canvas)` accepts an HTML canvas as a
+`wasm_bindgen::JsValue` and returns a `WebHandle`. Keep the handle for the
+application's lifetime; dropping it removes browser listeners, text controls,
+animation callbacks, GPU resources and the reactive scope. On desktop,
+`launch(App)` opens the native window. The browser package requires WebGL 2.
+
+The browser host dispatches pointer and keyboard events through `UiApp`, uses
+native text fields for basic `onInput` editing, observes canvas resize, and
+tracks the display's device pixel ratio. System reduced-motion preferences
+apply. Desktop IME, clipboard and accessibility remain separate integrations.
+
+## The compiled tour
+
+`deka-ui-tour` exports `start(lesson_id, canvas)` and `stop()`. Switching lessons
+replaces the running app inside the same loaded wasm module. Resetting a lesson
+creates a fresh reactive scope and clears renderer motion history.
+
+The lesson registry in `deka_ui::tour` includes the actual Rust example files.
+It supplies both the native parity gate and the browser module. Scripts and
+handler inventories are shared functions. Source display comes from those same
+files at site build time, with the producing commit recorded in the manifest.
+
+Build a browser package with Rust 1.96.0, the wasm target, and
+`wasm-bindgen-cli` 0.2.128 on PATH:
+
+```sh
+python3 scripts/build-rust-tour.py --out .tmp/rust-tour-package
+```
+
+The output contains the wasm module, JS host/loader, font license, source
+manifest, checksums and browser expectations. The latter are build/test inputs,
+not shipped as website runtime assets. The website pins an immutable deka
+commit, builds once per commit, verifies checksums and copies the resulting
+module and sources into its static assets. Highlighting happens at build time;
+page requests do no cloning, compilation or highlighting.

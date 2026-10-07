@@ -1,3 +1,4 @@
+#![cfg(feature = "tour")]
 //! Complete scene equality against the unchanged DekaScript tour/VM reference.
 use deka_native_ir::Node;
 use deka_native_ui::scene::{Renderer, Scene};
@@ -6,61 +7,7 @@ use deka_vm::{Hosts, compiler, ui::UiSession};
 use serde_json::Value;
 use std::{collections::BTreeSet, path::Path};
 
-#[path = "../examples/tour/arrays.rs"]
-mod arrays;
-#[path = "../examples/tour/bindings.rs"]
-mod bindings;
-#[path = "../examples/tour/booleans.rs"]
-mod booleans;
-#[path = "../examples/tour/comments.rs"]
-mod comments;
-#[path = "../examples/tour/components.rs"]
-mod components;
-#[path = "../examples/tour/control-flow.rs"]
-mod control_flow;
-#[path = "../examples/tour/counter.rs"]
-mod counter;
-#[path = "../examples/tour/decisions.rs"]
-mod decisions;
-#[path = "../examples/tour/fade.rs"]
-mod fade;
-#[path = "../examples/tour/first-function.rs"]
-mod first_function;
-#[path = "../examples/tour/functions.rs"]
-mod functions;
-#[path = "../examples/tour/grow.rs"]
-mod grow;
-#[path = "../examples/tour/hello-world.rs"]
-mod hello_world;
-#[path = "../examples/tour/keyframes.rs"]
-mod keyframes;
-#[path = "../examples/tour/layout.rs"]
-mod layout;
-#[path = "../examples/tour/layout-motion.rs"]
-mod layout_motion;
-#[path = "../examples/tour/lists.rs"]
-mod lists;
-#[path = "../examples/tour/menu.rs"]
-mod menu;
-#[path = "../examples/tour/named-values.rs"]
-mod named_values;
-#[path = "../examples/tour/numbers.rs"]
-mod numbers;
-#[path = "../examples/tour/presence.rs"]
-mod presence;
-#[path = "../examples/tour/spring.rs"]
-mod spring;
-#[path = "../examples/tour/stagger.rs"]
-mod stagger;
-#[path = "../examples/tour/strings.rs"]
-mod strings;
-#[path = "../examples/tour/toast.rs"]
-mod toast;
-#[path = "../examples/tour/transforms.rs"]
-mod transforms;
-#[path = "../examples/tour/values.rs"]
-mod values;
-
+use deka_ui::tour::{self, Action, handler_nodes};
 #[test]
 fn every_original_lesson_has_a_runnable_rust_twin_and_a_gate() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -72,7 +19,10 @@ fn every_original_lesson_has_a_runnable_rust_twin_and_a_gate() {
             .map(|path| path.file_stem().unwrap().to_str().unwrap().to_owned())
             .collect()
     }
-    let expected: BTreeSet<_> = LESSONS.iter().map(|name| (*name).to_owned()).collect();
+    let expected: BTreeSet<_> = tour::LESSONS
+        .iter()
+        .map(|lesson| lesson.id.to_owned())
+        .collect();
     assert_eq!(expected.len(), 27);
     assert_eq!(
         inventory(&root.join("../deka_fmt/tests/fixtures/tour"), "dsx"),
@@ -80,7 +30,7 @@ fn every_original_lesson_has_a_runnable_rust_twin_and_a_gate() {
     );
     assert_eq!(inventory(&root.join("examples/tour"), "rs"), expected);
     let manifest = include_str!("../Cargo.toml");
-    for name in LESSONS {
+    for name in tour::LESSONS.iter().map(|lesson| lesson.id) {
         assert!(manifest.contains(&format!("name = \"tour-{name}\"")));
     }
 }
@@ -153,23 +103,7 @@ impl Pair {
     }
     fn click(&mut self, handler: usize, time: f64) {
         let (scene, rust_scene) = self.frame(time);
-        let point = scene
-            .targets
-            .iter()
-            .find(|target| target.handler == handler)
-            .and_then(|target| target.rect.intersection(target.clip))
-            .and_then(|rect| {
-                (0..10)
-                    .flat_map(|y| {
-                        (0..10).map(move |x| {
-                            (
-                                rect.x + rect.width * (x as f32 + 0.5) / 10.,
-                                rect.y + rect.height * (y as f32 + 0.5) / 10.,
-                            )
-                        })
-                    })
-                    .find(|&(x, y)| scene.hit(x, y).is_some_and(|hit| hit.handler == handler))
-            });
+        let point = tour::click_point(&scene, handler);
         if let Some((x, y)) = point {
             let vm_hit = scene.hit(x, y).unwrap();
             let rust_hit = rust_scene.hit(x, y).expect("Rust missed the same point");
@@ -220,30 +154,15 @@ impl Pair {
         );
     }
 }
-fn handler_nodes(node: &Node) -> Vec<(String, usize)> {
-    fn visit(node: &Node, output: &mut Vec<(String, usize)>) {
-        if let Some(handler) = node.on_click {
-            output.push((node.id.clone(), handler));
-        }
-        for child in &node.children {
-            visit(child, output);
-        }
-    }
-    let mut output = vec![];
-    visit(node, &mut output);
-    output
-}
 // Counts describe real authored handlers across all lesson states, including
 // fade/menu close buttons and each item emitted by lists. Comments do not count.
 fn expected_handlers(name: &str) -> usize {
+    if let Some(lesson) = tour::LESSONS.iter().find(|lesson| lesson.id == name) {
+        return lesson.handlers;
+    }
     match name {
-        "bindings" | "lists" => 3,
-        "counter" | "comment-targets" | "fade" | "menu" | "transforms" | "late-handler"
-        | "clipped-handler" => 2,
-        "control-flow" | "functions" | "values" | "layout" | "layout-motion" | "grow" | "toast"
-        | "keyframes" | "spring" | "presence" | "stagger" | "no-op" | "missing-target" => 1,
-        "arrays" | "booleans" | "comments" | "components" | "decisions" | "first-function"
-        | "hello-world" | "named-values" | "numbers" | "strings" => 0,
+        "comment-targets" | "late-handler" | "clipped-handler" => 2,
+        "no-op" | "missing-target" => 1,
         _ => panic!("{name}: missing expected handler count"),
     }
 }
@@ -304,42 +223,14 @@ fn parity(name: &'static str, source: &str, app: fn() -> UiApp, motion: bool) {
             expected == 0 || !handlers.is_empty(),
             "{name}: expected handlers but initial scene has no targets"
         );
-        pair.frame(16.);
-        if !handlers.is_empty() {
-            if motion {
-                pair.click(handlers[0], 100.);
-                for t in [125., 220.] {
-                    pair.frame(t);
+        for action in tour::script(&handlers, motion).into_iter().skip(1) {
+            match action {
+                Action::Frame(time) => {
+                    pair.frame(time);
                 }
-                pair.click(handlers[0], 220.); // Retarget before the first motion finishes.
-                for t in [225., 350., 600., 1200., 2000.] {
-                    pair.frame(t);
-                }
-                pair.click(handlers[0], 2000.); // Re-enter after exit, preserving identity rules.
-                for t in [2120., 2240., 2500., 3400., 4000.] {
-                    pair.frame(t);
-                }
-                for &handler in handlers.iter().skip(1) {
-                    let time = 5000. + handler as f64 * 2000.;
-                    pair.click(handler, time);
-                    for delta in [120., 350., 1000.] {
-                        pair.frame(time + delta);
-                    }
-                }
-            } else {
-                // Selection lessons have intentionally idempotent buttons.
-                // Alternate targets instead of scripting same-value clicks.
-                for (step, &handler) in handlers
-                    .iter()
-                    .cycle()
-                    .take(2 * handlers.len() + 2)
-                    .enumerate()
-                {
-                    pair.click(handler, 100. + step as f64 * 100.);
-                }
+                Action::Click(handler, time) => pair.click(handler, time),
             }
         }
-        pair.frame(20000.);
         // Start an independent coverage history so motion retarget scripts and
         // intentionally idempotent reset/selection buttons keep their ordering.
         let mut discovery = Pair {
@@ -363,43 +254,19 @@ fn parity(name: &'static str, source: &str, app: fn() -> UiApp, motion: bool) {
     }
 }
 
-macro_rules! lessons {
-    ($($name:ident: $file:literal => $motion:expr),* $(,)?) => {
-        const LESSONS: &[&str] = &[$($file),*];
-        $(#[test]
-        fn $name() {
-            parity($file, include_str!(concat!("../../deka_fmt/tests/fixtures/tour/",$file,".dsx")), || UiApp::new($name::App), $motion);
-        })*
-    };
-}
-lessons! {
-    arrays: "arrays" => false,
-    bindings: "bindings" => false,
-    booleans: "booleans" => false,
-    comments: "comments" => false,
-    components: "components" => false,
-    control_flow: "control-flow" => false,
-    counter: "counter" => false,
-    decisions: "decisions" => false,
-    fade: "fade" => true,
-    first_function: "first-function" => false,
-    functions: "functions" => false,
-    grow: "grow" => true,
-    hello_world: "hello-world" => false,
-    keyframes: "keyframes" => true,
-    layout_motion: "layout-motion" => true,
-    layout: "layout" => false,
-    lists: "lists" => false,
-    menu: "menu" => true,
-    named_values: "named-values" => false,
-    numbers: "numbers" => false,
-    presence: "presence" => true,
-    spring: "spring" => true,
-    stagger: "stagger" => true,
-    strings: "strings" => false,
-    toast: "toast" => true,
-    transforms: "transforms" => true,
-    values: "values" => false,
+#[test]
+fn all_lessons_match_the_original_complete_scenes() {
+    for lesson in tour::LESSONS {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../deka_fmt/tests/fixtures/tour")
+            .join(format!("{}.dsx", lesson.id));
+        parity(
+            lesson.id,
+            &std::fs::read_to_string(path).unwrap(),
+            lesson.app,
+            lesson.motion,
+        );
+    }
 }
 
 #[test]
@@ -409,7 +276,13 @@ fn comments_cannot_inflate_the_rendered_handler_inventory() {
     parity(
         "comment-targets",
         &source,
-        || UiApp::new(counter::App),
+        || {
+            (tour::LESSONS
+                .iter()
+                .find(|l| l.id == "counter")
+                .unwrap()
+                .app)()
+        },
         false,
     );
 }

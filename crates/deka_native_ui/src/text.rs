@@ -239,10 +239,15 @@ impl Text {
         *self.font_ids.entry(data.id()).or_insert_with(|| {
             // The table directory (tags, checksums, offsets) identifies a font file.
             let bytes = data.data();
-            let mut hash = std::collections::hash_map::DefaultHasher::new();
-            bytes.len().hash(&mut hash);
-            bytes[..bytes.len().min(1024)].hash(&mut hash);
-            hash.finish()
+            // Hash explicit bytes, not usize/slice Hash (whose length prefix
+            // differs on wasm32). The same face has the same scene image ID.
+            (bytes.len() as u64)
+                .to_le_bytes()
+                .into_iter()
+                .chain(bytes[..bytes.len().min(1024)].iter().copied())
+                .fold(0xcbf29ce484222325u64, |hash, byte| {
+                    (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+                })
         }) ^ u64::from(index)
     }
 

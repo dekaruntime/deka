@@ -8,8 +8,13 @@ publish = false
 [features]
 default = ["desktop"]
 desktop = ["deka_native_ui/gpu"]
+web = ["dep:wasm-bindgen", "dep:serde_json", "dep:serde"]
+tour = []
+web-test = ["web"]
 
 [dependencies]
+serde_json = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 deka-ui-macros = { path = "../deka_ui_macros" }
 deka_native_ir = { path = "../deka_native_ir" }
 deka_native_ui = { path = "../deka_native_ui" }
@@ -164,3 +169,6 @@ required-features = ["desktop"]
 [[example]]
 name = "retained_tree"
 required-features = ["desktop"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "=0.2.128", optional = true }
