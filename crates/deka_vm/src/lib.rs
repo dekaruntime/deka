@@ -51,6 +51,8 @@ pub mod tcp;
 pub mod time;
 #[cfg(feature = "host")]
 pub mod timers;
+#[cfg(feature = "host")]
+pub mod tls;
 pub use bytecode::*;
 pub use heap::HeapStats;
 pub use host::*;

@@ -25,6 +25,7 @@ semver = "1"
 sha2 = "0.10"
 
 [dev-dependencies]
+rcgen = "0.14"
 corpus_gate = { path = "../corpus_gate" }
 
 [[bin]]

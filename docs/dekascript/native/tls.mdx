@@ -1,0 +1,91 @@
+# TLS sockets
+
+Import `connectTls`, `startTls` and `listenTls` from `"tls"`. They use the
+same immutable byte API as [TCP](./tcp): `read(max)`, `write(bytes)`,
+`localAddr`, `remoteAddr`, `closeWrite()` and `close()`. Each operation returns
+`Result<T, string>`; connect, upgrade, accept and I/O return promises.
+
+This loopback example accepts explicit PEM bytes. The caller supplies a
+certificate chain, its private key and a CA certificate trusted by the client.
+The test generates all three in memory for each run.
+
+```ds
+import { connectTls, listenTls } from "tls";
+import { from_hex, from_string, to_string, concat, len, slice } from "bytes";
+
+async fn echo(listener: TlsListener) Promise<Result<string, string>> {
+    const peer = unwrap(await listener.accept()) or { return Err("accept"); };
+    let data = from_string("");
+    for (; len(data) < 4;) {
+        const part = unwrap(await peer.read(4)) or { return Err("read"); };
+        const bytes = unwrap(part) or { return Err("early EOF"); };
+        data = concat(data, bytes);
+    }
+    let offset = 0;
+    for (; offset < len(data);) {
+        const written = unwrap(await peer.write(slice(data, offset))) or { return Err("write"); };
+        offset += written;
+    }
+    const ended = await peer.closeWrite();
+    return Ok("echoed");
+}
+
+async fn roundTrip(cert: bytes, key: bytes, ca: bytes) Promise<string> {
+    const listener = unwrap(listenTls({hostname: Some("127.0.0.1"), port: 0, cert: cert, key: key})) or { return "listen failed"; };
+    const echoed = echo(listener);
+    const conn = unwrap(await connectTls({hostname: Some("127.0.0.1"), port: listener.addr.port, caCerts: Some([ca])})) or { return "connect failed"; };
+    const message = from_string("Deka");
+    let offset = 0;
+    for (; offset < len(message);) {
+        const written = unwrap(await conn.write(slice(message, offset))) or { return "write failed"; };
+        offset += written;
+    }
+    let body = from_string("");
+    for (;;) {
+        const part = unwrap(await conn.read(4)) or { return "read failed"; };
+        const ended = match part { None => true, Some(bytes) => false };
+        if (ended) { break; }
+        const bytes = unwrap(part) or { return "unexpected EOF"; };
+        body = concat(body, bytes);
+    }
+    const finished = await echoed;
+    conn.close();
+    listener.close();
+    const text = unwrap(to_string(body)) or { return "invalid UTF-8"; };
+    return text;
+}
+```
+
+Calling `roundTrip` with a valid identity returns `"Deka"`. `read(max)` returns
+`Ok(None)` on clean TLS EOF, including a peer's `closeWrite()` (TLS close_notify).
+An abrupt transport close may instead return `Err` for truncated TLS data.
+Writes may be partial; flush completes before a successful write resolves.
+`closeWrite()` preserves the readable side. `close()` is idempotent, closes all
+aliases, wakes pending operations and drops idle socket ownership.
+
+`connectTls({port, hostname?: Option<string>, caCerts?: Option<Array<bytes>>})`
+uses hostname `127.0.0.1` by default. Certificates and the hostname are always
+verified. Platform roots match native fetch; `caCerts` adds explicit PEM roots.
+There is no option to bypass verification. Error prefixes distinguish
+`TLS configuration`, `TLS certificate verification`, `TLS handshake` and
+`TLS transport` failures.
+
+`startTls(conn, {hostname?: Option<string>, caCerts?: Option<Array<bytes>>})`
+upgrades an idle TCP connection using the same client verification. Configuration
+errors leave the raw connection intact. Once the handshake starts, TCP ownership
+is transferred: every raw alias is closed even if the handshake fails or is
+cancelled. An upgrade with pending raw reads or writes returns `Err` without
+consuming the connection. Read all plaintext protocol bytes before upgrading;
+the native TCP API does not keep a hidden plaintext read buffer.
+
+`listenTls({port, hostname?: Option<string>, cert: bytes, key: bytes})` binds
+synchronously and `listener.accept()` awaits one TLS handshake. Its default bind
+address is `0.0.0.0`; port `0` selects a free port. `cert` is a PEM certificate
+chain and `key` is its PEM private key. No file or environment credential is
+loaded implicitly. Closing a listener wakes pending accepts and handshakes;
+already accepted TLS connections remain independent. Failed handshakes do not
+close the listener. There is no implicit operation timeout.
+
+These Deno-shaped APIs solve encrypted byte transport and socket ownership in
+the native VM. DekaScript retains explicit `Option`/`Result` values and immutable
+bytes. No client-certificate authentication is exposed in this initial slice.

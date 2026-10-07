@@ -139,6 +139,7 @@ pub(crate) fn hosts() -> Result<Hosts> {
     deka_vm::fetch::register(&mut hosts)?;
     deka_vm::builtin_http::register(&mut hosts)?;
     deka_vm::tcp::register(&mut hosts)?;
+    deka_vm::tls::register(&mut hosts)?;
     deka_vm::blob::register(&mut hosts)?;
     Ok(hosts)
 }

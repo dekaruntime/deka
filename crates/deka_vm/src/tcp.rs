@@ -7,7 +7,7 @@ use tokio::{
     sync::{Mutex, watch},
 };
 
-const MAX_READ: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_READ: usize = 16 * 1024 * 1024;
 #[derive(Clone)]
 pub struct Connection(Rc<ConnectionState>);
 struct ConnectionState {
@@ -41,6 +41,32 @@ impl Connection {
     pub fn close(&self) {
         self.0.closed.send_replace(true);
         self.0.stream.borrow_mut().take();
+    }
+    /// A TLS upgrade transfers ownership only when no raw I/O is pending.
+    pub(crate) fn take_stream(&self) -> Result<TcpStream> {
+        let _read = self
+            .0
+            .read
+            .try_lock()
+            .map_err(|_| "TCP connection has pending reads")?;
+        let _write = self
+            .0
+            .write
+            .try_lock()
+            .map_err(|_| "TCP connection has pending writes")?;
+        let mut slot = self.0.stream.borrow_mut();
+        if slot.as_ref().is_some_and(|s| Arc::strong_count(s) != 1) {
+            return Err("TCP connection has pending I/O".into());
+        }
+        let stream = slot.take().ok_or("TCP connection is closed")?;
+        self.0.closed.send_replace(true);
+        Arc::try_unwrap(stream).map_err(|_| "TCP connection has pending I/O".into())
+    }
+    pub async fn close_write(&self) -> Result<()> {
+        let _guard = self.0.write.lock().await;
+        socket2::SockRef::from(self.stream()?.as_ref())
+            .shutdown(std::net::Shutdown::Write)
+            .map_err(|e| e.to_string())
     }
     pub async fn read(&self, max: usize) -> Result<Option<Vec<u8>>> {
         let mut closed = self.0.closed.subscribe();
@@ -126,6 +152,9 @@ impl Listener {
         self.0.closed.send_replace(true);
         self.0.listener.borrow_mut().take();
     }
+    pub(crate) fn closed(&self) -> watch::Receiver<bool> {
+        self.0.closed.subscribe()
+    }
     pub async fn accept(&self) -> Result<Connection> {
         let mut closed = self.0.closed.subscribe();
         let listener = self
@@ -188,15 +217,6 @@ pub(crate) fn options(value: &HostValue, default: &str, allow_zero: bool) -> Res
         _ => default.into(),
     };
     Ok((hostname, port(number, allow_zero)?))
-}
-fn connection(value: &HostValue) -> Result<Connection> {
-    let HostValue::Handle(handle) = value else {
-        return Err("invalid TCP receiver".into());
-    };
-    handle
-        .downcast_ref::<Connection>()
-        .cloned()
-        .ok_or("invalid TCP connection resource".into())
 }
 fn listener(value: &HostValue) -> Result<Listener> {
     let HostValue::Handle(handle) = value else {
@@ -264,14 +284,95 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
         .with_receiver_method("TcpListener", "accept")
         .with_result_channel(),
     )?;
+    register_connection::<Connection>(hosts, "tcp")?;
+    for (brand, ty) in [("TcpListener", listen)] {
+        hosts.register(
+            HostOp::new(
+                &format!("__{brand}_close"),
+                vec![ty.clone()],
+                HostType::Unit,
+                false,
+                move |args| {
+                    HostReply::Ready(
+                        listener(&args[0])
+                            .map(|l| l.close())
+                            .map(|()| HostValue::Unit),
+                    )
+                },
+            )
+            .with_receiver_method(brand, "close")
+            .with_result_channel(),
+        )?;
+        let fields = &["addr"][..];
+        for &field in fields {
+            hosts.register(
+                HostOp::new(
+                    &format!("__{brand}_{field}"),
+                    vec![ty.clone()],
+                    address_type(),
+                    false,
+                    move |args| HostReply::Ready(listener(&args[0]).map(|l| address(l.addr()))),
+                )
+                .with_receiver_property(brand, field),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// TCP and TLS expose the same typed byte contract from one host catalog.
+pub(crate) trait ByteConnection: Clone + 'static {
+    const BRAND: &'static str;
+    async fn read(&self, max: usize) -> Result<Option<Vec<u8>>>;
+    async fn write(&self, bytes: &[u8]) -> Result<usize>;
+    async fn close_write(&self) -> Result<()>;
+    fn close(&self);
+    fn local_addr(&self) -> SocketAddr;
+    fn remote_addr(&self) -> SocketAddr;
+}
+impl ByteConnection for Connection {
+    const BRAND: &'static str = "TcpConn";
+    async fn read(&self, max: usize) -> Result<Option<Vec<u8>>> {
+        self.read(max).await
+    }
+    async fn write(&self, bytes: &[u8]) -> Result<usize> {
+        self.write(bytes).await
+    }
+    async fn close_write(&self) -> Result<()> {
+        self.close_write().await
+    }
+    fn close(&self) {
+        self.close()
+    }
+    fn local_addr(&self) -> SocketAddr {
+        self.local_addr()
+    }
+    fn remote_addr(&self) -> SocketAddr {
+        self.remote_addr()
+    }
+}
+fn decode<C: ByteConnection>(value: &HostValue) -> Result<C> {
+    let HostValue::Handle(handle) = value else {
+        return Err("invalid connection receiver".into());
+    };
+    handle
+        .downcast_ref::<C>()
+        .cloned()
+        .ok_or("invalid connection resource".into())
+}
+pub(crate) fn register_connection<C: ByteConnection>(
+    hosts: &mut Hosts,
+    prefix: &str,
+) -> Result<()> {
+    let conn = HostType::Handle(C::BRAND.into());
     hosts.register(
         HostOp::new(
-            "__tcp_read",
+            &format!("__{prefix}_read"),
             vec![conn.clone(), HostType::Number],
             HostType::Option(Box::new(HostType::Bytes)),
             true,
             |args| {
-                let c = connection(&args[0]);
+                let c = decode::<C>(&args[0]);
                 let HostValue::Number(max) = args[1] else {
                     unreachable!("checked read max");
                 };
@@ -288,17 +389,17 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
                 }))
             },
         )
-        .with_receiver_method("TcpConn", "read")
+        .with_receiver_method(C::BRAND, "read")
         .with_result_channel(),
     )?;
     hosts.register(
         HostOp::new(
-            "__tcp_write",
+            &format!("__{prefix}_write"),
             vec![conn.clone(), HostType::Bytes],
             HostType::Number,
             true,
             |args| {
-                let c = connection(&args[0]);
+                let c = decode::<C>(&args[0]);
                 let HostValue::Bytes(bytes) = args[1].clone() else {
                     unreachable!("checked write bytes");
                 };
@@ -307,59 +408,61 @@ pub fn register(hosts: &mut Hosts) -> Result<()> {
                 }))
             },
         )
-        .with_receiver_method("TcpConn", "write")
+        .with_receiver_method(C::BRAND, "write")
         .with_result_channel(),
     )?;
-    for (brand, ty) in [("TcpConn", conn), ("TcpListener", listen)] {
+
+    hosts.register(
+        HostOp::new(
+            &format!("__{}_closeWrite", C::BRAND),
+            vec![conn.clone()],
+            HostType::Unit,
+            true,
+            |args| {
+                let c = decode::<C>(&args[0]);
+                HostReply::Pending(Box::pin(async move {
+                    c?.close_write().await.map(|()| HostValue::Unit)
+                }))
+            },
+        )
+        .with_receiver_method(C::BRAND, "closeWrite")
+        .with_result_channel(),
+    )?;
+    hosts.register(
+        HostOp::new(
+            &format!("__{}_close", C::BRAND),
+            vec![conn.clone()],
+            HostType::Unit,
+            false,
+            |args| {
+                HostReply::Ready(decode::<C>(&args[0]).map(|c| {
+                    c.close();
+                    HostValue::Unit
+                }))
+            },
+        )
+        .with_receiver_method(C::BRAND, "close")
+        .with_result_channel(),
+    )?;
+    for field in ["localAddr", "remoteAddr"] {
         hosts.register(
             HostOp::new(
-                &format!("__{brand}_close"),
-                vec![ty.clone()],
-                HostType::Unit,
+                &format!("__{}_{field}", C::BRAND),
+                vec![conn.clone()],
+                address_type(),
                 false,
                 move |args| {
-                    HostReply::Ready(
-                        if brand == "TcpConn" {
-                            connection(&args[0]).map(|c| c.close())
+                    HostReply::Ready(decode::<C>(&args[0]).map(|c| {
+                        address(if field == "localAddr" {
+                            c.local_addr()
                         } else {
-                            listener(&args[0]).map(|l| l.close())
-                        }
-                        .map(|()| HostValue::Unit),
-                    )
+                            c.remote_addr()
+                        })
+                    }))
                 },
             )
-            .with_receiver_method(brand, "close")
-            .with_result_channel(),
+            .with_receiver_property(C::BRAND, field),
         )?;
-        let fields = if brand == "TcpConn" {
-            &["localAddr", "remoteAddr"][..]
-        } else {
-            &["addr"][..]
-        };
-        for &field in fields {
-            hosts.register(
-                HostOp::new(
-                    &format!("__{brand}_{field}"),
-                    vec![ty.clone()],
-                    address_type(),
-                    false,
-                    move |args| {
-                        HostReply::Ready(if brand == "TcpConn" {
-                            connection(&args[0]).map(|c| {
-                                address(if field == "localAddr" {
-                                    c.local_addr()
-                                } else {
-                                    c.remote_addr()
-                                })
-                            })
-                        } else {
-                            listener(&args[0]).map(|l| address(l.addr()))
-                        })
-                    },
-                )
-                .with_receiver_property(brand, field),
-            )?;
-        }
     }
     Ok(())
 }

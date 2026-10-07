@@ -54,6 +54,8 @@ Output: `Deka`.
   peer EOF. `max` is an integer from 1 to 16 MiB. A read can return fewer bytes.
 - `conn.write(data)` returns `Promise<Result<number,string>>`: the actual count
   written. Callers loop over remaining bytes. Empty writes return zero.
+- `conn.closeWrite()` returns `Promise<Result<void,string>>`: it shuts down
+  outgoing TCP bytes while the readable side remains open.
 - `conn.close()` and `listener.close()` return `Result<void,string>` and are
   idempotent. Close affects aliases and cancels pending reads/writes/accepts.
 - `conn.localAddr`, `conn.remoteAddr` and `listener.addr` are read-only snapshots
