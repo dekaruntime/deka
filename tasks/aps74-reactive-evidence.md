@@ -1,7 +1,10 @@
 # APS 74: reactive core validation
 
-This is the independent reactive part of phase 1, step 1. It is **not** the
-completed counter/View PR. The shared-store blocker is recorded at
+This page records the initial reactive-only draft's evidence. The shared-store
+exception was subsequently approved on APS 74, and extraction PR #1414 supplies
+the common store. The completed View/counter layer and current validation are
+recorded in [aps74-view-evidence.md](aps74-view-evidence.md). The earlier decision
+question remains historical context:
 https://github.com/dekaruntime/aps/issues/74#issuecomment-6033016684.
 
 Base: `origin/main` at `08511f1b76f19f8bda828c631254d59251af6180`.

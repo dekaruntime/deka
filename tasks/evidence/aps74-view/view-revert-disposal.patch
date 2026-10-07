@@ -1,0 +1,13 @@
+--- a/crates/deka_ui/src/view.rs
++++ b/crates/deka_ui/src/view.rs
+@@ -306,9 +306,7 @@
+ }
+ impl Drop for Registrations {
+     fn drop(&mut self) {
+-        for effect in self.effects.drain(..) {
+-            effect.dispose();
+-        }
++        for _effect in self.effects.drain(..) {}
+         if let Some(context) = self.context.upgrade() {
+             for token in self.events.drain(..) {
+                 context.listeners.borrow_mut().remove(&token);

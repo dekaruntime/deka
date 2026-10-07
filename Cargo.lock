@@ -1922,6 +1922,10 @@ dependencies = [
 [[package]]
 name = "deka-ui"
 version = "0.1.0"
+dependencies = [
+ "deka_native_ir",
+ "deka_native_ui",
+]
 
 [[package]]
 name = "deka-validation"

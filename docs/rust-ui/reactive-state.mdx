@@ -3,9 +3,9 @@ title: Reactive state in Rust
 ---
 
 `deka-ui` is deka's Rust UI library under APS 74, licensed Apache-2.0. The
-initial reactive slice is unpublished (`publish = false`). It provides signals,
-derived values and effects. Retained View construction and desktop launch are
-pending the shared native store integration.
+library remains unpublished (`publish = false`). It provides signals, derived
+values and effects. `UiApp` creates their scope and batches event writes; the
+[View layer](views) patches the shared retained native store.
 
 ```rust
 use deka_ui::prelude::*;
@@ -58,7 +58,7 @@ one flush panics with a diagnostic.
 `scope.batch(...)` coalesces all writes, including nested `batch(...)` calls,
 into a reaction pass after the outer batch ends. Derived computations settle
 before effects, so an effect reading both a signal and its derived values sees
-the final values. Use a batch around each event's writes.
+the final values. `UiApp` batches each dispatched event automatically.
 
 Create signals and reactions inside `Scope::run` or `Scope::batch`. A scope owns
 their values and closures. Dropping its last clone releases them; Copy signal

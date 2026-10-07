@@ -1,0 +1,92 @@
+COMMAND: ['cargo', 'test', '--release', '--locked', '-p', 'deka-ui', '--all-features']
+   Compiling bytemuck v1.25.2
+   Compiling thiserror v2.0.20
+   Compiling zerovec v0.11.8
+   Compiling zerotrie v0.2.5
+   Compiling foreign-types v0.5.0
+   Compiling vello_gpu_shaders v0.3.0 (/Volumes/Projects/codex/deka/vendor/vello_gpu_shaders)
+   Compiling deka_native_ir v0.61.0 (/Volumes/Projects/codex/deka/crates/deka_native_ir)
+   Compiling serde v1.0.229
+   Compiling core-graphics v0.23.2
+   Compiling naga-types v30.0.1
+   Compiling font-types v0.12.5
+   Compiling color v0.3.3
+   Compiling wgpu-types v30.0.1
+   Compiling naga v30.0.1
+   Compiling winit v0.30.13
+   Compiling read-fonts v0.41.0
+   Compiling tinystr v0.8.4
+   Compiling potential_utf v0.1.6
+   Compiling peniko v0.6.1
+   Compiling icu_collections v2.3.0
+   Compiling icu_locale_core v2.3.0
+   Compiling vello_common v0.3.0
+   Compiling icu_provider v2.3.1
+   Compiling icu_properties v2.3.0
+   Compiling icu_locale_fallback v2.3.0
+   Compiling icu_normalizer v2.3.0
+   Compiling icu_segmenter v2.3.0
+   Compiling parley_data v0.11.1
+   Compiling skrifa v0.44.0
+   Compiling fontique v0.11.1
+   Compiling harfrust v0.12.0
+   Compiling wgpu-naga-bridge v30.0.1
+   Compiling wgpu-hal v30.0.1
+   Compiling swash v0.2.10
+   Compiling parley v0.11.1
+   Compiling wgpu-core-deps-apple v30.0.1
+   Compiling wgpu-core v30.0.1
+   Compiling wgpu v30.0.1
+   Compiling vello_gpu v0.3.0 (/Volumes/Projects/codex/deka/vendor/vello_gpu)
+   Compiling deka_native_ui v0.61.0 (/Volumes/Projects/codex/deka/crates/deka_native_ui)
+   Compiling deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+    Finished `release` profile [optimized] target(s) in 1m 01s
+     Running unittests src/lib.rs (.target/release/deps/deka_ui-e748d4183d2a4293)
+
+running 4 tests
+test view::tests::dynamic_class_base_and_multiple_toggles_coalesce_into_one_property_patch ... ok
+test view::tests::imperative_edits_survive_unchanged_authored_values_and_other_property_patches ... ok
+test view::tests::static_and_live_attributes_are_set_once_and_keep_authored_ownership ... ok
+test view::tests::replaced_structural_bindings_and_event_tables_remain_bounded ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/reactive.rs (.target/release/deps/reactive-246a656f02de069f)
+
+running 13 tests
+test copy_handles_events_arithmetic_toggle_and_display_are_reactive ... ok
+test dependencies_follow_branches_and_unobserved_signals_do_no_work ... ok
+test handles_are_copy_even_for_non_copy_values_and_update_returns_a_result ... ok
+test event_effect_can_update_another_signal_without_reentrant_borrows ... ok
+test derived_unchanged_values_do_not_notify_downstream_effects ... ok
+test effect_writes_during_first_execution_reschedule_until_settled ... ok
+test effects_registered_before_a_later_derived_value_still_see_settled_state ... ok
+test derived_values_cache_suppress_equal_results_and_settle_diamonds ... ok
+test nested_batches_and_nested_reactions_preserve_the_outer_read_capture ... ok
+test effect_disposal_and_scope_drop_release_reactions_and_values ... ok
+test separate_scopes_cannot_accidentally_alias_or_cross_subscribe ... ok
+test panic_restores_context_batch_depth_and_pending_reactions ... ok
+test a_cycle_reports_failure_and_the_scope_can_recover ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/view.rs (.target/release/deps/view-c5dab344ca444d60)
+
+running 8 tests
+test an_event_batches_multiple_writes_into_one_final_binding_pass ... ok
+test typed_input_and_key_events_use_the_same_batched_binding_path ... ok
+test the_existing_application_host_executes_real_rust_event_closures ... ok
+test class_toggles_and_dynamic_attributes_patch_without_rebuilding_other_properties ... ok
+test dropped_app_releases_scope_values_and_stale_signals_cannot_alias ... ok
+test option_and_iterator_children_preserve_later_static_siblings ... ok
+test removed_bindings_stop_observing_and_event_captures_are_released ... ok
+test clicks_patch_only_the_bound_property_of_the_retained_node ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests deka_ui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,11 @@
+--- a/crates/deka_ui/src/view.rs
++++ b/crates/deka_ui/src/view.rs
+@@ -625,7 +625,7 @@
+             return false;
+         };
+         let before = self.context.patches.get();
+-        self.scope.batch(|| callback.borrow_mut()(event));
++        self.scope.run(|| callback.borrow_mut()(event));
+         if self.context.patches.get() != before {
+             self.patch_passes.set(self.patch_passes.get() + 1);
+             if let Some(waker) = self.context.waker.borrow().as_ref() {

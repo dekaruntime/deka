@@ -1,0 +1,82 @@
+---
+title: Rust views and desktop launch
+---
+
+Rust views mount into deka's shared native retained store. `View` is a transient
+builder; mounted nodes have lasting identities in `deka_native_ir`. Presentation
+frames read snapshots without running application getters.
+
+```rust
+use deka_ui::prelude::*;
+
+fn app() -> View {
+    let mut count = signal(0);
+    View::element("view").attr("className", "p-4 gap-3")
+        .child(View::element("p")
+            .child(View::live_text(move || format!("Count: {count}"))))
+        .child(View::element("button")
+            .on_click(move |_| count += 1).child("Add one"))
+}
+
+fn main() { deka_ui::launch(app); }
+```
+
+The release example uses that same application. It can exercise three real
+handlers without opening a display:
+
+```sh
+cargo run --release --locked -p deka-ui --example counter -- --exercise 3
+```
+
+Output:
+
+```text
+Count: 3 Add one
+```
+
+`attr(name, value)` sets a scalar value once. A closure is a live attribute:
+`attr("className", move || if open.get() { "opacity-100" } else { "opacity-0" })`.
+The supported scalar attributes are `id`, `className`, `value` and `placeholder`.
+Tags and utilities use the existing native catalog; unsupported vocabulary
+fails with a diagnostic. `class("opacity-0", open)` accepts a boolean signal,
+derived boolean, closure or fixed boolean and composes it with the base class
+value. Several changes to that composed property coalesce into one patch.
+
+`View::live_text(move || ...)` tracks reads and patches only its leaf's text.
+Passing a signal or derived value to `child(...)` also makes live text. Plain
+strings and numbers are static children. Closures passed to `child` produce
+live content; an `Option<View>` omits absent content, and `children(iterator)`
+accepts iterators of views. For example:
+
+```rust
+let open = signal(false);
+let view = View::element("view")
+    .child(move || open.get().then(|| View::element("p").child("Visible")))
+    .children(["First", "Second"].into_iter()
+        .map(|text| View::element("p").child(text)));
+```
+
+Each authored child position has a structural slot. Removing an earlier
+conditional preserves later siblings; lists remain positional. Removed mounted
+content releases its event closures and binding registrations. Signals themselves
+belong to the application's scope and live until that scope is dropped.
+
+`on_click(move |event| ...)` accepts ordinary Rust closures, including mutable
+captures. `on(EventKind::Input, ...)` and `on(EventKind::KeyDown, ...)` register
+`Event::Input(String)` and `Event::KeyDown(String)` handlers. Integrations dispatch
+those through `UiApp::dispatch_to` using a snapshot node id. The current desktop
+Application seam supplies pointer/keyboard-activated clicks; platform text-editor
+integration is a subsequent phase. Rust authors do not supply numeric handlers.
+The adapter assigns renderer routing indices internally on each snapshot.
+
+One dispatched event batches its writes, settles derived values, evaluates only
+subscribed bindings and exposes one final patch pass. Static attributes do not
+re-run. Unrelated-state changes do no binding work. Text, classes and attributes
+keep the existing authored/effective ownership: an imperative edit stays until
+a binding computes a different authored value; changing one property preserves
+edits to other properties.
+
+`UiApp::new(app)` is also an existing `deka_native_ui::Application`, usable through
+`Host` and `Renderer::render_at` headlessly. The default `desktop` feature provides
+`launch(app)` on the existing window and `launch_with(app, WindowOptions, reduced_motion)`
+for explicit window options. Disable default features for headless use.

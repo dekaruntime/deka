@@ -1,0 +1,4 @@
+COMMAND: ['cargo', 'run', '--release', '--locked', '-p', 'deka-ui', '--example', 'counter', '--', '--smoke']
+    Finished `release` profile [optimized] target(s) in 0.32s
+     Running `.target/release/examples/counter --smoke`
+Presented Rust counter frame 1

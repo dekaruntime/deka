@@ -1,0 +1,40 @@
+COMMAND: ['cargo', 'test', '--release', '--locked', '-p', 'deka-ui', '--no-default-features', '--test', 'view', 'clicks_patch_only_the_bound_property_of_the_retained_node', '--', '--exact']
+   Compiling deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+warning: unused variable: `node`
+   --> crates/deka_ui/src/view.rs:383:29
+    |
+383 |                 if let Some(node) = target.borrow().as_ref() {
+    |                             ^^^^ help: if this is intentional, prefix it with an underscore: `_node`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `patch`
+   --> crates/deka_ui/src/view.rs:372:5
+    |
+372 |     patch: impl Fn(&NodeHandle, String) -> bool + 'static,
+    |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_patch`
+
+warning: `deka-ui` (lib) generated 2 warnings (run `cargo fix --lib -p deka-ui` to apply 2 suggestions)
+    Finished `release` profile [optimized] target(s) in 4.05s
+     Running tests/view.rs (.target/release/deps/view-d90f8e82488cf763)
+
+running 1 test
+test clicks_patch_only_the_bound_property_of_the_retained_node ... FAILED
+
+failures:
+
+---- clicks_patch_only_the_bound_property_of_the_retained_node stdout ----
+
+thread 'clicks_patch_only_the_bound_property_of_the_retained_node' (4896915) panicked at crates/deka_ui/tests/view.rs:50:5:
+assertion `left == right` failed
+  left: Some("0")
+ right: Some("1")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    clicks_patch_only_the_bound_property_of_the_retained_node
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p deka-ui --test view`

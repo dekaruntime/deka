@@ -1,0 +1,5 @@
+COMMAND: ['cargo', 'clippy', '--release', '--locked', '-p', 'deka-ui', '-p', 'deka_native_ir', '--all-targets', '--all-features', '--no-deps', '--', '-D', 'warnings']
+    Checking deka_native_ir v0.61.0 (/Volumes/Projects/codex/deka/crates/deka_native_ir)
+    Checking deka_native_ui v0.61.0 (/Volumes/Projects/codex/deka/crates/deka_native_ui)
+    Checking deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+    Finished `release` profile [optimized] target(s) in 2.16s

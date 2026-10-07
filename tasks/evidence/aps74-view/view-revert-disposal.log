@@ -1,0 +1,25 @@
+COMMAND: ['cargo', 'test', '--release', '--locked', '-p', 'deka-ui', '--no-default-features', '--test', 'view', 'removed_bindings_stop_observing_and_event_captures_are_released', '--', '--exact']
+   Compiling deka-ui v0.1.0 (/Volumes/Projects/codex/deka/crates/deka_ui)
+    Finished `release` profile [optimized] target(s) in 3.77s
+     Running tests/view.rs (.target/release/deps/view-d90f8e82488cf763)
+
+running 1 test
+test removed_bindings_stop_observing_and_event_captures_are_released ... FAILED
+
+failures:
+
+---- removed_bindings_stop_observing_and_event_captures_are_released stdout ----
+
+thread 'removed_bindings_stop_observing_and_event_captures_are_released' (4920688) panicked at crates/deka_ui/tests/view.rs:208:5:
+assertion `left == right` failed
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    removed_bindings_stop_observing_and_event_captures_are_released
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p deka-ui --test view`

@@ -4,3 +4,15 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = false
+
+[features]
+default = ["desktop"]
+desktop = ["deka_native_ui/gpu"]
+
+[dependencies]
+deka_native_ir = { path = "../deka_native_ir" }
+deka_native_ui = { path = "../deka_native_ui" }
+
+[[example]]
+name = "counter"
+required-features = ["desktop"]
