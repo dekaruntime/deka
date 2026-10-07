@@ -2,7 +2,7 @@
 title: Text input
 ---
 
-Use a `Signal<String>` as `value` to bind an input in both directions. A user edit updates the signal before `onInput` runs, in the same event batch. Programmatic signal changes replace the field's value. A string sets the initial value once; a closure reads a controlled value, with explicit `onInput` handling when required.
+Use a `Signal<String>` as `value` to bind an input in both directions. A user edit updates the signal before `onInput` runs, in the same event batch. Programmatic signal changes replace the field's value. A string sets the initial value once; a closure reads a controlled value, with explicit `onInput` handling when required. Tree reads return the committed edited value, including for unbound fields; a live binding reclaims the property when its value next changes (APS 73).
 
 ```rust
 use deka_ui::prelude::*;

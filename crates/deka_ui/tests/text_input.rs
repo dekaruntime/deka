@@ -70,6 +70,13 @@ fn os_ime_preedit_commit_cancel_and_dead_keys_update_signal_only_on_commit() {
     assert!(session.ime_area().unwrap().width > 0.);
     commit(&mut session, "日本");
     assert_eq!(value(&session), "Hello 日本");
+    assert!(
+        session
+            .frame(400., 300., 1.)
+            .nodes
+            .iter()
+            .any(|node| node.text.as_deref() == Some("Value: Hello 日本"))
+    );
     assert!(session.event(&WindowEvent::Ime(Ime::Preedit("語".into(), None)), 1.));
     session.event(&WindowEvent::Ime(Ime::Disabled), 1.);
     assert_eq!(value(&session), "Hello 日本");
@@ -227,5 +234,9 @@ fn one_way_initial_value_survives_frames_and_two_way_updates_before_user_handler
         before,
         serde_json::to_string(&session.frame(400., 300., 1.).paint).unwrap()
     );
-    assert_eq!(value(&session), "initial", "literal value is authored once");
+    assert_eq!(
+        value(&session),
+        "typed",
+        "edits write the retained effective value"
+    );
 }

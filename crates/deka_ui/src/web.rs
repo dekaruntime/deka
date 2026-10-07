@@ -116,7 +116,8 @@ impl BrowserApp {
     }
     /// The browser's native text field supplies the complete edited value.
     pub fn input(&self, node_id: &str, value: &str) -> bool {
-        self.app.dispatch_to(node_id, Event::Input(value.into()))
+        use deka_native_ui::Application;
+        self.app.text_input(node_id, value.into())
     }
     pub fn key_to(&self, node_id: &str, key: &str) -> bool {
         self.app.dispatch_to(node_id, Event::KeyDown(key.into()))

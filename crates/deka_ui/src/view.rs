@@ -976,7 +976,7 @@ impl UiApp {
                         .anchor
                         .borrow()
                         .as_ref()
-                        .is_some_and(|node| node.snapshot().id == node_id))
+                        .is_some_and(|node| node.renderer_id() == node_id))
                 .then_some(*token)
             });
         token.is_some_and(|token| self.invoke(token, event))
@@ -1048,7 +1048,7 @@ impl Application for UiApp {
             let record = tree.0.borrow();
             if matches!(tree.tag_name().as_deref(), Some("input" | "textarea")) {
                 controls.push(deka_native_ui::TextControl {
-                    id: tree.snapshot().id,
+                    id: tree.renderer_id(),
                     value: tree.attribute("value").unwrap_or_default(),
                     placeholder: tree.attribute("placeholder").unwrap_or_default(),
                     controlled: false,
@@ -1070,13 +1070,39 @@ impl Application for UiApp {
                     && l.anchor
                         .borrow()
                         .as_ref()
-                        .is_some_and(|n| n.snapshot().id == control.id)
+                        .is_some_and(|n| n.renderer_id() == control.id)
             });
         }
         controls
     }
     fn text_input(&self, id: &str, value: String) -> bool {
-        self.dispatch_to(id, Event::Input(value))
+        fn find(node: &NodeHandle, id: &str) -> Option<NodeHandle> {
+            if node.renderer_id() == id {
+                return Some(node.clone());
+            }
+            node.all_children().iter().find_map(|node| find(node, id))
+        }
+        let node = self
+            .context
+            .tree
+            .borrow()
+            .root
+            .as_ref()
+            .and_then(|node| find(node, id));
+        let Some(node) =
+            node.filter(|node| matches!(node.tag_name().as_deref(), Some("input" | "textarea")))
+        else {
+            return false;
+        };
+        let changed = match node.set_attribute("value", value.clone()) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.context.report(&node.slot(), "value", error);
+                return false;
+            }
+        };
+        self.context.node_changed(&node, changed);
+        self.dispatch_to(id, Event::Input(value)) || changed
     }
     fn key_input(&self, id: &str, key: String) -> bool {
         self.dispatch_to(id, Event::KeyDown(key))
