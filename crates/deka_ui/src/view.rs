@@ -1115,7 +1115,13 @@ impl Application for UiApp {
             }
         };
         self.context.node_changed(&node, changed);
-        self.dispatch_to(id, Event::Input(value)) || changed
+        // Browsers send a final input after compositionend; an unchanged full
+        // value is not another committed edit or user callback.
+        if !changed {
+            return false;
+        }
+        self.dispatch_to(id, Event::Input(value));
+        true
     }
     fn key_input(&self, id: &str, key: String) -> bool {
         self.dispatch_to(id, Event::KeyDown(key))

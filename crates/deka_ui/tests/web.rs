@@ -84,3 +84,24 @@ fn unchanged_glyphs_are_sent_once_and_new_text_supplies_new_bitmaps() {
             .any(|node| node["text"] == "Count: 42")
     );
 }
+
+#[test]
+fn a_composition_commit_and_unchanged_followup_input_publish_one_edit() {
+    let mut app = BrowserApp::new(UiApp::new(|| {
+        let text = signal(String::new());
+        let mut edits = signal(0);
+        view! { <view><input value={text} onInput={move |_| edits += 1}/><p>"Edited: {edits}"</p></view> }
+    }));
+    scene(&mut app);
+    let inputs: Value = serde_json::from_str(&app.inputs().unwrap()).unwrap();
+    let id = inputs[0]["id"].as_str().unwrap();
+    app.input(id, "日本");
+    app.input(id, "日本");
+    assert!(
+        scene(&mut app)["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["text"] == "Edited: 1")
+    );
+}
