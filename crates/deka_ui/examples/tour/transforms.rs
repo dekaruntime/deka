@@ -7,7 +7,7 @@ pub fn App() -> View {
         <button className="w-48 bg-[#663399] text-[#ffffff]" onClick={move |_| open.toggle()}>"Toggle scale and rotation"</button>
         <span>"The hit area moves with the transformed button."</span>
         <div className="w-full h-64 p-8 gap-3 overflow-hidden">
-            <button className={move || if open.get() {"w-32 h-20 rounded-lg bg-[#663399] text-[#ffffff] scale-125 rotate-20 transition-transform duration-700"} else {"w-32 h-20 rounded-lg bg-[#663399] text-[#ffffff] scale-100 rotate-0 transition-transform duration-700"}}
+            <button className={move || if open.get().unwrap_or_default() {"w-32 h-20 rounded-lg bg-[#663399] text-[#ffffff] scale-125 rotate-20 transition-transform duration-700"} else {"w-32 h-20 rounded-lg bg-[#663399] text-[#ffffff] scale-100 rotate-0 transition-transform duration-700"}}
                 onClick={move |_| open.toggle()}>"Click me too"</button>
         </div>
     </view>}

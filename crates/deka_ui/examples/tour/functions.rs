@@ -10,7 +10,7 @@ pub fn App() -> View {
     view! {<view className="p-6 gap-3 bg-[#F3EFE3] text-[#1A1611]">
         <p className="text-xl">"Functions calculate values"</p>
         <p>"Input: {value}"</p>
-        <p>"Doubled: "{move || twice(value.get())}</p>
+        <p>"Doubled: "{move || twice(value.get().unwrap_or_default())}</p>
         <button onClick={move |_| value += 1}>"Next number"</button>
     </view>}
 }

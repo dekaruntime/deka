@@ -21,9 +21,9 @@ fn copy_handles_events_arithmetic_toggle_and_display_are_reactive() {
         count -= 1;
         visible.toggle();
     });
-    assert_eq!(alias.get(), 2);
+    assert_eq!(alias.get().unwrap(), 2);
     assert_eq!(*observations.borrow(), ["0:false", "2:true"]);
-    count.update(|value| *value *= 2);
+    count.update(|value| *value *= 2).unwrap();
     assert_eq!(*observations.borrow(), ["0:false", "2:true", "4:true"]);
 }
 
@@ -38,10 +38,10 @@ fn dependencies_follow_branches_and_unobserved_signals_do_no_work() {
         let unused = signal(0);
         let output = output.clone();
         effect(move || {
-            output.borrow_mut().push(if choose.get() {
-                left.get()
+            output.borrow_mut().push(if choose.get().unwrap() {
+                left.get().unwrap()
             } else {
-                right.get()
+                right.get().unwrap()
             })
         });
         (left, right, choose, unused)
@@ -66,15 +66,19 @@ fn derived_values_cache_suppress_equal_results_and_settle_diamonds() {
         let computations = computations.clone();
         let left = derived(move || {
             computations.set(computations.get() + 1);
-            input.get() * 2
+            input.get().unwrap() * 2
         });
-        let right = derived(move || input.get() + 1);
-        let sum = derived(move || left.get() + right.get());
-        let parity = derived(move || input.get() % 2);
+        let right = derived(move || input.get().unwrap() + 1);
+        let sum = derived(move || left.get().unwrap() + right.get().unwrap());
+        let parity = derived(move || input.get().unwrap() % 2);
         let output = output.clone();
-        effect(move || output.borrow_mut().push((sum.get(), parity.get())));
-        assert_eq!(left.get(), 2);
-        assert_eq!(left.get(), 2);
+        effect(move || {
+            output
+                .borrow_mut()
+                .push((sum.get().unwrap(), parity.get().unwrap()))
+        });
+        assert_eq!(left.get().unwrap(), 2);
+        assert_eq!(left.get().unwrap(), 2);
         input
     });
     assert_eq!(computations.get(), 1);
@@ -94,10 +98,10 @@ fn derived_unchanged_values_do_not_notify_downstream_effects() {
     let calls = Rc::new(Cell::new(0));
     let input = scope.run(|| {
         let input = signal(1);
-        let parity = derived(move || input.get() % 2);
+        let parity = derived(move || input.get().unwrap() % 2);
         let calls = calls.clone();
         effect(move || {
-            let _ = parity.get();
+            let _ = parity.get().unwrap();
             calls.set(calls.get() + 1);
         });
         input
@@ -122,11 +126,11 @@ fn nested_batches_and_nested_reactions_preserve_the_outer_read_capture() {
             if outer_runs.get() == 0 {
                 let inner_runs = inner_runs.clone();
                 effect(move || {
-                    inner.get();
+                    inner.get().unwrap();
                     inner_runs.set(inner_runs.get() + 1);
                 });
             }
-            outer.get();
+            outer.get().unwrap();
             outer_runs.set(outer_runs.get() + 1);
         });
         (outer, inner)
@@ -158,25 +162,25 @@ fn effect_disposal_and_scope_drop_release_reactions_and_values() {
         let retained = signal(value);
         let calls = calls.clone();
         let registration = effect(move || {
-            state.get();
+            state.get().unwrap();
             let _ = &captured;
             calls.set(calls.get() + 1);
         });
         (state, registration, retained)
     });
-    registration.dispose();
-    registration.dispose();
+    registration.dispose().unwrap();
+    registration.dispose().unwrap();
     state.set(1);
     assert_eq!(calls.get(), 1);
     assert!(weak_capture.upgrade().is_none());
     drop(scope);
     assert!(weak_value.upgrade().is_none());
-    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| retained.get())).is_err());
+    assert_eq!(retained.get(), Err(deka_ui::ReactiveError::DroppedScope));
     let replacement = Scope::new();
     replacement.run(|| {
         signal(42);
     });
-    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| state.get())).is_err());
+    assert_eq!(state.get(), Err(deka_ui::ReactiveError::DroppedScope));
 }
 
 #[test]
@@ -186,15 +190,17 @@ fn panic_restores_context_batch_depth_and_pending_reactions() {
     let state = scope.run(|| {
         let state = signal(0);
         let observations = observations.clone();
-        effect(move || observations.borrow_mut().push(state.get()));
+        effect(move || observations.borrow_mut().push(state.get().unwrap()));
         state
     });
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         scope.batch(|| {
-            state.update(|value| {
-                *value = 7;
-                panic!("event failed");
-            })
+            state
+                .update(|value| {
+                    *value = 7;
+                    panic!("event failed");
+                })
+                .unwrap()
         });
     }));
     assert!(result.is_err());
@@ -213,22 +219,22 @@ fn separate_scopes_cannot_accidentally_alias_or_cross_subscribe() {
     let a = first.run(|| signal(1));
     let b = second.run(|| signal(2));
     a.set(3);
-    assert_eq!(b.get(), 2);
+    assert_eq!(b.get().unwrap(), 2);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         second.run(|| {
             effect(move || {
-                a.get();
+                assert_eq!(a.get(), Err(deka_ui::ReactiveError::CrossScopeRead));
             })
         });
     }));
-    assert!(result.is_err());
+    assert!(result.is_ok());
     second.run(|| {
         effect(move || {
-            b.get();
+            b.get().unwrap();
         })
     });
     b.set(4);
-    assert_eq!(b.get(), 4);
+    assert_eq!(b.get().unwrap(), 4);
 }
 
 #[test]
@@ -238,9 +244,9 @@ fn event_effect_can_update_another_signal_without_reentrant_borrows() {
     let input = scope.run(|| {
         let input = signal(1);
         let output = signal(0);
-        effect(move || output.set(input.get() * 2));
+        effect(move || output.set(input.get().unwrap() * 2));
         let seen = seen.clone();
-        effect(move || seen.borrow_mut().push(output.get()));
+        effect(move || seen.borrow_mut().push(output.get().unwrap()));
         input
     });
     input.set(3);
@@ -255,7 +261,7 @@ fn effect_writes_during_first_execution_reschedule_until_settled() {
         let state = signal(0);
         let seen = seen.clone();
         effect(move || {
-            let next = state.get();
+            let next = state.get().unwrap();
             seen.borrow_mut().push(next);
             if next < 3 {
                 state.set(next + 1);
@@ -263,7 +269,7 @@ fn effect_writes_during_first_execution_reschedule_until_settled() {
         });
         state
     });
-    assert_eq!(state.get(), 3);
+    assert_eq!(state.get().unwrap(), 3);
     assert_eq!(*seen.borrow(), [0, 1, 2, 3]);
 }
 
@@ -274,17 +280,17 @@ fn a_cycle_reports_failure_and_the_scope_can_recover() {
     let armed = scope.run(|| signal(false));
     let registration = scope.run(|| {
         effect(move || {
-            if armed.get() {
-                state.set(state.get() + 1);
+            if armed.get().unwrap() {
+                state.set(state.get().unwrap() + 1);
             }
         })
     });
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| armed.set(true)));
     assert!(result.is_err());
-    registration.dispose();
+    registration.dispose().unwrap();
     scope.flush();
     state.set(1);
-    assert_eq!(state.get(), 1);
+    assert_eq!(state.get().unwrap(), 1);
 }
 
 #[test]
@@ -297,10 +303,10 @@ fn handles_are_copy_even_for_non_copy_values_and_update_returns_a_result() {
         text.push('!');
         len
     });
-    assert_eq!(previous_length, 5);
-    assert_eq!(alias.get(), "Ready!");
+    assert_eq!(previous_length.unwrap(), 5);
+    assert_eq!(alias.get().unwrap(), "Ready!");
     title.set(String::from("Done"));
-    assert_eq!(alias.get(), "Done");
+    assert_eq!(alias.get().unwrap(), "Done");
 }
 
 #[test]
@@ -313,12 +319,40 @@ fn effects_registered_before_a_later_derived_value_still_see_settled_state() {
         let later_read = later.clone();
         let observations = observations.clone();
         effect(move || {
-            let result = input.get() + later_read.borrow().as_ref().map_or(0, |value| value.get());
+            let result = input.get().unwrap()
+                + later_read
+                    .borrow()
+                    .as_ref()
+                    .map_or(0, |value| value.get().unwrap());
             observations.borrow_mut().push(result);
         });
-        *later.borrow_mut() = Some(derived(move || input.get() * 2));
+        *later.borrow_mut() = Some(derived(move || input.get().unwrap() * 2));
         input
     });
     input.set(2);
     assert_eq!(*observations.borrow(), [1, 6]);
+}
+
+#[test]
+fn late_reactive_handles_return_errors_after_scope_teardown() {
+    let scope = Scope::new();
+    let (state, registration) = scope.run(|| {
+        let state = signal(1);
+        let registration = effect(move || {
+            let _ = state.get();
+        });
+        (state, registration)
+    });
+    drop(scope);
+    assert_eq!(state.get(), Err(deka_ui::ReactiveError::DroppedScope));
+    assert_eq!(state.try_set(2), Err(deka_ui::ReactiveError::DroppedScope));
+    assert_eq!(
+        state.update(|value| *value += 1),
+        Err(deka_ui::ReactiveError::DroppedScope)
+    );
+    assert_eq!(
+        registration.dispose(),
+        Err(deka_ui::ReactiveError::DroppedScope)
+    );
+    assert!(format!("{state}").contains("scope has been dropped"));
 }

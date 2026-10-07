@@ -7,7 +7,7 @@ pub fn App() -> View {
         <button className="w-48 bg-[#663399] text-[#ffffff]" onClick={move |_| open.toggle()}>"Toggle layout movement"</button>
         <span>"Changing alignment gives the box a new layout destination."</span>
         <div className="w-full h-64 p-8 gap-3 overflow-hidden">
-            <div className={move || if open.get() {"w-full h-28 flex-row justify-end bg-[#E2DCCF]"} else {"w-full h-28 flex-row justify-start bg-[#E2DCCF]"}}>
+            <div className={move || if open.get().unwrap_or_default() {"w-full h-28 flex-row justify-end bg-[#E2DCCF]"} else {"w-full h-28 flex-row justify-start bg-[#E2DCCF]"}}>
                 <div className="w-20 h-20 shrink-0 rounded-lg bg-[#0C8B43] transition-layout spring"/>
             </div>
         </div>

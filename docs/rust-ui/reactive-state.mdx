@@ -13,7 +13,7 @@ use deka_ui::prelude::*;
 let scope = Scope::new();
 let mut count = scope.run(|| {
     let count = signal(0);
-    let doubled = derived(move || count.get() * 2);
+    let doubled = derived(move || count.get().unwrap_or_default() * 2);
     effect(move || println!("Count: {count}, doubled: {doubled}"));
     count
 });
@@ -72,3 +72,5 @@ catching the panic, `scope.flush()` resumes pending work. Applications should
 handle their errors at the event boundary.
 
 Dynamic child registrations own the signals and reactions created while building those children. Replacing the children releases those values and recycles signal, subscriber and observer slots. Copied handles never alias a later allocation in a reused slot. Ordinary scope-level state remains live until its scope drops.
+
+`Signal::get`, `Derived::get`, `Signal::try_set`, `Signal::update`, and `Effect::dispose` return `Result` with `ReactiveError`. A copied signal reports `DroppedScope` after teardown or `DisposedSignal` after its Dynamic owner releases it, even if the slot has been reused. Convenience `set`, `toggle`, `+=`, and `-=` report write errors to stderr without unwinding. Signal Display renders an error marker for a stale read.

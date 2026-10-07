@@ -16,7 +16,7 @@ pub fn App() -> View {
         <p className="text-xl">"Loops and conditions"</p>
         <p>"Total: "{total(&values)}</p>
         <button onClick={move |_| open.toggle()}>"Toggle answer"</button>
-        {move || open.get().then(|| view!{<p>"The total is 16."</p>})}
+        {move || open.get().unwrap_or_default().then(|| view!{<p>"The total is 16."</p>})}
     </view>}
 }
 

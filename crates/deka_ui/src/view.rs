@@ -75,6 +75,7 @@ enum Builder {
     Text(Attribute),
     Fragment(Vec<View>),
     Dynamic(Box<dyn FnMut() -> View>),
+    Error(String),
 }
 struct Element {
     tag: String,
@@ -142,12 +143,12 @@ impl View {
     where
         V: IntoToggle<M>,
     {
-        assert!(
-            !name.is_empty() && !name.chars().any(char::is_whitespace),
-            "class toggle requires one utility"
-        );
-        deka_native_ir::apply_classes(&mut Default::default(), name)
-            .expect("invalid class toggle utility");
+        if name.is_empty() || name.chars().any(char::is_whitespace) {
+            return Self(Builder::Error("class toggle requires one utility".into()));
+        }
+        if let Err(error) = deka_native_ir::apply_classes(&mut Default::default(), name) {
+            return Self(Builder::Error(error));
+        }
         self.element_mut()
             .toggles
             .insert(name.into(), value.into_toggle());
@@ -206,12 +207,12 @@ where
 }
 impl<T: Clone + Display + 'static> IntoView<Tracked> for Signal<T> {
     fn into_view(self) -> View {
-        View::live_text(move || self.get())
+        View::live_text(move || format!("{self}"))
     }
 }
 impl<T: Clone + Display + 'static> IntoView<Tracked> for Derived<T> {
     fn into_view(self) -> View {
-        View::live_text(move || self.get())
+        View::live_text(move || format!("{self}"))
     }
 }
 macro_rules! scalar_children {
@@ -232,12 +233,12 @@ impl IntoToggle<Static> for bool {
 }
 impl IntoToggle<Tracked> for Signal<bool> {
     fn into_toggle(self) -> Box<dyn FnMut() -> bool> {
-        Box::new(move || self.get())
+        Box::new(move || self.get().unwrap_or(false))
     }
 }
 impl IntoToggle<Tracked> for Derived<bool> {
     fn into_toggle(self) -> Box<dyn FnMut() -> bool> {
-        Box::new(move || self.get())
+        Box::new(move || self.get().unwrap_or(false))
     }
 }
 impl<F: FnMut() -> bool + 'static> IntoToggle<Live> for F {
@@ -279,6 +280,7 @@ struct Context {
     next_listener: Cell<usize>,
     patches: Cell<usize>,
     waker: RefCell<Option<deka_native_ui::Waker>>,
+    errors: RefCell<Vec<String>>,
 }
 impl Context {
     fn changed(&self, changed: bool) {
@@ -321,7 +323,7 @@ impl Registrations {
 impl Drop for Registrations {
     fn drop(&mut self) {
         for effect in self.effects.drain(..) {
-            effect.dispose();
+            let _ = effect.dispose();
         }
         if let Some(context) = self.context.upgrade() {
             for token in self.events.drain(..) {
@@ -384,7 +386,7 @@ fn bind(
     anchor: &Anchor,
     context: &Rc<Context>,
     registrations: &mut Registrations,
-    patch: impl Fn(&NodeHandle, String) -> bool + 'static,
+    patch: impl Fn(&NodeHandle, String) -> Result<bool, String> + 'static,
 ) -> String {
     match value {
         Attribute::Value(value) => value,
@@ -397,7 +399,10 @@ fn bind(
                 let value = getter();
                 if let Some(node) = target.borrow().as_ref() {
                     if let Some(context) = context.upgrade() {
-                        context.changed(patch(node, value));
+                        match patch(node, value) {
+                            Ok(changed) => context.changed(changed),
+                            Err(error) => context.errors.borrow_mut().push(error),
+                        }
                     }
                 } else {
                     *output.borrow_mut() = value;
@@ -407,14 +412,20 @@ fn bind(
         }
     }
 }
-fn prepare(view: View, path: Vec<usize>, parent: Anchor, context: &Rc<Context>) -> Prepared {
+fn prepare(
+    view: View,
+    path: Vec<usize>,
+    parent: Anchor,
+    context: &Rc<Context>,
+) -> Result<Prepared, String> {
     let mut prepared = Prepared::new(context);
     match view.0 {
+        Builder::Error(error) => return Err(error),
         Builder::Fragment(children) => {
             for (index, child) in children.into_iter().enumerate() {
                 let mut slot = path.clone();
                 slot.push(index);
-                prepared.extend(prepare(child, slot, parent.clone(), context));
+                prepared.extend(prepare(child, slot, parent.clone(), context)?);
             }
         }
         Builder::Dynamic(mut getter) => {
@@ -430,17 +441,32 @@ fn prepare(view: View, path: Vec<usize>, parent: Anchor, context: &Rc<Context>) 
                 };
                 let mut slot = prefix.clone();
                 slot.push(0);
-                let (mut next, reactive) =
+                let (next, reactive) =
                     crate::reactive::owned(|| prepare(getter(), slot, parent.clone(), &context));
+                let mut next = match next {
+                    Ok(next) => next,
+                    Err(error) => {
+                        context.errors.borrow_mut().push(error);
+                        return;
+                    }
+                };
                 next.registrations.reactive.push(reactive);
                 let target = parent.borrow().clone();
                 if let Some(parent) = target {
                     let wires = std::mem::take(&mut next.wires);
-                    let roots = context
-                        .tree
-                        .borrow_mut()
-                        .replace_slot(&parent, &prefix, wires, &next.slots)
-                        .expect("invalid dynamic native children");
+                    let replacement = context.tree.borrow_mut().replace_slot(
+                        &parent,
+                        &prefix,
+                        wires,
+                        &next.slots,
+                    );
+                    let roots = match replacement {
+                        Ok(roots) => roots,
+                        Err(error) => {
+                            context.errors.borrow_mut().push(error);
+                            return;
+                        }
+                    };
                     next.attach(&roots);
                     *owner.borrow_mut() = next.registrations;
                     context.changed(true);
@@ -448,10 +474,11 @@ fn prepare(view: View, path: Vec<usize>, parent: Anchor, context: &Rc<Context>) 
                     *output.borrow_mut() = Some(next);
                 }
             }));
-            let mut next = initial
-                .borrow_mut()
-                .take()
-                .expect("initial dynamic children");
+            let Some(mut next) = initial.borrow_mut().take() else {
+                // The first evaluation failed; preserve an empty structural slot.
+                prepared.registrations.groups.push(group);
+                return Ok(prepared);
+            };
             *group.borrow_mut() = next.registrations;
             next.registrations = Registrations::default();
             prepared.registrations.groups.push(group);
@@ -464,7 +491,7 @@ fn prepare(view: View, path: Vec<usize>, parent: Anchor, context: &Rc<Context>) 
                 &anchor,
                 context,
                 &mut prepared.registrations,
-                NodeHandle::patch_text,
+                |node, value| Ok(node.patch_text(value)),
             );
             prepared.slots.push(path.clone());
             prepared.anchors.push((path, anchor));
@@ -531,20 +558,20 @@ fn prepare(view: View, path: Vec<usize>, parent: Anchor, context: &Rc<Context>) 
                     wire.handler = Some(token);
                 }
             }
-            wire.style().expect("invalid native element or classes");
+            wire.style()?;
             prepared.slots.push(path.clone());
             prepared.anchors.push((path.clone(), anchor.clone()));
             for (index, child) in element.children.into_iter().enumerate() {
                 let mut slot = path.clone();
                 slot.push(index);
-                let mut child = prepare(child, slot, anchor.clone(), context);
+                let mut child = prepare(child, slot, anchor.clone(), context)?;
                 wire.children.append(&mut child.wires);
                 prepared.extend(child);
             }
             prepared.wires.push(wire);
         }
     }
-    prepared
+    Ok(prepared)
 }
 /// Owns an app's reactive scope, binding registrations, event closures and shared
 /// retained store. Rendering takes a snapshot and performs no reactive work.
@@ -568,15 +595,38 @@ impl UiApp {
                 Builder::Element(_) | Builder::Text(_) => view,
                 _ => View::element("view").child(view),
             };
-            let mut prepared = prepare(view, vec![], Anchor::default(), &context);
-            assert_eq!(prepared.wires.len(), 1, "app requires one root");
-            context
+            let mut prepared = match prepare(view, vec![], Anchor::default(), &context) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    context.errors.borrow_mut().push(error);
+                    Prepared::new(&context)
+                }
+            };
+            if prepared.wires.is_empty() {
+                prepared.slots.push(vec![]);
+            }
+            let wire = prepared.wires.pop().unwrap_or_else(|| WireNode {
+                tag: "view".into(),
+                ..Default::default()
+            });
+            let result = context
                 .tree
                 .borrow_mut()
-                .update_slots(prepared.wires.pop().unwrap(), &prepared.slots)
-                .expect("invalid initial native tree");
-            let root = context.tree.borrow().root.clone().unwrap();
-            prepared.attach(&[root]);
+                .update_slots(wire, &prepared.slots);
+            if let Err(error) = result {
+                context.errors.borrow_mut().push(error);
+                // The validated fallback has no authored bindings or classes.
+                if let Err(error) = context.tree.borrow_mut().update(WireNode {
+                    tag: "view".into(),
+                    ..Default::default()
+                }) {
+                    context.errors.borrow_mut().push(error);
+                }
+                prepared = Prepared::new(&context);
+            }
+            if let Some(root) = context.tree.borrow().root.clone() {
+                prepared.attach(&[root]);
+            }
             prepared.registrations
         });
         Self {
@@ -593,7 +643,13 @@ impl UiApp {
             .tree
             .borrow()
             .snapshot()
-            .expect("mounted native tree");
+            .unwrap_or_else(|| Node {
+                id: "view/empty".into(),
+                style: Default::default(),
+                text: None,
+                on_click: None,
+                children: vec![],
+            });
         fn routes(node: &mut Node, tokens: &mut Vec<usize>) {
             if let Some(token) = node.on_click {
                 node.on_click = Some(tokens.len());
@@ -651,6 +707,11 @@ impl UiApp {
         }
         true
     }
+    /// Drain operational mount/binding errors. Failed patches retain the last
+    /// valid tree; other reactions continue in the same flush.
+    pub fn take_errors(&self) -> Vec<String> {
+        std::mem::take(&mut *self.context.errors.borrow_mut())
+    }
     pub fn patch_passes(&self) -> usize {
         self.patch_passes.get()
     }
@@ -701,6 +762,113 @@ mod tests {
     use crate::signal;
 
     #[test]
+    fn invalid_reactive_classes_report_without_losing_the_last_valid_tree() {
+        let app = UiApp::new(|| {
+            let invalid = signal(false);
+            View::element("view")
+                .child(
+                    View::element("p")
+                        .attr("id", "target")
+                        .attr("className", move || {
+                            if invalid.get().unwrap() {
+                                "p-bad"
+                            } else {
+                                "p-2"
+                            }
+                        })
+                        .child("Kept"),
+                )
+                .child(View::element("button").on_click(move |_| invalid.toggle()))
+        });
+        let before = app.tree();
+        app.dispatch(0);
+        assert_eq!(app.tree(), before);
+        assert_eq!(app.take_errors().len(), 1);
+        app.dispatch(0);
+        assert_eq!(app.tree(), before);
+        assert!(app.take_errors().is_empty());
+        let initial = UiApp::new(|| View::element("view").attr("className", "p-bad"));
+        assert_eq!(initial.take_errors().len(), 1);
+        assert!(initial.tree().children.is_empty());
+        let toggle = UiApp::new(|| View::element("view").class("p-bad", true));
+        assert_eq!(toggle.take_errors().len(), 1);
+    }
+
+    #[test]
+    fn failed_slot_replacement_reports_and_the_remaining_reactions_finish() {
+        let app = UiApp::new(|| {
+            let state = signal(false);
+            View::element("view")
+                .on_click(move |_| state.toggle())
+                .child(move || {
+                    if state.get().unwrap() {
+                        View::text("New")
+                    } else {
+                        View::text("Old")
+                    }
+                })
+                .child(View::live_text(move || state.get().unwrap()))
+        });
+        let before = app.tree();
+        let mut foreign = Tree::default();
+        foreign
+            .update(WireNode {
+                tag: "view".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let anchor = app
+            .context
+            .listeners
+            .borrow()
+            .values()
+            .next()
+            .unwrap()
+            .anchor
+            .clone();
+        let original = anchor.replace(foreign.root.clone());
+        app.dispatch(0);
+        let after = app.tree();
+        assert_eq!(after.children[0], before.children[0]);
+        assert_eq!(after.children[1].text.as_deref(), Some("true"));
+        assert_eq!(app.take_errors(), ["invalid retained structural slot"]);
+        anchor.replace(original);
+        app.dispatch(0);
+        assert!(app.take_errors().is_empty());
+        assert_eq!(app.tree().children[1].text.as_deref(), Some("false"));
+        app.dispatch(0);
+        assert_eq!(app.tree().children[0].text.as_deref(), Some("New"));
+    }
+
+    #[test]
+    fn invalid_dynamic_classes_release_new_registrations_and_recover() {
+        let app = UiApp::new(|| {
+            let invalid = signal(false);
+            View::element("view")
+                .child(move || {
+                    View::element("p")
+                        .attr(
+                            "className",
+                            if invalid.get().unwrap() {
+                                "p-bad"
+                            } else {
+                                "p-2"
+                            },
+                        )
+                        .child("Kept")
+                })
+                .child(View::element("button").on_click(move |_| invalid.toggle()))
+        });
+        let before = app.tree();
+        app.dispatch(0);
+        assert_eq!(app.tree(), before);
+        assert_eq!(app.take_errors().len(), 1);
+        app.dispatch(0);
+        assert_eq!(app.tree(), before);
+        assert!(app.take_errors().is_empty());
+    }
+
+    #[test]
     fn imperative_edits_survive_unchanged_authored_values_and_other_property_patches() {
         let app = UiApp::new(|| {
             let mut count = signal(0);
@@ -710,13 +878,13 @@ mod tests {
                     View::element("p")
                         .attr("id", "message")
                         .attr("className", move || {
-                            if red.get() {
+                            if red.get().unwrap() {
                                 "text-[#ff0000]"
                             } else {
                                 "text-[#0000ff]"
                             }
                         })
-                        .child(View::live_text(move || count.get() % 2)),
+                        .child(View::live_text(move || count.get().unwrap() % 2)),
                 )
                 .child(
                     View::element("button")
@@ -769,7 +937,7 @@ mod tests {
                         .attr("id", "message")
                         .attr("placeholder", move || {
                             seen.set(seen.get() + 1);
-                            value.get() % 2
+                            value.get().unwrap() % 2
                         })
                         .child("Static"),
                 )
@@ -813,6 +981,7 @@ mod tests {
                 .child(move || {
                     visible
                         .get()
+                        .unwrap()
                         .then(|| View::element("button").on_click(|_| {}).child("Temporary"))
                 })
                 .child(
@@ -839,9 +1008,11 @@ mod tests {
             View::element("view")
                 .child(
                     View::element("p")
-                        .attr("className", move || if state.get() { "p-4" } else { "p-2" })
+                        .attr("className", move || {
+                            if state.get().unwrap() { "p-4" } else { "p-2" }
+                        })
                         .class("opacity-0", state)
-                        .class("rounded", move || state.get())
+                        .class("rounded", move || state.get().unwrap())
                         .child("Same"),
                 )
                 .child(

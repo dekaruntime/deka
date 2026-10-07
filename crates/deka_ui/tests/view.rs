@@ -17,7 +17,7 @@ fn clicks_patch_only_the_bound_property_of_the_retained_node() {
                     .attr("className", "text-xl")
                     .child(View::live_text(move || {
                         observed.set(observed.get() + 1);
-                        count.get()
+                        count.get().unwrap()
                     })),
             )
             .child(View::element("p").child("Unchanged"))
@@ -66,7 +66,7 @@ fn an_event_batches_multiple_writes_into_one_final_binding_pass() {
         let count = signal(0);
         View::element("view")
             .child(View::live_text(move || {
-                let value = count.get();
+                let value = count.get().unwrap();
                 seen.borrow_mut().push(value);
                 value
             }))
@@ -92,7 +92,12 @@ fn option_and_iterator_children_preserve_later_static_siblings() {
     let app = UiApp::new(|| {
         let visible = signal(true);
         View::element("view")
-            .child(move || visible.get().then(|| View::element("p").child("Optional")))
+            .child(move || {
+                visible
+                    .get()
+                    .unwrap()
+                    .then(|| View::element("p").child("Optional"))
+            })
             .children(
                 ["First", "Second"]
                     .into_iter()
@@ -127,7 +132,7 @@ fn class_toggles_and_dynamic_attributes_patch_without_rebuilding_other_propertie
         View::element("view")
             .child(
                 View::element("p")
-                    .attr("id", move || name.get())
+                    .attr("id", move || name.get().unwrap())
                     .attr("className", "p-4")
                     .class("opacity-0", open)
                     .child("Kept"),
@@ -171,15 +176,15 @@ fn removed_bindings_stop_observing_and_event_captures_are_released() {
         View::element("view")
             .child(move || {
                 let seen = seen.clone();
-                visible.get().then(|| {
-                    let held = capture.get().unwrap();
+                visible.get().unwrap().then(|| {
+                    let held = capture.get().unwrap().unwrap();
                     View::element("button")
                         .on_click(move |_| {
                             let _keep = &held;
                         })
                         .child(View::live_text(move || {
                             seen.set(seen.get() + 1);
-                            count.get()
+                            count.get().unwrap()
                         }))
                 })
             })
@@ -216,7 +221,7 @@ fn typed_input_and_key_events_use_the_same_batched_binding_path() {
         View::element("view")
             .child(
                 View::element("input")
-                    .attr("value", move || text.get())
+                    .attr("value", move || text.get().unwrap())
                     .on(EventKind::Input, move |event| {
                         if let Event::Input(value) = event {
                             text.set(value);
@@ -266,11 +271,8 @@ fn dropped_app_releases_scope_values_and_stale_signals_cannot_alias() {
     });
     drop(app);
     assert!(weak.upgrade().is_none());
-    assert!(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| held
-            .borrow()
-            .unwrap()
-            .get()))
-        .is_err()
+    assert_eq!(
+        held.borrow().unwrap().get(),
+        Err(deka_ui::ReactiveError::DroppedScope)
     );
 }
