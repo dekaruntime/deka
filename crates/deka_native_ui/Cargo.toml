@@ -13,6 +13,7 @@ default = []
 gpu = [
     "dep:winit",
     "dep:arboard",
+    "dep:unicode-segmentation",
     "dep:wgpu",
     "dep:vello_gpu",
     "dep:pollster",
@@ -36,12 +37,12 @@ parley = "=0.11.1"
 swash = "=0.2.10"
 # Linux system fonts through a runtime dlopen of fontconfig: no build-time pkg-config/headers.
 fontique = { version = "=0.11.1", features = ["fontconfig-dlopen"] }
-unicode-segmentation = "1.13"
 serde = { version = "1", features = ["derive"] }
 taffy = { version = "=0.9.0", default-features = false, features = ["std", "taffy_tree", "flexbox"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rodio = { version = "=0.21.1", default-features = false, features = ["playback"], optional = true }
+unicode-segmentation = { version = "1.13", optional = true }
 arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"], optional = true }
 winit = { version = "=0.30.13", optional = true }
 # Metal on macOS, Vulkan on Linux, DX12 on Windows (the others compile out by cfg).
