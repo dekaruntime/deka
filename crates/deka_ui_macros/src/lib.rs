@@ -182,14 +182,14 @@ fn text_nodes(literal: &LitStr) -> syn::Result<Tokens> {
     let source = literal.value();
     let mut text = String::new();
     let mut parts = Vec::new();
-    let mut chars = source.chars().peekable();
-    while let Some(ch) = chars.next() {
+    let mut chars = source.chars().enumerate().peekable();
+    while let Some((index, ch)) = chars.next() {
         match ch {
-            '{' if chars.peek() == Some(&'{') => {
+            '{' if chars.peek().map(|(_, ch)| ch) == Some(&'{') => {
                 chars.next();
                 text.push('{');
             }
-            '}' if chars.peek() == Some(&'}') => {
+            '}' if chars.peek().map(|(_, ch)| ch) == Some(&'}') => {
                 chars.next();
                 text.push('}');
             }
@@ -200,7 +200,7 @@ fn text_nodes(literal: &LitStr) -> syn::Result<Tokens> {
                 }
                 let mut name = String::new();
                 let mut closed = false;
-                for ch in chars.by_ref() {
+                for (_, ch) in chars.by_ref() {
                     if ch == '}' {
                         closed = true;
                         break;
@@ -208,20 +208,22 @@ fn text_nodes(literal: &LitStr) -> syn::Result<Tokens> {
                     name.push(ch);
                 }
                 if !closed {
-                    return Err(syn::Error::new(
-                        literal.span(),
+                    return Err(interpolation_error(
+                        literal,
+                        index,
                         "unclosed text interpolation",
                     ));
                 }
                 let mut name: Ident = syn::parse_str(&name).map_err(|_| {
-                    syn::Error::new(literal.span(), "text interpolation requires an identifier")
+                    interpolation_error(literal, index, "text interpolation requires an identifier")
                 })?;
                 name.set_span(literal.span());
                 parts.push(quote_spanned!(literal.span()=> ::deka_ui::View::interpolate(&#name)));
             }
             '}' => {
-                return Err(syn::Error::new(
-                    literal.span(),
+                return Err(interpolation_error(
+                    literal,
+                    index,
                     "unmatched text interpolation brace",
                 ));
             }
@@ -237,6 +239,77 @@ fn text_nodes(literal: &LitStr) -> syn::Result<Tokens> {
     } else {
         quote!(::deka_ui::View::fragment(vec![#(#parts),*]))
     })
+}
+
+/// Map decoded characters back to their original literal bytes, including raw
+/// strings, escaped Unicode and escaped-newline whitespace continuation.
+fn literal_offsets(source: &str) -> Vec<usize> {
+    let start = source.find('"').unwrap_or(0) + 1;
+    let end = source.rfind('"').unwrap_or(source.len());
+    let raw = source.starts_with('r');
+    let mut offsets = Vec::new();
+    let mut index = start;
+    while index < end {
+        let offset = index;
+        let ch = source[index..].chars().next().unwrap();
+        index += ch.len_utf8();
+        // Rust normalizes a physical CRLF to one decoded newline in both
+        // ordinary and raw string literals; keep one source-offset entry.
+        if ch == '\r' && source.as_bytes().get(index) == Some(&b'\n') {
+            index += 1;
+        }
+        if !raw && ch == '\\' && index < end {
+            let escaped = source[index..].chars().next().unwrap();
+            index += escaped.len_utf8();
+            match escaped {
+                'u' => {
+                    if let Some(close) = source[index..end].find('}') {
+                        index += close + 1;
+                    }
+                }
+                'x' => index = (index + 2).min(end),
+                '\n' | '\r' => {
+                    while index < end {
+                        let ch = source[index..].chars().next().unwrap();
+                        if !ch.is_whitespace() {
+                            break;
+                        }
+                        index += ch.len_utf8();
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        offsets.push(offset);
+    }
+    offsets
+}
+fn interpolation_error(literal: &LitStr, index: usize, message: &str) -> syn::Error {
+    let token = literal.token();
+    let source = literal
+        .span()
+        .source_text()
+        .unwrap_or_else(|| token.to_string());
+    let offset = literal_offsets(&source).get(index).copied().unwrap_or(0);
+    let width = source[offset..].chars().next().map_or(0, char::len_utf8);
+    let span = token
+        .subspan(offset..offset + width)
+        .unwrap_or(literal.span());
+    let start = literal.span().start();
+    let (mut line, mut column) = (start.line, start.column + 1);
+    for ch in source[..offset].chars() {
+        if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    syn::Error::new(
+        span,
+        format!("{message} (brace at line {line}, column {column})"),
+    )
 }
 
 #[proc_macro_attribute]
@@ -353,15 +426,25 @@ fn expand_component(mut function: ItemFn) -> syn::Result<Tokens> {
             .map(|_| quote!(#missing))
             .collect::<Vec<_>>(),
     );
-    let complete_type = builder_type(
-        &required
-            .iter()
-            .map(|p| {
-                let ty = &p.ty;
-                quote!(#ty)
-            })
-            .collect::<Vec<_>>(),
-    );
+    let requirements: Vec<_> = required
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format_ident!("{}RequiredProp{}", name, index))
+        .collect();
+    let requirement_definitions = required.iter().zip(&requirements).map(|(p, requirement)| {
+        let ty = &p.ty;
+        let message = format!("missing required prop `{}` for component `{name}`", p.name);
+        quote!(
+            #[doc(hidden)] #[diagnostic::on_unimplemented(message = #message)]
+            #vis trait #requirement { fn into_prop(self) -> #ty; }
+            impl #requirement for #ty { fn into_prop(self) -> #ty { self } }
+        )
+    });
+    let build_bounds = if required.is_empty() {
+        Tokens::new()
+    } else {
+        quote!(where #(#params: #requirements),*)
+    };
     let missing_definition = if required.is_empty() {
         Tokens::new()
     } else {
@@ -390,7 +473,8 @@ fn expand_component(mut function: ItemFn) -> syn::Result<Tokens> {
             let param = &params[index];
             builder_fields.push(quote!(#field:#param));
             initial_fields.push(quote!(#field:#missing));
-            complete_fields.push(quote!(#field:self.#field));
+            let requirement = &requirements[index];
+            complete_fields.push(quote!(#field:#requirement::into_prop(self.#field)));
         } else {
             let default = prop.default.as_ref().unwrap();
             builder_fields.push(quote!(#field:Option<#ty>));
@@ -425,9 +509,10 @@ fn expand_component(mut function: ItemFn) -> syn::Result<Tokens> {
         Tokens::new()
     };
     let body = &function.block;
+    let props_binding = Ident::new("__deka_props", Span::mixed_site());
     let replacement: syn::Block =
-        syn::parse2(quote!({let #props_name{#(#patterns),*}=__deka_props; #body}))?;
-    function.sig.inputs = syn::parse_quote!(__deka_props:#props_name);
+        syn::parse2(quote!({let #props_name{#(#patterns),*}=#props_binding; #body}))?;
+    function.sig.inputs = syn::parse_quote!(#props_binding:#props_name);
     *function.block = replacement;
     // Component names intentionally match capitalized Rust markup tags.
     function
@@ -436,11 +521,12 @@ fn expand_component(mut function: ItemFn) -> syn::Result<Tokens> {
     Ok(quote!(
         #vis struct #props_name {#(pub #names:#types),*}
         #missing_definition
+        #(#requirement_definitions)*
         #[doc(hidden)] #vis struct #builder #definition {#(#builder_fields),*}
         impl #props_name {pub fn builder()->#initial_type {#builder{#(#initial_fields),*}}}
         impl ::deka_ui::ComponentProps for #props_name {type Builder=#initial_type;fn builder()->Self::Builder {Self::builder()}}
         impl #implementation #builder #implementation {#(#methods)*}
-        impl #complete_type {#[allow(dead_code, reason = "generated builder supports both markup and direct props construction")] pub fn build(self)->#props_name {#props_name{#(#complete_fields),*}}}
+        impl #implementation #builder #implementation {#[allow(dead_code, reason = "generated builder supports both markup and direct props construction")] pub fn build(self)->#props_name #build_bounds {#props_name{#(#complete_fields),*}}}
         #default
         #function
     ))
@@ -449,6 +535,49 @@ fn expand_component(mut function: ItemFn) -> syn::Result<Tokens> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn physical_crlf_diagnostics_point_at_the_decoded_brace() {
+        for source in ["\"First\r\nprefix {a.b}\"", "r#\"First\r\nprefix {a.b}\"#"] {
+            let literal: LitStr = syn::parse_str(source).unwrap();
+            // Index 13 is the brace after the compiler decodes physical CRLF
+            // as one newline. The unit-test fallback parser retains raw CRLF.
+            let error =
+                interpolation_error(&literal, 13, "text interpolation requires an identifier");
+            assert!(
+                error.to_string().contains("brace at line 2, column 8"),
+                "{error}"
+            );
+            assert_eq!(error.span().start().line, 2);
+            assert_eq!(error.span().start().column, 7);
+        }
+    }
+    #[test]
+    fn interpolation_errors_locate_the_brace_through_raw_strings_and_escapes() {
+        for source in [
+            r#""prefix {a.b}""#,
+            r##"r#"prefix {a.b}"#"##,
+            r#""é\n{a.b}""#,
+            r#""\u{00e9}{a.b}""#,
+        ] {
+            let literal: LitStr = syn::parse_str(source).unwrap();
+            let error = text_nodes(&literal).unwrap_err();
+            let offset = source.find("{a.b}").unwrap();
+            assert_eq!(error.span().start().column, offset, "{source}");
+            let column = source[..offset].chars().count() + 1;
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("brace at line 1, column {column}")),
+                "{error}"
+            );
+        }
+        for source in [r#""prefix {a""#, r#""prefix }""#] {
+            let literal: LitStr = syn::parse_str(source).unwrap();
+            let error = text_nodes(&literal).unwrap_err();
+            assert_eq!(error.span().start().column, 8);
+        }
+    }
     #[test]
     fn rstml_parses_rust_closures_colon_attributes_and_original_token_spans() {
         let source = "\n<view>\n<button onClick={move |_| count += 1} class:rounded={open}>\"Count: {count}\"</button>\n</view>";

@@ -1,4 +1,6 @@
 //! Compile-fail tests equivalent to trybuild, using only release-mode builds.
+//! This test runs cargo fetch for a separate locked fixture workspace and needs
+//! network access when its dependencies are not already cached. Checks run offline.
 use std::{path::PathBuf, process::Command};
 
 #[test]
@@ -23,9 +25,32 @@ fn errors_point_at_the_users_markup_lines() {
         String::from_utf8_lossy(&fetched.stdout)
     );
     for (case, line, message) in [
-        ("unknown", 6, "Missing"),
-        ("missing", 8, "build"),
+        (
+            "unknown",
+            6,
+            "cannot find function, tuple struct or tuple variant `Missing` in this scope",
+        ),
+        (
+            "missing",
+            8,
+            "missing required prop `title` for component `Card`",
+        ),
         ("wrong", 9, "mismatched types"),
+        (
+            "interpolation",
+            4,
+            "text interpolation requires an identifier (brace at line 4, column 40)",
+        ),
+        (
+            "crlf",
+            3,
+            "text interpolation requires an identifier (brace at line 4, column 8)",
+        ),
+        (
+            "raw_crlf",
+            3,
+            "text interpolation requires an identifier (brace at line 4, column 8)",
+        ),
     ] {
         let output = Command::new(env!("CARGO"))
             .args([
@@ -90,4 +115,26 @@ fn errors_point_at_the_users_markup_lines() {
             "{case}: expected compile failure 101; primary diagnostic on user's markup line {line}"
         );
     }
+    let output = Command::new(env!("CARGO"))
+        .args([
+            "run",
+            "--release",
+            "--locked",
+            "--offline",
+            "--manifest-path",
+        ])
+        .arg(&manifest)
+        .args(["--bin", "hygiene"])
+        .env("CARGO_TARGET_DIR", &target)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "hygiene fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "Global Title Value:local"
+    );
 }
