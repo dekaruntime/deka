@@ -38,6 +38,8 @@ def main():
     cargo('build','--locked','--profile','native','--target','wasm32-unknown-unknown','-p','deka-ui-tour')
     subprocess.run(['wasm-bindgen',str(target/'wasm32-unknown-unknown/native/deka_ui_tour.wasm'),'--target','web','--omit-default-module-path','--out-dir',str(out)],check=True)
     cargo('run','--locked','--release','-p','deka-ui-tour','--example','package_sources','--',str(out))
+    cargo('build','--locked','--profile','native','--target','wasm32-unknown-unknown','-p','deka-ui-tour','--example','web_input')
+    subprocess.run(['wasm-bindgen',str(target/'wasm32-unknown-unknown/native/examples/web_input.wasm'),'--target','web','--omit-default-module-path','--out-dir',str(out/'input-fixture')],check=True)
     shutil.copyfile(ROOT/'crates/deka_native_ui/assets/OFL.txt',out/'font-OFL.txt')
     files={str(p.relative_to(out)):{'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(out.rglob('*')) if p.is_file() and p.name!='manifest.json'}
     wasm=out/'deka_ui_tour_bg.wasm'

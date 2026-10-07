@@ -21,3 +21,7 @@ wasm-bindgen = "=0.2.128"
 
 [dev-dependencies]
 deka_native_ui = { path = "../deka_native_ui" }
+
+[[example]]
+name = "web_input"
+crate-type = ["cdylib"]

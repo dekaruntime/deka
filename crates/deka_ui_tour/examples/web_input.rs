@@ -1,0 +1,30 @@
+//! Browser integration fixture: native editing feeds typed Rust events.
+#[cfg(target_arch = "wasm32")]
+mod web {
+    use deka_ui::prelude::*;
+    use std::cell::RefCell;
+    use wasm_bindgen::prelude::*;
+    thread_local! { static APP: RefCell<Option<deka_ui::web::WebHandle>> = const { RefCell::new(None) }; }
+    #[component]
+    fn App() -> View {
+        let text = signal(String::new());
+        let key = signal(String::new());
+        view! {<view className="p-4 gap-4">
+            <input id="name" className="w-[240px] h-[40px]" value={move ||text.get().unwrap()}
+                onInput={move |event| if let Event::Input(value)=event { text.set(value); }}
+                onKeyDown={move |event| if let Event::KeyDown(value)=event { key.set(value); }}/>
+            <p>"Hello {text}"</p><p>"Key: {key}"</p>
+        </view>}
+    }
+    #[wasm_bindgen]
+    pub fn start(canvas: &JsValue) -> Result<(), JsValue> {
+        stop();
+        let handle = deka_ui::launch(App, canvas)?;
+        APP.with(|app| app.replace(Some(handle)));
+        Ok(())
+    }
+    #[wasm_bindgen]
+    pub fn stop() {
+        APP.with(|app| app.replace(None));
+    }
+}
