@@ -53,13 +53,18 @@ def main():
     subprocess.run(['wasm-bindgen',str(target/'wasm32-unknown-unknown/native/deka_ui_tour.wasm'),'--target','web','--omit-default-module-path','--out-dir',str(out/'test-fixture')],check=True)
     cargo('build','--locked','--profile','native','--target','wasm32-unknown-unknown','-p','deka-ui-tour','--features','web-test','--example','web_input')
     subprocess.run(['wasm-bindgen',str(target/'wasm32-unknown-unknown/native/examples/web_input.wasm'),'--target','web','--omit-default-module-path','--out-dir',str(out/'input-fixture')],check=True)
+    # wasm-bindgen copies its directly referenced module, not that module's
+    # relative imports. Test-only wrappers share the exact production host.
+    for fixture in ['test-fixture', 'input-fixture']:
+        for wrapper in (out/fixture).rglob('test-host.js'):
+            shutil.copyfile(ROOT/'crates/deka_ui/web/host.js',wrapper.parent/'host.js')
     shutil.copyfile(ROOT/'crates/deka_native_ui/assets/OFL.txt',out/'font-OFL.txt')
     files={str(p.relative_to(out)):{'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(out.rglob('*')) if p.is_file() and p.name!='manifest.json'}
     wasm=out/'deka_ui_tour_bg.wasm'
     for checkout_path in [str(ROOT), str(cargo_home), sysroot]:
         if checkout_path.encode() in wasm.read_bytes():
             raise SystemExit('Absolute build path leaked into wasm: '+checkout_path)
-    manifest={'schemaVersion':1,'runtime':'deka-ui','commit':commit,'source':'https://github.com/dekaruntime/deka','wasmBindgen':'0.2.128','rustc':subprocess.check_output(['rustc','+1.96.0','--version'],text=True).strip(),'target':'wasm32-unknown-unknown','gzipBytes':len(gzip.compress(wasm.read_bytes(),mtime=0)),'cargoLockSha256':hashlib.sha256((ROOT/'Cargo.lock').read_bytes()).hexdigest(),'files':files}
+    manifest={'schemaVersion':1,'runtime':'deka-ui','commit':commit,'source':'https://github.com/dekaruntime/deka','wasmBindgen':'0.2.128','rustc':subprocess.check_output(['rustc','+1.96.0','--version'],text=True).strip(),'target':'wasm32-unknown-unknown','gzipBytes':len(gzip.compress(wasm.read_bytes(),compresslevel=9,mtime=0)),'cargoLockSha256':hashlib.sha256((ROOT/'Cargo.lock').read_bytes()).hexdigest(),'files':files}
     (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     print(f'Rust tour: {len(wasm.read_bytes())} bytes; {manifest["gzipBytes"]} gzip bytes; {commit}')
 if __name__=='__main__':

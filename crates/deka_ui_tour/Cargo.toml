@@ -24,3 +24,11 @@ deka_native_ui = { path = "../deka_native_ui" }
 [[example]]
 name = "web_input"
 crate-type = ["cdylib"]
+
+[[example]]
+name = "size_counter"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "size_layout"
+crate-type = ["cdylib"]

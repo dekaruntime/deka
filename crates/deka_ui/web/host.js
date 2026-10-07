@@ -89,7 +89,7 @@ class WebGLRenderer {
     gl.uniform2f(uniform("viewport"), scene.width, scene.height);
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform1i(uniform("glyph"), 0);
-    const active = new Set(scene.paint.flatMap((paint) => paint.image ? [paint.image] : []));
+    const active = new Set(scene.image_ids);
     for (const [id, texture] of this.textures)
       if (!active.has(id)) {
         gl.deleteTexture(texture);
@@ -164,9 +164,10 @@ export function mount(app, canvas, inspect = false) {
         input.addEventListener('keydown', event => { try { app.key_to(control.id,event.key); draw() } catch(error) { fail(error) } })
         inputs.set(control.id,input); parent.append(input)
       }
-      if (input.value !== control.value) {
+      const value = control.value ?? ""
+      if (input.value !== value) {
         const selection = [input.selectionStart, input.selectionEnd]
-        input.value = control.value
+        input.value = value
         if (document.activeElement === input && selection.every(index => index !== null)) input.setSelectionRange(Math.min(selection[0],input.value.length),Math.min(selection[1],input.value.length))
       }
       const bounds = canvas.getBoundingClientRect(), origin = parent.getBoundingClientRect()
@@ -183,10 +184,11 @@ export function mount(app, canvas, inspect = false) {
       scene = JSON.parse(app.frame_at(bounds.width,bounds.height,scale,fixedClock ?? performance.now(),motion.matches))
       renderer.draw(scene,scale); syncInputs()
       if (inspect) {
-        const active = new Set(scene.paint.flatMap(paint => paint.image ? [paint.image] : []))
+        const {image_ids, ...rendered} = scene
+        const active = new Set(image_ids)
         for (const id of inspectedImages.keys()) if (!active.has(id)) inspectedImages.delete(id)
         for (const image of scene.images) inspectedImages.set(image.id, image)
-        canvas.dispatchEvent(new CustomEvent('deka:native-frame',{detail:{...scene,images:[...inspectedImages.values()].sort((a,b)=>a.id.localeCompare(b.id))},bubbles:true}))
+        canvas.dispatchEvent(new CustomEvent('deka:native-frame',{detail:{...rendered,images:[...inspectedImages.values()].sort((a,b)=>a.id.localeCompare(b.id))},bubbles:true}))
       }
       if (scene.animating && fixedClock === undefined) request = requestAnimationFrame(draw)
     } catch (error) { fail(error) }
@@ -199,7 +201,7 @@ export function mount(app, canvas, inspect = false) {
     canvas.focus(); const bounds=canvas.getBoundingClientRect()
     try { app.pointer(event.clientX-bounds.left,event.clientY-bounds.top); draw() } catch(error) { fail(error) }
   }
-  const key = event => { try { if(app.key(event.key,event.shiftKey)) event.preventDefault(); draw() } catch(error) { fail(error) }
+  const key = event => { try { if(app.key(event.key,event.shiftKey)) event.preventDefault(); draw() } catch(error) { fail(error) } }
   const blur = () => { app.blur(); draw() }
   // Explicit deterministic presentation clock for the same scripts as the native gate.
   const command = event => {

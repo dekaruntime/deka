@@ -57,7 +57,17 @@ impl BrowserApp {
             .filter(|image| self.sent_images.insert(image.id.clone()))
             .cloned()
             .collect();
-        let result = serde_json::to_string(&self.scene).map_err(|e| e.to_string());
+        #[derive(serde::Serialize)]
+        struct Frame<'a> {
+            #[serde(flatten)]
+            scene: &'a Scene,
+            image_ids: Vec<&'a str>,
+        }
+        let frame = Frame {
+            scene: &self.scene,
+            image_ids: images.iter().map(|image| image.id.as_str()).collect(),
+        };
+        let result = serde_json::to_string(&frame).map_err(|e| e.to_string());
         self.scene.images = images;
         result
     }
@@ -126,10 +136,9 @@ impl BrowserApp {
             .chain(tree.query_all("textarea").map_err(|e| e.to_string())?);
         let mut inputs = Vec::new();
         for element in controls {
-            // Absence is a valid empty HTML input, not a selector/serialization error.
-            let value = element
-                .get_attribute("value")
-                .map_or_else(String::new, |value| value);
+            // Absence is a valid empty HTML input. Preserve that Option across
+            // the boundary; the host applies the HTML default explicitly.
+            let value = element.get_attribute("value");
             inputs.push(serde_json::json!({"id": element.renderer_id(), "value": value}));
         }
         serde_json::to_string(&inputs).map_err(|e| e.to_string())

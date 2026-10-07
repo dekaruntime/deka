@@ -1927,6 +1927,7 @@ dependencies = [
  "deka_native_ir",
  "deka_native_ui",
  "deka_vm",
+ "serde",
  "serde_json",
  "wasm-bindgen",
 ]

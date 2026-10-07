@@ -23,6 +23,7 @@ function difference(actual, expected, path = 'scene') {
 }
 const server = createServer((req,res)=>{
   const path=new URL(req.url,'http://localhost').pathname
+  if (path==='/favicon.ico') {res.writeHead(204);res.end();return}
   if(path==='/') {
     res.setHeader('Content-Type','text/html');res.end(`<!doctype html><div style="position:relative"><canvas tabindex="0" style="width:560px;height:480px"></canvas></div><script type="module">
       const fixture=new URLSearchParams(location.search).get('fixture')||'test-fixture';
@@ -46,7 +47,7 @@ const metrics=[]
 try {
   for(const [scale,reduced] of [[1,false],[2,false],[1,true]]) {
     const context=await browser.newContext({deviceScaleFactor:scale,reducedMotion:reduced?'reduce':'no-preference',viewport:{width:1200,height:900}})
-    const page=await context.newPage();const errors=[]
+    const page=await context.newPage();page.setDefaultTimeout(30000);const errors=[]
     page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
     await page.goto(url);await page.waitForFunction(()=>window.ready)
     const canvas=page.locator('canvas');const blank=await canvas.screenshot()
@@ -79,7 +80,7 @@ try {
     console.log(`PASS: all 27 lessons, shared histories, input, pixels and stop; DPR ${scale}, reduced motion ${reduced}`)
     await context.close()
   }
-  const page=await browser.newPage()
+  const page=await browser.newPage();page.setDefaultTimeout(30000)
   await page.goto(url+'/?fixture=input-fixture');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start())
   const input=page.getByLabel('Deka text input');await input.pressSequentially('Sami')
   assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello Sami'))
