@@ -31,11 +31,16 @@ discarded, and numeric comparisons are exact.
 cargo test --release --locked -p deka-ui --no-default-features --test tour_parity -- --nocapture
 ```
 
-The tour target has 28 tests: one inventory guard and one for each lesson.
+The tour target has 33 tests: one inventory guard, one for each lesson and five
+behavioral guards for handler coverage and effects.
 The inventory guard requires exactly the same 27 original fixtures and runnable
 Rust twins. Tests compare at rest and after every event, resolving the same
 real pointer point through the renderer's transformed and clipped hit tester.
-Every click handler is exercised. Comparisons cover 560×480 at scale 1,
+A per-lesson expected count guards empty inventories. A separate discovery
+history re-collects handlers after every click, including new state-dependent
+targets, with a maximum of 64 clicks. Fully clipped handlers use their retained
+routes; their effect audit uses an enlarged viewport. Every expected handler is
+exercised. Comparisons cover 560×480 at scale 1,
 360×640 at scale 2, and reduced motion.
 
 Motion is sampled at fixed times, including mid-transition reversal at 220ms,
@@ -44,4 +49,4 @@ keyframes. The native CI workflow runs this gate when either authoring path or
 the renderer changes. A mismatch reports its lesson, viewport, timestamp and
 first differing scene field; the comparison does not relax visual differences.
 
-The gate inventories handlers from rendered scene targets. Every scripted click must change a complete scene independently on both sides: isolated clicked and unclicked renderer histories are compared at equal timestamps, so autonomous animation cannot disguise a no-op. This effect audit enables motion even for reduced-motion cases to observe intentional keyframe toggles; the main scene comparisons continue to use the actual configuration's motion policy. Selection lessons alternate buttons so each script step changes the selected value. Comments cannot inflate handler coverage.
+The gate combines rendered target inventory with retained handler discovery. Every scripted click must change a complete scene independently on both sides: isolated clicked and unclicked renderer histories are compared at equal timestamps, so autonomous animation cannot disguise a no-op. This effect audit enables motion even for reduced-motion cases to observe intentional keyframe toggles; the main scene comparisons continue to use the actual configuration's motion policy. Selection lessons alternate buttons so each script step changes the selected value. Comments cannot inflate handler coverage.
