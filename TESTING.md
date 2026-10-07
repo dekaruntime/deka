@@ -50,9 +50,9 @@ fails when the fix is removed. Do not replace assertions with snapshots of sourc
 strings or allow a skipped/empty run to masquerade as validation.
 
 The Rust UI macro diagnostic test uses a separate workspace and lockfile at
-`crates/deka_ui_macros/tests/ui/Cargo.toml`. The harness fetches that manifest's
-locked dependencies before running its release-mode, locked, offline
-compile-fail checks; fetching the root workspace alone does not prepare them.
+`crates/deka_ui_macros/tests/ui/Cargo.toml`. The harness runs `cargo fetch
+--locked` for that manifest's locked dependencies and needs network access on a
+cold cache. It then runs release-mode, locked, offline compile-fail checks; fetching the root workspace alone does not prepare them.
 Dependency preparation failures and checks with no compiler errors report the
 nested Cargo output. Each case keeps stdout (`.jsonl`) and stderr (`.stderr`)
 under `.target/ui-diagnostics/` for inspection.
