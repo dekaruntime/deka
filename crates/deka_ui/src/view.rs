@@ -1107,6 +1107,9 @@ impl Application for UiApp {
         else {
             return false;
         };
+        if node.attribute("value").unwrap_or_default() == value {
+            return false;
+        }
         let changed = match node.set_attribute("value", value.clone()) {
             Ok(changed) => changed,
             Err(error) => {
