@@ -163,7 +163,11 @@ export function mount(app, canvas) {
         input.addEventListener('keydown', event => { if (app.key_to(control.id,event.key)) event.preventDefault(); draw() })
         inputs.set(control.id,input); parent.append(input)
       }
-      if (input.value !== control.value && document.activeElement !== input) input.value = control.value
+      if (input.value !== control.value) {
+        const selection = [input.selectionStart, input.selectionEnd]
+        input.value = control.value
+        if (document.activeElement === input && selection.every(index => index !== null)) input.setSelectionRange(Math.min(selection[0],input.value.length),Math.min(selection[1],input.value.length))
+      }
       const bounds = canvas.getBoundingClientRect(), origin = parent.getBoundingClientRect()
       Object.assign(input.style,{left:`${bounds.left-origin.left+node.rect.x}px`,top:`${bounds.top-origin.top+node.rect.y}px`,width:`${node.rect.width}px`,height:`${node.rect.height}px`})
     }
