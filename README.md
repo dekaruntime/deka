@@ -1,14 +1,16 @@
 # deka
 
-deka is a programming language and runtime for building reliable web applications.
-It compiles to JavaScript and runs both natively and in the browser via WASM.
+deka is a runtime for building desktop applications.
+
+youtube video overview:
+
+[![deka - comparison between electron, tauri and cpp](https://img.youtube.com/vi/m_iv23GFlnw/0.jpg)](https://www.youtube.com/watch?v=m_iv23GFlnw)
 
 ## Quick links
 
 - **Homepage:** https://deka.gg
 - **Language tour:** https://deka.gg/tour
 - **Documentation:** https://deka.gg/docs
-- **CodeQuality Explorer:** https://explorer.deka.gg
 - **Releases:** https://github.com/dekaruntime/deka/releases
 
 ## Repository layout
