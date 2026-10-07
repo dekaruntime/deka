@@ -240,3 +240,26 @@ fn one_way_initial_value_survives_frames_and_two_way_updates_before_user_handler
         "edits write the retained effective value"
     );
 }
+
+#[test]
+fn two_way_handler_can_reject_an_edit_to_the_previous_value() {
+    let mut session = DesktopSession::new(UiApp::new(|| {
+        let text = signal("accepted".to_owned());
+        view! {
+            <view><input id="editor" value={text} onInput={move |_| text.set("accepted".into())}/>
+            <p>"Value: {text}"</p></view>
+        }
+    }));
+    session.frame(400., 300., 1.);
+    session.keyboard(key("tab"));
+    session.keyboard(command("a"));
+    commit(&mut session, "rejected");
+    assert_eq!(value(&session), "accepted");
+    assert!(
+        session
+            .frame(400., 300., 1.)
+            .nodes
+            .iter()
+            .any(|node| node.text.as_deref() == Some("Value: accepted"))
+    );
+}

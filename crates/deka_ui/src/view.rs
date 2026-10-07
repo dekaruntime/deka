@@ -811,6 +811,8 @@ fn prepare(
                     return Err("two-way value requires input or textarea".into());
                 }
                 let mut user = element.events.remove(&EventKind::Input);
+                let target = anchor.clone();
+                let owner = Rc::downgrade(context);
                 element.events.insert(
                     EventKind::Input,
                     Box::new(move |event| {
@@ -819,6 +821,17 @@ fn prepare(
                         }
                         if let Some(user) = &mut user {
                             user(event);
+                        }
+                        // A handler may normalize or reject the edit in this batch,
+                        // including restoring the previous authored value.
+                        let node = target.borrow().clone();
+                        if let (Some(node), Some(context), Ok(text)) =
+                            (node, owner.upgrade(), value.try_get())
+                        {
+                            match node.set_attribute("value", text) {
+                                Ok(changed) => context.node_changed(&node, changed),
+                                Err(error) => context.report(&node.slot(), "value", error),
+                            }
                         }
                     }),
                 );
