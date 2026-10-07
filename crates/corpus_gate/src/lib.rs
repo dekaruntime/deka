@@ -19,6 +19,7 @@ const RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 // Fill only absent guards; explicit corpus metadata remains authoritative.
 fn native_diagnostic(slug: &str) -> Option<&'static str> {
     Some(match slug {
+        "functions-duplicate-parameter-fail" => "duplicate parameter `x`",
         "basics-redeclare-let-as-const-fail"
         | "basics-redeclare-const-fail"
         | "functions-duplicate-module-const-in-body-fail" => "duplicate binding `x` in this scope",
@@ -221,6 +222,9 @@ fn native_duplicate_binding_fixture(case: &Case) -> bool {
         "basics-redeclare-let-as-const-fail" => "let x = 1\nconst x = 2\n",
         "basics-redeclare-const-fail" => {
             "import { echo } from \"io\"\nconst x = 1\nconst x = 2\necho(string(x))\n"
+        }
+        "functions-duplicate-parameter-fail" => {
+            "import { echo } from \"io\"\nfn add(x: number, x: number) number {\n  return x + x\n}\necho(string(add(1, 2)))\n"
         }
         "functions-duplicate-module-const-in-body-fail" => {
             "import { echo } from \"io\"\nconst x = 1\nconst x = 2\nfn read() number {\n  return x\n}\necho(string(read()))\n"
@@ -892,6 +896,51 @@ mod tests {
             load().expected_diagnostic_contains.as_deref(),
             Some("unknown identifier `crypto`")
         );
+    }
+
+    #[test]
+    fn original_duplicate_parameter_requires_the_named_check_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = dir.path().join("functions/duplicate_parameter_fail");
+        std::fs::create_dir_all(&fixture).unwrap();
+        let entry = fixture.join("test.fail.ds");
+        let metadata = fixture.join("test.json");
+        let source = "import { echo } from \"io\"\nfn add(x: number, x: number) number {\n  return x + x\n}\necho(string(add(1, 2)))\n";
+        std::fs::write(&entry, source).unwrap();
+        std::fs::write(&metadata, r#"{"stage":"run"}"#).unwrap();
+        let load = || load_cases(dir.path()).pop().unwrap();
+        let original = load();
+        assert_eq!(original.stage, Stage::Typecheck);
+        assert!(evaluate(&original, &run(false, "", "duplicate parameter `x`", true)).is_empty());
+        assert!(
+            !evaluate(
+                &original,
+                &run(
+                    false,
+                    "",
+                    "expression is unsupported by VM experiment",
+                    true
+                )
+            )
+            .is_empty()
+        );
+        assert!(!evaluate(&original, &run(true, "4\n", "", false)).is_empty());
+        std::fs::write(&entry, "fn add(x: number, x: number) number { return x; }").unwrap();
+        assert_eq!(load().stage, Stage::Run);
+        std::fs::write(&entry, source).unwrap();
+        std::fs::write(
+            &metadata,
+            r#"{"stage":"run","expectedDiagnosticContains":"explicit expectation"}"#,
+        )
+        .unwrap();
+        let explicit = load();
+        assert_eq!(explicit.stage, Stage::Run);
+        assert_eq!(
+            explicit.expected_diagnostic_contains.as_deref(),
+            Some("explicit expectation")
+        );
+        std::fs::write(&metadata, r#"{"stage":"run","packages":["other"]}"#).unwrap();
+        assert_eq!(load().stage, Stage::Run);
     }
 
     #[test]

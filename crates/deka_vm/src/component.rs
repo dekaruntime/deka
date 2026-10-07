@@ -5,7 +5,9 @@ use crate::{
     *,
 };
 use deka_native_ui::Node;
+mod read_api;
 pub(crate) mod tree;
+pub(crate) use read_api::operations as view_operations;
 
 pub struct InputSpec {
     pub target: usize,
@@ -28,12 +30,14 @@ pub struct Component {
     instance: Handle,
     handlers: Vec<Handle>,
     evaluations: usize,
-    tree: tree::Tree,
+    tree: std::rc::Rc<std::cell::RefCell<tree::Tree>>,
     bindings: std::collections::BTreeMap<Handle, Binding>,
     slots: Vec<Vec<usize>>,
 }
 impl Component {
-    pub fn new(program: Program, hosts: Hosts) -> Result<Self> {
+    pub fn new(program: Program, mut hosts: Hosts) -> Result<Self> {
+        let tree = std::rc::Rc::new(std::cell::RefCell::new(tree::Tree::default()));
+        hosts.bind_view_tree(tree.clone())?;
         let mut vm = Vm::new(program, hosts)?;
         let instance = vm.finish_sync()?;
         vm.pin(instance);
@@ -45,7 +49,7 @@ impl Component {
             instance,
             handlers: vec![],
             evaluations: 0,
-            tree: tree::Tree::default(),
+            tree,
             bindings: Default::default(),
             slots: vec![],
         })
@@ -125,7 +129,7 @@ impl Component {
         self.handlers.clear();
         let mut inputs = vec![];
         let wire = self.node(view, &mut inputs, vec![])?;
-        let root = self.tree.update_slots(wire, &self.slots)?;
+        let root = self.tree.borrow_mut().update_slots(wire, &self.slots)?;
         self.bindings.retain(|_, binding| binding.seen);
         let mut pins = vec![self.instance, view];
         pins.extend(self.handlers.iter().copied());
@@ -228,6 +232,12 @@ impl Component {
             .map(|h| self.text(*h))
             .transpose()?
             .unwrap_or_default();
+        let mut attributes = std::collections::BTreeMap::new();
+        for &name in crate::ui_contract::SCALAR_ATTRIBUTES {
+            if let Some(value) = fields.get(name) {
+                attributes.insert(name.into(), self.text(*value)?);
+            }
+        }
         let mut handler = fields
             .get("onClick")
             .map(|h| self.handler(*h))
@@ -259,6 +269,7 @@ impl Component {
         Ok(WireNode {
             tag,
             classes,
+            attributes,
             handler,
             children,
             text: None,

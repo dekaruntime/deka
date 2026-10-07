@@ -11,6 +11,8 @@ See [Module resolution errors](./native/import-refusals) for import locations an
 See [Native compiler refusals](./native/refusals) for source locations and
 construct-specific unsupported-operation messages.
 See [Forwarding type exports](./native/type-barrels) for type-only barrel imports.
+See [Function parameter names](./native/parameter-names) for distinct bindings
+and tuple parameters.
 
 Deka's native runtime compiles DekaScript to VM bytecode and renders a node tree
 through its Rust layout, text and animation implementation. The compiler,
@@ -23,6 +25,9 @@ compatibility with the older JavaScript backend.
 
 [Available host functions](native/host-functions.mdx) explains registration,
 validation and the removal of permission configuration.
+
+See [Typed host property setters](./native/host-property-setters) for checked
+writes through immutable opaque resource handles.
 
 See [Typed native callbacks](./native/host-callbacks) for queued Rust-to-DekaScript
 calls with typed arguments and awaitable completion.
@@ -673,6 +678,7 @@ See [Crypto module](./native/crypto-module) for Rust-backed hashes, authenticati
 - [Native JSON wire formats](./native/json-wire-formats)
 
 See [Importing nominal types through barrels](./native/import-aliases) for renamed factory signatures.
+- [Local names for imported types](./native/local-type-aliases)
 See [Nested generic calls](./native/generic-calls) for explicit call type arguments such as `JSON.parse<Array<number>>(text)`.
 
 See [JWT module](./native/jwt-module) for typed HS256 signing and verification.
@@ -681,5 +687,7 @@ See [Typed host enums](./native/host-enums) for named host values and enum Resul
 See [Native filesystem operations](./native/fs) for byte I/O, directory entries and typed filesystem Results.
 
 See the [native async corpus guide](./native/async-corpus) for the full async category and the exact archived-fixture migration.
+
+See [Reading the live view](./native/view-reads) for retained opaque node handles and typed tree reads.
 
 - [Native argument failure conformance](native/corpus-argument-negatives)

@@ -56,7 +56,38 @@ def check(packager, runtime, manifest, output):
         print("PASS: deka.json metadata/icon/resources, source change, relocated app handlers, signature, missing-payload failure")
 
 
+def check_view_reads(packager, runtime, manifest, output):
+    with tempfile.TemporaryDirectory(prefix="view-read-test-", dir=output) as tmp:
+        root = Path(tmp)
+        project = root / "project"
+        shutil.copytree(manifest.parent, project)
+        guide = Path(__file__).resolve().parents[2] / "docs/dekascript/native/view-reads.mdx"
+        source = guide.read_text().split("```deka\n", 1)[1].split("```", 1)[0]
+        (project / "main.dsx").write_text(source)
+        config = json.loads(manifest.read_text())
+        config["desktop"].update(productName="View Read Test", identifier="gg.deka.test.viewread", entry="main.dsx", entryFunction="App")
+        config_path = project / "deka.json"
+        config_path.write_text(json.dumps(config))
+        subprocess.run([packager, config_path, runtime, "--out", root / "stage"], check=True)
+        relocated = root / "elsewhere/View Read Test.app"
+        shutil.copytree(root / "stage/bundle/macos/View Read Test.app", relocated)
+        shutil.rmtree(root / "stage")
+        shutil.rmtree(project)
+        contents = relocated / "Contents"
+        with (contents / "Info.plist").open("rb") as stream:
+            info = plistlib.load(stream)
+        executable = contents / "MacOS" / info["CFBundleExecutable"]
+        result = subprocess.run([executable, "--snapshot", "1"], cwd=root, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        scene = json.loads(result.stdout)
+        assert sum(node.get("text") == "Hello, Deka!" for node in scene["nodes"]) == 2, scene
+        subprocess.run(["/usr/bin/codesign", "--verify", "--strict", relocated], check=True)
+        print("PASS: compiler-free relocated view-read app, deleted source/staging, button reads retained tree")
+
+
 if __name__ == "__main__":
     if len(sys.argv) != 5:
         raise SystemExit("usage: test_bundle.py packager runtime deka.json output-directory")
-    check(*(Path(arg).resolve() for arg in sys.argv[1:]))
+    paths = tuple(Path(arg).resolve() for arg in sys.argv[1:])
+    check(*paths)
+    check_view_reads(*paths)

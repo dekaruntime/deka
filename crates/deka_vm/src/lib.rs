@@ -42,6 +42,8 @@ mod machine;
 pub mod package;
 mod stack;
 mod turn;
+#[cfg(any(feature = "compiler", feature = "ui"))]
+mod ui_contract;
 pub use turn::Turn;
 #[cfg(feature = "host")]
 pub mod time;

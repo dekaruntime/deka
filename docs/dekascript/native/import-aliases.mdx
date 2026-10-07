@@ -45,6 +45,5 @@ import does not make those types interchangeable.
 An `import type` binding remains usable only as a type. Import an enum's
 constructor as an ordinary value when you need to construct its cases.
 
-Use one local spelling for each nominal type in a module. Importing the same
-nominal declaration under multiple local names is a separate current checker
-limitation ([multiple local aliases](https://github.com/dekaruntime/deka/issues/1387)).
+Multiple local names for the same declaration also retain its identity; see
+[local type aliases](./local-type-aliases).

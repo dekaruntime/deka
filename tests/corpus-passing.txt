@@ -384,6 +384,7 @@ functions-arrow-function-rejected-fail
 functions-arrow-no-context-rejected
 functions-async-fn-expression-rejected
 functions-bare-hole-fail
+functions-duplicate-parameter-fail
 functions-bare-return-in-non-void-fail
 functions-bare-return-in-void-fail
 functions-call-object-as-function

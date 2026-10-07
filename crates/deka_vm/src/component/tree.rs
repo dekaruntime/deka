@@ -23,6 +23,7 @@ struct Prepared {
     kind: Kind,
     slot: Vec<usize>,
     classes: String,
+    attributes: BTreeMap<String, String>,
     style: Style,
     text: Option<String>,
     handler: Option<usize>,
@@ -45,6 +46,7 @@ impl Prepared {
             kind,
             slot,
             classes: wire.classes,
+            attributes: wire.attributes,
             style,
             text: wire.text,
             handler: wire.handler,
@@ -56,12 +58,14 @@ impl Prepared {
         })
     }
 }
-struct Record {
+pub(super) struct Record {
     id: Identity,
     owner: Rc<Owner>,
     parent: Option<Weak<RefCell<Record>>>,
     authored_text: Option<String>,
     authored_classes: String,
+    authored_attributes: BTreeMap<String, String>,
+    attributes: BTreeMap<String, String>,
     kind: Kind,
     slot: Vec<usize>,
     classes: String,
@@ -77,7 +81,7 @@ struct Owner;
 /// One allocation is one node. Children own their subtree; parent/index edges
 /// are weak. The renderer receives snapshots, never these resource references.
 #[derive(Clone)]
-pub(crate) struct NodeHandle(Rc<RefCell<Record>>);
+pub(crate) struct NodeHandle(pub(super) Rc<RefCell<Record>>);
 impl PartialEq for NodeHandle {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
@@ -85,6 +89,48 @@ impl PartialEq for NodeHandle {
 }
 impl Eq for NodeHandle {}
 impl NodeHandle {
+    pub(super) fn is_element(&self) -> bool {
+        matches!(self.0.borrow().kind, Kind::Element(_))
+    }
+    pub(super) fn parent(&self) -> Option<Self> {
+        self.0.borrow().parent.as_ref()?.upgrade().map(Self)
+    }
+    pub(super) fn children(&self) -> Vec<Self> {
+        self.0
+            .borrow()
+            .children
+            .iter()
+            .filter(|node| node.is_element())
+            .cloned()
+            .collect()
+    }
+    pub(super) fn text_content(&self) -> String {
+        let record = self.0.borrow();
+        record.text.clone().unwrap_or_default()
+            + &record
+                .children
+                .iter()
+                .map(Self::text_content)
+                .collect::<String>()
+    }
+    pub(super) fn attribute(&self, name: &str) -> Option<String> {
+        let record = self.0.borrow();
+        if name == "className" {
+            record.attributes.get(name).map(|_| record.classes.clone())
+        } else {
+            record.attributes.get(name).cloned()
+        }
+    }
+    pub(super) fn element_by_id(&self, id: &str) -> Option<Self> {
+        if self.is_element() && self.attribute("id").as_deref() == Some(id) {
+            return Some(self.clone());
+        }
+        self.0
+            .borrow()
+            .children
+            .iter()
+            .find_map(|node| node.element_by_id(id))
+    }
     fn snapshot(&self) -> Node {
         Self::snapshot_record(&self.0.borrow())
     }
@@ -106,6 +152,12 @@ pub(crate) struct Tree {
     owner: Rc<Owner>,
 }
 impl Tree {
+    pub(super) fn owns(&self, node: &NodeHandle) -> bool {
+        Rc::ptr_eq(&self.owner, &node.0.borrow().owner)
+    }
+    pub(super) fn element_by_id(&self, id: &str) -> Option<NodeHandle> {
+        self.root.as_ref()?.element_by_id(id)
+    }
     /// Internal identity lookup, not an authored id or a public selector API.
     fn lookup(&self, id: Identity) -> Option<NodeHandle> {
         let record = self.records.get(&id)?.upgrade()?;
@@ -147,6 +199,8 @@ impl Tree {
                     kind: next.kind.clone(),
                     slot: next.slot.clone(),
                     authored_classes: next.classes.clone(),
+                    authored_attributes: next.attributes.clone(),
+                    attributes: next.attributes.clone(),
                     classes: next.classes.clone(),
                     authored_text: next.text.clone(),
                     text: next.text.clone(),
@@ -184,6 +238,25 @@ impl Tree {
             record.classes = next.classes;
             record.style = next.style;
         }
+        let names: std::collections::BTreeSet<_> = record
+            .authored_attributes
+            .keys()
+            .chain(next.attributes.keys())
+            .cloned()
+            .collect();
+        for name in names {
+            if record.authored_attributes.get(&name) != next.attributes.get(&name) {
+                match next.attributes.get(&name) {
+                    Some(value) => {
+                        record.attributes.insert(name.clone(), value.clone());
+                    }
+                    None => {
+                        record.attributes.remove(&name);
+                    }
+                }
+            }
+        }
+        record.authored_attributes = next.attributes;
         if record.authored_text != next.text {
             record.authored_text = next.text.clone();
             record.text = next.text;
@@ -247,7 +320,7 @@ mod ownership_tests {
                 count:fn(){count+=1;}, red:fn(){red=red==false;}, noise:fn(){noise+=1;count+=2;} };
         }"#,&Hosts::default(),"App").unwrap(),Hosts::default()).unwrap();
         app.render().unwrap();
-        let paragraph = app.tree.root.as_ref().unwrap().0.borrow().children[0].clone();
+        let paragraph = app.tree.borrow().root.as_ref().unwrap().0.borrow().children[0].clone();
         let leaf = paragraph.0.borrow().children[0].clone();
         let hand_style = WireNode {
             tag: "p".into(),
@@ -447,18 +520,18 @@ mod typed_node_tests {
         )
         .unwrap();
         app.render().unwrap();
-        let node = app.tree.root.as_ref().unwrap().0.borrow().children[0].clone();
+        let node = app.tree.borrow().root.as_ref().unwrap().0.borrow().children[0].clone();
         let id = node.0.borrow().id;
         let weak = Rc::downgrade(&node.0);
         let a = HostHandle::from_shared("TestNode", node.0.clone());
-        let b = HostHandle::from_shared("TestNode", app.tree.lookup(id).unwrap().0);
+        let b = HostHandle::from_shared("TestNode", app.tree.borrow().lookup(id).unwrap().0);
         assert_eq!(a, b); // Repeated lookups name one allocation, not proxy wrappers.
         app.call("retain", vec![HostValue::Handle(a)]).unwrap();
         drop(b);
         drop(node);
         app.call("rename", vec![]).unwrap();
         app.render().unwrap();
-        let current = app.tree.root.as_ref().unwrap().0.borrow().children[0].clone();
+        let current = app.tree.borrow().root.as_ref().unwrap().0.borrow().children[0].clone();
         assert!(Rc::ptr_eq(&weak.upgrade().unwrap(), &current.0));
         drop(current);
         assert_eq!(
@@ -475,7 +548,7 @@ mod typed_node_tests {
         app.call("forget", vec![]).unwrap();
         app.render().unwrap();
         assert!(weak.upgrade().is_none());
-        assert!(app.tree.lookup(id).is_none());
+        assert!(app.tree.borrow().lookup(id).is_none());
     }
     #[test]
     fn node_values_cannot_be_forged_as_records_or_replaced_with_other_brands() {
