@@ -60,8 +60,8 @@ fn class_colon_toggle_live_attributes_option_and_iterator_children_patch() {
         let open = signal(false);
         view! {
             <view>
-                <p className={move || if open.get(){"p-4"}else{"p-2"}} class:rounded={open}>"Kept"</p>
-                {move || open.get().then(|| view!{<p>"Optional"</p>})}
+                <p className={move || if open.get().unwrap(){"p-4"}else{"p-2"}} class:rounded={open}>"Kept"</p>
+                {move || open.get().unwrap().then(|| view!{<p>"Optional"</p>})}
                 {(0..2).map(|n| view!{<p>{n}</p>})}
                 <button onClick={move |_| open.toggle()}>"Toggle"</button>
             </view>
@@ -91,7 +91,7 @@ fn escaped_braces_and_repeated_string_interpolations_preserve_text_fragments() {
 fn input_and_keydown_markup_register_real_typed_closures() {
     let app = UiApp::new(|| {
         let value = signal(String::new());
-        view! {<view><input value={move || value.get()}
+        view! {<view><input value={move || value.get().unwrap()}
         onInput={move |event| {if let Event::Input(text)=event {value.set(text);}}}
         onKeyDown={move |event| {if event==Event::KeyDown("Escape".into()) {value.set(String::new());}}}/>{value}</view>}
     });

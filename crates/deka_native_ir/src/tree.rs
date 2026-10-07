@@ -114,24 +114,24 @@ impl NodeHandle {
     pub fn patch_text(&self, text: String) -> bool {
         self.0.borrow_mut().patch_text(Some(text))
     }
-    pub fn patch_attribute(&self, name: &str, value: String) -> bool {
+    pub fn patch_attribute(&self, name: &str, value: String) -> Result<bool> {
         if name == "className" {
             return self.patch_classes(value);
         }
         let mut record = self.0.borrow_mut();
         if record.authored_attributes.get(name) == Some(&value) {
-            return false;
+            return Ok(false);
         }
         record
             .authored_attributes
             .insert(name.into(), value.clone());
         record.attributes.insert(name.into(), value);
-        true
+        Ok(true)
     }
-    pub fn patch_classes(&self, classes: String) -> bool {
+    pub fn patch_classes(&self, classes: String) -> Result<bool> {
         let mut record = self.0.borrow_mut();
         if record.authored_classes == classes {
-            return false;
+            return Ok(false);
         }
         let wire = WireNode {
             tag: match &record.kind {
@@ -142,14 +142,14 @@ impl NodeHandle {
             classes: classes.clone(),
             ..Default::default()
         };
-        let style = wire.style().expect("invalid bound native classes");
+        let style = wire.style()?;
         record
             .authored_attributes
             .insert("className".into(), classes.clone());
         record
             .attributes
             .insert("className".into(), classes.clone());
-        record.patch_classes(classes, style)
+        Ok(record.patch_classes(classes, style))
     }
     pub fn is_element(&self) -> bool {
         matches!(self.0.borrow().kind, Kind::Element(_))

@@ -13,7 +13,7 @@ use deka_ui::prelude::*;
 let scope = Scope::new();
 let mut count = scope.run(|| {
     let count = signal(0);
-    let doubled = derived(move || count.get() * 2);
+    let doubled = derived(move || count.get().unwrap_or_default() * 2);
     effect(move || println!("Count: {count}, doubled: {doubled}"));
     count
 });
@@ -34,7 +34,7 @@ Count: 1, doubled: 2
 ```
 
 A `Signal<T>` is a Copy handle, including when `T` is a `String`. `get()` clones
-its current value and records a dependency when a reaction is running. Formatting
+its current value into a `Result` and records a dependency when a reaction is running. Formatting
 a signal with `Display` records the same read. `set(value)` replaces the value;
 `update(|value| ...)` changes it in place. Boolean signals provide `toggle()`;
 numeric signals support `+=` and `-=`.
@@ -62,10 +62,10 @@ the final values. `UiApp` batches each dispatched event automatically.
 
 Create signals and reactions inside `Scope::run` or `Scope::batch`. A scope owns
 their values and closures. Dropping its last clone releases them; Copy signal
-handles do not retain the scope. Checked `try_get`, `try_set` and `try_update` return a typed `ReactiveError`
-after disposal. Convenience `get` (for `T: Default`), `set` and operators report
-errors through `Scope::on_error` or stderr; reads render the default value. Signals and scopes stay on their UI
-thread; a reaction cannot subscribe to a different scope's signals.
+handles do not retain the scope. Reads and checked writes after that point return
+`ReactiveError::DroppedScope`; copied handles cannot alias a later application's
+state. Signals and scopes stay on their UI thread; reading a different scope's
+signal during a reaction returns `ReactiveError::CrossScopeRead`.
 
 When an update or batch panics, read tracking, context and batch depth are restored.
 Partial writes stay queued without executing reactions during unwinding. After
@@ -74,7 +74,20 @@ handle their errors at the event boundary.
 
 Dynamic child registrations own the signals and reactions created while building those children. Replacing the children releases those values and recycles signal, subscriber and observer slots. Copied handles never alias a later allocation in a reused slot. Ordinary scope-level state remains live until its scope drops.
 
+`Signal::get`, `Derived::get`, `Signal::try_set`, `Signal::update`, and `Effect::dispose` return `Result` with `ReactiveError`. A copied signal reports `DroppedScope` after teardown or `DisposedSignal` after its Dynamic owner releases it, even if the slot has been reused. Convenience `set`, `toggle`, `+=`, and `-=` report write errors to the sink without unwinding. Signal Display reports a stale read and renders an empty string.
+
 Signals and nested reactions created during an effect execution belong to that
 execution. Its next run releases them before computing replacements; disposing
-the effect or its Dynamic child releases the last execution. Copied handles from
-a previous execution return `DisposedSignal`, even when their slot is reused.
+the effect or its Dynamic child releases the last execution. `try_get` returns
+a typed failure without automatic reporting; `get` also reports failures to the
+host sink. The checked result still lets callers choose their rendering fallback.
+
+Convenience failures and invalid bindings reach the error sink immediately, once
+per occurrence. The default sink writes node path, binding and message to stderr.
+`UiApp::new_with_error_sink` and `launch_with_options` accept an `ErrorSink`
+(`Rc<dyn Fn(&UiError)>`) installed before mounting. Set `LaunchOptions.error_sink`
+to your callback; construct options with `LaunchOptions::new(WindowOptions::new(...))`.
+`take_errors()` is an optional diagnostic drain retaining only the newest 128
+messages; it does not deliver errors again. Class toggles still render `false`
+and formatted stale text renders an empty string after reporting the failure.
+Invalid builder operations produce mount errors without unwinding.

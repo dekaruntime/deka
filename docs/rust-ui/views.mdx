@@ -35,7 +35,7 @@ Count: 3 Add one
 ```
 
 `attr(name, value)` sets a scalar value once. A closure is a live attribute:
-`attr("className", move || if open.get() { "opacity-100" } else { "opacity-0" })`.
+`attr("className", move || if open.get().unwrap_or_default() { "opacity-100" } else { "opacity-0" })`.
 The supported scalar attributes are `id`, `className`, `value` and `placeholder`.
 Tags and utilities use the existing native catalog; unsupported vocabulary
 fails with a diagnostic. `class("opacity-0", open)` accepts a boolean signal,
@@ -51,7 +51,7 @@ accepts iterators of views. For example:
 ```rust
 let open = signal(false);
 let view = View::element("view")
-    .child(move || open.get().then(|| View::element("p").child("Visible")))
+    .child(move || open.get().unwrap_or_default().then(|| View::element("p").child("Visible")))
     .children(["First", "Second"].into_iter()
         .map(|text| View::element("p").child(text)));
 ```
@@ -80,3 +80,5 @@ edits to other properties.
 `Host` and `Renderer::render_at` headlessly. The default `desktop` feature provides
 `launch(app)` on the existing window and `launch_with(app, WindowOptions, reduced_motion)`
 for explicit window options. Disable default features for headless use.
+
+Mount and reactive patch failures are available through `UiApp::take_errors()`. An invalid class string or failed Dynamic slot replacement keeps the previous valid tree and allows other reactions to finish. Initial invalid markup mounts an empty root with an error; correcting a live binding can recover on the next authored change.
