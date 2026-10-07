@@ -112,9 +112,11 @@ assertions can be removed.
 
 ## Browser and release evidence
 
-The website owns browser tests for its tour. They must exercise the same compiled
-runtime and renderer as native demos: real source edits, event dispatch and
-resulting scene/output. Browser screenshots complement semantic assertions;
+The website owns browser tests for its tour. The Rust tour shows read-only
+repository source beside a precompiled wasm result. Its browser gate exercises
+all 27 shared Rust lesson constructors and parity scripts, real pointer/key/input
+events, renderer scenes and visible canvas pixels; it also checks lesson switching
+in one module instance and the 400px layout. No compiler or VM runs in that tour. Browser screenshots complement semantic assertions;
 they do not prove native platform input, menus, accessibility or packaging.
 
 Release publication requires the reusable native-runtime workflow and existing
