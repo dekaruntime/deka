@@ -1920,6 +1920,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka-ui"
+version = "0.1.0"
+dependencies = [
+ "deka_native_ir",
+ "deka_native_ui",
+]
+
+[[package]]
 name = "deka-validation"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

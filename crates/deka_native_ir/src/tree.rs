@@ -94,6 +94,54 @@ impl PartialEq for NodeHandle {
 }
 impl Eq for NodeHandle {}
 impl NodeHandle {
+    pub fn slot(&self) -> Vec<usize> {
+        self.0.borrow().slot.clone()
+    }
+    pub fn all_children(&self) -> Vec<Self> {
+        self.0.borrow().children.clone()
+    }
+    /// Patch one authored text property, preserving effective edits until its
+    /// authored value changes. This is the same ownership rule used by retain.
+    pub fn patch_text(&self, text: String) -> bool {
+        self.0.borrow_mut().patch_text(Some(text))
+    }
+    pub fn patch_attribute(&self, name: &str, value: String) -> bool {
+        if name == "className" {
+            return self.patch_classes(value);
+        }
+        let mut record = self.0.borrow_mut();
+        if record.authored_attributes.get(name) == Some(&value) {
+            return false;
+        }
+        record
+            .authored_attributes
+            .insert(name.into(), value.clone());
+        record.attributes.insert(name.into(), value);
+        true
+    }
+    pub fn patch_classes(&self, classes: String) -> bool {
+        let mut record = self.0.borrow_mut();
+        if record.authored_classes == classes {
+            return false;
+        }
+        let wire = WireNode {
+            tag: match &record.kind {
+                Kind::Text => String::new(),
+                Kind::Element(tag) => tag.clone(),
+            },
+            text: matches!(&record.kind, Kind::Text).then(String::new),
+            classes: classes.clone(),
+            ..Default::default()
+        };
+        let style = wire.style().expect("invalid bound native classes");
+        record
+            .authored_attributes
+            .insert("className".into(), classes.clone());
+        record
+            .attributes
+            .insert("className".into(), classes.clone());
+        record.patch_classes(classes, style)
+    }
     pub fn is_element(&self) -> bool {
         matches!(self.0.borrow().kind, Kind::Element(_))
     }
@@ -183,6 +231,53 @@ impl super::selectors::SelectorTree for Tree {
     }
 }
 impl Tree {
+    pub fn snapshot(&self) -> Option<Node> {
+        self.root.as_ref().map(NodeHandle::snapshot)
+    }
+    /// Replace only a structural child slot using the existing retention path.
+    /// Builders and wire values are transient; this store remains the sole tree.
+    pub fn replace_slot(
+        &mut self,
+        parent: &NodeHandle,
+        prefix: &[usize],
+        wires: Vec<WireNode>,
+        slots: &[Vec<usize>],
+    ) -> Result<Vec<NodeHandle>> {
+        if prefix.is_empty() || !self.owns(parent) {
+            return Err("invalid retained structural slot".into());
+        }
+        let mut slots = slots.iter().cloned();
+        let prepared = wires
+            .into_iter()
+            .map(|wire| Prepared::with_slots(wire, &mut slots))
+            .collect::<Result<Vec<_>>>()?;
+        if prepared.iter().any(|next| !next.slot.starts_with(prefix)) {
+            return Err("child lies outside its structural slot".into());
+        }
+        let old = parent.all_children();
+        let mut replacements = Vec::with_capacity(prepared.len());
+        for next in prepared {
+            let current = old.iter().find(|node| node.slot() == next.slot).cloned();
+            let node = self.retain(current, next)?;
+            node.0.borrow_mut().parent = Some(Rc::downgrade(&parent.0));
+            replacements.push(node);
+        }
+        let mut children: Vec<_> = old
+            .iter()
+            .filter(|node| !node.slot().starts_with(prefix))
+            .cloned()
+            .collect();
+        children.extend(replacements.iter().cloned());
+        children.sort_by_key(NodeHandle::slot);
+        for node in old {
+            if !children.contains(&node) {
+                node.0.borrow_mut().parent = None;
+            }
+        }
+        parent.0.borrow_mut().children = children;
+        self.records.retain(|_, record| record.strong_count() > 0);
+        Ok(replacements)
+    }
     pub fn query(&self, selector: &super::selectors::Selector, all: bool) -> Vec<NodeHandle> {
         let Some(root) = &self.root else {
             return vec![];
@@ -273,11 +368,7 @@ impl Tree {
             }
         }
         let mut record = node.0.borrow_mut();
-        if record.authored_classes != next.classes {
-            record.authored_classes = next.classes.clone();
-            record.classes = next.classes;
-            record.style = next.style;
-        }
+        record.patch_classes(next.classes, next.style);
         let names: std::collections::BTreeSet<_> = record
             .authored_attributes
             .keys()
@@ -297,10 +388,7 @@ impl Tree {
             }
         }
         record.authored_attributes = next.attributes;
-        if record.authored_text != next.text {
-            record.authored_text = next.text.clone();
-            record.text = next.text;
-        }
+        record.patch_text(next.text);
         if record.handler != next.handler {
             record.handler = next.handler;
         }
@@ -309,5 +397,25 @@ impl Tree {
         }
         drop(record);
         Ok(node)
+    }
+}
+
+impl Record {
+    fn patch_text(&mut self, text: Option<String>) -> bool {
+        if self.authored_text == text {
+            return false;
+        }
+        self.authored_text = text.clone();
+        self.text = text;
+        true
+    }
+    fn patch_classes(&mut self, classes: String, style: Style) -> bool {
+        if self.authored_classes == classes {
+            return false;
+        }
+        self.authored_classes = classes.clone();
+        self.classes = classes;
+        self.style = style;
+        true
     }
 }
