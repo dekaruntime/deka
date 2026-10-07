@@ -6,9 +6,9 @@ mod layout;
 mod layout_motion;
 mod motion;
 mod text;
-#[cfg(feature = "gpu")]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub mod window;
-#[cfg(feature = "gpu")]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub use window::{Snapshot, run, snapshot};
 
 /// Wakes whatever drives an [`Application`] (the desktop window's event loop)

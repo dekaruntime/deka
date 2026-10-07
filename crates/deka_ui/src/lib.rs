@@ -1,12 +1,17 @@
 //! Rust UI authoring support for deka (APS 74).
 //!
 //! Reactive Rust authoring on deka's shared retained tree and renderer.
+extern crate self as deka_ui;
 pub mod reactive;
+#[cfg(feature = "tour")]
+pub mod tour;
+#[cfg(feature = "web")]
+pub mod web;
 pub use deka_ui_macros::{component, view};
 pub use reactive::{Derived, Effect, ReactiveError, Scope, Signal, batch, derived, effect, signal};
 mod retained;
 mod view;
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub use deka_native_ui::window::Options as WindowOptions;
 pub use retained::{
     ComponentState, NodeRef, ViewClassList, ViewElement, ViewError, ViewNode, ViewTree, node_ref,
@@ -29,11 +34,13 @@ where
 {
     P::builder()
 }
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub use view::{LaunchOptions, launch, launch_with, launch_with_options};
 
 /// Common Rust UI authoring imports.
 pub mod prelude {
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    pub use crate::launch;
     pub use crate::{Children, Event, EventKind, UiApp, View};
     pub use crate::{
         ComponentState, NodeRef, ViewClassList, ViewElement, ViewError, ViewNode, ViewTree,
@@ -42,7 +49,10 @@ pub mod prelude {
     pub use crate::{
         Derived, Effect, ReactiveError, Scope, Signal, batch, derived, effect, signal,
     };
-    #[cfg(feature = "desktop")]
+    #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
     pub use crate::{LaunchOptions, WindowOptions, launch, launch_with, launch_with_options};
     pub use crate::{component, view};
 }
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub use web::launch;

@@ -8,6 +8,8 @@ on:
       - 'crates/deka_native_ir/**'
       - 'crates/deka_native_ui/**'
       - 'crates/deka_ui/**'
+      - 'crates/deka_ui_tour/**'
+      - 'scripts/build-rust-tour.py'
       - 'crates/deka_ui_macros/**'
       - 'crates/deka_vm/**'
       - 'crates/deka_cli/**'
@@ -52,9 +54,9 @@ jobs:
           cargo test --locked --release -p deka_cli --no-default-features
       - name: Check Rust UI and compare every tour lesson with the VM
         run: |
-          cargo fmt -p deka-ui -p deka-ui-macros --check
-          cargo check --locked --release -p deka-ui -p deka-ui-macros --all-targets
-          cargo clippy --locked --release -p deka-ui -p deka-ui-macros --all-targets --all-features --no-deps -- -D warnings
+          cargo fmt -p deka-ui -p deka-ui-macros -p deka-ui-tour --check
+          cargo check --locked --release -p deka-ui -p deka-ui-macros -p deka-ui-tour --all-targets
+          cargo clippy --locked --release -p deka-ui -p deka-ui-macros -p deka-ui-tour --all-targets --all-features --no-deps -- -D warnings
           ./scripts/test-rust-ui.sh
       - name: Compile source and execute without a compiler
         run: |
@@ -151,3 +153,27 @@ jobs:
           cargo build --locked --profile native -p deka_vm --no-default-features --features gpu --bin dvm-ui
           cargo build --locked --release --manifest-path tools/deka-package/Cargo.toml
           python3 tools/deka-package/test_bundle.py target/release/dvm-package target/native/dvm-ui crates/deka_vm/examples/packaged-counter/deka.json target/package-tests
+
+  rust-tour-wasm:
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - run: sccache --show-stats
+      - run: cargo install wasm-bindgen-cli --version 0.2.128 --locked
+      - name: Build the compiled Rust tour and source/expectation manifests
+        run: |
+          cargo clippy --locked --target wasm32-unknown-unknown -p deka-ui-tour --no-deps -- -D warnings
+          python3 scripts/build-rust-tour.py --out .tmp/rust-tour
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rust-tour
+          path: .tmp/rust-tour
+          if-no-files-found: error
