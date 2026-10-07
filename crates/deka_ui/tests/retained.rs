@@ -413,3 +413,99 @@ fn text_refs_and_multi_root_state_add_no_layout_nodes() {
         );
     }
 }
+
+#[test]
+fn descendant_and_sibling_bindings_preserve_unrelated_ancestor_text_edits() {
+    let input = Rc::new(Cell::new(None));
+    let output = input.clone();
+    let app =
+        UiApp::new(move || {
+            let count = signal(0);
+            output.set(Some(count));
+            View::element("view")
+                .attr("id", "root")
+                .child(View::element("p").attr("id", "edited").child(
+                    View::element("span").child(View::live_text(move || count.get().unwrap())),
+                ))
+                .child(View::element("p").child(View::dynamic(move || count.get().unwrap())))
+        });
+    let root = app.tree().get_element_by_id("root").unwrap();
+    let edited = app.tree().get_element_by_id("edited").unwrap();
+    edited.set_text_content("Hand edit").unwrap();
+    input.get().unwrap().set(1);
+    assert_eq!(edited.text_content(), "Hand edit");
+    assert_eq!(
+        app.tree()
+            .get_element_by_id("edited")
+            .unwrap()
+            .text_content(),
+        "Hand edit"
+    );
+    root.set_text_content("Root edit").unwrap();
+    input.get().unwrap().set(2);
+    assert_eq!(root.text_content(), "Root edit");
+    assert_eq!(
+        app.tree().get_element_by_id("root").unwrap().text_content(),
+        "Root edit"
+    );
+}
+#[test]
+fn node_ref_clears_after_dynamic_detachment_and_detached_text_does_not_dirty() {
+    let reference = node_ref();
+    let mounted = reference.clone();
+    let input = Rc::new(Cell::new(None));
+    let output = input.clone();
+    let app = UiApp::new(move || {
+        let shown = signal(true);
+        output.set(Some(shown));
+        view! {<view>{move || shown.get().unwrap().then(||
+        view!{<p node_ref={mounted.clone()}>"Child"</p>})}</view>}
+    });
+    let copied = reference.get().unwrap();
+    input.get().unwrap().set(false);
+    assert!(reference.get().is_none());
+    let before = app.property_patches();
+    copied.set_text_content("Detached edit").unwrap();
+    assert_eq!(copied.text_content(), "Detached edit");
+    assert_eq!(app.property_patches(), before);
+    input.get().unwrap().set(true);
+    let remounted = reference.get().unwrap();
+    assert_ne!(copied, remounted);
+    drop(app);
+    assert!(reference.get().is_none());
+}
+#[test]
+fn ref_wrapped_non_element_builders_report_misuse() {
+    let reference = node_ref();
+    let app = UiApp::new(|| View::fragment([]).node_ref(reference).child("bad"));
+    assert_eq!(app.take_errors().len(), 1);
+    let reference = node_ref();
+    let app = UiApp::new(|| View::dynamic(|| "child").node_ref(reference).child("bad"));
+    assert_eq!(app.take_errors().len(), 1);
+}
+
+#[test]
+fn direct_text_binding_reclaims_its_container_but_preserves_outer_edit() {
+    let input = Rc::new(Cell::new(None));
+    let output = input.clone();
+    let app = UiApp::new(move || {
+        let count = signal(0);
+        output.set(Some(count));
+        View::element("view").attr("id", "root").child(
+            View::element("p")
+                .attr("id", "bound")
+                .child(View::live_text(move || count.get().unwrap())),
+        )
+    });
+    let root = app.tree().get_element_by_id("root").unwrap();
+    let bound = app.tree().get_element_by_id("bound").unwrap();
+    bound.set_text_content("Edit").unwrap();
+    input.get().unwrap().set(0);
+    assert_eq!(bound.text_content(), "Edit");
+    input.get().unwrap().set(1);
+    assert_eq!(bound.text_content(), "1");
+    root.set_text_content("Outer edit").unwrap();
+    input.get().unwrap().set(2);
+    assert_eq!(bound.text_content(), "2");
+    assert_eq!(root.text_content(), "Outer edit");
+}

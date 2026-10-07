@@ -76,3 +76,12 @@ including the node's own component root. Use a Rust struct of Signal handles for
 mutable state. Other types and unpublished locals return `None`. Publishing adds
 no layout node, including components with multiple roots. Dropping Dynamic
 registrations releases their published state and signals.
+
+`NodeRef::get()` resolves only a node attached to the live app. After a Dynamic
+slot is removed, or the app drops, it returns `None`; an earlier copied
+`ViewNode` still owns its detached allocation. `set_text_content` remains valid
+on that allocation and never dirties or wakes the application frame.
+
+A changed binding reclaims text edits only on its target or direct text
+container. Changes inside a deeper descendant or an unrelated sibling leave
+an ancestor's hand edit intact. Equal authored values also preserve edits.

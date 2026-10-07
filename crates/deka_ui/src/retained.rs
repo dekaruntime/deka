@@ -160,6 +160,8 @@ impl ViewNode {
     pub fn text_content(&self) -> String {
         self.node.text_content()
     }
+    /// Detached handles may still be edited. Such edits affect only their
+    /// retained allocation and never dirty or wake an application frame (APS 73).
     pub fn set_text_content(&self, text: impl Into<String>) -> Result<(), ViewError> {
         let changed = self.node.set_text_content(text.into());
         self.changed(changed);
@@ -296,8 +298,12 @@ pub fn node_ref() -> NodeRef {
     NodeRef::default()
 }
 impl NodeRef {
+    /// Resolve only a node currently attached to the live application tree.
+    /// A previously copied ViewNode retains its allocation after detachment.
     pub fn get(&self) -> Option<ViewNode> {
-        self.0.node.borrow().clone()
+        let node = self.0.node.borrow().clone()?;
+        let context = node.context.upgrade()?;
+        context.is_attached(&node.node).then_some(node)
     }
     pub(crate) fn check(&self, scope: u64) -> Result<(), String> {
         if self.0.owner.get().is_some_and(|owner| owner != scope) {

@@ -169,11 +169,16 @@ impl NodeHandle {
         Ok(true)
     }
     fn reclaim_text_overrides(&self) {
-        let mut current = Some(self.clone());
-        while let Some(node) = current {
-            let mut record = node.0.borrow_mut();
-            record.text_override = None;
-            current = record.parent.as_ref().and_then(Weak::upgrade).map(Self);
+        self.0.borrow_mut().text_override = None;
+    }
+    fn reclaim_text_binding(&self) {
+        self.reclaim_text_overrides();
+        // A direct text binding owns its text node and containing element's
+        // text presentation. It does not own any more distant ancestor.
+        if matches!(self.0.borrow().kind, Kind::Text)
+            && let Some(parent) = self.0.borrow().parent.as_ref().and_then(Weak::upgrade)
+        {
+            Self(parent).reclaim_text_overrides();
         }
     }
     /// Patch one authored text property, preserving effective edits until its
@@ -181,7 +186,7 @@ impl NodeHandle {
     pub fn patch_text(&self, text: String) -> bool {
         let changed = self.0.borrow_mut().patch_text(Some(text));
         if changed {
-            self.reclaim_text_overrides();
+            self.reclaim_text_binding();
         }
         changed
     }
@@ -522,7 +527,10 @@ impl Tree {
             record.children = children;
         }
         drop(record);
-        if text_changed || children_changed {
+        if text_changed {
+            node.reclaim_text_binding();
+        }
+        if children_changed {
             node.reclaim_text_overrides();
         }
         Ok(node)

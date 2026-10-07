@@ -374,18 +374,20 @@ impl Context {
             children: vec![],
         })
     }
-    pub(crate) fn node_changed(&self, node: &NodeHandle, changed: bool) {
-        if !changed {
-            return;
-        }
+    pub(crate) fn is_attached(&self, node: &NodeHandle) -> bool {
         let root = self.tree.borrow().root.clone();
         let mut current = Some(node.clone());
         while let Some(node) = current {
             if root.as_ref().is_some_and(|root| root == &node) {
-                self.changed(true);
-                return;
+                return true;
             }
             current = node.parent();
+        }
+        false
+    }
+    pub(crate) fn node_changed(&self, node: &NodeHandle, changed: bool) {
+        if changed && self.is_attached(node) {
+            self.changed(true);
         }
     }
     fn publish(&self, anchor: Anchor, state: Rc<dyn Any>) -> usize {
