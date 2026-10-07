@@ -1,6 +1,7 @@
 //! Corpus gate library (deka#1214): enumerate testsuite-corpus cases,
 //! materialize fixtures exactly like the corpus runner, check then execute them,
 //! and evaluate the outcome against each case's expectation.
+mod native_async_fixture;
 mod native_crypto_fixture;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -208,6 +209,7 @@ fn load_case(category: &str, name: &str, dir: &Path) -> Option<Case> {
     if missing_message && native_duplicate_binding_fixture(&case) {
         case.stage = Stage::Typecheck;
     }
+    native_async_fixture::migrate(&mut case, &metadata);
     Some(case)
 }
 

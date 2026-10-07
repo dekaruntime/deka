@@ -49,7 +49,7 @@ members = [
 exclude = ["vendor/vello_gpu", "vendor/vello_gpu_shaders"]
 
 [workspace.package]
-version = "0.60.2"
+version = "0.61.0"
 
 [workspace.dependencies]
 # V8 Runtime (Deno Core)
