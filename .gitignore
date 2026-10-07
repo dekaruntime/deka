@@ -26,5 +26,6 @@ tests/dump/.cache/
 /.target/
 /.tmp/
 
-# local evidence logs: they belong in PR bodies, not the repo
-/tasks/
+# run logs collected for PRs: they belong in the PR body, not the repo
+/tasks/evidence/
+/tasks/*-evidence.md
