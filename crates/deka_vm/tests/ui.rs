@@ -63,7 +63,7 @@ fn unknown_ui_attributes_fail_but_async_handlers_update_the_view() {
     let source = include_str!("../examples/counter.dsx");
     assert!(
         compiler::compile_entry(
-            &source.replace("className=", "unknown="),
+            &source.replace("class=", "unknown="),
             &Hosts::default(),
             "Counter"
         )
@@ -112,7 +112,7 @@ fn conditionals_select_one_branch_and_dynamic_lists_keep_live_handlers() {
         return (<view>
             <p>{initial}</p><p>{changed}</p><p>{selected}</p>
             {rows.map(fn(name: string) { return (<button
-                className={selected == name ? "bg-[#00ff00]" : "bg-[#ffffff]"}
+                class={selected == name ? "bg-[#00ff00]" : "bg-[#ffffff]"}
                 onClick={fn() { selected = name; }}>{name}</button>); })}
             {selected == "Two" ? <p>Second selected</p> : None}
         </view>);

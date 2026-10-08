@@ -2,7 +2,7 @@
 //!
 //! Structural slots retain static siblings when an earlier conditional is absent.
 //! Dynamic list positions are not author keys; reordered lists are still positional.
-use crate::{Node, Style, WireNode};
+use crate::{CLASS_ATTRIBUTE, Node, Style, WireNode};
 type Result<T> = std::result::Result<T, String>;
 use std::{
     cell::RefCell,
@@ -144,10 +144,10 @@ impl NodeHandle {
         if !matches!(record.kind, Kind::Element(_)) {
             return Err("attributes require an element".into());
         }
-        if !matches!(name, "id" | "className" | "value" | "placeholder") {
+        if !matches!(name, "id" | CLASS_ATTRIBUTE | "value" | "placeholder") {
             return Err(format!("unsupported native attribute {name}"));
         }
-        if name == "className" {
+        if name == CLASS_ATTRIBUTE {
             let Kind::Element(tag) = &record.kind else {
                 return Err("classes require an element".into());
             };
@@ -191,7 +191,7 @@ impl NodeHandle {
         changed
     }
     pub fn patch_attribute(&self, name: &str, value: String) -> Result<bool> {
-        if name == "className" {
+        if name == CLASS_ATTRIBUTE {
             return self.patch_classes(value);
         }
         let mut record = self.0.borrow_mut();
@@ -221,10 +221,10 @@ impl NodeHandle {
         let style = wire.style()?;
         record
             .authored_attributes
-            .insert("className".into(), classes.clone());
+            .insert(CLASS_ATTRIBUTE.into(), classes.clone());
         record
             .attributes
-            .insert("className".into(), classes.clone());
+            .insert(CLASS_ATTRIBUTE.into(), classes.clone());
         Ok(record.patch_classes(classes, style))
     }
     pub fn is_element(&self) -> bool {
@@ -258,7 +258,7 @@ impl NodeHandle {
     }
     pub fn attribute(&self, name: &str) -> Option<String> {
         let record = self.0.borrow();
-        if name == "className" {
+        if name == CLASS_ATTRIBUTE {
             record.attributes.get(name).map(|_| record.classes.clone())
         } else {
             record.attributes.get(name).cloned()

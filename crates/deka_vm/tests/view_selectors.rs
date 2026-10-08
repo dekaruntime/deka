@@ -4,9 +4,9 @@ use deka_vm::{HostValue, Hosts, compiler, component::Component};
 const SOURCE: &str = r#"export fn App() {
     let visible = true; let id = "first"; let classes = "p-4 text-sm";
     return {view: fn() { return (<view id="root">
-        <div className="p-4"><p id={id} className={classes}>First<span> child</span></p></div>
-        <div className="p-4"><div><div className="p-4">
-            {visible ? <p id="second" className="text-sm">Second</p> : None}
+        <div class="p-4"><p id={id} class={classes}>First<span> child</span></p></div>
+        <div class="p-4"><div><div class="p-4">
+            {visible ? <p id="second" class="text-sm">Second</p> : None}
         </div></div></div>Text</view>); },
         first: fn(selector: string) { return view.querySelector(selector); },
         all: fn(selector: string) { return view.querySelectorAll(selector); },

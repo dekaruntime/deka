@@ -230,7 +230,7 @@ impl Component {
         };
         let tag = self.text(*fields.get("tag").ok_or("missing node tag")?)?;
         let classes = fields
-            .get("className")
+            .get(deka_native_ir::CLASS_ATTRIBUTE)
             .map(|h| self.text(*h))
             .transpose()?
             .unwrap_or_default();

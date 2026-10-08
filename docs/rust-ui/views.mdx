@@ -11,7 +11,7 @@ use deka_ui::prelude::*;
 
 fn app() -> View {
     let mut count = signal(0);
-    View::element("view").attr("className", "p-4 gap-3")
+    View::element("view").attr("class", "p-4 gap-3")
         .child(View::element("p")
             .child(View::live_text(move || format!("Count: {count}"))))
         .child(View::element("button")
@@ -35,8 +35,8 @@ Count: 3 Add one
 ```
 
 `attr(name, value)` sets a scalar value once. A closure is a live attribute:
-`attr("className", move || if open.get().unwrap_or_default() { "opacity-100" } else { "opacity-0" })`.
-The supported scalar attributes are `id`, `className`, `value` and `placeholder`.
+`attr("class", move || if open.get().unwrap_or_default() { "opacity-100" } else { "opacity-0" })`.
+The supported scalar attributes are `id`, `class`, `value` and `placeholder`.
 Tags and utilities use the existing native catalog; unsupported vocabulary
 fails with a diagnostic. `class("opacity-0", open)` accepts a boolean signal,
 derived boolean, closure or fixed boolean and composes it with the base class

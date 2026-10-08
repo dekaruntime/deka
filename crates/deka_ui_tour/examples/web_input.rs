@@ -9,8 +9,8 @@ mod web {
     fn App() -> View {
         let text = signal(String::new());
         let key = signal(String::new());
-        view! {<view className="p-4 gap-4">
-            <input id="name" className="w-60 h-10" value={move ||text.get().unwrap()}
+        view! {<view class="p-4 gap-4">
+            <input id="name" class="w-60 h-10" value={move ||text.get().unwrap()}
                 onInput={move |event| if let Event::Input(value)=event { text.set(value); }}
                 onKeyDown={move |event| if let Event::KeyDown(value)=event { key.set(value.clone()); if value=="Enter" { text.set("Confirmed".to_owned()); } }}/>
             <p>"Hello {text}"</p><p>"Key: {key}"</p>

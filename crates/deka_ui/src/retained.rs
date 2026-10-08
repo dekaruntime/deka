@@ -1,6 +1,6 @@
 //! Typed access to the shared retained store (APS 73 and APS 74).
 use crate::{reactive, view::Context};
-use deka_native_ir::{Node, selectors::Selector, tree::NodeHandle};
+use deka_native_ir::{CLASS_ATTRIBUTE, Node, selectors::Selector, tree::NodeHandle};
 use std::{
     any::Any,
     cell::{Cell, RefCell},
@@ -245,7 +245,7 @@ pub struct ViewClassList(ViewElement);
 impl ViewClassList {
     pub fn tokens(&self) -> Vec<String> {
         self.0
-            .get_attribute("className")
+            .get_attribute(CLASS_ATTRIBUTE)
             .unwrap_or_default()
             .split_whitespace()
             .map(str::to_owned)
@@ -269,7 +269,7 @@ impl ViewClassList {
             return Ok(());
         }
         tokens.push(token.into());
-        self.0.set_attribute("className", tokens.join(" "))
+        self.0.set_attribute(CLASS_ATTRIBUTE, tokens.join(" "))
     }
     pub fn remove(&self, token: &str) -> Result<(), ViewError> {
         Self::validate(token)?;
@@ -278,7 +278,7 @@ impl ViewClassList {
             return Ok(());
         }
         tokens.retain(|value| value != token);
-        self.0.set_attribute("className", tokens.join(" "))
+        self.0.set_attribute(CLASS_ATTRIBUTE, tokens.join(" "))
     }
     pub fn toggle(&self, token: &str) -> Result<bool, ViewError> {
         if self.contains(token) {

@@ -51,7 +51,7 @@ mod ownership_tests {
     fn imperative_values_survive_until_the_last_authored_value_changes() {
         let mut app=Component::new(compiler::compile_entry(r#"export fn App() {
             let count=0; let red=false; let noise=0;
-            return {view:fn(){return (<view><p className={red ? "text-[#ff0000]" : "text-[#0000ff]"}>{count % 2}</p></view>);},
+            return {view:fn(){return (<view><p class={red ? "text-[#ff0000]" : "text-[#0000ff]"}>{count % 2}</p></view>);},
                 count:fn(){count+=1;}, red:fn(){red=red==false;}, noise:fn(){noise+=1;count+=2;} };
         }"#,&Hosts::default(),"App").unwrap(),Hosts::default()).unwrap();
         app.render().unwrap();

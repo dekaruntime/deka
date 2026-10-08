@@ -4,7 +4,7 @@ use deka_ui::prelude::*;
 fn App() -> View {
     let mut count = signal(0);
     view! {
-        <view className="p-4 gap-3">
+        <view class="p-4 gap-3">
             <p>"Count: {count}"</p>
             <button onClick={move |_| count += 1}>"Add one"</button>
         </view>

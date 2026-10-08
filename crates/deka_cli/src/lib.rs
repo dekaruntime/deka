@@ -324,15 +324,16 @@ pub(crate) fn init(directory: &Path) -> Result<()> {
             return Err(format!("init would overwrite {name}"));
         }
     }
+    let class_attribute = deka_native_ui::CLASS_ATTRIBUTE;
+    let app_source = format!(
+        "export fn App() {{ let count = 0; return <view {class_attribute}=\"p-6 gap-4\"><p>Deka native app</p><p>Count: {{count}}</p><button onClick={{fn() {{ count += 1; }}}}>Add one</button></view>; }}\n"
+    );
     for (name, content) in [
         (
             "deka.json",
             "{\"name\":\"deka-app\",\"version\":\"0.1.0\",\"desktop\":{\"productName\":\"Deka App\",\"identifier\":\"gg.deka.app\",\"entry\":\"App.dsx\",\"entryFunction\":\"App\"}}\n",
         ),
-        (
-            "App.dsx",
-            "export fn App() { let count = 0; return <view className=\"p-6 gap-4\"><p>Deka native app</p><p>Count: {count}</p><button onClick={fn() { count += 1; }}>Add one</button></view>; }\n",
-        ),
+        ("App.dsx", app_source.as_str()),
         (
             "app.test.ds",
             "import { assert } from \"test\";\nfn test_addition() { assert(1 + 1 == 2); }\n",

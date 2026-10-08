@@ -13,8 +13,8 @@ pub fn App() -> View {
         minor: 60,
     };
     let mut clicks = signal(0);
-    view! {<view className="p-6 gap-3 bg-[#F3EFE3] text-[#1A1611]">
-        <p className="text-2xl">"Hello, {language}"</p>
+    view! {<view class="p-6 gap-3 bg-[#F3EFE3] text-[#1A1611]">
+        <p class="text-2xl">"Hello, {language}"</p>
         <p>"Minor version: "{release.minor}</p>
         <p>"Clicks: {clicks}"</p>
         <button onClick={move |_| clicks += 1}>"Change a binding"</button>

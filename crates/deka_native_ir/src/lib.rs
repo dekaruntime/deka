@@ -1,5 +1,8 @@
 //! Experimental native UI contract. No compiler, windowing, or evaluator dependency.
 //! `program` adds the development wire format; production needs only owned UI values.
+/// The authored class attribute shared by UI builders and the retained renderer.
+pub const CLASS_ATTRIBUTE: &str = "class";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "program", derive(serde::Serialize, serde::Deserialize))]
 pub enum Length {

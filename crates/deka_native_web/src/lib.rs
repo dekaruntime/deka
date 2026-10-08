@@ -143,9 +143,9 @@ mod tests {
     use deka_vm::ui;
     const SOURCE: &str = r#"export fn App() {
         let count = 0;
-        return (<view className="p-4 gap-2"><p>{count}</p>
+        return (<view class="p-4 gap-2"><p>{count}</p>
             <button onClick={fn() { count += 1; }}>Add one</button>
-            {count == 1 ? <p className="enter-fade duration-500">Visible</p> : None}
+            {count == 1 ? <p class="enter-fade duration-500">Visible</p> : None}
         </view>);
     }"#;
     fn snapshot(preview: &mut NativePreview) -> serde_json::Value {

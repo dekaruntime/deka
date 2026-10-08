@@ -33,8 +33,8 @@ element in tree order. Detached nodes do not appear in a query.
 | `element.getAttribute(name)` | `Option<string>` | Current scalar attribute, or `None` |
 | `element.classList` | `ViewClassList` | Opaque handle to that element's class tokens |
 
-Scalar attributes retained today are `id`, `className`, `value` and
-`placeholder`. `className` reads the same class string used for styling.
+Scalar attributes retained today are `id`, `class`, `value` and
+`placeholder`. `class` reads the same class string used for styling.
 Attributes containing event callbacks are not strings.
 
 `ViewNode`, `ViewElement` and `ViewClassList` are opaque Rust resources. You can

@@ -14,7 +14,7 @@ fn clicks_patch_only_the_bound_property_of_the_retained_node() {
         View::element("view")
             .child(
                 View::element("p")
-                    .attr("className", "text-xl")
+                    .attr("class", "text-xl")
                     .child(View::live_text(move || {
                         observed.set(observed.get() + 1);
                         count.get().unwrap()
@@ -133,7 +133,7 @@ fn class_toggles_and_dynamic_attributes_patch_without_rebuilding_other_propertie
             .child(
                 View::element("p")
                     .attr("id", move || name.get().unwrap())
-                    .attr("className", "p-4")
+                    .attr("class", "p-4")
                     .class("opacity-0", open)
                     .child("Kept"),
             )
