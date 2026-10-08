@@ -70,3 +70,9 @@ libc = { version = "0.2", optional = true }
 [[example]]
 name = "portfolio-world"
 required-features = ["world-audio"]
+
+[[test]]
+name = "native_events"
+path = "tests/native_events.rs"
+harness = false
+required-features = ["gpu"]
