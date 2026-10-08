@@ -33,6 +33,7 @@ pub enum WindowRequest<A> {
         options: Options,
     },
     Close(WindowToken),
+    Service(super::ServiceRequest),
 }
 /// Owns app-wide state and supplies requests after each OS event batch.
 pub trait WindowController: 'static {
@@ -71,6 +72,7 @@ trait Store<A> {
         options: Options,
     ) -> Result<Option<Arc<Window>>, String>;
     fn close(&mut self, id: WindowToken) -> bool;
+    fn service(&mut self, request: super::ServiceRequest) -> Result<(), String>;
 }
 /// Both native and headless hosts consume the same app commands and lifecycle.
 fn apply<C: WindowController>(controller: &mut C, store: &mut impl Store<C::App>) {
@@ -80,6 +82,11 @@ fn apply<C: WindowController>(controller: &mut C, store: &mut impl Store<C::App>
                 Ok(window) => controller.opened(id, window),
                 Err(error) => controller.failed(id, error),
             },
+            WindowRequest::Service(request) => {
+                if let Err(error) = store.service(request) {
+                    controller.report_error("native service", error);
+                }
+            }
             WindowRequest::Close(id) => {
                 store.close(id);
                 controller.closed(id);
@@ -94,6 +101,7 @@ struct NativeStore<'a, A: Application> {
     event_loop: &'a ActiveEventLoop,
     reduced: bool,
     clipboard: super::ui::SharedClipboard,
+    services: &'a mut super::services::Services,
 }
 impl<A: Application> Store<A> for NativeStore<'_, A> {
     fn open(
@@ -116,8 +124,10 @@ impl<A: Application> Store<A> for NativeStore<'_, A> {
         content.clipboard(self.clipboard.clone());
         let mut shell = Shell::new(content, options, self.proxy.clone(), Gpu::start());
         shell.standalone = false;
+        shell.menu_installed = self.services.has_menu();
         shell.open(self.event_loop)?;
         let window = shell.window.as_ref().unwrap().clone();
+        self.services.opened(&window)?;
         self.routes.register(window.id(), id);
         shell.first_frame(self.event_loop);
         self.windows.insert(id, shell);
@@ -127,9 +137,29 @@ impl<A: Application> Store<A> for NativeStore<'_, A> {
         let Some(mut shell) = self.windows.remove(&id) else {
             return false;
         };
+        self.services.closed(id, shell.window.as_deref());
         shell.exiting(self.event_loop);
         self.routes.remove(id);
         true
+    }
+    fn service(&mut self, request: super::ServiceRequest) -> Result<(), String> {
+        let token = request.window();
+        let parent = token
+            .and_then(|id| self.windows.get(&id))
+            .and_then(|shell| shell.window.clone());
+        let valid = token.is_none_or(|id| self.windows.contains_key(&id));
+        let windows = self
+            .windows
+            .values()
+            .filter_map(|shell| shell.window.clone())
+            .collect::<Vec<_>>();
+        self.services.apply(request, valid, parent, &windows)?;
+        if self.services.has_menu() {
+            for shell in self.windows.values_mut() {
+                shell.menu_installed = true;
+            }
+        }
+        Ok(())
     }
 }
 struct Multiple<C: WindowController> {
@@ -139,6 +169,7 @@ struct Multiple<C: WindowController> {
     proxy: EventLoopProxy<Wake>,
     reduced: bool,
     clipboard: super::ui::SharedClipboard,
+    services: super::services::Services,
 }
 impl<C: WindowController> Multiple<C> {
     fn requests(&mut self, event_loop: &ActiveEventLoop) {
@@ -149,6 +180,7 @@ impl<C: WindowController> Multiple<C> {
             event_loop,
             reduced: self.reduced,
             clipboard: self.clipboard.clone(),
+            services: &mut self.services,
         };
         apply(&mut self.controller, &mut store);
         for id in store
@@ -180,6 +212,10 @@ impl<C: WindowController> ApplicationHandler<Wake> for Multiple<C> {
                     shell.user_event(event_loop, Wake::Work);
                 }
             }
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            Wake::Menu(event) => {
+                self.services.event(&event);
+            }
             Wake::Accessibility(event) => {
                 if let Some(shell) = self
                     .routes
@@ -204,6 +240,7 @@ impl<C: WindowController> ApplicationHandler<Wake> for Multiple<C> {
                 event_loop,
                 reduced: self.reduced,
                 clipboard: self.clipboard.clone(),
+                services: &mut self.services,
             };
             if store.close(id) {
                 self.controller.closed(id);
@@ -230,6 +267,7 @@ impl<C: WindowController> ApplicationHandler<Wake> for Multiple<C> {
     }
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {
         for (id, shell) in &mut self.windows {
+            self.services.closed(*id, shell.window.as_deref());
             shell.exiting(event_loop);
             self.controller.closed(*id);
         }
@@ -239,7 +277,28 @@ impl<C: WindowController> ApplicationHandler<Wake> for Multiple<C> {
 }
 pub fn run_windows<C: WindowController>(mut controller: C) {
     crate::text::warm_on_thread();
+    let services = super::services::Services::new(true);
     let mut builder = EventLoop::<Wake>::with_user_event();
+    #[cfg(target_os = "windows")]
+    {
+        use winit::platform::windows::EventLoopBuilderExtWindows;
+        let table = services.accelerator.clone();
+        builder.with_msg_hook(move |message| {
+            let accelerator = table.get();
+            if accelerator == 0 {
+                return false;
+            }
+            let message = message.cast::<windows_sys::Win32::UI::WindowsAndMessaging::MSG>();
+            // SAFETY: winit supplies a live MSG; the table belongs to the retained menu.
+            unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::TranslateAcceleratorW(
+                    (*message).hwnd,
+                    accelerator as _,
+                    message,
+                ) != 0
+            }
+        });
+    }
     #[cfg(target_os = "macos")]
     {
         use winit::platform::macos::EventLoopBuilderExtMacOS;
@@ -253,6 +312,13 @@ pub fn run_windows<C: WindowController>(mut controller: C) {
         }
     };
     let proxy = event_loop.create_proxy();
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let menu_proxy = proxy.clone();
+        super::MenuEvent::set_event_handler(Some(move |event| {
+            let _ = menu_proxy.send_event(Wake::Menu(event));
+        }));
+    }
     let wake = proxy.clone();
     controller.set_waker(Waker::new(move || {
         let _ = wake.send_event(Wake::Work);
@@ -264,6 +330,7 @@ pub fn run_windows<C: WindowController>(mut controller: C) {
         proxy,
         reduced: std::env::args().any(|arg| arg == "--reduced-motion"),
         clipboard: Default::default(),
+        services,
     };
     if let Err(error) = event_loop.run_app(&mut app) {
         app.controller
@@ -279,6 +346,8 @@ struct HeadlessStore<A: Application> {
     windows: BTreeMap<WindowToken, HeadlessWindow<A>>,
     routes: Routes,
     clipboard: super::ui::SharedClipboard,
+    services: super::services::Services,
+    errors: Vec<String>,
 }
 impl<A: Application> Store<A> for HeadlessStore<A> {
     fn open(
@@ -297,8 +366,19 @@ impl<A: Application> Store<A> for HeadlessStore<A> {
         Ok(None)
     }
     fn close(&mut self, id: WindowToken) -> bool {
+        self.services.closed(id, None);
         self.routes.remove(id);
         self.windows.remove(&id).is_some()
+    }
+    fn service(&mut self, request: super::ServiceRequest) -> Result<(), String> {
+        let valid = request
+            .window()
+            .is_none_or(|id| self.windows.contains_key(&id));
+        if let Err(error) = self.services.apply(request, valid, None, &[]) {
+            self.errors.push(error.clone());
+            return Err(error);
+        }
+        Ok(())
     }
 }
 /// Production command/lifecycle and winit routing without opening OS windows.
@@ -308,16 +388,46 @@ pub struct MultipleDesktopSession<C: WindowController> {
 }
 impl<C: WindowController> MultipleDesktopSession<C> {
     pub fn new(controller: C) -> Self {
+        Self::with_services(controller, false)
+    }
+    /// CPU window driver with real OS services. Must run on the native UI
+    /// thread in a GUI session; queued file dialogs can display actual panels.
+    pub fn with_native_services(controller: C) -> Self {
+        Self::with_services(controller, true)
+    }
+    fn with_services(controller: C, native: bool) -> Self {
         let mut app = Self {
             controller,
             store: HeadlessStore {
                 windows: BTreeMap::new(),
                 routes: Routes::default(),
                 clipboard: Default::default(),
+                services: super::services::Services::new(native),
+                errors: vec![],
             },
         };
         app.requests();
         app
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub fn native_menu(&self) -> Option<super::NativeMenu> {
+        self.store.services.native_menu()
+    }
+    pub fn dialogs(&mut self, dialogs: impl super::FileDialogs) {
+        self.store.services.dialogs(dialogs);
+    }
+    pub fn service_errors(&self) -> &[String] {
+        &self.store.errors
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub fn menu_event(&mut self, event: super::MenuEvent) -> bool {
+        let changed = self.store.services.event(&event);
+        self.requests();
+        changed
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub fn dismiss_menu(&mut self, window: WindowToken) {
+        self.store.services.dismiss(window);
     }
     pub fn clipboard(&mut self, clipboard: impl super::TextClipboard + 'static) {
         self.store.clipboard.replace(clipboard);

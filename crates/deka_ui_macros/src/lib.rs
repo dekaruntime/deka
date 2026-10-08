@@ -118,6 +118,7 @@ fn node(input: &Node) -> syn::Result<Tokens> {
                     "onClick" => Some(quote!(Click)),
                     "onInput" => Some(quote!(Input)),
                     "onKeyDown" => Some(quote!(KeyDown)),
+                    "onContextMenu" => Some(quote!(ContextMenu)),
                     _ => None,
                 } {
                     setters.push(quote_spanned!(span=> .on(::deka_ui::EventKind::#event, #value)));

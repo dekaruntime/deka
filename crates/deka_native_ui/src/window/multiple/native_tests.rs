@@ -121,6 +121,7 @@ pub(crate) fn run(event_loop: &ActiveEventLoop, proxy: EventLoopProxy<Wake>) {
         proxy: proxy.clone(),
         reduced: true,
         clipboard: Default::default(),
+        services: super::super::services::Services::new(false),
     };
     let mut os = vec![];
     for i in 0..3 {
@@ -187,6 +188,7 @@ pub(crate) fn run(event_loop: &ActiveEventLoop, proxy: EventLoopProxy<Wake>) {
     assert!(!app.windows[&ids[0]].schedule.wants_frame());
     assert!(app.windows[&ids[1]].schedule.wants_frame());
     assert!(!app.windows[&ids[2]].schedule.wants_frame());
+    service_events(&mut app, event_loop, ids[1]);
     // Frame-limited shells ask the native store to dispose them after the batch.
     app.windows.get_mut(&ids[0]).unwrap().options.frames = Some(1);
     app.windows
@@ -229,4 +231,143 @@ pub(crate) fn run(event_loop: &ActiveEventLoop, proxy: EventLoopProxy<Wake>) {
     println!(
         "native Multiple/NativeStore close, exit, failed-open, work and accessibility routing passed"
     );
+}
+
+struct Dialogs {
+    calls: Rc<Cell<usize>>,
+}
+impl super::super::FileDialogs for Dialogs {
+    fn choose(
+        &mut self,
+        kind: super::super::DialogKind,
+        options: &super::super::FileDialogOptions,
+        parent: Option<&Window>,
+    ) -> super::super::DialogResult {
+        assert!(parent.is_some(), "NativeStore supplies the real OS parent");
+        assert_eq!(options.filters, vec![("Text".into(), vec!["txt".into()])]);
+        let i = self.calls.get();
+        self.calls.set(i + 1);
+        match i {
+            0 => {
+                assert_eq!(kind, super::super::DialogKind::Open);
+                Ok(Some("/selected.txt".into()))
+            }
+            1 => {
+                assert_eq!(kind, super::super::DialogKind::Save);
+                Ok(None)
+            }
+            _ => Err("native provider failure".into()),
+        }
+    }
+}
+fn service_events(
+    app: &mut Multiple<Controller>,
+    event_loop: &ActiveEventLoop,
+    window: WindowToken,
+) {
+    use super::super::{DialogKind, FileDialogOptions, ServiceRequest};
+    let calls = Rc::new(Cell::new(0));
+    let results = Rc::new(RefCell::new(vec![]));
+    app.services.dialogs(Dialogs {
+        calls: calls.clone(),
+    });
+    for kind in [DialogKind::Open, DialogKind::Save, DialogKind::Open] {
+        let output = results.clone();
+        app.controller
+            .requests
+            .push(WindowRequest::Service(ServiceRequest::FileDialog {
+                window,
+                kind,
+                options: FileDialogOptions::new().filter("Text", &["txt"]),
+                complete: Box::new(move |result| output.borrow_mut().push(result)),
+            }));
+        app.user_event(event_loop, Wake::Work);
+    }
+    assert_eq!(calls.get(), 3);
+    assert_eq!(
+        &*results.borrow(),
+        &[
+            Ok(Some("/selected.txt".into())),
+            Ok(None),
+            Err("native provider failure".into())
+        ]
+    );
+    assert_eq!(
+        app.controller.errors.borrow().len(),
+        2,
+        "backend failure reaches callback and app sink; cancellation adds no error"
+    );
+    assert_eq!(app.controller.errors.borrow()[1], "native provider failure");
+    // The real SystemFileDialogs guard returns errors through NativeStore,
+    // without showing an interactive panel on the user's screen.
+    app.services.dialogs(super::super::SystemFileDialogs);
+    let output = results.clone();
+    app.controller
+        .requests
+        .push(WindowRequest::Service(ServiceRequest::FileDialog {
+            window,
+            kind: DialogKind::Open,
+            options: FileDialogOptions::new().filter("Empty", &[]),
+            complete: Box::new(move |result| output.borrow_mut().push(result)),
+        }));
+    app.user_event(event_loop, Wake::Work);
+    assert_eq!(app.controller.errors.borrow().len(), 3);
+    assert_eq!(
+        results.borrow().last().unwrap().as_ref().unwrap_err(),
+        "file filters require nonempty extensions"
+    );
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        use super::super::{MenuEntry, MenuEvent, MenuItemSpec, MenuSpec};
+        let clicks = Rc::new(Cell::new(0));
+        let count = clicks.clone();
+        let item = MenuItemSpec::new("Native action", move || {
+            count.set(count.get() + 1);
+            true
+        });
+        let id = item.id.clone();
+        let count = clicks.clone();
+        let mut disabled = MenuItemSpec::new("Disabled", move || {
+            count.set(count.get() + 100);
+            true
+        });
+        disabled.enabled = false;
+        let disabled_id = disabled.id.clone();
+        let spec = MenuSpec {
+            entries: vec![MenuEntry::Item(item), MenuEntry::Item(disabled)],
+        };
+        let native = spec.native_menu().expect("build real OS menu objects");
+        assert_eq!(native.items().len(), 2);
+        app.controller
+            .requests
+            .push(WindowRequest::Service(ServiceRequest::AppMenu(spec)));
+        app.user_event(event_loop, Wake::Work);
+        app.user_event(event_loop, Wake::Menu(MenuEvent { id }));
+        assert_eq!(
+            clicks.get(),
+            1,
+            "menu OS payload reaches the real Multiple handler"
+        );
+        app.user_event(event_loop, Wake::Menu(MenuEvent { id: disabled_id }));
+        assert_eq!(clicks.get(), 1);
+        // A native menu construction failure must be visible through app errors.
+        let bad = MenuSpec {
+            entries: vec![MenuEntry::Item(MenuItemSpec::new("bad\0label", || true))],
+        };
+        app.services = super::super::services::Services::new(true);
+        app.controller
+            .requests
+            .push(WindowRequest::Service(ServiceRequest::AppMenu(bad)));
+        app.user_event(event_loop, Wake::Work);
+        assert!(
+            app.controller
+                .errors
+                .borrow()
+                .last()
+                .unwrap()
+                .contains("NUL")
+        );
+        app.services = super::super::services::Services::new(false);
+    }
+    println!("native menu/dialog payloads, parent routing, cancellation and errors passed");
 }

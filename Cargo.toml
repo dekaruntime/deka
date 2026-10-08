@@ -48,7 +48,7 @@ members = [
 ]
 # Vendored forks are path dependencies wired in through [patch.crates-io], not members:
 # their own lints and formatting stay upstream's.
-exclude = ["vendor/vello_gpu", "vendor/vello_gpu_shaders"]
+exclude = ["vendor/vello_gpu", "vendor/vello_gpu_shaders", "vendor/rfd"]
 
 [workspace.package]
 version = "0.61.0"

@@ -133,6 +133,7 @@ impl Content for WorldContent {
                 true
             }
             Input::Press { .. }
+            | Input::ContextMenu { .. }
             | Input::EditKey(_)
             | Input::Text(_)
             | Input::Preedit(..)

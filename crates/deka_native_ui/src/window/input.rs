@@ -14,6 +14,10 @@ pub(crate) enum Input {
         y: f32,
     },
     Release,
+    ContextMenu {
+        x: f32,
+        y: f32,
+    },
     /// The primary (left) button went down at this position.
     Press {
         x: f32,
@@ -50,6 +54,8 @@ pub(crate) fn key_name(key: &Key) -> Option<String> {
             NamedKey::End => "end",
             NamedKey::PageUp => "pageup",
             NamedKey::PageDown => "pagedown",
+            NamedKey::ContextMenu => "contextmenu",
+            NamedKey::F10 => "f10",
             _ => return None,
         },
         _ => return None,
@@ -161,6 +167,14 @@ impl EventLayer {
                     Some(Input::Release)
                 }
             }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => Some(Input::ContextMenu {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            }),
             WindowEvent::KeyboardInput { event, .. } => {
                 let mac = cfg!(target_os = "macos");
                 Some(Input::EditKey(KeyInput {
