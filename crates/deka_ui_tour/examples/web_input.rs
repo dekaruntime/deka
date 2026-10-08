@@ -11,9 +11,10 @@ mod web {
         let key = signal(String::new());
         let mut edits = signal(0);
         view! {<view className="p-4 gap-4">
-            <input id="name" className="w-60 h-10" value={text} onInput={move |_| edits += 1}
+            <input id="name" aria-label="Name" className="w-60 h-10" value={text} onInput={move |_| edits += 1}
                 onKeyDown={move |event| if let Event::KeyDown(value)=event { key.set(value.clone()); if value=="Enter" { text.set("Confirmed".to_owned()); } }}/>
-            <textarea id="notes" className="w-60 h-24" value={text}/>
+            <textarea id="notes" aria-label="Notes" className="w-60 h-24" value={text}/>
+            <button id="clear" onClick={move |_| text.set(String::new())}>"Clear"</button>
             <p>"Hello {text}"</p><p>"Key: {key}"</p><p>"Edits: {edits}"</p>
         </view>}
     }

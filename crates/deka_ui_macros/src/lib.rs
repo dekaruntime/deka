@@ -114,7 +114,7 @@ fn node(input: &Node) -> syn::Result<Tokens> {
                     _ => None,
                 } {
                     setters.push(quote_spanned!(span=> .on(::deka_ui::EventKind::#event, #value)));
-                } else if matches!(key.as_str(), "id" | "className" | "value" | "placeholder") {
+                } else if deka_native_ir::is_supported_attribute(&key) {
                     if key == "className"
                         && let Some(classes) = attribute.value_literal_string()
                     {

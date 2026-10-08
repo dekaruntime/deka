@@ -240,3 +240,17 @@ pub mod selectors;
 pub mod tree;
 mod wire;
 pub use wire::WireNode;
+
+/// Scalar properties accepted by builders and retained writes.
+pub fn is_supported_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        "id" | "className"
+            | "value"
+            | "placeholder"
+            | "aria-label"
+            | "aria-hidden"
+            | "tabIndex"
+            | "disabled"
+    )
+}

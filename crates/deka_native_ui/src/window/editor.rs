@@ -27,6 +27,37 @@ pub(super) struct Editor {
     observed: String,
 }
 impl Editor {
+    pub(super) fn accessibility(
+        &mut self,
+        update: &mut accesskit::TreeUpdate,
+        node: &mut accesskit::Node,
+        next: impl FnMut() -> accesskit::NodeId,
+    ) {
+        self.text
+            .driver(&mut self.fonts, &mut self.layouts)
+            .accessibility(
+                update,
+                node,
+                next,
+                self.origin.0.into(),
+                self.origin.1.into(),
+                |_, _| {},
+            );
+    }
+    pub(super) fn accessible_selection(&mut self, selection: &accesskit::TextSelection) {
+        self.cancel();
+        self.text
+            .driver(&mut self.fonts, &mut self.layouts)
+            .select_from_accesskit(selection);
+    }
+    pub(super) fn replace(&mut self, value: &str) {
+        self.cancel();
+        let end = self.text.text().to_string().len();
+        self.text
+            .driver(&mut self.fonts, &mut self.layouts)
+            .select_byte_range(0, end);
+        self.insert(value);
+    }
     pub(super) fn new(value: &str, multiline: bool) -> Self {
         let (fonts, family) = crate::text::context(true);
         let mut text = PlainEditor::new(16.);

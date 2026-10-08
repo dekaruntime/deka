@@ -88,7 +88,7 @@ impl Scene {
         })
     }
     pub fn focus_ring(&mut self, id: &str) {
-        if let Some(target) = self.targets.iter().find(|t| t.id == id) {
+        if let Some(target) = self.nodes.iter().find(|t| t.id == id) {
             let r = target.rect;
             for rect in [
                 Rect {
