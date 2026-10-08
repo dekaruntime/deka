@@ -43,6 +43,10 @@ pub trait Application: 'static {
     fn initial_state(&self) -> Vec<f64>;
     fn render(&self, state: &[f64]) -> Node;
     fn event(&self, handler: usize, state: &mut [f64]);
+    /// Operational host failures use the application's ordinary error sink.
+    fn report_error(&self, operation: &str, message: String) {
+        eprintln!("deka {operation}: {message}");
+    }
     fn text_controls(&self) -> Vec<TextControl> {
         vec![]
     }

@@ -234,14 +234,15 @@ impl<A: Application> Content for UiContent<A> {
                 {
                     if key.name == "v" {
                         match self.clipboard.get() {
-                            Ok(text) => editor.insert(&text),
-                            Err(error) => eprintln!("deka clipboard: {error}"),
+                            Ok(text) if !text.is_empty() => editor.insert(&text),
+                            Ok(_) => {}
+                            Err(error) => self.host.app.report_error("clipboard", error),
                         }
                     } else if let Some(text) = editor.text.selected_text() {
                         match self.clipboard.set(text) {
                             Ok(()) if key.name == "x" => editor.delete_selected(),
                             Ok(()) => {}
-                            Err(error) => eprintln!("deka clipboard: {error}"),
+                            Err(error) => self.host.app.report_error("clipboard", error),
                         }
                     }
                     true
@@ -376,7 +377,11 @@ impl SystemClipboard {
 }
 impl TextClipboard for SystemClipboard {
     fn get(&mut self) -> Result<String, String> {
-        self.clipboard()?.get_text().map_err(|e| e.to_string())
+        match self.clipboard()?.get_text() {
+            Ok(text) => Ok(text),
+            Err(arboard::Error::ContentNotAvailable) => Ok(String::new()),
+            Err(error) => Err(error.to_string()),
+        }
     }
     fn set(&mut self, text: &str) -> Result<(), String> {
         self.clipboard()?.set_text(text).map_err(|e| e.to_string())
@@ -440,6 +445,32 @@ mod tests {
     use crate::{Node, Reload, Style};
     use std::cell::Cell;
     use std::rc::Rc;
+
+    #[test]
+    fn system_clipboard_round_trip() {
+        let mut clipboard = SystemClipboard(None);
+        if let Err(error) = clipboard.clipboard() {
+            #[cfg(target_os = "linux")]
+            {
+                if std::env::var_os("DISPLAY").is_none()
+                    && std::env::var_os("WAYLAND_DISPLAY").is_none()
+                {
+                    eprintln!(
+                        "SKIP system_clipboard_round_trip: headless Linux has no display clipboard: {error}"
+                    );
+                    return;
+                }
+                panic!("platform clipboard failed on a display host: {error}");
+            }
+            #[cfg(not(target_os = "linux"))]
+            panic!("system clipboard must exist on this desktop host: {error}");
+        }
+        let previous = clipboard.get().unwrap();
+        let text = format!("Deka clipboard round trip 日本 {}", std::process::id());
+        let result = clipboard.set(&text).and_then(|()| clipboard.get());
+        clipboard.set(&previous).unwrap();
+        assert_eq!(result.unwrap(), text);
+    }
 
     /// Two buttons; each click adds its index + 1 to the state.
     struct Buttons {

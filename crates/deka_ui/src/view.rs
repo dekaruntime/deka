@@ -383,6 +383,7 @@ pub(crate) type PublishedState = (Anchor, Rc<dyn Any>);
 pub(crate) type Anchor = Rc<RefCell<Option<NodeHandle>>>;
 
 type Callback = Rc<RefCell<Box<dyn FnMut(Event)>>>;
+type TextIndex = (usize, Vec<(NodeHandle, bool)>);
 struct Listener {
     controlled_value: bool,
     anchor: Anchor,
@@ -397,6 +398,7 @@ pub(crate) struct Context {
     next_state: Cell<usize>,
     listeners: RefCell<BTreeMap<usize, Listener>>,
     next_listener: Cell<usize>,
+    text_index: RefCell<Option<TextIndex>>,
     patches: Cell<usize>,
     pending_frame: Cell<bool>,
     waker: RefCell<Option<deka_native_ui::Waker>>,
@@ -488,6 +490,7 @@ impl Context {
         event: Box<dyn FnMut(Event)>,
         controlled_value: bool,
     ) -> usize {
+        self.text_index.borrow_mut().take();
         let token = self.next_listener.get();
         self.next_listener
             .set(token.checked_add(1).expect("event identity exhausted"));
@@ -535,6 +538,7 @@ impl Drop for Registrations {
             }
             for token in self.events.drain(..) {
                 context.listeners.borrow_mut().remove(&token);
+                context.text_index.borrow_mut().take();
             }
         }
     }
@@ -1052,42 +1056,54 @@ impl Application for UiApp {
     fn event(&self, handler: usize, _: &mut [f64]) {
         self.dispatch(handler);
     }
-    fn text_controls(&self) -> Vec<deka_native_ui::TextControl> {
-        let mut controls = Vec::new();
-        fn visit(
-            tree: &deka_native_ir::tree::NodeHandle,
-            controls: &mut Vec<deka_native_ui::TextControl>,
-        ) {
-            let record = tree.0.borrow();
-            if matches!(tree.tag_name().as_deref(), Some("input" | "textarea")) {
-                controls.push(deka_native_ui::TextControl {
-                    id: tree.renderer_id(),
-                    value: tree.attribute("value").unwrap_or_default(),
-                    placeholder: tree.attribute("placeholder").unwrap_or_default(),
-                    controlled: false,
-                    multiline: tree.tag_name().as_deref() == Some("textarea"),
-                });
-            }
-            for child in &record.children {
-                visit(child, controls);
-            }
-        }
-        // The same shared retained store supplies descriptors and renderer nodes.
-        if let Some(root) = self.context.tree.borrow().root.as_ref() {
-            visit(root, &mut controls);
-        }
-        for control in &mut controls {
-            control.controlled = self.context.listeners.borrow().values().any(|l| {
-                l.kind == EventKind::Input
-                    && l.controlled_value
-                    && l.anchor
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|n| n.renderer_id() == control.id)
-            });
-        }
-        controls
+    fn report_error(&self, operation: &str, message: String) {
+        self.context.report(&[], operation, message);
     }
+    fn text_controls(&self) -> Vec<deka_native_ui::TextControl> {
+        let revision = self.context.patches.get();
+        let mut index = self.context.text_index.borrow_mut();
+        if index.as_ref().is_none_or(|(cached, _)| *cached != revision) {
+            let controlled: std::collections::BTreeSet<_> = self
+                .context
+                .listeners
+                .borrow()
+                .values()
+                .filter(|l| l.kind == EventKind::Input && l.controlled_value)
+                .filter_map(|l| l.anchor.borrow().as_ref().map(NodeHandle::renderer_id))
+                .collect();
+            fn visit(
+                node: &NodeHandle,
+                controlled: &std::collections::BTreeSet<String>,
+                out: &mut Vec<(NodeHandle, bool)>,
+            ) {
+                if matches!(node.tag_name().as_deref(), Some("input" | "textarea")) {
+                    out.push((node.clone(), controlled.contains(&node.renderer_id())));
+                }
+                for child in node.all_children() {
+                    visit(&child, controlled, out);
+                }
+            }
+            let mut nodes = vec![];
+            if let Some(root) = self.context.tree.borrow().root.as_ref() {
+                visit(root, &controlled, &mut nodes);
+            }
+            *index = Some((revision, nodes));
+        }
+        index
+            .as_ref()
+            .unwrap()
+            .1
+            .iter()
+            .map(|(node, controlled)| deka_native_ui::TextControl {
+                id: node.renderer_id(),
+                value: node.attribute("value").unwrap_or_default(),
+                placeholder: node.attribute("placeholder").unwrap_or_default(),
+                controlled: *controlled,
+                multiline: node.tag_name().as_deref() == Some("textarea"),
+            })
+            .collect()
+    }
+
     fn text_input(&self, id: &str, value: String) -> bool {
         fn find(node: &NodeHandle, id: &str) -> Option<NodeHandle> {
             if node.renderer_id() == id {

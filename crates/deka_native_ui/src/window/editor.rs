@@ -179,7 +179,9 @@ impl Editor {
             if let Some(snapshot) = source.pop() {
                 self.restore(&snapshot);
                 if redo {
-                    self.undo.push(before);
+                    let remaining = std::mem::take(&mut self.redo);
+                    self.push_undo(before);
+                    self.redo = remaining;
                 } else {
                     self.redo.push(before);
                 }
@@ -317,5 +319,25 @@ impl Editor {
             width: (b.x1 - b.x0) as f32,
             height: (b.y1 - b.y0) as f32,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn redo_caps_undo_and_preserves_remaining_redos() {
+        let mut editor = Editor::new("a", false);
+        let snapshot = editor.snapshot();
+        editor.undo = vec![snapshot.clone(); 256];
+        editor.redo = vec![snapshot; 2];
+        editor.key(&KeyInput {
+            name: "y".into(),
+            command: true,
+            down: true,
+            ..Default::default()
+        });
+        assert_eq!(editor.undo.len(), 256);
+        assert_eq!(editor.redo.len(), 1);
     }
 }
