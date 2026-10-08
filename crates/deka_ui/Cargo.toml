@@ -183,3 +183,12 @@ required-features = ["desktop"]
 [[example]]
 name = "multiple_windows"
 required-features = ["desktop"]
+
+[[example]]
+name = "native_services"
+required-features = ["desktop"]
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+dispatch2 = "0.3.1"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry"] }

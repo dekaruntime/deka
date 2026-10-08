@@ -84,6 +84,15 @@ impl BrowserApp {
         self.scene.images = images;
         result
     }
+    pub fn context_menu(&self, x: f32, y: f32) -> bool {
+        use deka_native_ui::Application;
+        self.scene
+            .nodes
+            .iter()
+            .rev()
+            .find(|node| node.rect.contains(x, y) && node.clip.contains(x, y))
+            .is_some_and(|node| self.app.context_menu(&node.id, x, y))
+    }
     pub fn pointer(&mut self, x: f32, y: f32) -> bool {
         self.focus_visible = false;
         if let Some(target) = self.scene.hit(x, y) {

@@ -20,6 +20,7 @@ mod multiple;
 pub mod native_tests;
 mod render;
 mod schedule;
+mod services;
 pub mod trace;
 mod ui;
 
@@ -27,6 +28,14 @@ pub use multiple::{
     MultipleDesktopSession, WindowController, WindowRequest, WindowToken, run_windows,
 };
 pub use render::Snapshot;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub use services::{
+    Accelerator, MenuEntry, MenuEvent, MenuId, MenuItemSpec, MenuSpec, NativeContextMenu,
+    NativeMenu,
+};
+pub use services::{
+    DialogKind, DialogResult, FileDialogOptions, FileDialogs, ServiceRequest, SystemFileDialogs,
+};
 pub use winit::window::Window as NativeWindow;
 
 use crate::{Application, Waker, scene::Scene};
@@ -125,6 +134,8 @@ impl Options {
 enum Wake {
     Work,
     Accessibility(accesskit_winit::Event),
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    Menu(MenuEvent),
 }
 impl From<accesskit_winit::Event> for Wake {
     fn from(event: accesskit_winit::Event) -> Self {
@@ -620,6 +631,8 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
     fn user_event(&mut self, _: &ActiveEventLoop, event: Wake) {
         let changed = match event {
             Wake::Work => self.content.turn(),
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            Wake::Menu(_) => false,
             Wake::Accessibility(event) => {
                 if self
                     .window

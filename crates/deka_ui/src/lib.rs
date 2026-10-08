@@ -12,7 +12,13 @@ pub use reactive::{Derived, Effect, ReactiveError, Scope, Signal, batch, derived
 #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 mod desktop;
 #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+mod native_services;
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+pub use deka_native_ui::window::{DialogResult, FileDialogOptions};
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub use desktop::{AppClosed, DesktopApp, WindowHandle, WindowManager};
+#[cfg(all(feature = "desktop", any(target_os = "macos", target_os = "windows")))]
+pub use native_services::{Menu, MenuItem};
 mod retained;
 mod view;
 #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
@@ -61,6 +67,10 @@ pub mod prelude {
         DesktopApp, LaunchOptions, WindowHandle, WindowManager, WindowOptions, launch, launch_with,
         launch_with_options,
     };
+    #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+    pub use crate::{DialogResult, FileDialogOptions};
+    #[cfg(all(feature = "desktop", any(target_os = "macos", target_os = "windows")))]
+    pub use crate::{Menu, MenuItem};
     pub use crate::{component, view};
 }
 

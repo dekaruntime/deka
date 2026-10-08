@@ -217,6 +217,15 @@ impl<A: Application> Content for UiContent<A> {
             self.dragging = false;
         }
         match input {
+            Input::ContextMenu { x, y } => self
+                .scene
+                .nodes
+                .iter()
+                .rev()
+                .find(|node| node.rect.contains(x, y) && node.clip.contains(x, y))
+                .is_some_and(|node| {
+                    self.available(&node.id) && self.host.app.context_menu(&node.id, x, y)
+                }),
             Input::Press { x, y } => {
                 if let Some(id) = self
                     .scene
@@ -275,6 +284,21 @@ impl<A: Application> Content for UiContent<A> {
                 let Some(id) = self.focused.clone() else {
                     return false;
                 };
+                if key.down && (key.name == "contextmenu" || (key.name == "f10" && key.shift)) {
+                    return self
+                        .scene
+                        .nodes
+                        .iter()
+                        .find(|node| node.id == id)
+                        .is_some_and(|node| {
+                            self.available(&id)
+                                && self.host.app.context_menu(
+                                    &id,
+                                    node.rect.x,
+                                    node.rect.y + node.rect.height,
+                                )
+                        });
+                }
                 let Some(editor) = self.editors.get_mut(&id) else {
                     return self.input(Input::Key {
                         name: key.name,

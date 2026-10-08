@@ -171,6 +171,7 @@ export function mount(app, canvas, inspect = false) {
       if (!input) {
         input = document.createElement(control.tag === 'textarea' ? 'textarea' : 'input'); input.setAttribute('aria-label', control.tag === 'textarea' ? 'Deka text area' : 'Deka text input')
         input.style.cssText = 'position:absolute;box-sizing:border-box;font:inherit;color:inherit;background:transparent;border:1px solid currentColor;border-radius:4px;padding:4px;'
+        input.addEventListener('contextmenu', event => contextMenu(event))
         input.addEventListener('compositionstart', () => { input.dekaComposing = true })
         input.addEventListener('compositionend', () => { input.dekaComposing = false; try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } })
         input.addEventListener('input', () => { if (!input.dekaComposing) { try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } } })
@@ -257,6 +258,10 @@ export function mount(app, canvas, inspect = false) {
     canvas.focus(); const bounds=canvas.getBoundingClientRect()
     try { app.pointer(event.clientX-bounds.left,event.clientY-bounds.top); draw() } catch(error) { fail(error) }
   }
+  const contextMenu = event => {
+    const bounds=canvas.getBoundingClientRect()
+    try { if(app.context_menu(event.clientX-bounds.left,event.clientY-bounds.top)) { event.preventDefault(); draw() } } catch(error) { fail(error) }
+  }
   const key = event => { try { if(app.key(event.key,event.shiftKey)) event.preventDefault(); draw() } catch(error) { fail(error) } }
   const blur = () => { app.blur(); draw() }
   // Explicit deterministic presentation clock for the same scripts as the native gate.
@@ -264,7 +269,7 @@ export function mount(app, canvas, inspect = false) {
     if (!inspect) return
     const {time} = event.detail; fixedClock=time; draw()
   }
-  canvas.addEventListener('pointerup',pointer); canvas.addEventListener('keydown',key); canvas.addEventListener('blur',blur)
+  canvas.addEventListener('contextmenu',contextMenu);canvas.addEventListener('pointerup',pointer); canvas.addEventListener('keydown',key); canvas.addEventListener('blur',blur)
   canvas.addEventListener('webglcontextlost',lost); canvas.addEventListener('webglcontextrestored',restored); if (inspect) canvas.addEventListener('deka:clock',command)
   const observer = new ResizeObserver(draw); observer.observe(canvas)
   window.addEventListener('resize',draw); motion.addEventListener('change',draw)
@@ -277,7 +282,7 @@ export function mount(app, canvas, inspect = false) {
   return {dispose() {
     if(disposed) return; disposed=true; mounts.delete(mountId); pending.delete(mountId); cancelAnimationFrame(request);observer.disconnect()
     window.removeEventListener('resize',draw);motion.removeEventListener('change',draw);dpr.removeEventListener('change',changedDpr)
-    canvas.removeEventListener('pointerup',pointer);canvas.removeEventListener('keydown',key);canvas.removeEventListener('blur',blur)
+    canvas.removeEventListener('contextmenu',contextMenu);canvas.removeEventListener('pointerup',pointer);canvas.removeEventListener('keydown',key);canvas.removeEventListener('blur',blur)
     canvas.removeEventListener('webglcontextlost',lost);canvas.removeEventListener('webglcontextrestored',restored);canvas.removeEventListener('deka:clock',command)
     for(const input of inputs.values()) input.remove(); for(const element of semantics.values()) element.remove()
     if (previousTabIndex === null) canvas.removeAttribute("tabindex"); else canvas.setAttribute("tabindex",previousTabIndex)
