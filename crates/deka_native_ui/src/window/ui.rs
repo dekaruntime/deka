@@ -607,9 +607,11 @@ mod tests {
                 if std::env::var_os("DISPLAY").is_none()
                     && std::env::var_os("WAYLAND_DISPLAY").is_none()
                 {
-                    eprintln!(
+                    use std::io::Write as _;
+                    // Direct stderr bypasses libtest's successful-test capture.
+                    writeln!(std::io::stderr().lock(),
                         "SKIP system_clipboard_round_trip: headless Linux has no display clipboard: {error}"
-                    );
+                    ).expect("write the CI-visible clipboard skip reason");
                     return;
                 }
                 panic!("platform clipboard failed on a display host: {error}");
