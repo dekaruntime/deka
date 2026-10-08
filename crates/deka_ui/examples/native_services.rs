@@ -90,7 +90,9 @@ fn main() {
         let mut ppm = format!("P6\n{} {}\n255\n", shot.width, shot.height).into_bytes();
         ppm.extend(
             shot.rgba
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|p| p[..3].iter().copied()),
         );
         std::fs::write(args.get(2).expect("capture file"), ppm).unwrap();
