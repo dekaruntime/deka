@@ -80,6 +80,10 @@ pub trait Application: 'static {
     fn semantics(&self) -> Vec<SemanticNode> {
         vec![]
     }
+    /// Operational host failures use the application's ordinary error sink.
+    fn report_error(&self, operation: &str, message: String) {
+        eprintln!("deka {operation}: {message}");
+    }
     fn text_controls(&self) -> Vec<TextControl> {
         vec![]
     }
