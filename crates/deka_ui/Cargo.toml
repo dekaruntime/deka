@@ -179,3 +179,7 @@ winit = "=0.30.13"
 [[example]]
 name = "text_input"
 required-features = ["desktop"]
+
+[[example]]
+name = "multiple_windows"
+required-features = ["desktop"]

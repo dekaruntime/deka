@@ -27,12 +27,14 @@ const server = createServer((req,res)=>{
   if(path==='/') {
     res.setHeader('Content-Type','text/html');res.end(`<!doctype html><div style="position:relative"><canvas tabindex="0" style="width:560px;height:480px"></canvas></div><script type="module">
       const fixture=new URLSearchParams(location.search).get('fixture')||'test-fixture';
-      const file=fixture==='input-fixture'?'web_input':'deka_ui_tour';
+      const file=fixture==='input-fixture'?'web_input':fixture==='shared-fixture'?'web_shared':'deka_ui_tour';
+      if(fixture==='shared-fixture') document.body.insertAdjacentHTML('beforeend','<div style="position:relative"><canvas tabindex="0" style="width:560px;height:480px"></canvas></div>');
       window.errors=[];window.frames=0;window.dekaFrameTimes=[];
       window.addEventListener('deka:error',event=>window.errors.push(event.detail));
-      window.addEventListener('deka:native-frame',event=>{window.scene=event.detail;window.frames++});
+      window.addEventListener('deka:native-frame',event=>{window.scene=event.detail;event.target.dekaScene=event.detail;window.frames++});
       const module=await import('/'+fixture+'/'+file+'.js');await module.default({module_or_path:'/'+fixture+'/'+file+'_bg.wasm'});
-      window.start=lesson=>fixture==='input-fixture'?module.start(document.querySelector('canvas')):module.start(lesson,document.querySelector('canvas'));
+      window.closeFirst=module.close_first;
+      window.start=lesson=>fixture==='shared-fixture'?module.start(...document.querySelectorAll('canvas')):fixture==='input-fixture'?module.start(document.querySelector('canvas')):module.start(lesson,document.querySelector('canvas'));
       window.stop=module.stop;window.ready=true;
       </script>`);return
   }
@@ -117,6 +119,18 @@ try {
   assert(accessibilitySnapshot.includes('button "Clear"'));
   await page.evaluate(()=>window.stop());assert.equal(await page.getByRole('button',{name:'Clear'}).count(),0);assert.equal(await input.count(),0);assert.equal(await textarea.count(),0)
   console.log('PASS: browser text/key/clipboard input, accessible controls/actions and teardown')
+  await page.goto(url+'/?fixture=shared-fixture');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start());
+  const canvases=page.locator('canvas');
+  const secondBefore=await canvases.nth(1).screenshot();
+  await page.getByRole('button',{name:'Add',exact:true}).nth(0).focus();await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>[...document.querySelectorAll('canvas')].every(canvas=>canvas.dekaScene.nodes.some(node=>node.text?.endsWith(': 1'))));
+  assert.notDeepEqual(await canvases.nth(1).screenshot(),secondBefore,'shared signal repaints the other browser mount');
+  await page.evaluate(()=>window.closeFirst());assert.equal(await page.getByRole('button',{name:'Add',exact:true}).count(),1);
+  await page.getByRole('button',{name:'Add',exact:true}).focus();await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>document.querySelectorAll('canvas')[1].dekaScene.nodes.some(node=>node.text==='Second: 2'));
+  await page.evaluate(()=>window.stop());assert.equal(await page.getByRole('button',{name:'Add',exact:true}).count(),0);
+  assert.deepEqual(await page.evaluate(()=>window.errors),[]);
+  console.log('PASS: shared browser mounts repaint and survive closing the first mount');
   await page.goto(url+'/?fixture=.&inspect');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start('counter'))
   const canvas=page.locator('canvas');const before=await canvas.screenshot()
   await canvas.focus();await page.keyboard.press('Tab');await page.keyboard.press('Enter');assert.notDeepEqual(await canvas.screenshot(),before)

@@ -394,6 +394,7 @@ struct Listener {
 pub(crate) struct Context {
     pub(crate) tree: RefCell<Tree>,
     pub(crate) scope_id: u64,
+    pub(crate) session_id: u64,
     pub(crate) states: RefCell<BTreeMap<usize, PublishedState>>,
     next_state: Cell<usize>,
     listeners: RefCell<BTreeMap<usize, Listener>>,
@@ -405,6 +406,7 @@ pub(crate) struct Context {
     errors: RefCell<Vec<String>>,
     error_sink: RefCell<Option<ErrorSink>>,
     error_location: RefCell<(Vec<usize>, String)>,
+    event_owners: RefCell<Vec<crate::reactive::ReactiveOwner>>,
 }
 impl Context {
     pub(crate) fn snapshot(&self) -> Node {
@@ -458,7 +460,7 @@ impl Context {
             eprintln!("deka ui: {error}");
         }
     }
-    fn report_current(&self, message: String) {
+    pub(crate) fn report_current(&self, message: String) {
         let (path, binding) = self.error_location.borrow().clone();
         self.report(&path, &binding, message);
     }
@@ -471,7 +473,7 @@ impl Context {
         }
         let previous = self.error_location.replace((path.to_vec(), binding.into()));
         let _location = Location(self, Some(previous));
-        run()
+        crate::retained::with_session(self.session_id, run)
     }
     fn changed(&self, changed: bool) {
         if changed {
@@ -650,7 +652,7 @@ fn prepare(
     match view.0 {
         Builder::Error(error) => return Err(format!("node {path:?} builder: {error}")),
         Builder::Ref(view, reference) => {
-            reference.check(context.scope_id)?;
+            reference.check(context.session_id)?;
             let mut next = prepare(*view, path, parent, context)?;
             if next.root_anchors.len() != 1 {
                 return Err("node_ref requires one retained root".into());
@@ -885,61 +887,83 @@ impl UiApp {
     where
         A: BuildApp<M>,
     {
-        let scope = Scope::new();
+        Self::in_scope(Scope::new(), app, sink)
+    }
+    /// Mount a separate retained tree in an existing app scope. Signals are
+    /// shared; local allocations and registrations are owned by this mount.
+    pub fn new_in_scope<A, M>(scope: &Scope, app: A) -> Self
+    where
+        A: BuildApp<M>,
+    {
+        Self::in_scope(scope.clone(), app, None)
+    }
+    pub(crate) fn in_scope<A, M>(scope: Scope, app: A, sink: Option<ErrorSink>) -> Self
+    where
+        A: BuildApp<M>,
+    {
         let context = Rc::new(Context {
             scope_id: scope.id(),
+            session_id: crate::retained::next_session_id(),
             ..Context::default()
         });
-        crate::retained::register(scope.id(), &context);
+        crate::retained::register(&context);
         context.error_sink.replace(sink);
         context.error_location.replace((vec![], "reactive".into()));
-        let weak = Rc::downgrade(&context);
-        scope.on_error(move |error| {
-            if let Some(context) = weak.upgrade() {
+        scope.ensure_error_sink(|error| {
+            if let Some(context) =
+                crate::retained::active_context().and_then(|context| context.upgrade())
+            {
                 context.report_current(error.to_string());
-            }
-        });
-        let registrations = scope.run(|| {
-            let view = app.build();
-            let view = if view.single_root() {
-                view
             } else {
-                View::element("view").child(view)
-            };
-            let mut prepared = match prepare(view, vec![], Anchor::default(), &context) {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    context.report(&[], "mount", error);
-                    Prepared::new(&context)
-                }
-            };
-            if prepared.wires.is_empty() {
-                prepared.slots.push(vec![]);
+                eprintln!("deka reactive: {error}");
             }
-            let wire = prepared.wires.pop().unwrap_or_else(|| WireNode {
-                tag: "view".into(),
-                ..Default::default()
-            });
-            let result = context
-                .tree
-                .borrow_mut()
-                .update_slots(wire, &prepared.slots);
-            if let Err(error) = result {
-                context.report(&[], "mount", error);
-                // The validated fallback has no authored bindings or classes.
-                if let Err(error) = context.tree.borrow_mut().update(WireNode {
-                    tag: "view".into(),
-                    ..Default::default()
-                }) {
-                    context.report(&[], "mount", error);
-                }
-                prepared = Prepared::new(&context);
-            }
-            if let Some(root) = context.tree.borrow().root.clone() {
-                prepared.attach(&[root], &context);
-            }
-            prepared.registrations
         });
+        let (mut registrations, owner) = scope.run(|| {
+            context.at(&[], "mount", || {
+                crate::reactive::owned(|| {
+                    let view = app.build();
+                    let view = if view.single_root() {
+                        view
+                    } else {
+                        View::element("view").child(view)
+                    };
+                    let mut prepared = match prepare(view, vec![], Anchor::default(), &context) {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            context.report(&[], "mount", error);
+                            Prepared::new(&context)
+                        }
+                    };
+                    if prepared.wires.is_empty() {
+                        prepared.slots.push(vec![]);
+                    }
+                    let wire = prepared.wires.pop().unwrap_or_else(|| WireNode {
+                        tag: "view".into(),
+                        ..Default::default()
+                    });
+                    let result = context
+                        .tree
+                        .borrow_mut()
+                        .update_slots(wire, &prepared.slots);
+                    if let Err(error) = result {
+                        context.report(&[], "mount", error);
+                        // The validated fallback has no authored bindings or classes.
+                        if let Err(error) = context.tree.borrow_mut().update(WireNode {
+                            tag: "view".into(),
+                            ..Default::default()
+                        }) {
+                            context.report(&[], "mount", error);
+                        }
+                        prepared = Prepared::new(&context);
+                    }
+                    if let Some(root) = context.tree.borrow().root.clone() {
+                        prepared.attach(&[root], &context);
+                    }
+                    prepared.registrations
+                })
+            })
+        });
+        registrations.reactive.push(owner);
         Self {
             registrations: Some(registrations),
             scope,
@@ -1016,9 +1040,13 @@ impl UiApp {
             .get(&token)
             .and_then(|listener| listener.anchor.borrow().as_ref().map(NodeHandle::slot))
             .unwrap_or_default();
-        self.context.at(&path, "event", || {
-            self.scope.batch(|| callback.borrow_mut()(event))
+        let (_, owner) = self.context.at(&path, "event", || {
+            self.scope
+                .batch(|| crate::reactive::owned(|| callback.borrow_mut()(event)))
         });
+        if !owner.is_empty() {
+            self.context.event_owners.borrow_mut().push(owner);
+        }
         if self.context.patches.get() != before {
             self.patch_passes.set(self.patch_passes.get() + 1);
         }
@@ -1041,9 +1069,14 @@ impl UiApp {
 }
 impl Drop for UiApp {
     fn drop(&mut self) {
-        self.scope.run(|| drop(self.registrations.take()));
+        self.context.at(&[], "drop", || {
+            self.scope.run(|| {
+                drop(self.registrations.take());
+                self.context.event_owners.borrow_mut().clear();
+            })
+        });
         self.context.waker.borrow_mut().take();
-        crate::retained::unregister(self.scope.id());
+        crate::retained::unregister(self.context.session_id);
     }
 }
 impl Application for UiApp {
@@ -1216,6 +1249,9 @@ impl Application for UiApp {
     fn key_input(&self, id: &str, key: String) -> bool {
         self.dispatch_to(id, Event::KeyDown(key))
     }
+    fn run_turn(&mut self, _budget: usize) -> bool {
+        self.context.pending_frame.get()
+    }
     fn set_waker(&mut self, waker: deka_native_ui::Waker) {
         if self.context.pending_frame.get() {
             waker.wake();
@@ -1226,9 +1262,32 @@ impl Application for UiApp {
 #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub fn launch<A, M>(app: A)
 where
-    A: BuildApp<M>,
+    A: LaunchApp<M>,
 {
-    deka_native_ui::run(UiApp::new(app));
+    app.launch();
+}
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+#[doc(hidden)]
+pub struct SingleWindow<M>(std::marker::PhantomData<M>);
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+#[doc(hidden)]
+pub struct MultipleWindows;
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+#[doc(hidden)]
+pub trait LaunchApp<M> {
+    fn launch(self);
+}
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+impl<A: BuildApp<M>, M> LaunchApp<SingleWindow<M>> for A {
+    fn launch(self) {
+        deka_native_ui::run(UiApp::new(self));
+    }
+}
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+impl LaunchApp<MultipleWindows> for crate::DesktopApp {
+    fn launch(self) {
+        deka_native_ui::window::run_windows(self);
+    }
 }
 
 /// Launch with the existing window's explicit options and motion preference.

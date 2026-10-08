@@ -93,6 +93,8 @@ impl ApplicationHandler<Wake> for TestLoop {
         );
         content.frame(200., 100., 1.);
         let mut shell = Shell {
+            standalone: false,
+            close_requested: false,
             proxy: self.proxy.clone(),
             content,
             options: Options::new("Test", 200., 100.),
@@ -179,6 +181,7 @@ impl ApplicationHandler<Wake> for TestLoop {
             shell.content.accessibility(1.).tree.is_some(),
             "deactivation releases the previous projection"
         );
+        super::multiple::native_tests::run(event_loop, self.proxy.clone());
         shell.exiting(event_loop);
         event_loop.exit();
     }

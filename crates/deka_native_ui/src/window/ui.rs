@@ -58,12 +58,18 @@ impl<A: Application> UiContent<A> {
         }
     }
 
+    pub(crate) fn has_pending_work(&self) -> bool {
+        self.wake_pending.load(Ordering::Acquire) || self.host.has_ready_work()
+    }
     fn available(&self, id: &str) -> bool {
         self.semantics.is_empty()
             || self
                 .semantics
                 .iter()
                 .any(|n| n.id == id && !n.disabled && !n.hidden)
+    }
+    pub(super) fn clipboard(&mut self, clipboard: impl TextClipboard + 'static) {
+        self.clipboard = Box::new(clipboard);
     }
     fn publish(&mut self, id: &str) {
         let editor = self.editors.get_mut(id).unwrap();
@@ -510,6 +516,29 @@ pub trait TextClipboard {
     fn get(&mut self) -> Result<String, String>;
     fn set(&mut self, text: &str) -> Result<(), String>;
 }
+/// App-wide ownership retains copied text when its originating window closes.
+#[derive(Clone)]
+pub(super) struct SharedClipboard(std::rc::Rc<std::cell::RefCell<Box<dyn TextClipboard>>>);
+impl Default for SharedClipboard {
+    fn default() -> Self {
+        Self(std::rc::Rc::new(std::cell::RefCell::new(Box::new(
+            SystemClipboard(None),
+        ))))
+    }
+}
+impl SharedClipboard {
+    pub(super) fn replace(&self, clipboard: impl TextClipboard + 'static) {
+        self.0.replace(Box::new(clipboard));
+    }
+}
+impl TextClipboard for SharedClipboard {
+    fn get(&mut self) -> Result<String, String> {
+        self.0.borrow_mut().get()
+    }
+    fn set(&mut self, text: &str) -> Result<(), String> {
+        self.0.borrow_mut().set(text)
+    }
+}
 struct SystemClipboard(Option<arboard::Clipboard>);
 impl SystemClipboard {
     fn clipboard(&mut self) -> Result<&mut arboard::Clipboard, String> {
@@ -573,6 +602,9 @@ impl<A: Application> DesktopSession<A> {
     }
     pub fn keyboard(&mut self, key: KeyInput) -> bool {
         self.content.input(Input::EditKey(key))
+    }
+    pub fn turn(&mut self) -> bool {
+        self.content.turn()
     }
     pub fn app(&self) -> &A {
         &self.content.host.app

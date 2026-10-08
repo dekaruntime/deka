@@ -15,6 +15,7 @@ mod encode;
 mod input;
 #[cfg(target_os = "macos")]
 mod mac;
+mod multiple;
 #[cfg(test)]
 pub mod native_tests;
 mod render;
@@ -22,7 +23,11 @@ mod schedule;
 pub mod trace;
 mod ui;
 
+pub use multiple::{
+    MultipleDesktopSession, WindowController, WindowRequest, WindowToken, run_windows,
+};
 pub use render::Snapshot;
+pub use winit::window::Window as NativeWindow;
 
 use crate::{Application, Waker, scene::Scene};
 pub(crate) use input::Input;
@@ -181,23 +186,7 @@ pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
         }
     };
     trace::mark("event loop built");
-    let mut shell = Shell {
-        proxy: event_loop.create_proxy(),
-        content,
-        options,
-        gpu: GpuState::Starting(gpu),
-        window: None,
-        surface: None,
-        schedule: Schedule::new(),
-        events: EventLayer::default(),
-        adapter: None,
-        focused: true,
-        presented: 0,
-        drawn_scale: None,
-        shown_with_frame: false,
-        menu_installed: false,
-        failed: None,
-    };
+    let mut shell = Shell::new(content, options, event_loop.create_proxy(), gpu);
     if let Err(e) = event_loop.run_app(&mut shell) {
         eprintln!("deka: event loop: {e}");
         std::process::exit(1);
@@ -220,6 +209,8 @@ struct Surface {
 }
 
 struct Shell<C: Content> {
+    standalone: bool,
+    close_requested: bool,
     events: EventLayer,
     adapter: Option<accesskit_winit::Adapter>,
     proxy: EventLoopProxy<Wake>,
@@ -255,6 +246,28 @@ enum Drawn {
 }
 
 impl<C: Content> Shell<C> {
+    fn new(content: C, options: Options, proxy: EventLoopProxy<Wake>, gpu: Pending) -> Self {
+        Self {
+            proxy,
+            content,
+            options,
+            gpu: GpuState::Starting(gpu),
+            window: None,
+            surface: None,
+            schedule: Schedule::new(),
+            events: EventLayer::default(),
+            adapter: None,
+            focused: true,
+            presented: 0,
+            drawn_scale: None,
+            shown_with_frame: false,
+            menu_installed: false,
+            failed: None,
+            standalone: true,
+            close_requested: false,
+        }
+    }
+
     fn open(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         let mut attributes = Window::default_attributes()
             .with_title(self.options.title.clone())
@@ -468,7 +481,10 @@ impl<C: Content> Shell<C> {
             on_frame(frame);
         }
         if self.options.frames.is_some_and(|n| self.presented >= n) {
-            event_loop.exit();
+            self.close_requested = true;
+            if self.standalone {
+                event_loop.exit();
+            }
         }
         // Normally the visibility event installs it first.
         if self.presented >= 2 {
