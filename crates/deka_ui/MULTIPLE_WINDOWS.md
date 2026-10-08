@@ -30,3 +30,11 @@ example. For a headless renderer capture, append `-- --snapshot <directory>`.
 The headless multi-window driver consumes the same queued commands and winit
 routing as the native event loop. Tests inject pointer/key/close events and
 assert rendered state, cross-window updates, disposal and clipboard effects.
+
+A window closed while pending never runs its factory. A failed native open
+reports through `DesktopApp::new_with_error_sink`'s `UiError` sink (`window`),
+drops that mount, and keeps other windows running. `DesktopApp::take_errors()`
+drains app-level operational errors. The same sink is installed on each mount
+for binding and clipboard failures. Work wakes run turns only on mounts with
+pending work. Native ingress tests use real invisible winit windows and exercise
+`Multiple`/`NativeStore` close requests, accessibility wakes and exit.

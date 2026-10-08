@@ -195,3 +195,119 @@ fn removed_control_loses_adapter_route_and_identity_is_not_reused() {
         temporary
     );
 }
+
+#[test]
+fn incremental_updates_only_send_changed_nodes_and_parent_child_removals() {
+    let mut text_handle = None;
+    let mut shown_handle = None;
+    let mut session = DesktopSession::new(UiApp::new(|| {
+        let text = signal("old".to_owned());
+        let shown = signal(true);
+        text_handle = Some(text);
+        shown_handle = Some(shown);
+        view! { <view>
+            <input aria-label="Name" value={text}/>
+            {move || if shown.get().unwrap() {view!{<button>"Temporary"</button>}} else {View::fragment([])}}
+            <button>"Stable"</button>
+        </view> }
+    }));
+    session.frame(400., 300., 1.);
+    let first = session.accessibility(1.);
+    assert!(first.tree.is_some());
+    let input = first
+        .nodes
+        .iter()
+        .find(|(_, n)| n.label() == Some("Name"))
+        .unwrap()
+        .0;
+    let stable = first
+        .nodes
+        .iter()
+        .find(|(_, n)| n.label() == Some("Stable"))
+        .unwrap()
+        .0;
+    let temporary = first
+        .nodes
+        .iter()
+        .find(|(_, n)| n.label() == Some("Temporary"))
+        .unwrap()
+        .0;
+    let idle = session.accessibility(1.);
+    assert!(idle.tree.is_none());
+    assert!(
+        idle.nodes.is_empty(),
+        "unchanged text runs must retain their identities too"
+    );
+    text_handle.unwrap().set("new".into());
+    session.frame(400., 300., 1.);
+    let changed = session.accessibility(1.);
+    assert!(changed.tree.is_none());
+    assert_eq!(
+        changed
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == input)
+            .unwrap()
+            .1
+            .value(),
+        Some("new")
+    );
+    assert!(!changed.nodes.iter().any(|(id, _)| *id == stable));
+    shown_handle.unwrap().set(false);
+    session.frame(400., 300., 1.);
+    let removed = session.accessibility(1.);
+    assert!(removed.tree.is_none());
+    assert!(!removed.nodes.iter().any(|(id, _)| *id == temporary));
+    let parent = first
+        .nodes
+        .iter()
+        .find(|(_, n)| n.children().contains(&temporary))
+        .unwrap()
+        .0;
+    assert!(
+        !removed
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == parent)
+            .unwrap()
+            .1
+            .children()
+            .contains(&temporary),
+        "parent update must remove the old node from the AT tree"
+    );
+}
+
+#[test]
+fn queued_winit_click_and_focus_reject_newly_hidden_or_disabled_parent() {
+    for attribute in ["aria-hidden", "disabled"] {
+        let clicks = Rc::new(Cell::new(0));
+        let output = clicks.clone();
+        let mut session = DesktopSession::new(UiApp::new(move || {
+            view! {
+                <view id="parent"><button aria-label="Child" onClick={move |_|output.set(output.get()+1)}>"Child"</button></view>
+            }
+        }));
+        session.frame(400., 300., 1.);
+        let first = session.accessibility(1.);
+        let child = first
+            .nodes
+            .iter()
+            .find(|(_, n)| n.label() == Some("Child"))
+            .unwrap()
+            .0;
+        assert!(session.accessibility_event(&action(Action::Click, child, None)));
+        assert_eq!(clicks.get(), 1);
+        session
+            .app()
+            .tree()
+            .get_element_by_id("parent")
+            .unwrap()
+            .set_attribute(attribute, "true")
+            .unwrap();
+        // Queued payloads arrive before the next frame/projection refresh.
+        assert!(!session.accessibility_event(&action(Action::Click, child, None)));
+        assert!(!session.accessibility_event(&action(Action::Focus, child, None)));
+        assert_eq!(clicks.get(), 1);
+        assert_eq!(session.focus(), None);
+    }
+}

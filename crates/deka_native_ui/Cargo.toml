@@ -80,3 +80,8 @@ muda = { version = "=0.21.1", default-features = false, optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"], optional = true }
+[[test]]
+name = "native_events"
+path = "tests/native_events.rs"
+harness = false
+required-features = ["gpu"]

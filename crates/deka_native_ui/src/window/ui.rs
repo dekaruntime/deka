@@ -58,6 +58,9 @@ impl<A: Application> UiContent<A> {
         }
     }
 
+    pub(crate) fn has_pending_work(&self) -> bool {
+        self.wake_pending.load(Ordering::Acquire) || self.host.has_ready_work()
+    }
     fn available(&self, id: &str) -> bool {
         self.semantics.is_empty()
             || self
@@ -133,8 +136,10 @@ impl<A: Application> Content for UiContent<A> {
         let root = self.host.render();
         self.semantics = self.host.app.semantics();
         let controls = self.host.app.text_controls();
+        let control_ids: std::collections::BTreeSet<_> =
+            controls.iter().map(|c| c.id.as_str()).collect();
         self.editors
-            .retain(|id, _| controls.iter().any(|c| &c.id == id));
+            .retain(|id, _| control_ids.contains(id.as_str()));
         for c in &controls {
             let editor = self
                 .editors
@@ -162,10 +167,16 @@ impl<A: Application> Content for UiContent<A> {
             self.clock.elapsed().as_secs_f64() * 1000.,
             self.reduced_motion,
         );
+        let bounds: BTreeMap<_, _> = self
+            .scene
+            .nodes
+            .iter()
+            .map(|n| (n.id.clone(), (n.rect, n.clip)))
+            .collect();
         for c in controls {
-            if let Some(node) = self.scene.nodes.iter().find(|n| n.id == c.id) {
+            if let Some((rect, clip)) = bounds.get(&c.id) {
                 let editor = self.editors.get_mut(&c.id).unwrap();
-                editor.place(node.rect, node.clip);
+                editor.place(*rect, *clip);
                 editor.decoration(
                     &mut self.scene,
                     self.active && self.focused.as_ref() == Some(&c.id),
@@ -303,14 +314,15 @@ impl<A: Application> Content for UiContent<A> {
                 {
                     if key.name == "v" {
                         match self.clipboard.get() {
-                            Ok(text) => editor.insert(&text),
-                            Err(error) => eprintln!("deka clipboard: {error}"),
+                            Ok(text) if !text.is_empty() => editor.insert(&text),
+                            Ok(_) => {}
+                            Err(error) => self.host.app.report_error("clipboard", error),
                         }
                     } else if let Some(text) = editor.text.selected_text() {
                         match self.clipboard.set(text) {
                             Ok(()) if key.name == "x" => editor.delete_selected(),
                             Ok(()) => {}
-                            Err(error) => eprintln!("deka clipboard: {error}"),
+                            Err(error) => self.host.app.report_error("clipboard", error),
                         }
                     }
                     true
@@ -392,23 +404,29 @@ impl<A: Application> Content for UiContent<A> {
             self.active.then_some(self.focused.as_deref()).flatten(),
             scale,
         );
-        for control in &self.semantics {
-            if control.hidden {
-                continue;
-            }
+        let mut nodes: BTreeMap<_, _> = std::mem::take(&mut update.nodes).into_iter().collect();
+        for control in self.semantics.iter().filter(|n| !n.hidden) {
             if let Some(editor) = self.editors.get_mut(&control.id) {
                 let id = self.accessibility.id(&control.id);
-                if let Some(index) = update.nodes.iter().position(|(node, _)| *node == id) {
-                    let (_, mut node) = update.nodes.remove(index);
-                    editor.accessibility(&mut update, &mut node, || self.accessibility.allocate());
-                    update.nodes.push((id, node));
+                if let Some(node) = nodes.get_mut(&id) {
+                    editor.accessibility(&mut update, node, || self.accessibility.allocate());
                 }
             }
         }
-        update
+        update.nodes.extend(nodes);
+        self.accessibility.incremental(update)
     }
+
     fn accessibility_event(&mut self, event: &accesskit_winit::WindowEvent) -> bool {
         use accesskit::{Action, ActionData};
+        if matches!(
+            event,
+            accesskit_winit::WindowEvent::InitialTreeRequested
+                | accesskit_winit::WindowEvent::AccessibilityDeactivated
+        ) {
+            self.accessibility.deactivate();
+            return matches!(event, accesskit_winit::WindowEvent::InitialTreeRequested);
+        }
         self.semantics = self.host.app.semantics();
         let accesskit_winit::WindowEvent::ActionRequested(request) = event else {
             return false;
@@ -558,7 +576,11 @@ impl SystemClipboard {
 }
 impl TextClipboard for SystemClipboard {
     fn get(&mut self) -> Result<String, String> {
-        self.clipboard()?.get_text().map_err(|e| e.to_string())
+        match self.clipboard()?.get_text() {
+            Ok(text) => Ok(text),
+            Err(arboard::Error::ContentNotAvailable) => Ok(String::new()),
+            Err(error) => Err(error.to_string()),
+        }
     }
     fn set(&mut self, text: &str) -> Result<(), String> {
         self.clipboard()?.set_text(text).map_err(|e| e.to_string())
@@ -631,6 +653,46 @@ mod tests {
     use crate::{Node, Reload, Style};
     use std::cell::Cell;
     use std::rc::Rc;
+
+    #[test]
+    fn system_clipboard_round_trip() {
+        let mut clipboard = SystemClipboard(None);
+        if let Err(error) = clipboard.clipboard() {
+            #[cfg(target_os = "linux")]
+            {
+                if std::env::var_os("DISPLAY").is_none()
+                    && std::env::var_os("WAYLAND_DISPLAY").is_none()
+                {
+                    eprintln!(
+                        "SKIP system_clipboard_round_trip: headless Linux has no display clipboard: {error}"
+                    );
+                    return;
+                }
+                panic!("platform clipboard failed on a display host: {error}");
+            }
+            #[cfg(not(target_os = "linux"))]
+            panic!("system clipboard must exist on this desktop host: {error}");
+        }
+        let previous = clipboard.get().unwrap();
+        let text = format!("Deka clipboard round trip 日本 {}", std::process::id());
+        let result = clipboard.set(&text).and_then(|()| clipboard.get());
+        clipboard.set(&previous).unwrap();
+        assert_eq!(result.unwrap(), text);
+    }
+
+    #[test]
+    fn focused_nonsemantic_element_projects_to_the_window_root() {
+        let (mut ui, _) = content();
+        let rect = ui.scene.targets[0].rect;
+        assert!(ui.input(Input::Press {
+            x: rect.x + 2.,
+            y: rect.y + 2.
+        }));
+        assert_eq!(ui.focused.as_deref(), Some("b0"));
+        let tree = ui.accessibility(1.);
+        assert_eq!(tree.focus, super::super::accessibility::ROOT);
+        assert!(tree.nodes.iter().any(|(id, _)| *id == tree.focus));
+    }
 
     /// Two buttons; each click adds its index + 1 to the state.
     struct Buttons {

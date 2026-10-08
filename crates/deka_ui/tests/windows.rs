@@ -252,3 +252,107 @@ fn clipboard_owner_outlives_the_window_that_copied_text() {
         Some("A")
     );
 }
+
+#[test]
+fn a_window_closed_while_pending_never_runs_its_factory() {
+    let factories = Rc::new(Cell::new(0));
+    let output = factories.clone();
+    let app = DesktopApp::new(move |windows| {
+        let closed = windows
+            .open(WindowOptions::new("Never mounted", 200., 100.), move |_| {
+                output.set(output.get() + 1);
+                view! {<p>"Must not mount"</p>}
+            })
+            .unwrap();
+        assert!(closed.close());
+        windows
+            .open(
+                WindowOptions::new("Survivor", 200., 100.),
+                |_| view! {<p>"Alive"</p>},
+            )
+            .unwrap();
+    });
+    let mut session = Session::new(app);
+    assert_eq!(factories.get(), 0);
+    assert_eq!(session.windows().len(), 1);
+    let id = session.windows()[0].0;
+    assert!(text(&mut session, id).contains(&"Alive".into()));
+}
+
+#[test]
+fn closing_a_window_drops_its_actual_shared_signal_subscriber() {
+    let trigger = Rc::new(Cell::new(None));
+    let output = trigger.clone();
+    let counts = [Rc::new(Cell::new(0)), Rc::new(Cell::new(0))];
+    let callbacks = counts.clone();
+    let app = DesktopApp::new(move |windows| {
+        let shared = signal(0);
+        output.set(Some(shared));
+        for (i, count) in callbacks.into_iter().enumerate() {
+            windows
+                .open(
+                    WindowOptions::new(format!("Window {i}"), 200., 100.),
+                    move |_| {
+                        effect(move || {
+                            let _ = shared.get().unwrap();
+                            count.set(count.get() + 1);
+                        });
+                        view! {<p>"Subscriber"</p>}
+                    },
+                )
+                .unwrap();
+        }
+    });
+    let mut session = Session::new(app);
+    let windows = session.windows();
+    assert_eq!([counts[0].get(), counts[1].get()], [1, 1]);
+    session.event(windows[0].1, &WindowEvent::CloseRequested, 1.);
+    trigger.get().unwrap().set(1);
+    assert_eq!(
+        [counts[0].get(), counts[1].get()],
+        [1, 2],
+        "closed mount's subscriber must be removed, surviving subscriber must still run"
+    );
+    session.event(windows[1].1, &WindowEvent::CloseRequested, 1.);
+    trigger.get().unwrap().set(2);
+    assert_eq!([counts[0].get(), counts[1].get()], [1, 2]);
+}
+
+#[test]
+fn failed_window_uses_the_same_app_sink_as_window_runtime_errors() {
+    use deka_native_ui::window::WindowController;
+    let errors = Rc::new(RefCell::new(vec![]));
+    let output = errors.clone();
+    let mut failed = None;
+    let mut app = DesktopApp::new_with_error_sink(
+        |windows| {
+            failed = Some(
+                windows
+                    .open(WindowOptions::new("A", 200., 100.), |_| view! {<p>"A"</p>})
+                    .unwrap()
+                    .id(),
+            );
+            windows
+                .open(WindowOptions::new("B", 200., 100.), |_| {
+                    View::element("view").attr("className", "invalid-utility")
+                })
+                .unwrap();
+        },
+        Some(Rc::new(move |error| {
+            output
+                .borrow_mut()
+                .push((error.binding.clone(), error.message.clone()))
+        })),
+    );
+    app.failed(failed.unwrap(), "cannot create native window".into());
+    let requests = app.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        errors.borrow().len(),
+        2,
+        "open failure and runtime mount failure share one sink"
+    );
+    assert_eq!(errors.borrow()[0].0, "window");
+    assert!(errors.borrow()[0].1.contains("cannot create native window"));
+    assert_eq!(app.take_errors().len(), 1);
+}

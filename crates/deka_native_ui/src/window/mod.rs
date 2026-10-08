@@ -16,6 +16,8 @@ mod input;
 #[cfg(target_os = "macos")]
 mod mac;
 mod multiple;
+#[cfg(test)]
+pub mod native_tests;
 mod render;
 mod schedule;
 mod services;
@@ -222,7 +224,6 @@ struct Shell<C: Content> {
     close_requested: bool,
     events: EventLayer,
     adapter: Option<accesskit_winit::Adapter>,
-    accessible_tree: Arc<std::sync::Mutex<accesskit::TreeUpdate>>,
     proxy: EventLoopProxy<Wake>,
     content: C,
     options: Options,
@@ -267,7 +268,6 @@ impl<C: Content> Shell<C> {
             schedule: Schedule::new(),
             events: EventLayer::default(),
             adapter: None,
-            accessible_tree: Arc::new(std::sync::Mutex::new(accessibility::empty_tree())),
             focused: true,
             presented: 0,
             drawn_scale: None,
@@ -298,25 +298,9 @@ impl<C: Content> Shell<C> {
             self.options.height as f32,
             window.scale_factor() as f32,
         );
-        *self
-            .accessible_tree
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) =
-            self.content.accessibility(window.scale_factor() as f32);
-        if let Some((_, root)) = self
-            .accessible_tree
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .nodes
-            .iter_mut()
-            .find(|(id, _)| *id == accessibility::ROOT)
-        {
-            root.set_label(self.options.title.clone());
-        }
-        self.adapter = Some(accesskit_winit::Adapter::with_mixed_handlers(
+        self.adapter = Some(accesskit_winit::Adapter::with_event_loop_proxy(
             event_loop,
             &window,
-            accessibility::Activation(self.accessible_tree.clone()),
             self.proxy.clone(),
         ));
         trace::mark("window created");
@@ -487,20 +471,22 @@ impl<C: Content> Shell<C> {
         };
         self.content.presented(self.focused);
         self.sync_ime();
-        let mut update = self.content.accessibility(self.scale() as f32);
-        if let Some((_, root)) = update
-            .nodes
-            .iter_mut()
-            .find(|(id, _)| *id == accessibility::ROOT)
-        {
-            root.set_label(self.options.title.clone());
-        }
-        *self
-            .accessible_tree
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = update.clone();
         if let Some(adapter) = &mut self.adapter {
-            adapter.update_if_active(|| update);
+            // The adapter invokes this only while AT is active, including its
+            // initial request. Idle frames never build or cache a platform tree.
+            adapter.update_if_active(|| {
+                let mut update = self
+                    .content
+                    .accessibility(self.window.as_ref().map_or(1., |w| w.scale_factor()) as f32);
+                if let Some((_, root)) = update
+                    .nodes
+                    .iter_mut()
+                    .find(|(id, _)| *id == accessibility::ROOT)
+                {
+                    root.set_label(self.options.title.clone());
+                }
+                update
+            });
         }
         if let Some(on_frame) = self.options.on_frame.as_mut() {
             on_frame(frame);
