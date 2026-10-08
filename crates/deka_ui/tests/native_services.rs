@@ -368,3 +368,154 @@ fn right_click_payload_respects_hidden_and_disabled_ancestors_and_false_values()
         }
     }
 }
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct CountedDrop(Rc<Cell<usize>>);
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl Drop for CountedDrop {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() + 1);
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[test]
+fn window_drop_frees_installed_menu_and_pending_dialog_captures() {
+    use deka_native_ui::window::{MenuEvent, WindowController, WindowRequest};
+    let menu_drops = Rc::new(Cell::new(0));
+    let dialog_drops = Rc::new(Cell::new(0));
+    let menu_capture = Rc::new(CountedDrop(menu_drops.clone()));
+    let dialog_capture = Rc::new(CountedDrop(dialog_drops.clone()));
+    let weak_menu = Rc::downgrade(&menu_capture);
+    let weak_dialog = Rc::downgrade(&dialog_capture);
+    let calls = Rc::new(Cell::new(0));
+    let output = calls.clone();
+    let mut app = DesktopApp::new(move |windows| {
+        let menus = windows.clone();
+        windows
+            .open(WindowOptions::new("Owner", 320., 180.), move |window| {
+                menus
+                    .app_menu(Menu::new().item(MenuItem::new("Window action", move || {
+                        let _capture = &menu_capture;
+                        output.set(output.get() + 1);
+                    })))
+                    .unwrap();
+                window
+                    .open_file(FileDialogOptions::new(), move |_| {
+                        let _capture = &dialog_capture;
+                        panic!("completion must not run after its window is dropped");
+                    })
+                    .unwrap();
+                view! { <p>"Owner"</p> }
+            })
+            .unwrap();
+    });
+    let mut requests = app.requests();
+    let WindowRequest::Open {
+        id, app: window, ..
+    } = requests.remove(0)
+    else {
+        panic!("expected the window mount");
+    };
+    let services = app.requests();
+    app.opened(id, None);
+    // Hold the dialog outside the host queue, as a pending backend would. Install
+    // the window-authored app menu in a host that remains alive after mount drop.
+    let mut complete = None;
+    let mut event = None;
+    // A small controller forwards the actual requests to production Services.
+    struct Pending(Vec<WindowRequest<UiApp>>);
+    impl WindowController for Pending {
+        type App = UiApp;
+        fn requests(&mut self) -> Vec<WindowRequest<UiApp>> {
+            std::mem::take(&mut self.0)
+        }
+        fn has_requests(&self) -> bool {
+            !self.0.is_empty()
+        }
+    }
+    let mut menu_requests = Vec::new();
+    for request in services {
+        match request {
+            WindowRequest::Service(deka_native_ui::window::ServiceRequest::FileDialog {
+                complete: callback,
+                ..
+            }) => complete = Some(callback),
+            WindowRequest::Service(deka_native_ui::window::ServiceRequest::AppMenu(menu)) => {
+                let deka_native_ui::window::MenuEntry::Item(item) = &menu.entries[0] else {
+                    panic!("expected menu item")
+                };
+                event = Some(MenuEvent {
+                    id: item.id.clone(),
+                });
+                menu_requests.push(WindowRequest::Service(
+                    deka_native_ui::window::ServiceRequest::AppMenu(menu),
+                ));
+            }
+            _ => panic!("unexpected service"),
+        }
+    }
+    let mut menu_host = MultipleDesktopSession::new(Pending(menu_requests));
+    let event = event.unwrap();
+    assert!(menu_host.menu_event(event.clone()));
+    assert_eq!(calls.get(), 1);
+    assert!(weak_menu.upgrade().is_some());
+    assert!(weak_dialog.upgrade().is_some());
+    drop(window);
+    app.closed(id);
+    assert_eq!(menu_drops.get(), 1);
+    assert_eq!(dialog_drops.get(), 1);
+    assert!(weak_menu.upgrade().is_none());
+    assert!(weak_dialog.upgrade().is_none());
+    assert!(!menu_host.menu_event(event));
+    complete.unwrap()(Ok(None));
+    assert_eq!(calls.get(), 1);
+    // Keep the app scope/manager alive until after all reclamation assertions.
+    drop(app);
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[test]
+fn closing_window_frees_its_pending_context_menu_without_stopping_other_windows() {
+    let drops = Rc::new(Cell::new(0));
+    let capture = Rc::new(CountedDrop(drops.clone()));
+    let weak = Rc::downgrade(&capture);
+    let app = DesktopApp::new(move |windows| {
+        windows
+            .open(
+                WindowOptions::new("Popup owner", 320., 180.),
+                move |window| {
+                    window
+                        .context_menu(
+                            Menu::new().item(MenuItem::new("Pending", move || {
+                                let _capture = &capture;
+                                panic!("undispatched popup");
+                            })),
+                            1.,
+                            1.,
+                        )
+                        .unwrap();
+                    view! { <p>"Popup owner"</p> }
+                },
+            )
+            .unwrap();
+        windows
+            .open(
+                WindowOptions::new("Survivor", 320., 180.),
+                |_| view! { <p>"Survivor"</p> },
+            )
+            .unwrap();
+    });
+    let mut session = Session::new(app);
+    let (owner, os_owner) = session.windows()[0];
+    let survivor = session.windows()[1].0;
+    assert!(weak.upgrade().is_some());
+    assert_eq!(drops.get(), 0);
+    assert!(session.event(os_owner, &WindowEvent::CloseRequested, 1.));
+    assert!(session.app(owner).is_none());
+    assert!(session.app(survivor).is_some());
+    assert_eq!(drops.get(), 1);
+    assert!(weak.upgrade().is_none());
+    drop(session);
+    assert_eq!(drops.get(), 1);
+}

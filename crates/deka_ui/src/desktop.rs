@@ -97,12 +97,19 @@ impl WindowHandle {
     ) -> Result<(), AppClosed> {
         self.service(|scope| {
             let captured = crate::native_services::Captured::new(scope);
+            let complete =
+                captured.run(|| crate::native_services::ScopedCallback::new(Some(complete)));
             deka_native_ui::window::ServiceRequest::FileDialog {
                 window: self.id,
                 kind,
                 options,
                 complete: Box::new(move |result| {
-                    captured.run(|| complete(result));
+                    if let Some(callback) = complete.as_ref().and_then(|callback| callback.get()) {
+                        let callback = callback.borrow_mut().take();
+                        if let Some(callback) = callback {
+                            captured.run(|| callback(result));
+                        }
+                    }
                 }),
             }
         })

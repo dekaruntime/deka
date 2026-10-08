@@ -13,7 +13,10 @@ logical window coordinates. Right-clicks bubble from the hit retained node to
 its nearest registered ancestor. Call `window.context_menu(menu, x, y)` from
 the handler. The Context Menu key and Shift-F10 use the focused control.
 Callbacks retain their originating scope and tree weakly; closed windows lose
-their popup routes. Menu actions arrive as muda events through the winit proxy,
+their popup routes. Dropping the originating scope/window frees callback captures,
+even when an application menu clone or queued dialog request remains alive.
+Dropping the last menu/service reference also frees its captures without waiting
+for scope shutdown. Menu actions arrive as muda events through the winit proxy,
 then update signals in a batch. A callback can open/close windows through the
 same queued window capabilities.
 
@@ -87,3 +90,5 @@ in automated runs; `SystemFileDialogs`' invalid-option path is also exercised.
 `cargo test --locked --release --manifest-path vendor/rfd/Cargo.toml --lib`
 checks macOS modal responses without showing a panel. Live file choice and
 VoiceOver remain the manual checks above.
+
+-codex
