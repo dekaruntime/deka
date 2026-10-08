@@ -35,25 +35,68 @@ impl From<String> for ViewError {
 }
 thread_local! {
     static APPS: RefCell<BTreeMap<u64, Weak<Context>>> = const { RefCell::new(BTreeMap::new()) };
+    static NEXT_SESSION: Cell<u64> = const { Cell::new(0) };
+    static ACTIVE_TREE: RefCell<Option<Weak<Context>>> = const { RefCell::new(None) };
 }
-pub(crate) fn register(scope: u64, context: &Rc<Context>) {
+pub(crate) fn next_session_id() -> u64 {
+    NEXT_SESSION.with(|next| {
+        let id = next.get();
+        next.set(id.checked_add(1).expect("tree session identity exhausted"));
+        id
+    })
+}
+pub(crate) fn register(context: &Rc<Context>) {
     APPS.with(|apps| {
         let mut apps = apps.borrow_mut();
         apps.retain(|_, app| app.strong_count() > 0);
-        apps.insert(scope, Rc::downgrade(context));
+        apps.insert(context.session_id, Rc::downgrade(context));
     });
 }
-pub(crate) fn unregister(scope: u64) {
+pub(crate) fn unregister(session: u64) {
     APPS.with(|apps| {
-        apps.borrow_mut().remove(&scope);
+        apps.borrow_mut().remove(&session);
     });
 }
-/// Access the current app during construction, an event or a reaction.
+pub(crate) fn active_context() -> Option<Weak<Context>> {
+    ACTIVE_TREE.with(|tree| tree.borrow().clone())
+}
+pub(crate) fn with_active<R>(context: Option<Weak<Context>>, run: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Weak<Context>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ACTIVE_TREE.with(|tree| {
+                tree.replace(self.0.take());
+            });
+        }
+    }
+    let previous = ACTIVE_TREE.with(|tree| tree.replace(context));
+    let _restore = Restore(previous);
+    run()
+}
+pub(crate) fn with_session<R>(session: u64, run: impl FnOnce() -> R) -> R {
+    let context = APPS.with(|apps| apps.borrow().get(&session).cloned());
+    with_active(context, run)
+}
+/// Access the originating window during construction, events and reactions.
 pub fn tree() -> Result<ViewTree, ViewError> {
     let scope = reactive::current_scope_id().ok_or(ViewError::NoActiveApp)?;
-    let context = APPS
-        .with(|apps| apps.borrow().get(&scope).and_then(Weak::upgrade))
-        .ok_or(ViewError::NoActiveApp)?;
+    let context = if let Some(active) = active_context() {
+        active
+            .upgrade()
+            .filter(|context| context.scope_id == scope)
+            .ok_or(ViewError::SessionDropped)?
+    } else {
+        APPS.with(|apps| {
+            let mut matching = apps
+                .borrow()
+                .values()
+                .filter_map(Weak::upgrade)
+                .filter(|context| context.scope_id == scope)
+                .collect::<Vec<_>>();
+            (matching.len() == 1).then(|| matching.pop().unwrap())
+        })
+        .ok_or(ViewError::NoActiveApp)?
+    };
     Ok(ViewTree::new(context.snapshot(), &context))
 }
 
@@ -138,10 +181,6 @@ impl ViewNode {
             context: Rc::downgrade(context),
         }
     }
-    #[cfg(feature = "web")]
-    pub(crate) fn renderer_id(&self) -> String {
-        self.node.snapshot().id
-    }
     pub fn as_element(&self) -> Option<ViewElement> {
         self.node.is_element().then(|| ViewElement(self.clone()))
     }
@@ -222,6 +261,9 @@ impl ViewElement {
             .into_iter()
             .filter_map(|node| node.as_element())
             .collect()
+    }
+    pub fn tag_name(&self) -> Option<String> {
+        self.0.node.tag_name()
     }
     pub fn get_attribute(&self, name: &str) -> Option<String> {
         self.0.node.attribute(name)
@@ -309,15 +351,15 @@ impl NodeRef {
         let context = node.context.upgrade()?;
         context.is_attached(&node.node).then_some(node)
     }
-    pub(crate) fn check(&self, scope: u64) -> Result<(), String> {
-        if self.0.owner.get().is_some_and(|owner| owner != scope) {
+    pub(crate) fn check(&self, session: u64) -> Result<(), String> {
+        if self.0.owner.get().is_some_and(|owner| owner != session) {
             Err("node ref belongs to another tree session".into())
         } else {
             Ok(())
         }
     }
     pub(crate) fn capture(&self, node: NodeHandle, context: &Rc<Context>) {
-        self.0.owner.set(Some(context.scope_id));
+        self.0.owner.set(Some(context.session_id));
         self.0.node.replace(Some(ViewNode::new(node, context)));
     }
 }

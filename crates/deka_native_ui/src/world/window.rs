@@ -99,6 +99,15 @@ impl Content for WorldContent {
     }
 
     fn input(&mut self, input: Input) -> bool {
+        let input = match input {
+            Input::EditKey(k) => Input::Key {
+                name: k.name,
+                down: k.down,
+                repeat: false,
+                shift: k.shift,
+            },
+            input => input,
+        };
         match input {
             Input::Key {
                 name,
@@ -123,7 +132,12 @@ impl Content for WorldContent {
                 }
                 true
             }
-            Input::Press { .. } => false,
+            Input::Press { .. }
+            | Input::EditKey(_)
+            | Input::Text(_)
+            | Input::Preedit(..)
+            | Input::Move { .. }
+            | Input::Release => false,
         }
     }
 

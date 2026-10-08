@@ -9,6 +9,10 @@ pub mod tour;
 pub mod web;
 pub use deka_ui_macros::{component, view};
 pub use reactive::{Derived, Effect, ReactiveError, Scope, Signal, batch, derived, effect, signal};
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+mod desktop;
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+pub use desktop::{AppClosed, DesktopApp, WindowHandle, WindowManager};
 mod retained;
 mod view;
 #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
@@ -35,6 +39,9 @@ where
     P::builder()
 }
 #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+#[doc(hidden)]
+pub use view::LaunchApp;
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub use view::{LaunchOptions, launch, launch_with, launch_with_options};
 
 /// Common Rust UI authoring imports.
@@ -50,7 +57,10 @@ pub mod prelude {
         Derived, Effect, ReactiveError, Scope, Signal, batch, derived, effect, signal,
     };
     #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
-    pub use crate::{LaunchOptions, WindowOptions, launch, launch_with, launch_with_options};
+    pub use crate::{
+        DesktopApp, LaunchOptions, WindowHandle, WindowManager, WindowOptions, launch, launch_with,
+        launch_with_options,
+    };
     pub use crate::{component, view};
 }
 

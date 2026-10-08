@@ -1,0 +1,29 @@
+---
+title: Text input
+---
+
+Use a `Signal<String>` as `value` to bind an input in both directions. A user edit updates the signal before `onInput` runs, in the same event batch. Programmatic signal changes replace the field's value. A string sets the initial value once; a closure reads a controlled value, with explicit `onInput` handling when required. Tree reads return the committed edited value, including for unbound fields; a live binding reclaims the property when its value next changes (APS 73).
+
+```rust
+use deka_ui::prelude::*;
+
+#[component]
+fn App() -> View {
+    let text = signal(String::new());
+    view! {
+        <view class="p-4 gap-4">
+            <input value={text} placeholder="Name" />
+            <textarea value={text} />
+            <p>"Value: {text}"</p>
+        </view>
+    }
+}
+```
+
+Desktop fields use Parley for shaped text, caret placement, mouse drag selection, Shift-arrow selection, word movement (Option-arrow on macOS, Control-arrow elsewhere), Home/End and line movement (Command-arrow on macOS). Textarea accepts newlines and wraps. Input excludes line breaks. The caret scrolls into view when necessary. Copy/cut/paste use Command on macOS and Control elsewhere; undo is Command/Control-Z, redo is Shift-Z or Control-Y. Each committed edit is an undo transaction, including an IME commit; at most 256 transactions are retained. Programmatic replacement clears stale history.
+
+IME preedit appears inline and underlined. It does not enter signal state or fire `onInput`. Commit replaces the saved selection as one edit. Empty preedit, disabled IME, Escape, focus loss or changing controls cancels the composition and restores the previous text and selection. The native window enables IME only for an active text control and places the candidate area at the editor's caret/composition.
+
+Browser fields use native HTML inputs and textareas positioned over the canvas. The browser supplies caret, selection, undo/redo, IME and clipboard behavior; no clipboard permission API is required for normal keyboard editing. Preedit is protected from controlled-value synchronization until composition ends. Runtime-created nodes and listeners are removed when the browser handle is dropped.
+
+Desktop clipboard uses arboard with text support, no image codecs or webview. The clipboard object lives for the session (Linux requires this for selection ownership). Pure Wayland requires the compositor's data-control protocol; XWayland remains the fallback on unsupported compositors. Clipboard failures retain the editor contents and reach the application error sink with binding `clipboard` (stderr by default), and are available through `UiApp::take_errors()`. Empty or non-text clipboard content leaves both the value and selection untouched.

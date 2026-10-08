@@ -100,6 +100,8 @@ fn node(input: &Node) -> syn::Result<Tokens> {
                         _ => value.to_token_stream(),
                     };
                     setters.push(quote_spanned!(span=> .#method(#value)));
+                } else if key == "value" {
+                    setters.push(quote_spanned!(span=> .value(#value)));
                 } else if key == "node_ref" {
                     setters.push(quote_spanned!(span=> .node_ref(#value)));
                 } else if let Some(class) = key.strip_prefix("class:") {
@@ -119,10 +121,7 @@ fn node(input: &Node) -> syn::Result<Tokens> {
                     _ => None,
                 } {
                     setters.push(quote_spanned!(span=> .on(::deka_ui::EventKind::#event, #value)));
-                } else if matches!(
-                    key.as_str(),
-                    "id" | CLASS_ATTRIBUTE | "value" | "placeholder"
-                ) {
+                } else if deka_native_ir::is_supported_attribute(&key) {
                     if key == CLASS_ATTRIBUTE
                         && let Some(classes) = attribute.value_literal_string()
                     {

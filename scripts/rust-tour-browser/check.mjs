@@ -27,12 +27,14 @@ const server = createServer((req,res)=>{
   if(path==='/') {
     res.setHeader('Content-Type','text/html');res.end(`<!doctype html><div style="position:relative"><canvas tabindex="0" style="width:560px;height:480px"></canvas></div><script type="module">
       const fixture=new URLSearchParams(location.search).get('fixture')||'test-fixture';
-      const file=fixture==='input-fixture'?'web_input':'deka_ui_tour';
+      const file=fixture==='input-fixture'?'web_input':fixture==='shared-fixture'?'web_shared':'deka_ui_tour';
+      if(fixture==='shared-fixture') document.body.insertAdjacentHTML('beforeend','<div style="position:relative"><canvas tabindex="0" style="width:560px;height:480px"></canvas></div>');
       window.errors=[];window.frames=0;window.dekaFrameTimes=[];
       window.addEventListener('deka:error',event=>window.errors.push(event.detail));
-      window.addEventListener('deka:native-frame',event=>{window.scene=event.detail;window.frames++});
+      window.addEventListener('deka:native-frame',event=>{window.scene=event.detail;event.target.dekaScene=event.detail;window.frames++});
       const module=await import('/'+fixture+'/'+file+'.js');await module.default({module_or_path:'/'+fixture+'/'+file+'_bg.wasm'});
-      window.start=lesson=>fixture==='input-fixture'?module.start(document.querySelector('canvas')):module.start(lesson,document.querySelector('canvas'));
+      window.closeFirst=module.close_first;
+      window.start=lesson=>fixture==='shared-fixture'?module.start(...document.querySelectorAll('canvas')):fixture==='input-fixture'?module.start(document.querySelector('canvas')):module.start(lesson,document.querySelector('canvas'));
       window.stop=module.stop;window.ready=true;
       </script>`);return
   }
@@ -56,7 +58,8 @@ try {
         window.stop();window.scene=undefined;window.dekaFrameTimes=[];
         const canvas=document.querySelector('canvas');canvas.style.width=history.width+'px';canvas.style.height=history.height+'px';window.start(history.lesson)
       },history)
-      await page.waitForFunction(()=>window.scene)
+      await page.waitForFunction(()=>window.scene || window.errors.length)
+      assert.deepEqual(await page.evaluate(()=>window.errors),[],`${history.lesson} render errors`)
       for(const step of history.steps) {
         await canvas.evaluate((canvas,time)=>canvas.dispatchEvent(new CustomEvent('deka:clock',{detail:{time}})),step.time)
         if(step.point) {
@@ -82,11 +85,52 @@ try {
   }
   const page=await browser.newPage();page.setDefaultTimeout(30000)
   await page.goto(url+'/?fixture=input-fixture');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start())
-  const input=page.getByLabel('Deka text input');await input.pressSequentially('Sami')
+  const input=page.getByRole('textbox',{name:'Name',exact:true});
+  assert.equal(await page.getByRole('textbox',{name:'Notes',exact:true}).count(),1);
+  assert.equal(await page.getByRole('button',{name:'Clear',exact:true}).count(),1);
+  await input.pressSequentially('Sami')
   assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello Sami'))
   await input.press('Enter');assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Key: Enter'))
-  assert.equal(await input.inputValue(),'Confirmed');await page.evaluate(()=>window.stop());assert.equal(await input.count(),0)
-  console.log('PASS: native browser text/key input and teardown')
+  assert.equal(await input.inputValue(),'Confirmed');
+  const textarea=page.locator('textarea');assert.equal(await textarea.inputValue(),'Confirmed');
+  await textarea.fill('line one\nline two');assert.equal(await input.inputValue(),'line oneline two');
+  const editsBefore=await page.evaluate(()=>Number(window.scene.nodes.find(n=>n.text?.startsWith("Edits: ")).text.slice(7)));
+  await input.evaluate(input=>{input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.value='にほん';input.dispatchEvent(new InputEvent('input',{data:'にほん',isComposing:true,bubbles:true}));});
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello line one\nline two'),'preedit must not update signal');
+  await input.evaluate(input=>{input.value='日本';input.dispatchEvent(new CompositionEvent('compositionend',{data:'日本',bubbles:true}));input.dispatchEvent(new InputEvent('input',{data:'日本',isComposing:false,bubbles:true}));});
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello 日本'));
+  assert.equal(await textarea.inputValue(),'日本');
+  assert.equal(await page.evaluate(()=>Number(window.scene.nodes.find(n=>n.text?.startsWith("Edits: ")).text.slice(7))),editsBefore+1,'compositionend and final input form one committed edit');
+  await page.context().grantPermissions(['clipboard-read','clipboard-write']);
+  await page.evaluate(()=>navigator.clipboard.writeText('clipboard 日本'));
+  await input.focus();await input.press('ControlOrMeta+A');await input.press('ControlOrMeta+V');
+  assert.equal(await input.inputValue(),'clipboard 日本');
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello clipboard 日本'));
+  await input.press('ControlOrMeta+A');await input.press('ControlOrMeta+X');assert.equal(await input.inputValue(),'');
+  await input.press('ControlOrMeta+V');assert.equal(await input.inputValue(),'clipboard 日本');
+  await input.focus();await page.keyboard.press('Tab');
+  assert.equal(await textarea.evaluate(element=>element===document.activeElement),true);
+  await page.keyboard.press('Tab');
+  assert.equal(await page.getByRole('button',{name:'Clear',exact:true}).evaluate(element=>element===document.activeElement),true);
+  await page.keyboard.press('Enter');assert.equal(await input.inputValue(),'');
+  const accessibilitySnapshot=await page.locator('body').ariaSnapshot();
+  assert(accessibilitySnapshot.includes('textbox "Name"'));
+  assert(accessibilitySnapshot.includes('textbox "Notes"'));
+  assert(accessibilitySnapshot.includes('button "Clear"'));
+  await page.evaluate(()=>window.stop());assert.equal(await page.getByRole('button',{name:'Clear'}).count(),0);assert.equal(await input.count(),0);assert.equal(await textarea.count(),0)
+  console.log('PASS: browser text/key/clipboard input, accessible controls/actions and teardown')
+  await page.goto(url+'/?fixture=shared-fixture');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start());
+  const canvases=page.locator('canvas');
+  const secondBefore=await canvases.nth(1).screenshot();
+  await page.getByRole('button',{name:'Add',exact:true}).nth(0).focus();await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>[...document.querySelectorAll('canvas')].every(canvas=>canvas.dekaScene.nodes.some(node=>node.text?.endsWith(': 1'))));
+  assert.notDeepEqual(await canvases.nth(1).screenshot(),secondBefore,'shared signal repaints the other browser mount');
+  await page.evaluate(()=>window.closeFirst());assert.equal(await page.getByRole('button',{name:'Add',exact:true}).count(),1);
+  await page.getByRole('button',{name:'Add',exact:true}).focus();await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>document.querySelectorAll('canvas')[1].dekaScene.nodes.some(node=>node.text==='Second: 2'));
+  await page.evaluate(()=>window.stop());assert.equal(await page.getByRole('button',{name:'Add',exact:true}).count(),0);
+  assert.deepEqual(await page.evaluate(()=>window.errors),[]);
+  console.log('PASS: shared browser mounts repaint and survive closing the first mount');
   await page.goto(url+'/?fixture=.&inspect');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start('counter'))
   const canvas=page.locator('canvas');const before=await canvas.screenshot()
   await canvas.focus();await page.keyboard.press('Tab');await page.keyboard.press('Enter');assert.notDeepEqual(await canvas.screenshot(),before)

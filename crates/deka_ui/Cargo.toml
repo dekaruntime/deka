@@ -173,3 +173,14 @@ required-features = ["desktop"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "=0.2.128", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+winit = "=0.30.13"
+
+[[example]]
+name = "text_input"
+required-features = ["desktop"]
+
+[[example]]
+name = "multiple_windows"
+required-features = ["desktop"]

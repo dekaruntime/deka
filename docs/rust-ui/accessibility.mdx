@@ -1,0 +1,25 @@
+---
+title: Accessibility
+---
+
+The desktop host projects the effective retained tree into AccessKit. Buttons, text inputs, multiline text inputs, groups and text have native roles; text descendants name buttons, `aria-label` names controls, and a placeholder supplies an unnamed field's fallback. Edited values come from the same retained property that tree reads observe. Parley supplies text runs, caret/selection and selection actions. AccessKit focus, activation, value and selection requests enter through the window event loop and run normal Rust event batches.
+
+```rust
+view! {
+    <view>
+        <input aria-label="Name" value={name} />
+        <textarea aria-label="Notes" value={notes} />
+        <button onClick={move |_| save()}>"Save"</button>
+    </view>
+}
+```
+
+Tab and Shift-Tab follow source order. A positive `tabIndex` precedes natural controls (ascending index, then source order). `tabIndex=-1` supports explicit accessibility focus while excluding Tab. `disabled=true` and `aria-hidden=true` exclude controls from focus/actions; hidden and disabled group state applies to descendants. Focus has a visible renderer ring, including text fields. Dropped nodes lose their action route and IDs are never reused in the window.
+
+The adapter is attached before the native window becomes visible. Activation enters through winit and builds the initial full tree on the UI thread; the OS adapter may expose its temporary window placeholder until that update arrives. Subsequent frames send only changed nodes, and unchanged frames send no node replacements. Deactivation releases the projection. When no assistive technology is active, frames do not build or cache an AccessKit tree. Focus on a non-semantic element projects to the window root. macOS uses AccessKit's NSAccessibility adapter, Windows uses UI Automation and Linux uses AT-SPI. This is the Rust library projection; older VM applications that do not supply semantic metadata retain a window-only tree.
+
+The browser uses the same metadata to create native DOM text fields, buttons, groups and text. Names, values, disabled state and tab indices are exposed to assistive technology; DOM focus and activation dispatch through Rust. The presentation canvas is hidden from screen readers and excluded from ordinary Tab order. Dropping the browser handle removes semantic nodes and restores the canvas attributes. AccessKit's web adapter is not yet available, so this target uses HTML semantics directly.
+
+### macOS VoiceOver smoke
+
+This step requires a visible window and enabling VoiceOver, so it is manual. Run `cargo run --locked --release -p deka-ui --example text_input`, enable VoiceOver with Command-F5, and navigate the application with Control-Option arrows. Confirm Name is announced as a text field, Notes as a multiline field, and Clear as a button. Edit text and inspect its value/caret with VoiceOver; select a word and replace it, then activate Clear with Control-Option-Space. Confirm both fields and the rendered value clear. Use Tab/Shift-Tab to confirm focus rings and order, then close the window. Automated checks cover the same adapter action ingress, tree values and selection effects; they do not claim a live VoiceOver smoke.

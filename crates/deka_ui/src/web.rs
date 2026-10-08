@@ -11,6 +11,7 @@ pub struct BrowserApp {
     renderer: Renderer,
     scene: Scene,
     focus: Option<String>,
+    focus_visible: bool,
     sent_images: HashSet<String>,
 }
 impl BrowserApp {
@@ -20,12 +21,19 @@ impl BrowserApp {
             renderer: Renderer::new(),
             scene: Scene::default(),
             focus: None,
+            focus_visible: false,
             sent_images: HashSet::new(),
         }
     }
 }
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl BrowserApp {
+    #[cfg(target_arch = "wasm32")]
+    pub fn wake_on(&mut self, id: u32) {
+        use deka_native_ui::Application;
+        self.app
+            .set_waker(deka_native_ui::Waker::new(move || wake(id)));
+    }
     pub fn frame_at(
         &mut self,
         width: f32,
@@ -38,6 +46,11 @@ impl BrowserApp {
         self.scene = self
             .renderer
             .render_at(&tree, width, height, scale, milliseconds, reduced);
+        if let Some(id) = &self.focus
+            && self.focus_visible
+        {
+            self.scene.focus_ring(id);
+        }
         let errors = self.app.take_errors();
         if !errors.is_empty() {
             return Err(errors.join("\n"));
@@ -72,9 +85,10 @@ impl BrowserApp {
         result
     }
     pub fn pointer(&mut self, x: f32, y: f32) -> bool {
+        self.focus_visible = false;
         if let Some(target) = self.scene.hit(x, y) {
             self.focus = Some(target.id.clone());
-            return self.app.dispatch(target.handler);
+            return self.activate(&target.id);
         }
         self.focus = self
             .scene
@@ -88,20 +102,19 @@ impl BrowserApp {
     /// Tab follows rendered controls; boundaries let focus leave the canvas.
     pub fn key(&mut self, key: &str, backwards: bool) -> bool {
         if key == "Tab" {
-            let current = self
-                .scene
-                .targets
+            self.focus_visible = true;
+            use deka_native_ui::Application;
+            let targets = deka_native_ui::tab_order(&self.app.semantics());
+            let current = targets
                 .iter()
-                .position(|t| Some(&t.id) == self.focus.as_ref());
+                .position(|id| Some(id) == self.focus.as_ref());
             let next = match (current, backwards) {
                 (None, false) => Some(0),
-                (None, true) => self.scene.targets.len().checked_sub(1),
+                (None, true) => targets.len().checked_sub(1),
                 (Some(i), false) => Some(i + 1),
                 (Some(i), true) => i.checked_sub(1),
             };
-            self.focus = next
-                .and_then(|i| self.scene.targets.get(i))
-                .map(|t| t.id.clone());
+            self.focus = next.and_then(|i| targets.get(i)).cloned();
             return self.focus.is_some();
         }
         if let Some(id) = &self.focus {
@@ -109,17 +122,49 @@ impl BrowserApp {
                 return true;
             }
             if matches!(key, "Enter" | " ") {
-                return self.app.dispatch_to(id, Event::Click);
+                return self.activate(id);
             }
         }
         false
     }
     /// The browser's native text field supplies the complete edited value.
     pub fn input(&self, node_id: &str, value: &str) -> bool {
-        self.app.dispatch_to(node_id, Event::Input(value.into()))
+        use deka_native_ui::Application;
+        self.app.text_input(node_id, value.into())
     }
     pub fn key_to(&self, node_id: &str, key: &str) -> bool {
         self.app.dispatch_to(node_id, Event::KeyDown(key.into()))
+    }
+    pub fn semantic_nodes(&self) -> Result<String, String> {
+        use deka_native_ui::{Application, SemanticRole};
+        let nodes: Vec<_> = self.app.semantics().into_iter().map(|node| serde_json::json!({
+            "id":node.id,"parent":node.parent,"name":node.name,"value":node.value,"disabled":node.disabled,"hidden":node.hidden,"tabIndex":node.tab_index,"clickable":node.clickable,
+            "role": match node.role { SemanticRole::Group => "group", SemanticRole::Label => "text", SemanticRole::Button => "button", SemanticRole::TextInput => "input", SemanticRole::MultilineTextInput => "textarea" }
+        })).collect();
+        serde_json::to_string(&nodes).map_err(|e| e.to_string())
+    }
+    pub fn focus_node(&mut self, id: &str, visible: bool) -> bool {
+        use deka_native_ui::Application;
+        if self
+            .app
+            .semantics()
+            .iter()
+            .any(|n| n.id == id && n.tab_index.is_some() && !n.disabled && !n.hidden)
+        {
+            self.focus = Some(id.into());
+            self.focus_visible = visible;
+            true
+        } else {
+            false
+        }
+    }
+    pub fn activate(&self, id: &str) -> bool {
+        use deka_native_ui::Application;
+        self.app
+            .semantics()
+            .iter()
+            .any(|n| n.id == id && n.clickable && !n.disabled && !n.hidden)
+            && self.app.dispatch_to(id, Event::Click)
     }
     pub fn blur(&mut self) {
         self.focus = None;
@@ -128,19 +173,10 @@ impl BrowserApp {
         self.focus.clone()
     }
     pub fn inputs(&self) -> Result<String, String> {
-        let tree = self.app.tree();
-        let controls = tree
-            .query_all("input")
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .chain(tree.query_all("textarea").map_err(|e| e.to_string())?);
-        let mut inputs = Vec::new();
-        for element in controls {
-            // Absence is a valid empty HTML input. Preserve that Option across
-            // the boundary; the host applies the HTML default explicitly.
-            let value = element.get_attribute("value");
-            inputs.push(serde_json::json!({"id": element.renderer_id(), "value": value}));
-        }
+        use deka_native_ui::Application;
+        let inputs:Vec<_> = self.app.text_controls().into_iter().map(|control| serde_json::json!({
+            "id":control.id,"value":control.value,"tag":if control.multiline {"textarea"} else {"input"},"placeholder":control.placeholder,"controlled":control.controlled
+        })).collect();
         serde_json::to_string(&inputs).map_err(|e| e.to_string())
     }
 }
@@ -149,6 +185,8 @@ impl BrowserApp {
 #[cfg_attr(feature = "web-test", wasm_bindgen(module = "/web/test-host.js"))]
 #[cfg_attr(not(feature = "web-test"), wasm_bindgen(module = "/web/host.js"))]
 extern "C" {
+    #[wasm_bindgen(js_name = wake)]
+    fn wake(id: u32);
     #[wasm_bindgen(catch, js_name = mount)]
     fn mount(app: BrowserApp, canvas: &JsValue) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = reportPanic)]

@@ -32,10 +32,69 @@ pub enum Reload {
     Preserve,
     Reset,
 }
+/// Text editing metadata from the application's retained tree.
+#[derive(Clone, Debug)]
+pub struct TextControl {
+    pub controlled: bool,
+    pub id: String,
+    pub value: String,
+    pub placeholder: String,
+    pub multiline: bool,
+}
+/// Backend-independent semantics from the effective retained tree.
+#[derive(Clone, Debug)]
+pub struct SemanticNode {
+    pub id: String,
+    pub parent: Option<String>,
+    pub role: SemanticRole,
+    pub name: String,
+    pub value: String,
+    pub disabled: bool,
+    pub hidden: bool,
+    pub tab_index: Option<i32>,
+    pub clickable: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SemanticRole {
+    Group,
+    Label,
+    Button,
+    TextInput,
+    MultilineTextInput,
+}
+/// Positive tab indices precede natural source order; negative indices allow
+/// explicit focus only. Disabled/hidden nodes never receive focus/actions.
+pub fn tab_order(nodes: &[SemanticNode]) -> Vec<String> {
+    let mut focusable: Vec<_> = nodes
+        .iter()
+        .filter(|n| !n.disabled && !n.hidden && n.tab_index.is_some_and(|i| i >= 0))
+        .collect();
+    focusable.sort_by_key(|n| match n.tab_index {
+        Some(i) if i > 0 => (0, i),
+        _ => (1, 0),
+    });
+    focusable.into_iter().map(|n| n.id.clone()).collect()
+}
 pub trait Application: 'static {
     fn initial_state(&self) -> Vec<f64>;
     fn render(&self, state: &[f64]) -> Node;
     fn event(&self, handler: usize, state: &mut [f64]);
+    fn semantics(&self) -> Vec<SemanticNode> {
+        vec![]
+    }
+    /// Operational host failures use the application's ordinary error sink.
+    fn report_error(&self, operation: &str, message: String) {
+        eprintln!("deka {operation}: {message}");
+    }
+    fn text_controls(&self) -> Vec<TextControl> {
+        vec![]
+    }
+    fn text_input(&self, _id: &str, _value: String) -> bool {
+        false
+    }
+    fn key_input(&self, _id: &str, _key: String) -> bool {
+        false
+    }
     /// Backend-independent application scheduling. Backends supply a wake and
     /// drive finite turns; applications keep their task ownership internally.
     fn has_ready_work(&self) -> bool {

@@ -25,12 +25,17 @@ impl WireNode {
         } else {
             // Inputs use the platform editor; their presentation container is
             // a div, while the retained store keeps the original input kind.
-            crate::element_style(if self.tag == "input" {
+            crate::element_style(if matches!(self.tag.as_str(), "input" | "textarea") {
                 "div"
             } else {
                 &self.tag
             })?
         };
+        if matches!(self.tag.as_str(), "input" | "textarea") {
+            style.width = crate::Length::Px(240.);
+            style.height = crate::Length::Px(if self.tag == "textarea" { 96. } else { 32. });
+            style.clip = true;
+        }
         crate::apply_classes(&mut style, &self.classes)?;
         Ok(style)
     }

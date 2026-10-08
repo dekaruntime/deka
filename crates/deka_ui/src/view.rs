@@ -46,6 +46,39 @@ pub struct Computed<M>(std::marker::PhantomData<M>);
 #[doc(hidden)]
 pub struct Tracked;
 #[doc(hidden)]
+pub struct TwoWay;
+#[doc(hidden)]
+pub trait IntoValue<M> {
+    fn apply(self, view: View) -> View;
+}
+impl IntoValue<Static> for String {
+    fn apply(self, view: View) -> View {
+        view.attr("value", self)
+    }
+}
+impl IntoValue<Static> for &str {
+    fn apply(self, view: View) -> View {
+        view.attr("value", self)
+    }
+}
+impl<F, T> IntoValue<Live> for F
+where
+    F: FnMut() -> T + 'static,
+    T: Display,
+{
+    fn apply(self, view: View) -> View {
+        view.attr("value", self)
+    }
+}
+impl IntoValue<TwoWay> for Signal<String> {
+    fn apply(self, mut view: View) -> View {
+        if let Some(element) = view.element_mut() {
+            element.value_signal = Some(self);
+        }
+        view.attr("value", move || self.get().unwrap_or_default())
+    }
+}
+#[doc(hidden)]
 pub enum Attribute {
     Value(String),
     Binding(Box<dyn FnMut() -> String>),
@@ -81,6 +114,7 @@ enum Builder {
     State(Box<View>, Rc<dyn Any>),
 }
 struct Element {
+    value_signal: Option<Signal<String>>,
     tag: String,
     attributes: BTreeMap<String, Attribute>,
     toggles: BTreeMap<String, Box<dyn FnMut() -> bool>>,
@@ -116,6 +150,7 @@ impl View {
     pub fn element(tag: impl Into<String>) -> Self {
         Self(Builder::Element(Element {
             tag: tag.into(),
+            value_signal: None,
             attributes: BTreeMap::new(),
             toggles: BTreeMap::new(),
             events: BTreeMap::new(),
@@ -142,11 +177,15 @@ impl View {
     {
         Self(Builder::Dynamic(Box::new(move || value().into_view())))
     }
+    /// A string signal binds both directions; strings and closures bind one direction.
+    pub fn value<V: IntoValue<M>, M>(self, value: V) -> Self {
+        value.apply(self)
+    }
     pub fn attr<V, M>(mut self, name: &str, value: V) -> Self
     where
         V: IntoAttribute<M>,
     {
-        if !matches!(name, "id" | CLASS_ATTRIBUTE | "value" | "placeholder") {
+        if !deka_native_ir::is_supported_attribute(name) {
             return Self(Builder::Error(format!(
                 "unsupported native attribute {name}"
             )));
@@ -344,7 +383,9 @@ pub(crate) type PublishedState = (Anchor, Rc<dyn Any>);
 pub(crate) type Anchor = Rc<RefCell<Option<NodeHandle>>>;
 
 type Callback = Rc<RefCell<Box<dyn FnMut(Event)>>>;
+type TextIndex = (usize, Vec<(NodeHandle, bool)>);
 struct Listener {
+    controlled_value: bool,
     anchor: Anchor,
     kind: EventKind,
     callback: Callback,
@@ -353,16 +394,19 @@ struct Listener {
 pub(crate) struct Context {
     pub(crate) tree: RefCell<Tree>,
     pub(crate) scope_id: u64,
+    pub(crate) session_id: u64,
     pub(crate) states: RefCell<BTreeMap<usize, PublishedState>>,
     next_state: Cell<usize>,
     listeners: RefCell<BTreeMap<usize, Listener>>,
     next_listener: Cell<usize>,
+    text_index: RefCell<Option<TextIndex>>,
     patches: Cell<usize>,
     pending_frame: Cell<bool>,
     waker: RefCell<Option<deka_native_ui::Waker>>,
     errors: RefCell<Vec<String>>,
     error_sink: RefCell<Option<ErrorSink>>,
     error_location: RefCell<(Vec<usize>, String)>,
+    event_owners: RefCell<Vec<crate::reactive::ReactiveOwner>>,
 }
 impl Context {
     pub(crate) fn snapshot(&self) -> Node {
@@ -416,7 +460,7 @@ impl Context {
             eprintln!("deka ui: {error}");
         }
     }
-    fn report_current(&self, message: String) {
+    pub(crate) fn report_current(&self, message: String) {
         let (path, binding) = self.error_location.borrow().clone();
         self.report(&path, &binding, message);
     }
@@ -429,7 +473,7 @@ impl Context {
         }
         let previous = self.error_location.replace((path.to_vec(), binding.into()));
         let _location = Location(self, Some(previous));
-        run()
+        crate::retained::with_session(self.session_id, run)
     }
     fn changed(&self, changed: bool) {
         if changed {
@@ -441,13 +485,21 @@ impl Context {
             }
         }
     }
-    fn listen(&self, anchor: Anchor, kind: EventKind, event: Box<dyn FnMut(Event)>) -> usize {
+    fn listen(
+        &self,
+        anchor: Anchor,
+        kind: EventKind,
+        event: Box<dyn FnMut(Event)>,
+        controlled_value: bool,
+    ) -> usize {
+        self.text_index.borrow_mut().take();
         let token = self.next_listener.get();
         self.next_listener
             .set(token.checked_add(1).expect("event identity exhausted"));
         self.listeners.borrow_mut().insert(
             token,
             Listener {
+                controlled_value,
                 anchor,
                 kind,
                 callback: Rc::new(RefCell::new(event)),
@@ -488,6 +540,7 @@ impl Drop for Registrations {
             }
             for token in self.events.drain(..) {
                 context.listeners.borrow_mut().remove(&token);
+                context.text_index.borrow_mut().take();
             }
         }
     }
@@ -599,7 +652,7 @@ fn prepare(
     match view.0 {
         Builder::Error(error) => return Err(format!("node {path:?} builder: {error}")),
         Builder::Ref(view, reference) => {
-            reference.check(context.scope_id)?;
+            reference.check(context.session_id)?;
             let mut next = prepare(*view, path, parent, context)?;
             if next.root_anchors.len() != 1 {
                 return Err("node_ref requires one retained root".into());
@@ -744,6 +797,8 @@ fn prepare(
                 wire.attributes
                     .insert(CLASS_ATTRIBUTE.into(), wire.classes.clone());
             }
+            let controlled_value =
+                matches!(element.attributes.get("value"), Some(Attribute::Binding(_)));
             for (name, value) in element.attributes {
                 let property = name.clone();
                 let value = bind(
@@ -757,8 +812,38 @@ fn prepare(
                 );
                 wire.attributes.insert(name, value);
             }
+            if let Some(value) = element.value_signal {
+                if !matches!(wire.tag.as_str(), "input" | "textarea") {
+                    return Err("two-way value requires input or textarea".into());
+                }
+                let mut user = element.events.remove(&EventKind::Input);
+                let target = anchor.clone();
+                let owner = Rc::downgrade(context);
+                element.events.insert(
+                    EventKind::Input,
+                    Box::new(move |event| {
+                        if let Event::Input(text) = &event {
+                            value.set(text.clone());
+                        }
+                        if let Some(user) = &mut user {
+                            user(event);
+                        }
+                        // A handler may normalize or reject the edit in this batch,
+                        // including restoring the previous authored value.
+                        let node = target.borrow().clone();
+                        if let (Some(node), Some(context), Ok(text)) =
+                            (node, owner.upgrade(), value.try_get())
+                        {
+                            match node.set_attribute("value", text) {
+                                Ok(changed) => context.node_changed(&node, changed),
+                                Err(error) => context.report(&node.slot(), "value", error),
+                            }
+                        }
+                    }),
+                );
+            }
             for (kind, event) in element.events {
-                let token = context.listen(anchor.clone(), kind, event);
+                let token = context.listen(anchor.clone(), kind, event, controlled_value);
                 prepared.registrations.events.push(token);
                 if kind == EventKind::Click {
                     wire.handler = Some(token);
@@ -802,61 +887,83 @@ impl UiApp {
     where
         A: BuildApp<M>,
     {
-        let scope = Scope::new();
+        Self::in_scope(Scope::new(), app, sink)
+    }
+    /// Mount a separate retained tree in an existing app scope. Signals are
+    /// shared; local allocations and registrations are owned by this mount.
+    pub fn new_in_scope<A, M>(scope: &Scope, app: A) -> Self
+    where
+        A: BuildApp<M>,
+    {
+        Self::in_scope(scope.clone(), app, None)
+    }
+    pub(crate) fn in_scope<A, M>(scope: Scope, app: A, sink: Option<ErrorSink>) -> Self
+    where
+        A: BuildApp<M>,
+    {
         let context = Rc::new(Context {
             scope_id: scope.id(),
+            session_id: crate::retained::next_session_id(),
             ..Context::default()
         });
-        crate::retained::register(scope.id(), &context);
+        crate::retained::register(&context);
         context.error_sink.replace(sink);
         context.error_location.replace((vec![], "reactive".into()));
-        let weak = Rc::downgrade(&context);
-        scope.on_error(move |error| {
-            if let Some(context) = weak.upgrade() {
+        scope.ensure_error_sink(|error| {
+            if let Some(context) =
+                crate::retained::active_context().and_then(|context| context.upgrade())
+            {
                 context.report_current(error.to_string());
-            }
-        });
-        let registrations = scope.run(|| {
-            let view = app.build();
-            let view = if view.single_root() {
-                view
             } else {
-                View::element("view").child(view)
-            };
-            let mut prepared = match prepare(view, vec![], Anchor::default(), &context) {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    context.report(&[], "mount", error);
-                    Prepared::new(&context)
-                }
-            };
-            if prepared.wires.is_empty() {
-                prepared.slots.push(vec![]);
+                eprintln!("deka reactive: {error}");
             }
-            let wire = prepared.wires.pop().unwrap_or_else(|| WireNode {
-                tag: "view".into(),
-                ..Default::default()
-            });
-            let result = context
-                .tree
-                .borrow_mut()
-                .update_slots(wire, &prepared.slots);
-            if let Err(error) = result {
-                context.report(&[], "mount", error);
-                // The validated fallback has no authored bindings or classes.
-                if let Err(error) = context.tree.borrow_mut().update(WireNode {
-                    tag: "view".into(),
-                    ..Default::default()
-                }) {
-                    context.report(&[], "mount", error);
-                }
-                prepared = Prepared::new(&context);
-            }
-            if let Some(root) = context.tree.borrow().root.clone() {
-                prepared.attach(&[root], &context);
-            }
-            prepared.registrations
         });
+        let (mut registrations, owner) = scope.run(|| {
+            context.at(&[], "mount", || {
+                crate::reactive::owned(|| {
+                    let view = app.build();
+                    let view = if view.single_root() {
+                        view
+                    } else {
+                        View::element("view").child(view)
+                    };
+                    let mut prepared = match prepare(view, vec![], Anchor::default(), &context) {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            context.report(&[], "mount", error);
+                            Prepared::new(&context)
+                        }
+                    };
+                    if prepared.wires.is_empty() {
+                        prepared.slots.push(vec![]);
+                    }
+                    let wire = prepared.wires.pop().unwrap_or_else(|| WireNode {
+                        tag: "view".into(),
+                        ..Default::default()
+                    });
+                    let result = context
+                        .tree
+                        .borrow_mut()
+                        .update_slots(wire, &prepared.slots);
+                    if let Err(error) = result {
+                        context.report(&[], "mount", error);
+                        // The validated fallback has no authored bindings or classes.
+                        if let Err(error) = context.tree.borrow_mut().update(WireNode {
+                            tag: "view".into(),
+                            ..Default::default()
+                        }) {
+                            context.report(&[], "mount", error);
+                        }
+                        prepared = Prepared::new(&context);
+                    }
+                    if let Some(root) = context.tree.borrow().root.clone() {
+                        prepared.attach(&[root], &context);
+                    }
+                    prepared.registrations
+                })
+            })
+        });
+        registrations.reactive.push(owner);
         Self {
             registrations: Some(registrations),
             scope,
@@ -897,8 +1004,7 @@ impl UiApp {
         let token = self.routes.borrow().get(handler).copied();
         token.is_some_and(|token| self.invoke(token, Event::Click))
     }
-    /// Typed dispatch for integrations supplying input/key events. The current
-    /// desktop Application seam supplies clicks; platform text editing belongs to the editor lane.
+    /// Typed dispatch used by platform event adapters.
     pub fn dispatch_to(&self, node_id: &str, event: Event) -> bool {
         let token = self
             .context
@@ -911,7 +1017,7 @@ impl UiApp {
                         .anchor
                         .borrow()
                         .as_ref()
-                        .is_some_and(|node| node.snapshot().id == node_id))
+                        .is_some_and(|node| node.renderer_id() == node_id))
                 .then_some(*token)
             });
         token.is_some_and(|token| self.invoke(token, event))
@@ -934,9 +1040,13 @@ impl UiApp {
             .get(&token)
             .and_then(|listener| listener.anchor.borrow().as_ref().map(NodeHandle::slot))
             .unwrap_or_default();
-        self.context.at(&path, "event", || {
-            self.scope.batch(|| callback.borrow_mut()(event))
+        let (_, owner) = self.context.at(&path, "event", || {
+            self.scope
+                .batch(|| crate::reactive::owned(|| callback.borrow_mut()(event)))
         });
+        if !owner.is_empty() {
+            self.context.event_owners.borrow_mut().push(owner);
+        }
         if self.context.patches.get() != before {
             self.patch_passes.set(self.patch_passes.get() + 1);
         }
@@ -959,9 +1069,14 @@ impl UiApp {
 }
 impl Drop for UiApp {
     fn drop(&mut self) {
-        self.scope.run(|| drop(self.registrations.take()));
+        self.context.at(&[], "drop", || {
+            self.scope.run(|| {
+                drop(self.registrations.take());
+                self.context.event_owners.borrow_mut().clear();
+            })
+        });
         self.context.waker.borrow_mut().take();
-        crate::retained::unregister(self.scope.id());
+        crate::retained::unregister(self.context.session_id);
     }
 }
 impl Application for UiApp {
@@ -974,6 +1089,169 @@ impl Application for UiApp {
     fn event(&self, handler: usize, _: &mut [f64]) {
         self.dispatch(handler);
     }
+    fn semantics(&self) -> Vec<deka_native_ui::SemanticNode> {
+        use deka_native_ui::{SemanticNode, SemanticRole};
+        fn visit(
+            node: &NodeHandle,
+            parent: Option<String>,
+            hidden: bool,
+            disabled: bool,
+            output: &mut Vec<SemanticNode>,
+        ) {
+            let tag = node.tag_name();
+            let clickable = node.has_click_handler();
+            let role = match tag.as_deref() {
+                Some("button") => SemanticRole::Button,
+                Some("input") => SemanticRole::TextInput,
+                Some("textarea") => SemanticRole::MultilineTextInput,
+                None => SemanticRole::Label,
+                _ if clickable => SemanticRole::Button,
+                _ if node.all_children().is_empty() && !node.text_content().is_empty() => {
+                    SemanticRole::Label
+                }
+                _ => SemanticRole::Group,
+            };
+            let hidden = hidden || node.attribute("aria-hidden").as_deref() == Some("true");
+            let disabled = disabled
+                || node
+                    .attribute("disabled")
+                    .is_some_and(|v| !matches!(v.as_str(), "false" | "0"));
+            let natural = matches!(
+                role,
+                SemanticRole::Button | SemanticRole::TextInput | SemanticRole::MultilineTextInput
+            ) || clickable;
+            let name = node.attribute("aria-label").unwrap_or_else(|| {
+                if matches!(
+                    role,
+                    SemanticRole::TextInput | SemanticRole::MultilineTextInput
+                ) {
+                    node.attribute("placeholder").unwrap_or_default()
+                } else if natural || role == SemanticRole::Label {
+                    node.text_content()
+                } else {
+                    String::new()
+                }
+            });
+            let id = node.renderer_id();
+            output.push(SemanticNode {
+                id: id.clone(),
+                parent,
+                role,
+                name,
+                value: node.attribute("value").unwrap_or_default(),
+                disabled,
+                hidden,
+                tab_index: node
+                    .attribute("tabIndex")
+                    .and_then(|v| v.parse().ok())
+                    .or(natural.then_some(0)),
+                clickable,
+            });
+            // A button's descendant text supplies its accessible name.
+            if role != SemanticRole::Button {
+                for child in node.all_children() {
+                    visit(&child, Some(id.clone()), hidden, disabled, output);
+                }
+            }
+        }
+        let mut output = vec![];
+        if let Some(root) = self.context.tree.borrow().root.as_ref() {
+            visit(root, None, false, false, &mut output);
+        }
+        output
+    }
+    fn report_error(&self, operation: &str, message: String) {
+        self.context.report(&[], operation, message);
+    }
+    fn text_controls(&self) -> Vec<deka_native_ui::TextControl> {
+        let revision = self.context.patches.get();
+        let mut index = self.context.text_index.borrow_mut();
+        if index.as_ref().is_none_or(|(cached, _)| *cached != revision) {
+            let controlled: std::collections::BTreeSet<_> = self
+                .context
+                .listeners
+                .borrow()
+                .values()
+                .filter(|l| l.kind == EventKind::Input && l.controlled_value)
+                .filter_map(|l| l.anchor.borrow().as_ref().map(NodeHandle::renderer_id))
+                .collect();
+            fn visit(
+                node: &NodeHandle,
+                controlled: &std::collections::BTreeSet<String>,
+                out: &mut Vec<(NodeHandle, bool)>,
+            ) {
+                if matches!(node.tag_name().as_deref(), Some("input" | "textarea")) {
+                    out.push((node.clone(), controlled.contains(&node.renderer_id())));
+                }
+                for child in node.all_children() {
+                    visit(&child, controlled, out);
+                }
+            }
+            let mut nodes = vec![];
+            if let Some(root) = self.context.tree.borrow().root.as_ref() {
+                visit(root, &controlled, &mut nodes);
+            }
+            *index = Some((revision, nodes));
+        }
+        index
+            .as_ref()
+            .unwrap()
+            .1
+            .iter()
+            .map(|(node, controlled)| deka_native_ui::TextControl {
+                id: node.renderer_id(),
+                value: node.attribute("value").unwrap_or_default(),
+                placeholder: node.attribute("placeholder").unwrap_or_default(),
+                controlled: *controlled,
+                multiline: node.tag_name().as_deref() == Some("textarea"),
+            })
+            .collect()
+    }
+
+    fn text_input(&self, id: &str, value: String) -> bool {
+        fn find(node: &NodeHandle, id: &str) -> Option<NodeHandle> {
+            if node.renderer_id() == id {
+                return Some(node.clone());
+            }
+            node.all_children().iter().find_map(|node| find(node, id))
+        }
+        let node = self
+            .context
+            .tree
+            .borrow()
+            .root
+            .as_ref()
+            .and_then(|node| find(node, id));
+        let Some(node) =
+            node.filter(|node| matches!(node.tag_name().as_deref(), Some("input" | "textarea")))
+        else {
+            return false;
+        };
+        if node.attribute("value").unwrap_or_default() == value {
+            return false;
+        }
+        let changed = match node.set_attribute("value", value.clone()) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.context.report(&node.slot(), "value", error);
+                return false;
+            }
+        };
+        self.context.node_changed(&node, changed);
+        // Browsers send a final input after compositionend; an unchanged full
+        // value is not another committed edit or user callback.
+        if !changed {
+            return false;
+        }
+        self.dispatch_to(id, Event::Input(value));
+        true
+    }
+    fn key_input(&self, id: &str, key: String) -> bool {
+        self.dispatch_to(id, Event::KeyDown(key))
+    }
+    fn run_turn(&mut self, _budget: usize) -> bool {
+        self.context.pending_frame.get()
+    }
     fn set_waker(&mut self, waker: deka_native_ui::Waker) {
         if self.context.pending_frame.get() {
             waker.wake();
@@ -984,9 +1262,32 @@ impl Application for UiApp {
 #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub fn launch<A, M>(app: A)
 where
-    A: BuildApp<M>,
+    A: LaunchApp<M>,
 {
-    deka_native_ui::run(UiApp::new(app));
+    app.launch();
+}
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+#[doc(hidden)]
+pub struct SingleWindow<M>(std::marker::PhantomData<M>);
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+#[doc(hidden)]
+pub struct MultipleWindows;
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+#[doc(hidden)]
+pub trait LaunchApp<M> {
+    fn launch(self);
+}
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+impl<A: BuildApp<M>, M> LaunchApp<SingleWindow<M>> for A {
+    fn launch(self) {
+        deka_native_ui::run(UiApp::new(self));
+    }
+}
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+impl LaunchApp<MultipleWindows> for crate::DesktopApp {
+    fn launch(self) {
+        deka_native_ui::window::run_windows(self);
+    }
 }
 
 /// Launch with the existing window's explicit options and motion preference.

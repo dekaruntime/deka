@@ -9,30 +9,44 @@
 //! changed or a scene animates, and never while the window is hidden.
 //!
 //! Nothing here panics on a frame: errors are logged and the frame is skipped.
+mod accessibility;
+mod editor;
 mod encode;
 mod input;
 #[cfg(target_os = "macos")]
 mod mac;
+mod multiple;
+#[cfg(test)]
+pub mod native_tests;
 mod render;
 mod schedule;
 pub mod trace;
 mod ui;
 
+pub use multiple::{
+    MultipleDesktopSession, WindowController, WindowRequest, WindowToken, run_windows,
+};
 pub use render::Snapshot;
+pub use winit::window::Window as NativeWindow;
 
 use crate::{Application, Waker, scene::Scene};
 pub(crate) use input::Input;
-use input::key_name;
+pub use input::{EventLayer, KeyInput};
 use render::{Gpu, Pending};
 use schedule::{Schedule, Wait};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+pub use ui::{DesktopSession, TextClipboard};
+/// Public adapter event payloads for platform integration and event tests.
+pub mod accesskit_events {
+    pub use accesskit::{Action, ActionData, ActionRequest, NodeId, Role, TreeId};
+    pub use accesskit_winit::WindowEvent;
+}
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::dpi::{LogicalPosition, LogicalSize, PhysicalSize};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::keyboard::ModifiersState;
-use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+
 use winit::window::{Window, WindowId};
 
 /// What a window shows: a deka [`Application`] or the portfolio world.
@@ -42,6 +56,15 @@ pub(crate) trait Content: 'static {
     /// Handle one input; `true` when the window must redraw.
     fn input(&mut self, input: Input) -> bool;
     /// Background work between input events; `true` when the window must redraw.
+    fn accessibility(&mut self, _scale: f32) -> accesskit::TreeUpdate {
+        accessibility::empty_tree()
+    }
+    fn accessibility_event(&mut self, _event: &accesskit_winit::WindowEvent) -> bool {
+        false
+    }
+    fn ime_area(&self) -> Option<crate::scene::Rect> {
+        None
+    }
     fn turn(&mut self) -> bool {
         false
     }
@@ -99,7 +122,15 @@ impl Options {
 }
 
 /// Wakes the event loop from any thread; the loop then runs [`Content::turn`].
-struct Wake;
+enum Wake {
+    Work,
+    Accessibility(accesskit_winit::Event),
+}
+impl From<accesskit_winit::Event> for Wake {
+    fn from(event: accesskit_winit::Event) -> Self {
+        Self::Accessibility(event)
+    }
+}
 
 /// Open `app` in a window and run until it closes. `--exercise N` runs the
 /// application's handlers without a window and prints its text instead.
@@ -155,23 +186,7 @@ pub(crate) fn show<C: Content>(content: C, options: Options, gpu: Pending) {
         }
     };
     trace::mark("event loop built");
-    let mut shell = Shell {
-        proxy: event_loop.create_proxy(),
-        content,
-        options,
-        gpu: GpuState::Starting(gpu),
-        window: None,
-        surface: None,
-        schedule: Schedule::new(),
-        cursor: PhysicalPosition::new(0., 0.),
-        modifiers: ModifiersState::empty(),
-        focused: true,
-        presented: 0,
-        drawn_scale: None,
-        shown_with_frame: false,
-        menu_installed: false,
-        failed: None,
-    };
+    let mut shell = Shell::new(content, options, event_loop.create_proxy(), gpu);
     if let Err(e) = event_loop.run_app(&mut shell) {
         eprintln!("deka: event loop: {e}");
         std::process::exit(1);
@@ -194,6 +209,10 @@ struct Surface {
 }
 
 struct Shell<C: Content> {
+    standalone: bool,
+    close_requested: bool,
+    events: EventLayer,
+    adapter: Option<accesskit_winit::Adapter>,
     proxy: EventLoopProxy<Wake>,
     content: C,
     options: Options,
@@ -201,8 +220,6 @@ struct Shell<C: Content> {
     window: Option<Arc<Window>>,
     surface: Option<Surface>,
     schedule: Schedule,
-    cursor: PhysicalPosition<f64>,
-    modifiers: ModifiersState,
     focused: bool,
     presented: u64,
     /// The scale factor the last frame was drawn at.
@@ -229,12 +246,34 @@ enum Drawn {
 }
 
 impl<C: Content> Shell<C> {
+    fn new(content: C, options: Options, proxy: EventLoopProxy<Wake>, gpu: Pending) -> Self {
+        Self {
+            proxy,
+            content,
+            options,
+            gpu: GpuState::Starting(gpu),
+            window: None,
+            surface: None,
+            schedule: Schedule::new(),
+            events: EventLayer::default(),
+            adapter: None,
+            focused: true,
+            presented: 0,
+            drawn_scale: None,
+            shown_with_frame: false,
+            menu_installed: false,
+            failed: None,
+            standalone: true,
+            close_requested: false,
+        }
+    }
+
     fn open(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         let mut attributes = Window::default_attributes()
             .with_title(self.options.title.clone())
             .with_inner_size(LogicalSize::new(self.options.width, self.options.height))
             // Shown once its background is the application's colour.
-            .with_visible(!cfg!(target_os = "macos"));
+            .with_visible(false);
         if let Some((x, y)) = self.options.position {
             attributes = attributes.with_position(LogicalPosition::new(x, y));
         }
@@ -243,6 +282,16 @@ impl<C: Content> Shell<C> {
                 .create_window(attributes)
                 .map_err(|e| format!("cannot create a window: {e}"))?,
         );
+        self.content.frame(
+            self.options.width as f32,
+            self.options.height as f32,
+            window.scale_factor() as f32,
+        );
+        self.adapter = Some(accesskit_winit::Adapter::with_event_loop_proxy(
+            event_loop,
+            &window,
+            self.proxy.clone(),
+        ));
         trace::mark("window created");
         // On macOS the window stays hidden until frame one is in it (`first_frame`).
         #[cfg(target_os = "macos")]
@@ -290,7 +339,7 @@ impl<C: Content> Shell<C> {
         self.window = Some(window);
         let proxy = self.proxy.clone();
         self.content.set_waker(Waker::new(move || {
-            let _ = proxy.send_event(Wake);
+            let _ = proxy.send_event(Wake::Work);
         }));
         self.schedule
             .plan_turn(Instant::now(), self.content.turn_interval());
@@ -325,6 +374,19 @@ impl<C: Content> Shell<C> {
         if self.content.input(input) {
             self.schedule.invalidate();
         }
+        self.sync_ime();
+    }
+    fn sync_ime(&self) {
+        if let Some(window) = &self.window {
+            let area = self.content.ime_area();
+            window.set_ime_allowed(area.is_some());
+            if let Some(r) = area {
+                window.set_ime_cursor_area(
+                    LogicalPosition::new(r.x, r.y),
+                    LogicalSize::new(r.width, r.height),
+                );
+            }
+        }
     }
 
     /// Frame one, and the window shown with it.
@@ -353,6 +415,10 @@ impl<C: Content> Shell<C> {
                 Ok(Err(error)) => eprintln!("deka: frame one waits for the window: {error}"),
                 Err(_) => eprintln!("deka: frame one waits for the window after a panic"),
             }
+        }
+        #[cfg(not(target_os = "macos"))]
+        if let Some(window) = &self.window {
+            window.set_visible(true);
         }
         self.frame(event_loop);
     }
@@ -393,11 +459,32 @@ impl<C: Content> Shell<C> {
             presented_at: Instant::now(),
         };
         self.content.presented(self.focused);
+        self.sync_ime();
+        if let Some(adapter) = &mut self.adapter {
+            // The adapter invokes this only while AT is active, including its
+            // initial request. Idle frames never build or cache a platform tree.
+            adapter.update_if_active(|| {
+                let mut update = self
+                    .content
+                    .accessibility(self.window.as_ref().map_or(1., |w| w.scale_factor()) as f32);
+                if let Some((_, root)) = update
+                    .nodes
+                    .iter_mut()
+                    .find(|(id, _)| *id == accessibility::ROOT)
+                {
+                    root.set_label(self.options.title.clone());
+                }
+                update
+            });
+        }
         if let Some(on_frame) = self.options.on_frame.as_mut() {
             on_frame(frame);
         }
         if self.options.frames.is_some_and(|n| self.presented >= n) {
-            event_loop.exit();
+            self.close_requested = true;
+            if self.standalone {
+                event_loop.exit();
+            }
         }
         // Normally the visibility event installs it first.
         if self.presented >= 2 {
@@ -530,13 +617,32 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
         self.first_frame(event_loop);
     }
 
-    fn user_event(&mut self, _: &ActiveEventLoop, _: Wake) {
-        if self.content.turn() {
+    fn user_event(&mut self, _: &ActiveEventLoop, event: Wake) {
+        let changed = match event {
+            Wake::Work => self.content.turn(),
+            Wake::Accessibility(event) => {
+                if self
+                    .window
+                    .as_ref()
+                    .is_none_or(|w| w.id() != event.window_id)
+                {
+                    return;
+                }
+                self.content.accessibility_event(&event.window_event)
+            }
+        };
+        if changed {
             self.schedule.invalidate();
         }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        if let (Some(adapter), Some(window)) = (&mut self.adapter, &self.window) {
+            adapter.process_event(window, &event);
+        }
+        if let Some(input) = self.events.translate(&event, self.scale()) {
+            self.input(input);
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.resize(size),
@@ -556,37 +662,6 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
             WindowEvent::RedrawRequested => self.frame(event_loop),
             WindowEvent::Focused(focused) => {
                 self.focused = focused;
-                if !focused {
-                    self.modifiers = ModifiersState::empty();
-                }
-                self.input(Input::Focus(focused));
-            }
-            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
-            WindowEvent::CursorMoved { position, .. } => self.cursor = position,
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Left,
-                ..
-            } => {
-                let scale = self.scale();
-                self.input(Input::Press {
-                    x: (self.cursor.x / scale) as f32,
-                    y: (self.cursor.y / scale) as f32,
-                });
-            }
-            WindowEvent::KeyboardInput {
-                event,
-                is_synthetic: false,
-                ..
-            } => {
-                if let Some(name) = key_name(&event.key_without_modifiers()) {
-                    self.input(Input::Key {
-                        name,
-                        down: event.state == ElementState::Pressed,
-                        repeat: event.repeat,
-                        shift: self.modifiers.shift_key(),
-                    });
-                }
             }
             _ => {}
         }
@@ -616,6 +691,7 @@ impl<C: Content> ApplicationHandler<Wake> for Shell<C> {
         // The surface refers to the window; release it first, then the GPU.
         self.surface = None;
         self.gpu = GpuState::Failed;
+        self.adapter = None;
         self.window = None;
     }
 }

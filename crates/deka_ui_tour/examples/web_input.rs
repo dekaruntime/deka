@@ -9,11 +9,13 @@ mod web {
     fn App() -> View {
         let text = signal(String::new());
         let key = signal(String::new());
+        let mut edits = signal(0);
         view! {<view class="p-4 gap-4">
-            <input id="name" class="w-60 h-10" value={move ||text.get().unwrap()}
-                onInput={move |event| if let Event::Input(value)=event { text.set(value); }}
+            <input id="name" aria-label="Name" class="w-60 h-10" value={text} onInput={move |_| edits += 1}
                 onKeyDown={move |event| if let Event::KeyDown(value)=event { key.set(value.clone()); if value=="Enter" { text.set("Confirmed".to_owned()); } }}/>
-            <p>"Hello {text}"</p><p>"Key: {key}"</p>
+            <textarea id="notes" aria-label="Notes" class="w-60 h-24" value={text}/>
+            <button id="clear" onClick={move |_| text.set(String::new())}>"Clear"</button>
+            <p>"Hello {text}"</p><p>"Key: {key}"</p><p>"Edits: {edits}"</p>
         </view>}
     }
     #[wasm_bindgen]

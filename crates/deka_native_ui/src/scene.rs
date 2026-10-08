@@ -88,7 +88,7 @@ impl Scene {
         })
     }
     pub fn focus_ring(&mut self, id: &str) {
-        if let Some(target) = self.targets.iter().find(|t| t.id == id) {
+        if let Some(target) = self.nodes.iter().find(|t| t.id == id) {
             let r = target.rect;
             for rect in [
                 Rect {
@@ -173,6 +173,32 @@ impl Renderer {
         }
         scene.animating = active || layout_active;
         scene
+    }
+    /// Paint a platform editor with the same shaping/font/raster path as scene text.
+    pub fn editor_text(
+        &self,
+        scene: &mut Scene,
+        content: &str,
+        width: Option<f32>,
+        origin: (f32, f32),
+        clip: Rect,
+        scale: f32,
+    ) {
+        let mut images = HashMap::new();
+        let mut text = self.text.borrow_mut();
+        for (rect, id) in text.glyphs(content, 16., width, origin, scale, 0x1a1611, &mut images) {
+            scene.paint.push(Paint {
+                rect,
+                clip,
+                color: 0x1a1611,
+                radius: 0.,
+                image: Some(id),
+                opacity: 1.,
+            });
+        }
+        scene.images.extend(images.into_values());
+        scene.images.sort_by(|a, b| a.id.cmp(&b.id));
+        scene.images.dedup_by(|a, b| a.id == b.id);
     }
     pub fn render(&self, root: &Node, width: f32, height: f32, scale: f32) -> Scene {
         let width = width.clamp(1., 8192.);
