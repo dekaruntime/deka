@@ -3,6 +3,8 @@ use deka_ui::prelude::*;
 fn app() -> DesktopApp {
     DesktopApp::new(|windows| {
         let selected = signal("No file selected".to_owned());
+        // Mutated only by the macOS/Windows menu handlers; Linux has no native menus yet (#1434).
+        #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(unused_mut))]
         let mut count = signal(0);
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         windows
