@@ -65,3 +65,25 @@ winit cursor/mouse events and public native menu event payloads, asserting
 rendered shared state, originating-tree edits, closed-window rejection, filters,
 selection, cancellation and backend errors. The headless driver shares the
 production service request consumer and callback routing.
+
+Service failures reach the completion `Err` and the app's `UiError` sink
+(`native service`); cancellation is `Ok(None)` and adds no error. Configure the
+sink with `DesktopApp::new_with_error_sink`. Invalid filters/NUL options, invalid
+context positions and native menu construction failures are reported before a
+panel or popup is shown. Right-click dispatch rechecks hidden/disabled ancestor
+state even for events queued before repaint; `disabled="0"` is false.
+
+Deka vendors rfd 0.17.2 with error-preserving open/save methods. These distinguish
+macOS abort/missing URL from Cancel, Windows HRESULT failures from
+`ERROR_CANCELLED`, and Linux portal/zenity failures from cancellation. The patch
+and provenance are in `vendor/rfd/DEKA-PATCH.md`; unsupported optional backends
+report an error. These checks preserve the selected path when a dialog fails.
+
+`cargo test --locked --release -p deka_native_ui --features gpu --test native_events`
+exercises the real native `Multiple` handler and `NativeStore`, builds real OS
+menu objects, and checks menu payloads and dialog routing with actual invisible
+winit parents. Success/cancel/failure dialog providers avoid interactive panels
+in automated runs; `SystemFileDialogs`' invalid-option path is also exercised.
+`cargo test --locked --release --manifest-path vendor/rfd/Cargo.toml --lib`
+checks macOS modal responses without showing a panel. Live file choice and
+VoiceOver remain the manual checks above.

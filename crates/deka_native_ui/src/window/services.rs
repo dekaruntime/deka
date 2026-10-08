@@ -65,6 +65,21 @@ impl FileDialogs for SystemFileDialogs {
         {
             return Err("file filters require nonempty extensions".into());
         }
+        if options.title.as_deref().is_some_and(|v| v.contains('\0'))
+            || options
+                .file_name
+                .as_deref()
+                .is_some_and(|v| v.contains('\0'))
+            || options
+                .directory
+                .as_ref()
+                .is_some_and(|v| v.as_os_str().as_encoded_bytes().contains(&0))
+            || options.filters.iter().any(|(name, extensions)| {
+                name.contains('\0') || extensions.iter().any(|v| v.contains('\0'))
+            })
+        {
+            return Err("file dialog options cannot contain NUL characters".into());
+        }
         let mut dialog = rfd::FileDialog::new();
         if let Some(title) = &options.title {
             dialog = dialog.set_title(title);
@@ -81,10 +96,10 @@ impl FileDialogs for SystemFileDialogs {
         if let Some(parent) = parent {
             dialog = dialog.set_parent(parent);
         }
-        Ok(match kind {
-            DialogKind::Open => dialog.pick_file(),
-            DialogKind::Save => dialog.save_file(),
-        })
+        match kind {
+            DialogKind::Open => dialog.try_pick_file(),
+            DialogKind::Save => dialog.try_save_file(),
+        }
     }
 }
 struct NoDialogs;
@@ -188,6 +203,15 @@ mod menus {
         /// Build actual OS menu objects on the UI thread. Used by the host and
         /// native smoke checks; no window or popup is created by this operation.
         pub fn native_menu(&self) -> Result<muda::Menu, String> {
+            if self.entries.iter().any(|entry| match entry {
+                MenuEntry::Item(item) => item.label.contains('\0'),
+                MenuEntry::Submenu(label, _) | MenuEntry::StandardApp(label) => {
+                    label.contains('\0')
+                }
+                _ => false,
+            }) {
+                return Err("menu labels cannot contain NUL characters".into());
+            }
             let menu = muda::Menu::new();
             for entry in &self.entries {
                 match entry {
@@ -342,11 +366,16 @@ impl Services {
                 complete,
                 ..
             } => {
-                complete(if valid {
+                let result = if valid {
                     self.dialogs.choose(kind, &options, parent.as_deref())
                 } else {
                     Err("window is closed".into())
-                });
+                };
+                let error = result.as_ref().err().cloned();
+                complete(result);
+                if let Some(error) = error {
+                    return Err(error);
+                }
             }
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             ServiceRequest::AppMenu(spec) => {
@@ -387,6 +416,9 @@ impl Services {
             } => {
                 if !valid {
                     return Err("window is closed".into());
+                }
+                if !position.0.is_finite() || !position.1.is_finite() {
+                    return Err("context menu position must be finite".into());
                 }
                 let selected = if self.native {
                     use muda::ContextMenu;

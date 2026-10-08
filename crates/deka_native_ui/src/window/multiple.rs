@@ -84,7 +84,7 @@ fn apply<C: WindowController>(controller: &mut C, store: &mut impl Store<C::App>
             },
             WindowRequest::Service(request) => {
                 if let Err(error) = store.service(request) {
-                    eprintln!("deka: native service: {error}");
+                    controller.report_error("native service", error);
                 }
             }
             WindowRequest::Close(id) => {

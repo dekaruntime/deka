@@ -241,7 +241,10 @@ fn os_clicks_queue_filtered_dialogs_results_repaint_and_cancel_preserves_selecti
         local.get().unwrap().try_get(),
         Err(ReactiveError::DisposedSignal)
     );
-    assert!(session.service_errors().is_empty());
+    assert_eq!(
+        session.service_errors(),
+        &["backend unavailable".to_owned()]
+    );
 }
 
 #[test]
@@ -261,4 +264,107 @@ fn invalid_native_filters_report_error_through_os_click_without_opening_a_panel(
     let id = session.windows()[0].0;
     click(&mut session, id, 0);
     assert!(texts(&mut session, id).contains(&"file filters require nonempty extensions".into()));
+}
+
+#[test]
+fn native_option_failures_reach_the_result_callback_and_app_error_sink_once() {
+    let errors = Rc::new(RefCell::new(vec![]));
+    let output = errors.clone();
+    let app = DesktopApp::new_with_error_sink(
+        |windows| {
+            let status = signal("Ready".to_owned());
+            windows.open(WindowOptions::new("Guard",320.,180.),move|window| view!{
+            <view><p>{status}</p><button onClick={move |_|{
+                window.open_file(FileDialogOptions::new().title("bad\0title"),move|result|status.set(result.unwrap_err())).unwrap();
+            }}>"Open"</button></view>
+        }).unwrap();
+        },
+        Some(Rc::new(move |error| {
+            output
+                .borrow_mut()
+                .push((error.binding.clone(), error.message.clone()))
+        })),
+    );
+    let mut session = Session::new(app);
+    session.dialogs(deka_native_ui::window::SystemFileDialogs);
+    let id = session.windows()[0].0;
+    click(&mut session, id, 0);
+    assert!(
+        texts(&mut session, id)
+            .contains(&"file dialog options cannot contain NUL characters".into())
+    );
+    assert_eq!(errors.borrow().len(), 1);
+    assert_eq!(errors.borrow()[0].0, "native service");
+    assert_eq!(session.service_errors().len(), 1);
+}
+
+#[test]
+fn right_click_payload_respects_hidden_and_disabled_ancestors_and_false_values() {
+    use deka_native_ui::Application;
+    for attribute in ["aria-hidden", "disabled"] {
+        let count = Rc::new(Cell::new(0));
+        let output = count.clone();
+        let app = DesktopApp::new(move |windows| {
+            windows.open(WindowOptions::new("Context",320.,180.),move|_|view!{
+                <view id="parent" onContextMenu={move |_|output.set(output.get()+1)}><p>"Target"</p></view>
+            }).unwrap();
+        });
+        let mut session = Session::new(app);
+        let id = session.windows()[0].0;
+        let rect = session
+            .frame(id, 1.)
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|n| n.text.as_deref() == Some("Target"))
+            .unwrap()
+            .rect;
+        let point = (rect.x + 2., rect.y + 2.);
+        mouse(&mut session, id, point, MouseButton::Right);
+        assert_eq!(count.get(), 1);
+        session
+            .app(id)
+            .unwrap()
+            .tree()
+            .get_element_by_id("parent")
+            .unwrap()
+            .set_attribute(attribute, "true")
+            .unwrap();
+        mouse(&mut session, id, point, MouseButton::Right);
+        assert_eq!(
+            count.get(),
+            1,
+            "queued right clicks must recheck ancestor state before repaint"
+        );
+        session
+            .app(id)
+            .unwrap()
+            .tree()
+            .get_element_by_id("parent")
+            .unwrap()
+            .set_attribute(attribute, "false")
+            .unwrap();
+        mouse(&mut session, id, point, MouseButton::Right);
+        assert_eq!(count.get(), 2);
+        if attribute == "disabled" {
+            session
+                .app(id)
+                .unwrap()
+                .tree()
+                .get_element_by_id("parent")
+                .unwrap()
+                .set_attribute(attribute, "0")
+                .unwrap();
+            mouse(&mut session, id, point, MouseButton::Right);
+            assert_eq!(count.get(), 3);
+            assert!(
+                !session
+                    .app(id)
+                    .unwrap()
+                    .semantics()
+                    .iter()
+                    .any(|n| n.disabled)
+            );
+        }
+    }
 }

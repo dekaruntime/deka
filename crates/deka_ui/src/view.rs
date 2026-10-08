@@ -1204,7 +1204,7 @@ impl Application for UiApp {
         while let Some(current) = node {
             if current
                 .attribute("disabled")
-                .is_some_and(|value| value != "false")
+                .is_some_and(|value| !matches!(value.as_str(), "false" | "0"))
                 || current.attribute("aria-hidden").as_deref() == Some("true")
             {
                 return false;
