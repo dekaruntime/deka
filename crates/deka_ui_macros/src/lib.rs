@@ -93,6 +93,8 @@ fn node(input: &Node) -> syn::Result<Tokens> {
                         _ => value.to_token_stream(),
                     };
                     setters.push(quote_spanned!(span=> .#method(#value)));
+                } else if key == "value" {
+                    setters.push(quote_spanned!(span=> .value(#value)));
                 } else if key == "node_ref" {
                     setters.push(quote_spanned!(span=> .node_ref(#value)));
                 } else if let Some(class) = key.strip_prefix("class:") {

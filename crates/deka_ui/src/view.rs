@@ -46,6 +46,39 @@ pub struct Computed<M>(std::marker::PhantomData<M>);
 #[doc(hidden)]
 pub struct Tracked;
 #[doc(hidden)]
+pub struct TwoWay;
+#[doc(hidden)]
+pub trait IntoValue<M> {
+    fn apply(self, view: View) -> View;
+}
+impl IntoValue<Static> for String {
+    fn apply(self, view: View) -> View {
+        view.attr("value", self)
+    }
+}
+impl IntoValue<Static> for &str {
+    fn apply(self, view: View) -> View {
+        view.attr("value", self)
+    }
+}
+impl<F, T> IntoValue<Live> for F
+where
+    F: FnMut() -> T + 'static,
+    T: Display,
+{
+    fn apply(self, view: View) -> View {
+        view.attr("value", self)
+    }
+}
+impl IntoValue<TwoWay> for Signal<String> {
+    fn apply(self, mut view: View) -> View {
+        if let Some(element) = view.element_mut() {
+            element.value_signal = Some(self);
+        }
+        view.attr("value", move || self.get().unwrap_or_default())
+    }
+}
+#[doc(hidden)]
 pub enum Attribute {
     Value(String),
     Binding(Box<dyn FnMut() -> String>),
@@ -81,6 +114,7 @@ enum Builder {
     State(Box<View>, Rc<dyn Any>),
 }
 struct Element {
+    value_signal: Option<Signal<String>>,
     tag: String,
     attributes: BTreeMap<String, Attribute>,
     toggles: BTreeMap<String, Box<dyn FnMut() -> bool>>,
@@ -116,6 +150,7 @@ impl View {
     pub fn element(tag: impl Into<String>) -> Self {
         Self(Builder::Element(Element {
             tag: tag.into(),
+            value_signal: None,
             attributes: BTreeMap::new(),
             toggles: BTreeMap::new(),
             events: BTreeMap::new(),
@@ -141,6 +176,10 @@ impl View {
         V: IntoView<M>,
     {
         Self(Builder::Dynamic(Box::new(move || value().into_view())))
+    }
+    /// A string signal binds both directions; strings and closures bind one direction.
+    pub fn value<V: IntoValue<M>, M>(self, value: V) -> Self {
+        value.apply(self)
     }
     pub fn attr<V, M>(mut self, name: &str, value: V) -> Self
     where
@@ -344,7 +383,9 @@ pub(crate) type PublishedState = (Anchor, Rc<dyn Any>);
 pub(crate) type Anchor = Rc<RefCell<Option<NodeHandle>>>;
 
 type Callback = Rc<RefCell<Box<dyn FnMut(Event)>>>;
+type TextIndex = (usize, Vec<(NodeHandle, bool)>);
 struct Listener {
+    controlled_value: bool,
     anchor: Anchor,
     kind: EventKind,
     callback: Callback,
@@ -357,6 +398,7 @@ pub(crate) struct Context {
     next_state: Cell<usize>,
     listeners: RefCell<BTreeMap<usize, Listener>>,
     next_listener: Cell<usize>,
+    text_index: RefCell<Option<TextIndex>>,
     patches: Cell<usize>,
     pending_frame: Cell<bool>,
     waker: RefCell<Option<deka_native_ui::Waker>>,
@@ -441,13 +483,21 @@ impl Context {
             }
         }
     }
-    fn listen(&self, anchor: Anchor, kind: EventKind, event: Box<dyn FnMut(Event)>) -> usize {
+    fn listen(
+        &self,
+        anchor: Anchor,
+        kind: EventKind,
+        event: Box<dyn FnMut(Event)>,
+        controlled_value: bool,
+    ) -> usize {
+        self.text_index.borrow_mut().take();
         let token = self.next_listener.get();
         self.next_listener
             .set(token.checked_add(1).expect("event identity exhausted"));
         self.listeners.borrow_mut().insert(
             token,
             Listener {
+                controlled_value,
                 anchor,
                 kind,
                 callback: Rc::new(RefCell::new(event)),
@@ -488,6 +538,7 @@ impl Drop for Registrations {
             }
             for token in self.events.drain(..) {
                 context.listeners.borrow_mut().remove(&token);
+                context.text_index.borrow_mut().take();
             }
         }
     }
@@ -744,6 +795,8 @@ fn prepare(
                 wire.attributes
                     .insert("className".into(), wire.classes.clone());
             }
+            let controlled_value =
+                matches!(element.attributes.get("value"), Some(Attribute::Binding(_)));
             for (name, value) in element.attributes {
                 let property = name.clone();
                 let value = bind(
@@ -757,8 +810,38 @@ fn prepare(
                 );
                 wire.attributes.insert(name, value);
             }
+            if let Some(value) = element.value_signal {
+                if !matches!(wire.tag.as_str(), "input" | "textarea") {
+                    return Err("two-way value requires input or textarea".into());
+                }
+                let mut user = element.events.remove(&EventKind::Input);
+                let target = anchor.clone();
+                let owner = Rc::downgrade(context);
+                element.events.insert(
+                    EventKind::Input,
+                    Box::new(move |event| {
+                        if let Event::Input(text) = &event {
+                            value.set(text.clone());
+                        }
+                        if let Some(user) = &mut user {
+                            user(event);
+                        }
+                        // A handler may normalize or reject the edit in this batch,
+                        // including restoring the previous authored value.
+                        let node = target.borrow().clone();
+                        if let (Some(node), Some(context), Ok(text)) =
+                            (node, owner.upgrade(), value.try_get())
+                        {
+                            match node.set_attribute("value", text) {
+                                Ok(changed) => context.node_changed(&node, changed),
+                                Err(error) => context.report(&node.slot(), "value", error),
+                            }
+                        }
+                    }),
+                );
+            }
             for (kind, event) in element.events {
-                let token = context.listen(anchor.clone(), kind, event);
+                let token = context.listen(anchor.clone(), kind, event, controlled_value);
                 prepared.registrations.events.push(token);
                 if kind == EventKind::Click {
                     wire.handler = Some(token);
@@ -897,8 +980,7 @@ impl UiApp {
         let token = self.routes.borrow().get(handler).copied();
         token.is_some_and(|token| self.invoke(token, Event::Click))
     }
-    /// Typed dispatch for integrations supplying input/key events. The current
-    /// desktop Application seam supplies clicks; platform text editing belongs to the editor lane.
+    /// Typed dispatch used by platform event adapters.
     pub fn dispatch_to(&self, node_id: &str, event: Event) -> bool {
         let token = self
             .context
@@ -911,7 +993,7 @@ impl UiApp {
                         .anchor
                         .borrow()
                         .as_ref()
-                        .is_some_and(|node| node.snapshot().id == node_id))
+                        .is_some_and(|node| node.renderer_id() == node_id))
                 .then_some(*token)
             });
         token.is_some_and(|token| self.invoke(token, event))
@@ -973,6 +1055,95 @@ impl Application for UiApp {
     }
     fn event(&self, handler: usize, _: &mut [f64]) {
         self.dispatch(handler);
+    }
+    fn report_error(&self, operation: &str, message: String) {
+        self.context.report(&[], operation, message);
+    }
+    fn text_controls(&self) -> Vec<deka_native_ui::TextControl> {
+        let revision = self.context.patches.get();
+        let mut index = self.context.text_index.borrow_mut();
+        if index.as_ref().is_none_or(|(cached, _)| *cached != revision) {
+            let controlled: std::collections::BTreeSet<_> = self
+                .context
+                .listeners
+                .borrow()
+                .values()
+                .filter(|l| l.kind == EventKind::Input && l.controlled_value)
+                .filter_map(|l| l.anchor.borrow().as_ref().map(NodeHandle::renderer_id))
+                .collect();
+            fn visit(
+                node: &NodeHandle,
+                controlled: &std::collections::BTreeSet<String>,
+                out: &mut Vec<(NodeHandle, bool)>,
+            ) {
+                if matches!(node.tag_name().as_deref(), Some("input" | "textarea")) {
+                    out.push((node.clone(), controlled.contains(&node.renderer_id())));
+                }
+                for child in node.all_children() {
+                    visit(&child, controlled, out);
+                }
+            }
+            let mut nodes = vec![];
+            if let Some(root) = self.context.tree.borrow().root.as_ref() {
+                visit(root, &controlled, &mut nodes);
+            }
+            *index = Some((revision, nodes));
+        }
+        index
+            .as_ref()
+            .unwrap()
+            .1
+            .iter()
+            .map(|(node, controlled)| deka_native_ui::TextControl {
+                id: node.renderer_id(),
+                value: node.attribute("value").unwrap_or_default(),
+                placeholder: node.attribute("placeholder").unwrap_or_default(),
+                controlled: *controlled,
+                multiline: node.tag_name().as_deref() == Some("textarea"),
+            })
+            .collect()
+    }
+
+    fn text_input(&self, id: &str, value: String) -> bool {
+        fn find(node: &NodeHandle, id: &str) -> Option<NodeHandle> {
+            if node.renderer_id() == id {
+                return Some(node.clone());
+            }
+            node.all_children().iter().find_map(|node| find(node, id))
+        }
+        let node = self
+            .context
+            .tree
+            .borrow()
+            .root
+            .as_ref()
+            .and_then(|node| find(node, id));
+        let Some(node) =
+            node.filter(|node| matches!(node.tag_name().as_deref(), Some("input" | "textarea")))
+        else {
+            return false;
+        };
+        if node.attribute("value").unwrap_or_default() == value {
+            return false;
+        }
+        let changed = match node.set_attribute("value", value.clone()) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.context.report(&node.slot(), "value", error);
+                return false;
+            }
+        };
+        self.context.node_changed(&node, changed);
+        // Browsers send a final input after compositionend; an unchanged full
+        // value is not another committed edit or user callback.
+        if !changed {
+            return false;
+        }
+        self.dispatch_to(id, Event::Input(value));
+        true
+    }
+    fn key_input(&self, id: &str, key: String) -> bool {
+        self.dispatch_to(id, Event::KeyDown(key))
     }
     fn set_waker(&mut self, waker: deka_native_ui::Waker) {
         if self.context.pending_frame.get() {

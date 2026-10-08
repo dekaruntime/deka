@@ -56,7 +56,8 @@ try {
         window.stop();window.scene=undefined;window.dekaFrameTimes=[];
         const canvas=document.querySelector('canvas');canvas.style.width=history.width+'px';canvas.style.height=history.height+'px';window.start(history.lesson)
       },history)
-      await page.waitForFunction(()=>window.scene)
+      await page.waitForFunction(()=>window.scene || window.errors.length)
+      assert.deepEqual(await page.evaluate(()=>window.errors),[],`${history.lesson} render errors`)
       for(const step of history.steps) {
         await canvas.evaluate((canvas,time)=>canvas.dispatchEvent(new CustomEvent('deka:clock',{detail:{time}})),step.time)
         if(step.point) {
@@ -82,10 +83,27 @@ try {
   }
   const page=await browser.newPage();page.setDefaultTimeout(30000)
   await page.goto(url+'/?fixture=input-fixture');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start())
-  const input=page.getByLabel('Deka text input');await input.pressSequentially('Sami')
+  const input=page.locator('input');await input.pressSequentially('Sami')
   assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello Sami'))
   await input.press('Enter');assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Key: Enter'))
-  assert.equal(await input.inputValue(),'Confirmed');await page.evaluate(()=>window.stop());assert.equal(await input.count(),0)
+  assert.equal(await input.inputValue(),'Confirmed');
+  const textarea=page.locator('textarea');assert.equal(await textarea.inputValue(),'Confirmed');
+  await textarea.fill('line one\nline two');assert.equal(await input.inputValue(),'line oneline two');
+  const editsBefore=await page.evaluate(()=>Number(window.scene.nodes.find(n=>n.text?.startsWith("Edits: ")).text.slice(7)));
+  await input.evaluate(input=>{input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.value='にほん';input.dispatchEvent(new InputEvent('input',{data:'にほん',isComposing:true,bubbles:true}));});
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello line one\nline two'),'preedit must not update signal');
+  await input.evaluate(input=>{input.value='日本';input.dispatchEvent(new CompositionEvent('compositionend',{data:'日本',bubbles:true}));input.dispatchEvent(new InputEvent('input',{data:'日本',isComposing:false,bubbles:true}));});
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello 日本'));
+  assert.equal(await textarea.inputValue(),'日本');
+  assert.equal(await page.evaluate(()=>Number(window.scene.nodes.find(n=>n.text?.startsWith("Edits: ")).text.slice(7))),editsBefore+1,'compositionend and final input form one committed edit');
+  await page.context().grantPermissions(['clipboard-read','clipboard-write']);
+  await page.evaluate(()=>navigator.clipboard.writeText('clipboard 日本'));
+  await input.focus();await input.press('ControlOrMeta+A');await input.press('ControlOrMeta+V');
+  assert.equal(await input.inputValue(),'clipboard 日本');
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello clipboard 日本'));
+  await input.press('ControlOrMeta+A');await input.press('ControlOrMeta+X');assert.equal(await input.inputValue(),'');
+  await input.press('ControlOrMeta+V');assert.equal(await input.inputValue(),'clipboard 日本');
+  await page.evaluate(()=>window.stop());assert.equal(await input.count(),0);assert.equal(await textarea.count(),0)
   console.log('PASS: native browser text/key input and teardown')
   await page.goto(url+'/?fixture=.&inspect');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start('counter'))
   const canvas=page.locator('canvas');const before=await canvas.screenshot()

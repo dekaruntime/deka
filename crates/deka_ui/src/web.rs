@@ -116,7 +116,8 @@ impl BrowserApp {
     }
     /// The browser's native text field supplies the complete edited value.
     pub fn input(&self, node_id: &str, value: &str) -> bool {
-        self.app.dispatch_to(node_id, Event::Input(value.into()))
+        use deka_native_ui::Application;
+        self.app.text_input(node_id, value.into())
     }
     pub fn key_to(&self, node_id: &str, key: &str) -> bool {
         self.app.dispatch_to(node_id, Event::KeyDown(key.into()))
@@ -128,19 +129,10 @@ impl BrowserApp {
         self.focus.clone()
     }
     pub fn inputs(&self) -> Result<String, String> {
-        let tree = self.app.tree();
-        let controls = tree
-            .query_all("input")
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .chain(tree.query_all("textarea").map_err(|e| e.to_string())?);
-        let mut inputs = Vec::new();
-        for element in controls {
-            // Absence is a valid empty HTML input. Preserve that Option across
-            // the boundary; the host applies the HTML default explicitly.
-            let value = element.get_attribute("value");
-            inputs.push(serde_json::json!({"id": element.renderer_id(), "value": value}));
-        }
+        use deka_native_ui::Application;
+        let inputs:Vec<_> = self.app.text_controls().into_iter().map(|control| serde_json::json!({
+            "id":control.id,"value":control.value,"tag":if control.multiline {"textarea"} else {"input"},"placeholder":control.placeholder,"controlled":control.controlled
+        })).collect();
         serde_json::to_string(&inputs).map_err(|e| e.to_string())
     }
 }

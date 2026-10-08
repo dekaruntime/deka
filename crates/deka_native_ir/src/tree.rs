@@ -105,7 +105,19 @@ impl PartialEq for NodeHandle {
     }
 }
 impl Eq for NodeHandle {}
+fn renderer_id(id: Identity) -> String {
+    format!("view/{}", id.0)
+}
 impl NodeHandle {
+    pub fn renderer_id(&self) -> String {
+        renderer_id(self.0.borrow().id)
+    }
+    pub fn tag_name(&self) -> Option<String> {
+        match &self.0.borrow().kind {
+            Kind::Element(tag) => Some(tag.clone()),
+            Kind::Text => None,
+        }
+    }
     pub fn slot(&self) -> Vec<usize> {
         #[cfg(test)]
         SLOT_CLONES.with(|count| count.set(count.get() + 1));
@@ -277,7 +289,7 @@ impl NodeHandle {
     }
     pub fn snapshot_record(record: &Record) -> Node {
         Node {
-            id: format!("view/{}", record.id.0),
+            id: renderer_id(record.id),
             style: record.style.clone(),
             text: record
                 .text_override

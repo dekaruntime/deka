@@ -158,18 +158,22 @@ export function mount(app, canvas, inspect = false) {
       active.add(control.id)
       let input = inputs.get(control.id)
       if (!input) {
-        input = document.createElement('input'); input.setAttribute('aria-label', 'Deka text input')
+        input = document.createElement(control.tag === 'textarea' ? 'textarea' : 'input'); input.setAttribute('aria-label', control.tag === 'textarea' ? 'Deka text area' : 'Deka text input')
         input.style.cssText = 'position:absolute;box-sizing:border-box;font:inherit;color:inherit;background:transparent;border:1px solid currentColor;border-radius:4px;padding:4px;'
-        input.addEventListener('input', () => { try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } })
-        input.addEventListener('keydown', event => { try { app.key_to(control.id,event.key); draw() } catch(error) { fail(error) } })
+        input.addEventListener('compositionstart', () => { input.dekaComposing = true })
+        input.addEventListener('compositionend', () => { input.dekaComposing = false; try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } })
+        input.addEventListener('input', () => { if (!input.dekaComposing) { try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } } })
+        input.addEventListener('keydown', event => { if(event.isComposing) return; try { app.key_to(control.id,event.key); draw() } catch(error) { fail(error) } })
         inputs.set(control.id,input); parent.append(input)
       }
       const value = control.value ?? ""
-      if (input.value !== value) {
+      input.placeholder = control.placeholder ?? ""
+      if (!input.dekaComposing && (control.controlled || input.dekaObservedValue !== value) && input.value !== value) {
         const selection = [input.selectionStart, input.selectionEnd]
         input.value = value
         if (document.activeElement === input && selection.every(index => index !== null)) input.setSelectionRange(Math.min(selection[0],input.value.length),Math.min(selection[1],input.value.length))
       }
+      if (!input.dekaComposing) input.dekaObservedValue = value
       const bounds = canvas.getBoundingClientRect(), origin = parent.getBoundingClientRect()
       Object.assign(input.style,{left:`${bounds.left-origin.left+node.rect.x}px`,top:`${bounds.top-origin.top+node.rect.y}px`,width:`${node.rect.width}px`,height:`${node.rect.height}px`})
     }
