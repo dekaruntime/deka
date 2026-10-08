@@ -263,3 +263,103 @@ fn two_way_handler_can_reject_an_edit_to_the_previous_value() {
             .any(|node| node.text.as_deref() == Some("Value: accepted"))
     );
 }
+
+#[test]
+fn controlled_normalization_and_rejection_sync_without_loop_or_lost_next_edit() {
+    use std::cell::Cell;
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    let mut session = DesktopSession::new(UiApp::new(move || {
+        let text = signal("accepted".to_owned());
+        view! {<view>
+            <input id="editor" value={text} onInput={move |event| {
+                count.set(count.get() + 1);
+                if let Event::Input(value) = event {
+                    text.set(match value.as_str() { "reject" => "accepted".into(), "normalize" => "NORMALIZE".into(), _ => value });
+                }
+            }}/><p>"Value: {text}"</p>
+        </view>}
+    }));
+    session.frame(400., 300., 1.);
+    session.keyboard(key("tab"));
+    for (i, (edit, expected)) in [("reject", "accepted"), ("normalize", "NORMALIZE")]
+        .into_iter()
+        .enumerate()
+    {
+        session.keyboard(command("a"));
+        commit(&mut session, edit);
+        assert_eq!(value(&session), expected);
+        for _ in 0..3 {
+            assert!(
+                session
+                    .frame(400., 300., 1.)
+                    .nodes
+                    .iter()
+                    .any(|n| n.text.as_deref() == Some(&format!("Value: {expected}")))
+            );
+        }
+        assert_eq!(calls.get(), i * 2 + 1, "sync must not dispatch input");
+        session.keyboard(command("right"));
+        commit(&mut session, "!");
+        assert_eq!(
+            value(&session),
+            format!("{expected}!"),
+            "editor sync must preserve the accepted value before the next edit"
+        );
+        session.frame(400., 300., 1.);
+        assert_eq!(calls.get(), i * 2 + 2);
+    }
+}
+
+struct FailingClipboard;
+impl TextClipboard for FailingClipboard {
+    fn get(&mut self) -> Result<String, String> {
+        Err("read failure".into())
+    }
+    fn set(&mut self, _: &str) -> Result<(), String> {
+        Err("write failure".into())
+    }
+}
+#[test]
+fn clipboard_failures_reach_app_error_sink_and_empty_paste_keeps_selection() {
+    let errors = Rc::new(RefCell::new(vec![]));
+    let output = errors.clone();
+    let app = UiApp::new_with_error_sink(
+        || view! {<input id="editor" value="selected"/>},
+        Some(Rc::new(move |e| {
+            output
+                .borrow_mut()
+                .push((e.binding.clone(), e.message.clone()))
+        })),
+    );
+    let mut session = DesktopSession::new(app);
+    session.frame(400., 300., 1.);
+    session.keyboard(key("tab"));
+    session.keyboard(command("a"));
+    session.clipboard(FailingClipboard);
+    session.keyboard(command("x"));
+    session.keyboard(command("v"));
+    assert_eq!(value(&session), "selected");
+    assert_eq!(
+        &*errors.borrow(),
+        &[
+            ("clipboard".into(), "write failure".into()),
+            ("clipboard".into(), "read failure".into())
+        ]
+    );
+    assert_eq!(session.app().take_errors().len(), 2);
+    session.clipboard(Clipboard(Rc::new(RefCell::new(String::new()))));
+    session.keyboard(command("v"));
+    assert_eq!(
+        value(&session),
+        "selected",
+        "empty paste must not delete selection"
+    );
+    commit(&mut session, "replacement");
+    assert_eq!(
+        value(&session),
+        "replacement",
+        "empty paste must preserve selection"
+    );
+    assert_eq!(errors.borrow().len(), 2);
+}

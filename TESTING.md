@@ -159,3 +159,15 @@ fixtures snapshot the 27 active lesson sources from dekaruntime/website main
 category to the VM gate; that is a separate port-note task.
 
 The filesystem migration admits only three exact original clock-independent fixtures (`fs-mkdirs-idempotent`, `fs-read-missing`, `fs-read-dir-missing`). The native adapter checks original source, passing run status, package names, original `dekaJson` and expected stdout. It does not install a legacy package, edit source or waive checks; normal `check`, `run` and output comparison remain required. Changed or unrelated metadata fails closed.
+
+Native accessibility/window ingress also has a main-thread winit test executable:
+
+```sh
+cargo test --locked --release -p deka_native_ui --features gpu --test native_events
+```
+
+It compiles the production window module, creates invisible OS windows, and
+calls the real winit application handlers. A custom harness is required because
+macOS winit cannot run on libtest worker threads. It does not enable VoiceOver,
+show windows, or attach debugging/profiling tools. Linux without a display emits
+a loud skip reason; a native display host fails on setup errors.
