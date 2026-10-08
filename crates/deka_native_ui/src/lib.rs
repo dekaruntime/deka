@@ -1,5 +1,7 @@
 //! Native UI shared by interpreted development applications and compiled applications.
-pub use deka_native_ir::{Align, Edges, Justify, Keyframe, Length, Motion, Node, Style};
+pub use deka_native_ir::{
+    Align, CLASS_ATTRIBUTE, Edges, Justify, Keyframe, Length, Motion, Node, Style,
+};
 pub mod animation;
 pub mod geometry;
 mod layout;

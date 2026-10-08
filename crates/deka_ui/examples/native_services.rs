@@ -24,7 +24,7 @@ fn app() -> DesktopApp {
             .unwrap();
         windows.open(WindowOptions::new("Native services",520.,340.),move|window| {
             let open=window.clone();let save=window.clone();
-            let view=view!{<view className="p-4 gap-4"><p>"Actions: {count}"</p><p>{selected}</p>
+            let view=view!{<view class="p-4 gap-4"><p>"Actions: {count}"</p><p>{selected}</p>
                 <button onClick={move |_| {open.open_file(FileDialogOptions::new().filter("Text",&["txt","md"]),move|result|if let Ok(Some(path))=result {selected.set(path.display().to_string());}).unwrap();}}>"Open file"</button>
                 <button onClick={move |_| {save.save_file(FileDialogOptions::new().file_name("draft.txt").filter("Text",&["txt","md"]),move|result|if let Ok(Some(path))=result {selected.set(path.display().to_string());}).unwrap();}}>"Save file"</button>
             </view>};
@@ -260,7 +260,7 @@ mod smoke {
                 windows.open(options,move|window| {
                     let open=window.clone();let save=window.clone();
                     let opener=driver.clone();let saver=driver.clone();
-                    view!{<view className="p-4 gap-4"><p>{status}</p>
+                    view!{<view class="p-4 gap-4"><p>{status}</p>
                         <button onClick={move |_| {
                             schedule(PanelTask{message:"deka smoke open".into(),capture:opener.path.join("open.png"),attempts:0});
                             let done=opener.done.clone();

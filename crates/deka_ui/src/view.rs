@@ -1,7 +1,7 @@
 //! Transient Rust builders and reactive bindings on the shared native store.
 use crate::{ComponentState, Derived, Effect, NodeRef, Scope, Signal, ViewTree, effect};
 use deka_native_ir::{
-    Node, WireNode,
+    CLASS_ATTRIBUTE, Node, WireNode,
     tree::{NodeHandle, Tree},
 };
 use deka_native_ui::Application;
@@ -783,7 +783,7 @@ fn prepare(
                 tag: element.tag,
                 ..Default::default()
             };
-            let base = element.attributes.remove("className");
+            let base = element.attributes.remove(CLASS_ATTRIBUTE);
             let has_classes = base.is_some() || !element.toggles.is_empty();
             let base = base.unwrap_or_else(|| Attribute::Value(String::new()));
             let classes = if element.toggles.is_empty() {
@@ -809,7 +809,7 @@ fn prepare(
             wire.classes = bind(
                 classes,
                 &path,
-                "className",
+                CLASS_ATTRIBUTE,
                 &anchor,
                 context,
                 &mut prepared.registrations,
@@ -817,7 +817,7 @@ fn prepare(
             );
             if has_classes {
                 wire.attributes
-                    .insert("className".into(), wire.classes.clone());
+                    .insert(CLASS_ATTRIBUTE.into(), wire.classes.clone());
             }
             let controlled_value =
                 matches!(element.attributes.get("value"), Some(Attribute::Binding(_)));
@@ -872,7 +872,7 @@ fn prepare(
                 }
             }
             wire.style()
-                .map_err(|error| format!("node {path:?} className: {error}"))?;
+                .map_err(|error| format!("node {path:?} {CLASS_ATTRIBUTE}: {error}"))?;
             prepared.slots.push(path.clone());
             prepared.anchors.push((path.clone(), anchor.clone()));
             for (index, child) in element.children.into_iter().enumerate() {
@@ -1399,7 +1399,7 @@ mod tests {
             || {
                 let invalid = signal(false);
                 View::element("view")
-                    .attr("className", move || {
+                    .attr("class", move || {
                         if invalid.get().unwrap() {
                             "p-bad"
                         } else {
@@ -1415,7 +1415,7 @@ mod tests {
                 app.event(0, &mut state);
                 assert_eq!(app.render(&state), before);
                 assert_eq!(errors.borrow().len(), 1);
-                assert_eq!(errors.borrow()[0].binding, "className");
+                assert_eq!(errors.borrow()[0].binding, "class");
             },
         );
     }
@@ -1427,7 +1427,7 @@ mod tests {
             || {
                 let invalid = signal(false);
                 View::element("view")
-                    .child(View::element("p").attr("className", move || {
+                    .child(View::element("p").attr("class", move || {
                         if invalid.get().unwrap() {
                             "p-bad"
                         } else {
@@ -1447,7 +1447,7 @@ mod tests {
         app.render(&state);
         assert_eq!(errors.borrow().len(), 1);
         assert_eq!(errors.borrow()[0].path, [0]);
-        assert_eq!(errors.borrow()[0].binding, "className");
+        assert_eq!(errors.borrow()[0].binding, "class");
         assert!(!errors.borrow()[0].message.is_empty());
         assert_eq!(app.take_errors().len(), 1);
         assert!(app.take_errors().is_empty());
@@ -1458,7 +1458,7 @@ mod tests {
         let calls = Rc::new(Cell::new(0));
         let output = calls.clone();
         let app = UiApp::new_with_error_sink(
-            || View::element("view").attr("className", "p-bad"),
+            || View::element("view").attr("class", "p-bad"),
             Some(Rc::new(move |_| output.set(output.get() + 1))),
         );
         assert_eq!(calls.get(), 1);
@@ -1501,7 +1501,7 @@ mod tests {
                 .iter()
                 .all(|error| error.message.contains("disposed"))
         );
-        assert_eq!(errors.borrow()[0].binding, "className");
+        assert_eq!(errors.borrow()[0].binding, "class");
         assert_eq!(errors.borrow()[2].binding, "text");
         assert!(
             app.tree()
@@ -1530,7 +1530,7 @@ mod tests {
                 .child(
                     View::element("p")
                         .attr("id", "target")
-                        .attr("className", move || {
+                        .attr("class", move || {
                             if invalid.get().unwrap() {
                                 "p-bad"
                             } else {
@@ -1548,7 +1548,7 @@ mod tests {
         app.dispatch(0);
         assert_eq!(app.tree(), before);
         assert!(app.take_errors().is_empty());
-        let initial = UiApp::new(|| View::element("view").attr("className", "p-bad"));
+        let initial = UiApp::new(|| View::element("view").attr("class", "p-bad"));
         assert_eq!(initial.take_errors().len(), 1);
         assert!(initial.tree().children.is_empty());
         let toggle = UiApp::new(|| View::element("view").class("p-bad", true));
@@ -1609,7 +1609,7 @@ mod tests {
                 .child(move || {
                     View::element("p")
                         .attr(
-                            "className",
+                            "class",
                             if invalid.get().unwrap() {
                                 "p-bad"
                             } else {
@@ -1638,7 +1638,7 @@ mod tests {
                 .child(
                     View::element("p")
                         .attr("id", "message")
-                        .attr("className", move || {
+                        .attr("class", move || {
                             if red.get().unwrap() {
                                 "text-[#ff0000]"
                             } else {
@@ -1769,9 +1769,12 @@ mod tests {
             View::element("view")
                 .child(
                     View::element("p")
-                        .attr("className", move || {
-                            if state.get().unwrap() { "p-4" } else { "p-2" }
-                        })
+                        .attr(
+                            "class",
+                            move || {
+                                if state.get().unwrap() { "p-4" } else { "p-2" }
+                            },
+                        )
                         .class("opacity-0", state)
                         .class("rounded", move || state.get().unwrap())
                         .child("Same"),

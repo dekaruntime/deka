@@ -82,9 +82,9 @@ executes only its selected branch. `None` contributes no child.
 export fn App() {
     let open = 0;
     return (
-        <view className="p-4 gap-3">
+        <view class="p-4 gap-3">
             <button onClick={fn() { open = 1 - open; }}>Toggle</button>
-            {open == 1 ? <p className="enter-fade exit-fade duration-500">Hello</p> : None}
+            {open == 1 ? <p class="enter-fade exit-fade duration-500">Hello</p> : None}
         </view>
     );
 }
@@ -162,7 +162,7 @@ interface CardProps { title: string; detail: string }
 
 fn Card(props: CardProps) {
     return (
-        <div className="p-4 gap-2">
+        <div class="p-4 gap-2">
             <p>{props.title}</p>
             <p>{props.detail}</p>
         </div>
@@ -207,7 +207,7 @@ interface CardProps { title: string; detail: string }
 fn Hero() { return <p>Testing</p>; }
 fn Card(props: CardProps) {
     return (
-        <div className="p-4 gap-3">
+        <div class="p-4 gap-3">
             <p>{props.title}</p>
             <p>{props.detail}</p>
             <slot />

@@ -16,7 +16,7 @@ mod web {
         for (name, canvas) in [("First", first), ("Second", second)] {
             let app = UiApp::new_in_scope(&scope, move || {
                 view! {
-                    <view className="p-4 gap-4"><p>"{name}: {count}"</p>
+                    <view class="p-4 gap-4"><p>"{name}: {count}"</p>
                     <button onClick={move |_| count += 1}>"Add"</button></view>
                 }
             });

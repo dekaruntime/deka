@@ -4,7 +4,7 @@ mod widgets {
     use super::*;
     #[component]
     pub fn Card(title: String, #[prop(default = 2)] copies: usize, children: Children) -> View {
-        view! { <div className="p-4">{(0..copies).map(move |_| view! {<p>"{title}"</p>})}{children()}</div> }
+        view! { <div class="p-4">{(0..copies).map(move |_| view! {<p>"{title}"</p>})}{children()}</div> }
     }
 }
 use widgets::Card;
@@ -60,7 +60,7 @@ fn class_colon_toggle_live_attributes_option_and_iterator_children_patch() {
         let open = signal(false);
         view! {
             <view>
-                <p className={move || if open.get().unwrap(){"p-4"}else{"p-2"}} class:rounded={open}>"Kept"</p>
+                <p class={move || if open.get().unwrap(){"p-4"}else{"p-2"}} class:rounded={open}>"Kept"</p>
                 {move || open.get().unwrap().then(|| view!{<p>"Optional"</p>})}
                 {(0..2).map(|n| view!{<p>{n}</p>})}
                 <button onClick={move |_| open.toggle()}>"Toggle"</button>
@@ -111,4 +111,45 @@ fn default_props_support_launch_style_functions_and_root_expression_fragments() 
     assert_eq!(text(&UiApp::new(Defaults).tree()), "07");
     let app = UiApp::new(|| view! {{Some(view!{<p>"Root option"</p>})}});
     assert_eq!(text(&app.tree()), "Root option");
+}
+
+#[test]
+fn static_expression_and_live_classes_style_the_same_retained_attribute() {
+    let app = UiApp::new(|| {
+        let open = signal(false);
+        let classes = "p-3";
+        view! {<view>
+            <p id="static" class="p-4">"Static"</p>
+            <p id="expression" class={classes}>"Expression"</p>
+            <p id="live" class={move || if open.get().unwrap() {"p-6"} else {"p-2"}}
+                class:rounded={open}>"Live"</p>
+            <button onClick={move |_| open.toggle()}>"Toggle"</button>
+        </view>}
+    });
+    let static_node = app.tree().get_element_by_id("static").unwrap();
+    let expression = app.tree().get_element_by_id("expression").unwrap();
+    let live = app.tree().get_element_by_id("live").unwrap();
+    assert_eq!(static_node.get_attribute("class").as_deref(), Some("p-4"));
+    assert_eq!(expression.get_attribute("class").as_deref(), Some("p-3"));
+    assert_eq!(live.get_attribute("class").as_deref(), Some("p-2"));
+    assert_eq!(app.tree().children[0].style.padding.top, 16.);
+    assert_eq!(app.tree().children[1].style.padding.top, 12.);
+    assert_eq!(app.tree().children[2].style.padding.top, 8.);
+    app.dispatch(0);
+    assert_eq!(app.tree().get_element_by_id("live").unwrap(), live);
+    assert_eq!(live.get_attribute("class").as_deref(), Some("p-6 rounded"));
+    assert_eq!(live.class_list().tokens(), ["p-6", "rounded"]);
+    assert_eq!(app.tree().children[2].style.padding.top, 24.);
+    assert_eq!(app.tree().children[2].style.radius, 4.);
+    live.class_list().add("opacity-25").unwrap();
+    assert_eq!(
+        live.get_attribute("class").as_deref(),
+        Some("p-6 rounded opacity-25")
+    );
+    assert_eq!(app.tree().children[2].style.opacity, 0.25);
+    app.dispatch(0);
+    assert_eq!(live.get_attribute("class").as_deref(), Some("p-2"));
+    assert_eq!(app.tree().children[2].style.padding.top, 8.);
+    assert_eq!(app.tree().children[2].style.opacity, 1.);
+    assert!(app.take_errors().is_empty());
 }

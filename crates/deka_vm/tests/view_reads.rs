@@ -8,8 +8,8 @@ export fn App() {
     let visible = true;
     let title = "First";
     let held: Option<ViewElement> = None;
-    return {view: fn() { return (<view id="root"><div id="section" className="p-4">
-        {visible ? <p id="message" className="text-sm">{title}<span> child</span></p> : None}
+    return {view: fn() { return (<view id="root"><div id="section" class="p-4">
+        {visible ? <p id="message" class="text-sm">{title}<span> child</span></p> : None}
     </div></view>); },
         read: fn() { return match(view.getElementById("message")) {
             Some(node) => node.textContent, None => "Missing"
@@ -32,7 +32,7 @@ export fn App() {
             None => "Missing"
         }; },
         classes: fn() { return match(view.getElementById("message")) {
-            Some(node) => node.getAttribute("className"), None => None
+            Some(node) => node.getAttribute("class"), None => None
         }; },
         id: fn() { return match(view.getElementById("message")) {
             Some(node) => node.getAttribute("id"), None => None
@@ -196,7 +196,7 @@ fn authored_attribute_reads_follow_bindings_and_distinguish_absence() {
     let source = r#"export fn App(){let id="old";
         return {view:fn(){return (<view id="root"><p id={id}>First</p><p id={id}>Second</p></view>);},
             lookup:fn(id:string){return match(view.getElementById(id)){Some(node)=>node.textContent,None=>"Missing"};},
-            classes:fn(){return match(view.getElementById("root")){Some(node)=>node.getAttribute("className"),None=>None};},
+            classes:fn(){return match(view.getElementById("root")){Some(node)=>node.getAttribute("class"),None=>None};},
             parent:fn(){return match(view.getElementById("root")){Some(node)=>node.parentNode,None=>None};},
             rename:fn(){id="new";}};}"#;
     let mut app = app(source);

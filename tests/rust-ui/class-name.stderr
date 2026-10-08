@@ -1,0 +1,17 @@
+error: deka-ui uses `class`, not `className`
+ --> $WORKSPACE/tests/rust-ui/class-name.rs
+  |
+  |     let _ = view! { <view className="p-4"/> };
+  |                           ^^^^^^^^^
+
+error: deka-ui uses `class`, not `className`
+ --> $WORKSPACE/tests/rust-ui/class-name.rs
+  |
+  |     let _ = view! { <view className={classes}/> };
+  |                           ^^^^^^^^^
+
+error: deka-ui uses `class`, not `className`
+ --> $WORKSPACE/tests/rust-ui/class-name.rs
+  |
+  |     let _ = view! { <view className={move || classes}/> };
+  |                           ^^^^^^^^^

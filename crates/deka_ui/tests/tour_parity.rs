@@ -303,10 +303,10 @@ fn matching_noop_handlers_on_both_sides_are_rejected() {
 fn authored_handlers_cannot_pass_with_an_empty_scene_inventory() {
     parity(
         "missing-target",
-        "export fn App(){return (<view><view className=\"h-0 overflow-hidden\"><button onClick={fn(){}}>Hidden</button></view></view>);}",
+        "export fn App(){return (<view><view class=\"h-0 overflow-hidden\"><button onClick={fn(){}}>Hidden</button></view></view>);}",
         || {
             UiApp::new(
-                || deka_ui::view! {<view><view className="h-0 overflow-hidden"><button onClick={|_| {}}>"Hidden"</button></view></view>},
+                || deka_ui::view! {<view><view class="h-0 overflow-hidden"><button onClick={|_| {}}>"Hidden"</button></view></view>},
             )
         },
         false,
@@ -334,12 +334,12 @@ fn newly_mounted_noop_handler_is_exercised() {
 fn clipped_noop_handler_is_exercised() {
     parity(
         "clipped-handler",
-        "export fn App(){let count=0;return (<view><button onClick={fn(){count+=1;}}>Count: {count}</button><view className=\"h-0 overflow-hidden\"><button onClick={fn(){}}>Hidden</button></view></view>);}",
+        "export fn App(){let count=0;return (<view><button onClick={fn(){count+=1;}}>Count: {count}</button><view class=\"h-0 overflow-hidden\"><button onClick={fn(){}}>Hidden</button></view></view>);}",
         || {
             UiApp::new(|| {
                 let mut count = deka_ui::signal(0);
                 deka_ui::view! {<view><button onClick={move |_| count+=1}>"Count: {count}"</button>
-                    <view className="h-0 overflow-hidden"><button onClick={|_| {}}>"Hidden"</button></view>
+                    <view class="h-0 overflow-hidden"><button onClick={|_| {}}>"Hidden"</button></view>
                 </view>}
             })
         },

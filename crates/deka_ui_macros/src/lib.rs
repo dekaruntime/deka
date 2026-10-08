@@ -1,4 +1,5 @@
 //! Rust token/span preserving markup and ordinary function components.
+use deka_native_ir::CLASS_ATTRIBUTE;
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span, TokenStream as Tokens};
 use quote::{ToTokens, format_ident, quote, quote_spanned};
@@ -67,6 +68,12 @@ fn node(input: &Node) -> syn::Result<Tokens> {
                     return Err(syn::Error::new_spanned(attribute, "use a named attribute"));
                 };
                 let key = attribute.key.to_string();
+                if key == format!("{CLASS_ATTRIBUTE}Name") {
+                    return Err(syn::Error::new_spanned(
+                        &attribute.key,
+                        format!("deka-ui uses `{CLASS_ATTRIBUTE}`, not `{CLASS_ATTRIBUTE}Name`"),
+                    ));
+                }
                 if !seen.insert(key.clone()) {
                     return Err(syn::Error::new_spanned(
                         &attribute.key,
@@ -116,7 +123,7 @@ fn node(input: &Node) -> syn::Result<Tokens> {
                 } {
                     setters.push(quote_spanned!(span=> .on(::deka_ui::EventKind::#event, #value)));
                 } else if deka_native_ir::is_supported_attribute(&key) {
-                    if key == "className"
+                    if key == CLASS_ATTRIBUTE
                         && let Some(classes) = attribute.value_literal_string()
                     {
                         deka_native_ir::apply_classes(&mut Default::default(), &classes)

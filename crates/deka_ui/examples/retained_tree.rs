@@ -10,7 +10,7 @@ pub fn App() -> View {
     let count = signal(0);
     let message = node_ref();
     view! {
-        <view className="p-4 gap-3">
+        <view class="p-4 gap-3">
             <p id="message" node_ref={message.clone()}>"Count: {count}"</p>
             <button onClick={move |_| {
                 let node = tree().unwrap().query("#message").unwrap().unwrap();

@@ -32,7 +32,7 @@ fn adapter_actions_change_rendered_signal_value_and_focus() {
     let output = count.clone();
     let mut session = DesktopSession::new(UiApp::new(move || {
         let text = signal("start".to_owned());
-        view! { <view className="p-4 gap-4">
+        view! { <view class="p-4 gap-4">
             <input id="editor" aria-label="Name" value={text}/>
             <button id="button" onClick={move |_| output.set(output.get()+1)}>"Save"</button>
             <p>"Typed: {text}"</p>

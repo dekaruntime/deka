@@ -20,9 +20,9 @@ fn node_refs_reads_snapshots_and_detached_lifetimes_port_lane_b() {
         let visible = signal(true);
         let title = signal("First");
         output.set(Some((visible, title)));
-        view! { <view id="root"><div id="section" className="p-4">
+        view! { <view id="root"><div id="section" class="p-4">
             {move || visible.get().unwrap().then(|| view! {
-                <p id="message" node_ref={mounted.clone()} className="text-sm">
+                <p id="message" node_ref={mounted.clone()} class="text-sm">
                     {title}<span>" child"</span>
                 </p>
             })}
@@ -33,10 +33,7 @@ fn node_refs_reads_snapshots_and_detached_lifetimes_port_lane_b() {
     let element = node.as_element().unwrap();
     assert_eq!(node.text_content(), "First child");
     assert_eq!(node.parent_node().unwrap().text_content(), "First child");
-    assert_eq!(
-        element.get_attribute("className").as_deref(),
-        Some("text-sm")
-    );
+    assert_eq!(element.get_attribute("class").as_deref(), Some("text-sm"));
     assert_eq!(element.get_attribute("not-an-attribute"), None);
     assert_eq!(element.class_list(), element.class_list());
     let mut children = element.children();
@@ -71,9 +68,9 @@ fn selectors_port_compounds_combinators_backtracking_order_and_live_identity() {
         let classes = signal("p-4 text-sm");
         output.set(Some((visible, id, classes)));
         view! {<view id="root">
-            <div className="p-4"><p id={move || id.get().unwrap()} className={move || classes.get().unwrap()}>"First"<span>" child"</span></p></div>
-            <div className="p-4"><div><div className="p-4">
-                {move || visible.get().unwrap().then(|| view!{<p id="second" className="text-sm">"Second"</p>})}
+            <div class="p-4"><p id={move || id.get().unwrap()} class={move || classes.get().unwrap()}>"First"<span>" child"</span></p></div>
+            <div class="p-4"><div><div class="p-4">
+                {move || visible.get().unwrap().then(|| view!{<p id="second" class="text-sm">"Second"</p>})}
             </div></div></div>"Text"
         </view>}
     });
@@ -171,7 +168,7 @@ fn text_attribute_and_class_edits_keep_authored_ownership_and_reclaim_on_change(
         let id = signal("message");
         output.set(Some((count, open, id)));
         view! {<view><p id={move || id.get().unwrap()} value={move || count.get().unwrap()%2}
-            className={move || if open.get().unwrap(){"p-4"}else{"p-2"}}>
+            class={move || if open.get().unwrap(){"p-4"}else{"p-2"}}>
             {move || count.get().unwrap()%2}<span>" child"</span>
         </p></view>}
     });
@@ -231,7 +228,7 @@ fn edits_wake_once_for_the_next_frame_and_detached_or_unchanged_edits_do_not() {
     let node = reference.get().unwrap().as_element().unwrap();
     let before = Renderer::new().render_at(&app.tree(), 320., 240., 1., 0., false);
     node.set_text_content("Edited").unwrap();
-    node.set_attribute("className", "p-4").unwrap();
+    node.set_attribute("class", "p-4").unwrap();
     assert_eq!(wakes.load(Ordering::SeqCst), 1);
     let after = Renderer::new().render_at(&app.tree(), 320., 240., 1., 0., false);
     assert!(
@@ -259,10 +256,10 @@ fn edits_wake_once_for_the_next_frame_and_detached_or_unchanged_edits_do_not() {
 
 #[test]
 fn invalid_writes_are_atomic_and_class_list_reads_and_toggles_are_live() {
-    let app = UiApp::new(|| view! {<p id="target" className="p-2">"Text"</p>});
+    let app = UiApp::new(|| view! {<p id="target" class="p-2">"Text"</p>});
     let element = app.tree().get_element_by_id("target").unwrap();
     let before = app.tree();
-    for (name, value) in [("unknown", "x"), ("className", "p-bad")] {
+    for (name, value) in [("unknown", "x"), ("class", "p-bad")] {
         assert!(element.set_attribute(name, value).is_err());
         assert_eq!(app.tree(), before);
     }

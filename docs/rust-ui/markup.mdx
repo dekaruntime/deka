@@ -13,7 +13,7 @@ use deka_ui::prelude::*;
 fn App() -> View {
     let mut count = signal(0);
     view! {
-        <view className="p-4 gap-3">
+        <view class="p-4 gap-3">
             <p>"Count: {count}"</p>
             <button onClick={move |_| count += 1}>"Add one"</button>
         </view>
@@ -27,8 +27,12 @@ Run `cargo run --release -p deka-ui --example counter_macro -- --exercise 3`.
 The event exercise prints `Count:  3 Add one`.
 
 Lowercase tags name native elements: `view`, `div`, `span`, `p`, `button`, and
-`input`. Quoted `className` literals are checked against the native utility
-catalog. Unknown native tags, attributes and utilities report a markup error.
+`input`. Quoted `class` literals are checked against the native utility
+catalog. Use `class="p-4"`, `class={classes}`, or
+`class={move || classes.get().unwrap()}`; the builder uses `.attr("class", value)`.
+The React attribute spelling is rejected at its markup span with a diagnostic
+that directs you to `class`. Unknown native tags, attributes and utilities report
+a markup error.
 Capitalized tags call Rust functions in scope, including imported functions and
 qualified paths. Ordinary Rust name resolution and prop types apply.
 
@@ -36,7 +40,7 @@ qualified paths. Ordinary Rust name resolution and prop types apply.
 #[component]
 fn Card(title: String, #[prop(default = 2)] copies: usize, children: Children) -> View {
     view! {
-        <div className="p-4">
+        <div class="p-4">
             {(0..copies).map(move |_| view! { <p>"{title}"</p> })}
             {children()}
         </div>
@@ -61,8 +65,8 @@ so a Signal's tracked Display updates it. `{{` and `}}` produce literal braces.
 Views; use a closure for live computed or conditional children.
 
 `attr={value}` is static; `attr={move || expression}` is live. Supported scalar
-attributes are `id`, `className`, `value`, and `placeholder`. Boolean classes
-use `class:rounded={signal_or_closure}`. Class bindings compose with className
+attributes are `id`, `class`, `value`, and `placeholder`. Boolean classes
+use `class:rounded={signal_or_closure}`. Class bindings compose with `class`
 and patch once per event.
 
 `onClick`, `onInput` and `onKeyDown` accept closures receiving the typed `Event`.

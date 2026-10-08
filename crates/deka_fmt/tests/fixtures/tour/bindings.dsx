@@ -3,11 +3,11 @@ export fn App() {
     let other = 10;
 
     return (
-        <view className="p-4 gap-2 bg-[#F3EFE3] text-[#1A1611]">
-            <p className="text-xl">A view. A binding. No React.</p>
+        <view class="p-4 gap-2 bg-[#F3EFE3] text-[#1A1611]">
+            <p class="text-xl">A view. A binding. No React.</p>
             <p>State lives in the VM. Rust draws the view.</p>
-            <p className="text-xl">Count: {count}</p>
-            <div className="flex-row gap-3">
+            <p class="text-xl">Count: {count}</p>
+            <div class="flex-row gap-3">
                 <button onClick={fn() { count += 1; }}>Add one</button>
                 <button onClick={fn() { count = 0; }}>Reset count</button>
             </div>

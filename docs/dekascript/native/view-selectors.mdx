@@ -9,7 +9,7 @@ its root element. A missing match is `Ok(None)` or `Ok([])`.
 export fn App() {
     let output = "Click to find the greeting";
     return (<view>
-        <p id="greeting" className="text-sm">Hello, Deka!</p>
+        <p id="greeting" class="text-sm">Hello, Deka!</p>
         <button onClick={fn() {
             output = match(view.querySelector("view > p#greeting.text-sm")) {
                 Ok(Some(node)) => node.textContent,

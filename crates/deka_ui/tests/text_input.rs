@@ -12,7 +12,7 @@ fn app(value: &str, multiline: bool) -> DesktopSession<UiApp> {
         let text = signal(value);
         let tag = if multiline { "textarea" } else { "input" };
         View::element("view")
-            .attr("className", "p-4 gap-4")
+            .attr("class", "p-4 gap-4")
             .child(View::element(tag).attr("id", "editor").value(text))
             .child(view! { <p>"Value: {text}"</p> })
     });

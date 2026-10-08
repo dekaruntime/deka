@@ -93,7 +93,7 @@ fn menu_os_payloads_change_all_windows_and_right_click_keeps_origin_and_rejects_
         for name in ["First", "Second"] {
             let ids = output.clone();
             windows.open(WindowOptions::new(name,360.,240.),move|window|view! {
-    <view className="p-4 gap-4" onContextMenu={move|event|if let Event::ContextMenu{x,y}=event {
+    <view class="p-4 gap-4" onContextMenu={move|event|if let Event::ContextMenu{x,y}=event {
      let action=MenuItem::new("Context add",move||{count+=1;tree().unwrap().get_element_by_id("origin").unwrap().set_text_content(format!("{name} context")).unwrap();});
      ids.borrow_mut().push(action.id().clone());window.context_menu(Menu::new().item(action),x,y).unwrap();
     }}><p id="origin">{name}</p><p>"Count: {count}"</p></view>
@@ -203,7 +203,7 @@ fn os_clicks_queue_filtered_dialogs_results_repaint_and_cancel_preserves_selecti
         let status = signal("Ready".to_owned());
         windows.open(WindowOptions::new("Picker",360.,320.),move|window| {
    let open=window.clone();let save=window.clone();let local=local_out.clone();
-   view! {<view className="p-4 gap-4"><p id="origin">"Origin"</p><p>{selected}</p><p>{status}</p>
+   view! {<view class="p-4 gap-4"><p id="origin">"Origin"</p><p>{selected}</p><p>{status}</p>
     <button onClick={move |_|{let local=local.clone();open.open_file(FileDialogOptions::new().filter("Text",&["txt","md"]),move|result|{
       local.set(Some(signal(42)));tree().unwrap().get_element_by_id("origin").unwrap().set_text_content("Completed here").unwrap();
       match result {Ok(Some(path))=>{selected.set(path.display().to_string());status.set("Opened".into());},Ok(None)=>{status.set("Cancelled".into());},Err(error)=>{status.set(error);}}

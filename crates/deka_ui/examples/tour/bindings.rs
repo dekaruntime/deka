@@ -4,11 +4,11 @@ use deka_ui::prelude::*;
 pub fn App() -> View {
     let mut count = signal(0);
     let mut other = signal(10);
-    view! {<view className="p-4 gap-2 bg-[#F3EFE3] text-[#1A1611]">
-        <p className="text-xl">"A view. A binding. No React."</p>
+    view! {<view class="p-4 gap-2 bg-[#F3EFE3] text-[#1A1611]">
+        <p class="text-xl">"A view. A binding. No React."</p>
         <p>"State lives in the VM. Rust draws the view."</p>
-        <p className="text-xl">"Count: {count}"</p>
-        <div className="flex-row gap-3">
+        <p class="text-xl">"Count: {count}"</p>
+        <div class="flex-row gap-3">
             <button onClick={move |_| count += 1}>"Add one"</button>
             <button onClick={move |_| count.set(0)}>"Reset count"</button>
         </div>

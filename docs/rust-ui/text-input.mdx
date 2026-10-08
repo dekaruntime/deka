@@ -11,7 +11,7 @@ use deka_ui::prelude::*;
 fn App() -> View {
     let text = signal(String::new());
     view! {
-        <view className="p-4 gap-4">
+        <view class="p-4 gap-4">
             <input value={text} placeholder="Name" />
             <textarea value={text} />
             <p>"Value: {text}"</p>

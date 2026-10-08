@@ -3,7 +3,7 @@ use deka_ui::prelude::*;
 fn app() -> View {
     let mut count = signal(0);
     View::element("view")
-        .attr("className", "p-4 gap-3")
+        .attr("class", "p-4 gap-3")
         .child(View::element("p").child(View::live_text(move || format!("Count: {count}"))))
         .child(
             View::element("button")

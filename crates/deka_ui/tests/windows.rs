@@ -334,7 +334,7 @@ fn failed_window_uses_the_same_app_sink_as_window_runtime_errors() {
             );
             windows
                 .open(WindowOptions::new("B", 200., 100.), |_| {
-                    View::element("view").attr("className", "invalid-utility")
+                    View::element("view").attr("class", "invalid-utility")
                 })
                 .unwrap();
         },

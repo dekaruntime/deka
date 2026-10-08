@@ -23,7 +23,7 @@ pub fn App() -> View {
     let count = signal(0);
     let message = node_ref();
     view! {
-        <view className="p-4 gap-3">
+        <view class="p-4 gap-3">
             <p id="message" node_ref={message.clone()}>"Count: {count}"</p>
             <button onClick={move |_| {
                 let node = tree().unwrap().query("#message").unwrap().unwrap();
@@ -54,7 +54,7 @@ first match or `None`; author ids do not define internal node identity.
 `ViewNode` provides `text_content`, `set_text_content`, `parent_node`,
 `child_nodes` and `as_element`. `ViewElement` adds element-only `children`,
 `get_attribute`, `set_attribute` and `class_list`. Child collections are snapshots
-of live handles. Attributes support `id`, `className`, `value` and `placeholder`;
+of live handles. Attributes support `id`, `class`, `value` and `placeholder`;
 unknown writes and invalid utilities return errors before changing the tree.
 `ViewClassList` provides live `tokens`, `contains`, `add`, `remove` and `toggle`.
 

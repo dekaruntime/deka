@@ -6,10 +6,10 @@ fn app() -> DesktopApp {
         for title in ["First", "Second"] {
             let opener = windows.clone();
             windows.open(WindowOptions::new(title, 360., 260.), move |window| view! {
-                <view className="p-4 gap-4"><p>"{title}: {count}"</p>
+                <view class="p-4 gap-4"><p>"{title}: {count}"</p>
                     <button onClick={move |_| count += 1}>"Add"</button>
                     <button onClick={move |_| { opener.open(WindowOptions::new("New window", 360., 260.), move |child| view! {
-                        <view className="p-4 gap-4"><p>"New window: {count}"</p><button onClick={move |_| { child.close(); }}>"Close"</button></view>
+                        <view class="p-4 gap-4"><p>"New window: {count}"</p><button onClick={move |_| { child.close(); }}>"Close"</button></view>
                     }).unwrap(); }}>"New window"</button>
                     <button onClick={move |_| { window.close(); }}>"Close"</button>
                 </view>
