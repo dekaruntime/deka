@@ -58,6 +58,9 @@ impl<A: Application> UiContent<A> {
         }
     }
 
+    pub(crate) fn has_pending_work(&self) -> bool {
+        self.wake_pending.load(Ordering::Acquire) || self.host.has_ready_work()
+    }
     fn available(&self, id: &str) -> bool {
         self.semantics.is_empty()
             || self

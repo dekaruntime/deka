@@ -42,8 +42,11 @@ pub trait WindowController: 'static {
     fn set_waker(&mut self, _waker: Waker) {}
     fn opened(&mut self, _id: WindowToken, _window: Option<Arc<Window>>) {}
     fn closed(&mut self, _id: WindowToken) {}
+    fn report_error(&self, operation: &str, error: String) {
+        eprintln!("deka {operation}: {error}");
+    }
     fn failed(&mut self, id: WindowToken, error: String) {
-        eprintln!("deka: window {id:?}: {error}");
+        self.report_error("window", format!("window {id:?}: {error}"));
         self.closed(id);
     }
 }
@@ -90,7 +93,6 @@ struct NativeStore<'a, A: Application> {
     proxy: EventLoopProxy<Wake>,
     event_loop: &'a ActiveEventLoop,
     reduced: bool,
-    failure: &'a mut Option<String>,
     clipboard: super::ui::SharedClipboard,
 }
 impl<A: Application> Store<A> for NativeStore<'_, A> {
@@ -103,14 +105,18 @@ impl<A: Application> Store<A> for NativeStore<'_, A> {
         if self.windows.contains_key(&id) {
             return Err("window token is already open".into());
         }
+        if !options.width.is_finite()
+            || !options.height.is_finite()
+            || options.width <= 0.
+            || options.height <= 0.
+        {
+            return Err("window dimensions must be finite and positive".into());
+        }
         let mut content = super::ui::UiContent::new(app, self.reduced);
         content.clipboard(self.clipboard.clone());
         let mut shell = Shell::new(content, options, self.proxy.clone(), Gpu::start());
         shell.standalone = false;
-        if let Err(error) = shell.open(self.event_loop) {
-            self.failure.replace(error.clone());
-            return Err(error);
-        }
+        shell.open(self.event_loop)?;
         let window = shell.window.as_ref().unwrap().clone();
         self.routes.register(window.id(), id);
         shell.first_frame(self.event_loop);
@@ -132,7 +138,6 @@ struct Multiple<C: WindowController> {
     routes: Routes,
     proxy: EventLoopProxy<Wake>,
     reduced: bool,
-    failure: Option<String>,
     clipboard: super::ui::SharedClipboard,
 }
 impl<C: WindowController> Multiple<C> {
@@ -143,7 +148,6 @@ impl<C: WindowController> Multiple<C> {
             proxy: self.proxy.clone(),
             event_loop,
             reduced: self.reduced,
-            failure: &mut self.failure,
             clipboard: self.clipboard.clone(),
         };
         apply(&mut self.controller, &mut store);
@@ -168,7 +172,11 @@ impl<C: WindowController> ApplicationHandler<Wake> for Multiple<C> {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Wake) {
         match event {
             Wake::Work => {
-                for shell in self.windows.values_mut() {
+                for shell in self
+                    .windows
+                    .values_mut()
+                    .filter(|s| s.content.has_pending_work())
+                {
                     shell.user_event(event_loop, Wake::Work);
                 }
             }
@@ -195,7 +203,6 @@ impl<C: WindowController> ApplicationHandler<Wake> for Multiple<C> {
                 proxy: self.proxy.clone(),
                 event_loop,
                 reduced: self.reduced,
-                failure: &mut self.failure,
                 clipboard: self.clipboard.clone(),
             };
             if store.close(id) {
@@ -227,6 +234,7 @@ impl<C: WindowController> ApplicationHandler<Wake> for Multiple<C> {
             self.controller.closed(*id);
         }
         self.windows.clear();
+        self.routes.0.clear();
     }
 }
 pub fn run_windows<C: WindowController>(mut controller: C) {
@@ -237,10 +245,13 @@ pub fn run_windows<C: WindowController>(mut controller: C) {
         use winit::platform::macos::EventLoopBuilderExtMacOS;
         builder.with_default_menu(false);
     }
-    let event_loop = builder.build().unwrap_or_else(|error| {
-        eprintln!("deka: cannot open windows: {error}");
-        std::process::exit(1)
-    });
+    let event_loop = match builder.build() {
+        Ok(event_loop) => event_loop,
+        Err(error) => {
+            controller.report_error("window", format!("cannot open event loop: {error}"));
+            return;
+        }
+    };
     let proxy = event_loop.create_proxy();
     let wake = proxy.clone();
     controller.set_waker(Waker::new(move || {
@@ -252,18 +263,14 @@ pub fn run_windows<C: WindowController>(mut controller: C) {
         routes: Routes::default(),
         proxy,
         reduced: std::env::args().any(|arg| arg == "--reduced-motion"),
-        failure: None,
         clipboard: Default::default(),
     };
     if let Err(error) = event_loop.run_app(&mut app) {
-        eprintln!("deka: event loop: {error}");
-        std::process::exit(1);
-    }
-    if let Some(error) = app.failure {
-        eprintln!("deka: {error}");
-        std::process::exit(1);
+        app.controller
+            .report_error("window", format!("event loop: {error}"));
     }
 }
+
 struct HeadlessWindow<A: Application> {
     session: DesktopSession<A>,
     options: Options,
@@ -377,3 +384,6 @@ impl<C: WindowController> MultipleDesktopSession<C> {
         changed
     }
 }
+
+#[cfg(test)]
+pub(super) mod native_tests;

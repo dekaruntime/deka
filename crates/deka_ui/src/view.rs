@@ -897,7 +897,7 @@ impl UiApp {
     {
         Self::in_scope(scope.clone(), app, None)
     }
-    fn in_scope<A, M>(scope: Scope, app: A, sink: Option<ErrorSink>) -> Self
+    pub(crate) fn in_scope<A, M>(scope: Scope, app: A, sink: Option<ErrorSink>) -> Self
     where
         A: BuildApp<M>,
     {

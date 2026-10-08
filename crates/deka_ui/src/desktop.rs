@@ -28,6 +28,8 @@ enum State {
 }
 struct Manager {
     alive: Cell<bool>,
+    error_sink: Option<crate::ErrorSink>,
+    errors: RefCell<Vec<String>>,
     requests: RefCell<Vec<Request>>,
     states: RefCell<BTreeMap<WindowToken, State>>,
     windows: RefCell<BTreeMap<WindowToken, std::sync::Weak<NativeWindow>>>,
@@ -113,9 +115,17 @@ pub struct DesktopApp {
 }
 impl DesktopApp {
     pub fn new(build: impl FnOnce(WindowManager)) -> Self {
+        Self::new_with_error_sink(build, None)
+    }
+    pub fn new_with_error_sink(
+        build: impl FnOnce(WindowManager),
+        error_sink: Option<crate::ErrorSink>,
+    ) -> Self {
         let scope = Scope::new();
         let windows = WindowManager(Rc::new(Manager {
             alive: Cell::new(true),
+            error_sink,
+            errors: RefCell::new(Vec::new()),
             requests: RefCell::new(vec![]),
             states: RefCell::new(BTreeMap::new()),
             windows: RefCell::new(BTreeMap::new()),
@@ -123,6 +133,9 @@ impl DesktopApp {
         }));
         scope.run(|| build(windows.clone()));
         Self { scope, windows }
+    }
+    pub fn take_errors(&self) -> Vec<String> {
+        std::mem::take(&mut *self.windows.0.errors.borrow_mut())
     }
 }
 impl WindowController for DesktopApp {
@@ -138,17 +151,39 @@ impl WindowController for DesktopApp {
                     factory,
                 } => {
                     let id = handle.id;
-                    let app = UiApp::new_in_scope(&self.scope, move || factory(handle));
-                    if self.windows.0.states.borrow().get(&id) == Some(&State::Closing) {
-                        drop(app);
+                    if self.windows.0.states.borrow().get(&id) != Some(&State::Pending) {
                         WindowRequest::Close(id)
                     } else {
+                        let app = UiApp::in_scope(
+                            self.scope.clone(),
+                            move || factory(handle),
+                            self.windows.0.error_sink.clone(),
+                        );
                         WindowRequest::Open { id, app, options }
                     }
                 }
                 Request::Close(id) => WindowRequest::Close(id),
             })
             .collect()
+    }
+    fn report_error(&self, operation: &str, message: String) {
+        let error = crate::UiError {
+            path: vec![],
+            binding: operation.into(),
+            message,
+        };
+        {
+            let mut errors = self.windows.0.errors.borrow_mut();
+            if errors.len() == 128 {
+                errors.remove(0);
+            }
+            errors.push(error.message.clone());
+        }
+        if let Some(sink) = &self.windows.0.error_sink {
+            sink(&error);
+        } else {
+            eprintln!("deka ui: {error}");
+        }
     }
     fn has_requests(&self) -> bool {
         !self.windows.0.requests.borrow().is_empty()
