@@ -277,6 +277,19 @@ impl ViewElement {
         self.0.changed(changed);
         Ok(())
     }
+    /// Request focus in the originating window/browser. The host validates
+    /// focusability and effective disabled/hidden state before applying it.
+    pub fn focus(&self) -> Result<(), ViewError> {
+        let context = self.0.context.upgrade().ok_or(ViewError::SessionDropped)?;
+        if !context.is_attached(&self.0.node) {
+            return Err(ViewError::InvalidOperation(
+                "cannot focus a detached node".into(),
+            ));
+        }
+        context.focus_request.replace(Some(self.0.node.clone()));
+        context.changed(true);
+        Ok(())
+    }
     pub fn class_list(&self) -> ViewClassList {
         ViewClassList(self.clone())
     }

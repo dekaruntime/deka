@@ -97,112 +97,24 @@ impl<A: Application> UiContent<A> {
         handler.is_some()
     }
 
-    fn cycle_focus(&mut self, backwards: bool) {
-        let targets = if self.semantics.is_empty() {
-            self.scene
-                .nodes
-                .iter()
-                .filter(|n| {
-                    self.editors.contains_key(&n.id)
-                        || self.scene.targets.iter().any(|t| t.id == n.id)
-                })
-                .map(|n| n.id.clone())
-                .collect()
-        } else {
-            crate::tab_order(&self.semantics)
-        };
-        let current = targets
-            .iter()
-            .position(|id| Some(id) == self.focused.as_ref());
-        let next = match (current, backwards) {
-            (None, false) => Some(0),
-            (None, true) => targets.len().checked_sub(1),
-            (Some(i), false) => Some(i + 1),
-            (Some(i), true) => i.checked_sub(1),
-        };
-        if let Some(editor) = self
-            .focused
-            .as_ref()
-            .and_then(|id| self.editors.get_mut(id))
-        {
-            editor.cancel();
-        }
-        self.focused = next.and_then(|i| targets.get(i)).cloned();
-    }
-}
-
-impl<A: Application> Content for UiContent<A> {
-    fn frame(&mut self, width: f32, height: f32, scale: f32) -> &Scene {
-        let root = self.host.render();
-        self.semantics = self.host.app.semantics();
-        let controls = self.host.app.text_controls();
-        let control_ids: std::collections::BTreeSet<_> =
-            controls.iter().map(|c| c.id.as_str()).collect();
-        self.editors
-            .retain(|id, _| control_ids.contains(id.as_str()));
-        for c in &controls {
-            let editor = self
-                .editors
-                .entry(c.id.clone())
-                .or_insert_with(|| Editor::new(&c.value, c.multiline));
-            editor.sync(&c.value, c.controlled);
-        }
-        if self.focused.as_ref().is_some_and(|id| {
-            if self.semantics.is_empty() {
-                !self.editors.contains_key(id) && !self.scene.targets.iter().any(|t| &t.id == id)
-            } else {
-                !self
-                    .semantics
-                    .iter()
-                    .any(|n| &n.id == id && n.tab_index.is_some() && !n.disabled && !n.hidden)
-            }
-        }) {
-            self.focused = None;
-        }
-        self.scene = self.renderer.render_at(
-            &root,
-            width,
-            height,
-            scale,
-            self.clock.elapsed().as_secs_f64() * 1000.,
-            self.reduced_motion,
-        );
-        let bounds: BTreeMap<_, _> = self
-            .scene
-            .nodes
-            .iter()
-            .map(|n| (n.id.clone(), (n.rect, n.clip)))
-            .collect();
-        for c in controls {
-            if let Some((rect, clip)) = bounds.get(&c.id) {
-                let editor = self.editors.get_mut(&c.id).unwrap();
-                editor.place(*rect, *clip);
-                editor.decoration(
-                    &mut self.scene,
-                    self.active && self.focused.as_ref() == Some(&c.id),
-                );
-                let value = if editor.text.raw_text().is_empty() {
-                    &c.placeholder
-                } else {
-                    editor.text.raw_text()
-                };
-                self.renderer.editor_text(
-                    &mut self.scene,
-                    value,
-                    editor.multiline.then_some((editor.rect.width - 8.).max(1.)),
-                    editor.origin,
-                    editor.clip,
-                    scale,
-                );
+    fn apply_focus_request(&mut self) {
+        if let Some(id) = self.host.app.take_focus_request() {
+            self.semantics = self.host.app.semantics();
+            if self.semantics.iter().any(|node| {
+                node.id == id && node.tab_index.is_some() && !node.hidden && !node.disabled
+            }) {
+                if let Some(editor) = self
+                    .focused
+                    .as_ref()
+                    .and_then(|id| self.editors.get_mut(id))
+                {
+                    editor.cancel();
+                }
+                self.focused = Some(id);
             }
         }
-        if let Some(id) = &self.focused {
-            self.scene.focus_ring(id);
-        }
-        &self.scene
     }
-
-    fn input(&mut self, input: Input) -> bool {
+    fn handle_input(&mut self, input: Input) -> bool {
         // A handler can disable/remove a field before the next presented frame.
         self.semantics = self.host.app.semantics();
         if self.focused.as_ref().is_some_and(|id| !self.available(id)) {
@@ -268,14 +180,22 @@ impl<A: Application> Content for UiContent<A> {
                 down: true,
                 shift,
                 ..
-            } => match name.as_str() {
-                "tab" => {
-                    self.cycle_focus(shift);
-                    true
+            } => {
+                if name != "tab"
+                    && let Some(id) = self.focused.as_deref()
+                    && self.host.app.key_input(id, key_name_for_handler(&name))
+                {
+                    return true;
                 }
-                "enter" | "space" => self.click_focused(),
-                _ => false,
-            },
+                match name.as_str() {
+                    "tab" => {
+                        self.cycle_focus(shift);
+                        true
+                    }
+                    "enter" | "space" => self.click_focused(),
+                    _ => false,
+                }
+            }
             Input::EditKey(key) => {
                 if key.name == "tab" && key.down {
                     self.cycle_focus(key.shift);
@@ -395,6 +315,121 @@ impl<A: Application> Content for UiContent<A> {
             }
             Input::Key { .. } => false,
         }
+    }
+    fn cycle_focus(&mut self, backwards: bool) {
+        let targets = if self.semantics.is_empty() {
+            self.scene
+                .nodes
+                .iter()
+                .filter(|n| {
+                    self.editors.contains_key(&n.id)
+                        || self.scene.targets.iter().any(|t| t.id == n.id)
+                })
+                .map(|n| n.id.clone())
+                .collect()
+        } else {
+            crate::tab_order(&self.semantics)
+        };
+        let current = targets
+            .iter()
+            .position(|id| Some(id) == self.focused.as_ref());
+        let next = match (current, backwards) {
+            (None, false) => Some(0),
+            (None, true) => targets.len().checked_sub(1),
+            (Some(i), false) => Some(i + 1),
+            (Some(i), true) => i.checked_sub(1),
+        };
+        if let Some(editor) = self
+            .focused
+            .as_ref()
+            .and_then(|id| self.editors.get_mut(id))
+        {
+            editor.cancel();
+        }
+        self.focused = next.and_then(|i| targets.get(i)).cloned();
+    }
+}
+
+impl<A: Application> Content for UiContent<A> {
+    fn frame(&mut self, width: f32, height: f32, scale: f32) -> &Scene {
+        let root = self.host.render();
+        self.semantics = self.host.app.semantics();
+        self.apply_focus_request();
+        let controls = self.host.app.text_controls();
+        let control_ids: std::collections::BTreeSet<_> =
+            controls.iter().map(|c| c.id.as_str()).collect();
+        self.editors
+            .retain(|id, _| control_ids.contains(id.as_str()));
+        for c in &controls {
+            let editor = self
+                .editors
+                .entry(c.id.clone())
+                .or_insert_with(|| Editor::new(&c.value, c.multiline));
+            editor.sync(&c.value, c.controlled);
+        }
+        if self.focused.as_ref().is_some_and(|id| {
+            if self.semantics.is_empty() {
+                !self.editors.contains_key(id) && !self.scene.targets.iter().any(|t| &t.id == id)
+            } else {
+                !self
+                    .semantics
+                    .iter()
+                    .any(|n| &n.id == id && n.tab_index.is_some() && !n.disabled && !n.hidden)
+            }
+        }) {
+            self.focused = None;
+        }
+        self.scene = self.renderer.render_at(
+            &root,
+            width,
+            height,
+            scale,
+            self.clock.elapsed().as_secs_f64() * 1000.,
+            self.reduced_motion,
+        );
+        let bounds: BTreeMap<_, _> = self
+            .scene
+            .nodes
+            .iter()
+            .map(|n| (n.id.clone(), (n.rect, n.clip)))
+            .collect();
+        for c in controls {
+            if let Some((rect, clip)) = bounds.get(&c.id) {
+                let editor = self.editors.get_mut(&c.id).unwrap();
+                editor.place(*rect, *clip);
+                editor.decoration(
+                    &mut self.scene,
+                    self.active && self.focused.as_ref() == Some(&c.id),
+                    c.color,
+                );
+                let value = if editor.text.raw_text().is_empty() {
+                    &c.placeholder
+                } else {
+                    editor.text.raw_text()
+                };
+                self.renderer.editor_text(
+                    &mut self.scene,
+                    value,
+                    editor.multiline.then_some((editor.rect.width - 8.).max(1.)),
+                    editor.origin,
+                    editor.clip,
+                    crate::scene::EditorTextStyle {
+                        scale,
+                        color: c.color,
+                    },
+                );
+            }
+        }
+        if let Some(id) = &self.focused {
+            self.scene.focus_ring(id);
+        }
+        &self.scene
+    }
+
+    fn input(&mut self, input: Input) -> bool {
+        let handled = self.handle_input(input);
+        self.apply_focus_request();
+        handled
     }
 
     fn accessibility(&mut self, scale: f32) -> accesskit::TreeUpdate {
@@ -596,6 +631,8 @@ fn key_name_for_handler(name: &str) -> String {
         "right" => "ArrowRight",
         "up" => "ArrowUp",
         "down" => "ArrowDown",
+        "home" => "Home",
+        "end" => "End",
         n => n,
     }
     .into()

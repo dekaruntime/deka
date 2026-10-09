@@ -80,10 +80,56 @@ try {
       assert.deepEqual(await page.evaluate(()=>window.errors),[])
     }
     assert.deepEqual(errors,[])
-    console.log(`PASS: all 27 lessons, shared histories, input, pixels and stop; DPR ${scale}, reduced motion ${reduced}`)
+    console.log(`PASS: all 27 lessons and 8 themed component entries, shared histories, input, pixels and stop; DPR ${scale}, reduced motion ${reduced}`)
     await context.close()
   }
   const page=await browser.newPage();page.setDefaultTimeout(30000)
+  // The same production tour bundle/source manifest includes the first
+  // component set. Exercise platform DOM keys and canvas pointer ingress.
+  const startComponent = async name => {
+    await page.goto(url); await page.waitForFunction(()=>window.ready)
+    await page.evaluate(name=>window.start(name),name)
+    await page.waitForFunction(()=>window.scene || window.errors.length)
+    assert.deepEqual(await page.evaluate(()=>window.errors),[])
+  }
+  await startComponent('component-button-light')
+  const action=page.getByRole('button',{name:'Add one',exact:true})
+  const actionBounds=await action.boundingBox(); await page.mouse.click(actionBounds.x+8,actionBounds.y+8)
+  await action.focus(); await action.press('Enter'); await action.press('Space')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Count: 3'))
+  assert.equal(await page.getByRole('button',{name:'Unavailable',exact:true}).isDisabled(),true)
+  await startComponent('component-input-dark')
+  const componentInput=page.getByRole('textbox',{name:'Name',exact:true})
+  assert.equal(await componentInput.evaluate(e=>getComputedStyle(e).color),'rgb(245, 239, 226)')
+  await componentInput.fill('Ava')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello Ava'))
+  await componentInput.focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Enter')
+  assert.equal(await componentInput.inputValue(),'')
+  await startComponent('component-list-light')
+  const zega=page.getByRole('button',{name:'Zega',exact:true}), zegaId=await zega.getAttribute('id')
+  await zega.focus(); await zega.press('Enter')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Selected: zega'))
+  const reverse=page.getByRole('button',{name:'Reverse order',exact:true})
+  await reverse.focus(); await reverse.press('Enter')
+  assert.equal(await zega.getAttribute('id'),zegaId)
+  assert.deepEqual(await page.getByRole('button').evaluateAll(elements=>elements.map(e=>e.getAttribute('aria-label'))),['cqx','Zega','Deka','Reverse order'])
+  await zega.focus(); await page.keyboard.press('Tab')
+  assert.equal(await page.getByRole('button',{name:'Deka',exact:true}).evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('Enter')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Selected: deka'))
+  await startComponent('component-tabs-dark')
+  const overview=page.getByRole('tab',{name:'Overview',exact:true}), activity=page.getByRole('tab',{name:'Activity',exact:true}), settings=page.getByRole('tab',{name:'Settings',exact:true})
+  await overview.focus(); await page.keyboard.press('ArrowRight')
+  assert.equal(await activity.evaluate(e=>e===document.activeElement),true)
+  assert.equal(await activity.getAttribute('aria-selected'),'true')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Your latest project activity.'))
+  await page.keyboard.press('End'); assert.equal(await settings.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('ArrowRight'); assert.equal(await overview.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('ArrowLeft'); assert.equal(await settings.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('Home'); assert.equal(await overview.evaluate(e=>e===document.activeElement),true)
+  assert.equal(await overview.evaluate(e=>document.getElementById(e.getAttribute('aria-controls'))?.getAttribute('role')),'tabpanel')
+  assert.deepEqual(await page.evaluate(()=>window.errors),[])
+  console.log('PASS: Button/Input/List/Tabs pointer, DOM keyboard, keyed order and accessible tab focus')
   await page.goto(url+'/?fixture=input-fixture');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start())
   const input=page.getByRole('textbox',{name:'Name',exact:true});
   assert.equal(await page.getByRole('textbox',{name:'Notes',exact:true}).count(),1);
@@ -113,6 +159,9 @@ try {
   await page.keyboard.press('Tab');
   assert.equal(await page.getByRole('button',{name:'Clear',exact:true}).evaluate(element=>element===document.activeElement),true);
   await page.keyboard.press('Enter');assert.equal(await input.inputValue(),'');
+  await page.getByRole('button',{name:'Focus name',exact:true}).focus()
+  await page.keyboard.press('Enter')
+  assert.equal(await input.evaluate(element=>element===document.activeElement),true,'retained focus reaches the actual platform text field')
   await input.click({button:'right'});assert((await page.evaluate(()=>window.scene.nodes)).some(node=>node.text==='Key: Context'),'DOM right click reaches the Rust context handler');
   const accessibilitySnapshot=await page.locator('body').ariaSnapshot();
   assert(accessibilitySnapshot.includes('textbox "Name"'));

@@ -104,6 +104,11 @@ impl Projection {
                 SemanticRole::Button => Role::Button,
                 SemanticRole::TextInput => Role::TextInput,
                 SemanticRole::MultilineTextInput => Role::MultilineTextInput,
+                SemanticRole::List => Role::List,
+                SemanticRole::ListItem => Role::ListItem,
+                SemanticRole::TabList => Role::TabList,
+                SemanticRole::Tab => Role::Tab,
+                SemanticRole::TabPanel => Role::TabPanel,
             });
             if !item.name.is_empty() {
                 node.set_label(item.name.clone());
@@ -113,6 +118,12 @@ impl Projection {
                 SemanticRole::TextInput | SemanticRole::MultilineTextInput
             ) {
                 node.set_value(item.value.clone());
+            }
+            if let Some(selected) = item.selected {
+                node.set_selected(selected);
+            }
+            if let Some(target) = item.controls.as_deref().filter(|id| visible.contains(id)) {
+                node.set_controls(vec![self.id(target)]);
             }
             if item.disabled {
                 node.set_disabled();
@@ -172,6 +183,8 @@ mod tests {
             hidden: false,
             tab_index: Some(0),
             clickable: true,
+            selected: None,
+            controls: None,
         };
         let first = projection.tree(&[item], &Scene::default(), Some("removed"), 1.);
         let removed = first.focus;

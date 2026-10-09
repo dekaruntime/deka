@@ -39,6 +39,8 @@ pub struct TextControl {
     pub id: String,
     pub value: String,
     pub placeholder: String,
+    /// Effective text foreground, including inherited colour.
+    pub color: u32,
     pub multiline: bool,
 }
 /// Backend-independent semantics from the effective retained tree.
@@ -53,6 +55,8 @@ pub struct SemanticNode {
     pub hidden: bool,
     pub tab_index: Option<i32>,
     pub clickable: bool,
+    pub selected: Option<bool>,
+    pub controls: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SemanticRole {
@@ -61,6 +65,11 @@ pub enum SemanticRole {
     Button,
     TextInput,
     MultilineTextInput,
+    List,
+    ListItem,
+    TabList,
+    Tab,
+    TabPanel,
 }
 /// Positive tab indices precede natural source order; negative indices allow
 /// explicit focus only. Disabled/hidden nodes never receive focus/actions.
@@ -97,6 +106,11 @@ pub trait Application: 'static {
     }
     fn key_input(&self, _id: &str, _key: String) -> bool {
         false
+    }
+    /// Consume an explicit focus request on the UI thread. Backends validate
+    /// current semantics before focusing, including hidden/disabled ancestry.
+    fn take_focus_request(&self) -> Option<String> {
+        None
     }
     /// Backend-independent application scheduling. Backends supply a wake and
     /// drive finite turns; applications keep their task ownership internally.

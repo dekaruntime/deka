@@ -41,6 +41,8 @@ impl Application for App {
             disabled,
             tab_index,
             clickable,
+            selected: None,
+            controls: None,
         };
         vec![
             node(

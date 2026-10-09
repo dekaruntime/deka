@@ -154,6 +154,16 @@ export function mount(app, canvas, inspect = false) {
   let disposed = false, request = 0, scene, fixedClock = inspect ? 0 : undefined
   const motion = matchMedia('(prefers-reduced-motion: reduce)')
   const inputs = new Map()
+  const mountId = nextMount++
+  const semanticId = id => `deka-semantic-${mountId}-${id}`
+  const semanticKey = event => {
+    if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return
+    try {
+      const id = event.currentTarget.dataset.dekaNode
+      if (app.key_to(id, event.key)) event.preventDefault()
+      draw()
+    } catch(error) { fail(error) }
+  }
   const semantics = new Map()
   const previousTabIndex = canvas.getAttribute("tabindex")
   const previousAriaHidden = canvas.getAttribute("aria-hidden")
@@ -182,6 +192,7 @@ export function mount(app, canvas, inspect = false) {
       }
       const value = control.value ?? ""
       input.placeholder = control.placeholder ?? ""
+      input.style.color = `#${control.color.toString(16).padStart(6,"0")}`
       if (!input.dekaComposing && (control.controlled || input.dekaObservedValue !== value) && input.value !== value) {
         const selection = [input.selectionStart, input.selectionEnd]
         input.value = value
@@ -195,15 +206,15 @@ export function mount(app, canvas, inspect = false) {
   }
   const syncSemantics = () => {
     const descriptors = JSON.parse(app.semantic_nodes())
-    const active = new Set()
+    const active = new Set(), ordered = new Map()
     for (const node of descriptors) {
       if (node.hidden) continue
       active.add(node.id)
       let element = inputs.get(node.id) ?? semantics.get(node.id)
       if (!element) {
-        element = document.createElement(node.role === 'button' ? 'button' : node.role === 'text' ? 'span' : 'div')
-        if (node.role === 'group') { element.setAttribute('role', 'group'); element.style.display='contents' }
-        else if (node.role === 'button') {
+        element = document.createElement((node.role === 'button' || node.role === 'tab') ? 'button' : node.role === 'text' ? 'span' : 'div')
+        if (['group','list','listitem','tablist','tabpanel'].includes(node.role)) { element.setAttribute('role', node.role); element.style.display='contents' }
+        else if (node.role === 'button' || node.role === 'tab') {
           element.style.cssText='position:absolute;opacity:0;pointer-events:none;'
           element.addEventListener('click', () => { try { app.activate(node.id); draw() } catch(error) { fail(error) } })
         } else element.style.cssText='position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);'
@@ -211,6 +222,16 @@ export function mount(app, canvas, inspect = false) {
         element.addEventListener('blur', () => { app.blur(); draw() })
         semantics.set(node.id, element)
       }
+      element.id = semanticId(node.id)
+      element.dataset.dekaNode = node.id
+      if (node.role === 'tab') {
+        element.setAttribute('role', 'tab')
+        element.addEventListener('keydown', semanticKey)
+      }
+      if (node.selected !== null) element.setAttribute('aria-selected', String(node.selected))
+      else element.removeAttribute('aria-selected')
+      if (node.controls) element.setAttribute('aria-controls', semanticId(node.controls))
+      else element.removeAttribute('aria-controls')
       if (node.name) element.setAttribute('aria-label', node.name)
       else if (!inputs.has(node.id)) element.removeAttribute('aria-label')
       element.setAttribute('aria-disabled', String(node.disabled))
@@ -219,9 +240,10 @@ export function mount(app, canvas, inspect = false) {
       else if (!inputs.has(node.id)) element.removeAttribute('tabindex')
       if (node.role === 'text') element.textContent = node.name
       const container = semantics.get(node.parent) ?? parent
-      // Preserve DOM source order without moving focused controls each frame.
+      if (!ordered.has(container)) ordered.set(container, [])
+      ordered.get(container).push(element)
       if (element.parentElement !== container) container.append(element)
-      if (node.role === 'button') {
+      if (node.role === 'button' || node.role === 'tab') {
         const box = scene.nodes.find(n=>n.id===node.id)?.rect
         if (box) {
           const bounds=canvas.getBoundingClientRect(), origin=parent.getBoundingClientRect()
@@ -229,6 +251,20 @@ export function mount(app, canvas, inspect = false) {
         }
       }
     }
+    // Reordered keys also reorder native DOM tab traversal. Move only nodes
+    // that changed position; moveBefore preserves focus where supported.
+    const focused = document.activeElement
+    for (const [container, children] of ordered) {
+      let before = null
+      for (const element of children.toReversed()) {
+        if (element.nextElementSibling !== before) {
+          if (container.moveBefore) container.moveBefore(element, before)
+          else container.insertBefore(element, before)
+        }
+        before = element
+      }
+    }
+    if (focused?.isConnected && document.activeElement !== focused) focused.focus({preventScroll:true})
     for (const [id, element] of semantics) if (!active.has(id)) { element.remove(); semantics.delete(id) }
     for (const [id, input] of inputs) if (!active.has(id)) input.hidden = true; else input.hidden = false
   }
@@ -240,6 +276,9 @@ export function mount(app, canvas, inspect = false) {
       const scale = Math.max(1, devicePixelRatio || 1)
       scene = JSON.parse(app.frame_at(bounds.width,bounds.height,scale,fixedClock ?? performance.now(),motion.matches))
       renderer.draw(scene,scale); syncInputs(); syncSemantics()
+      const requested = app.take_requested_focus()
+      const target = semantics.get(requested) ?? inputs.get(requested)
+      if (target && document.activeElement !== target) target.focus({preventScroll:true})
       if (inspect) {
         const {image_ids, ...rendered} = scene
         const active = new Set(image_ids)
@@ -277,7 +316,7 @@ export function mount(app, canvas, inspect = false) {
   let dpr
   const watchDpr = () => { dpr?.removeEventListener('change',changedDpr); dpr=matchMedia(`(resolution: ${devicePixelRatio}dppx)`);dpr.addEventListener('change',changedDpr) }
   const changedDpr = () => { watchDpr(); draw() }; watchDpr()
-  const mountId = nextMount++; mounts.set(mountId, draw); app.wake_on(mountId)
+  mounts.set(mountId, draw); app.wake_on(mountId)
   draw()
   return {dispose() {
     if(disposed) return; disposed=true; mounts.delete(mountId); pending.delete(mountId); cancelAnimationFrame(request);observer.disconnect()

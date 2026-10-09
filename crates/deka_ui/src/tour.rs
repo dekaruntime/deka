@@ -409,3 +409,85 @@ pub fn handler_nodes(node: &deka_native_ir::Node) -> Vec<(String, usize)> {
     visit(node, &mut output);
     output
 }
+
+#[path = "../examples/showcase/button.rs"]
+mod showcase_button;
+#[path = "../examples/showcase/input.rs"]
+mod showcase_input;
+#[path = "../examples/showcase/list.rs"]
+mod showcase_list;
+#[path = "../examples/showcase/tabs.rs"]
+mod showcase_tabs;
+
+/// Component source and themed constructors use the same compiled pipeline as
+/// /tour. They are separate from the 27 unchanged DekaScript parity lessons.
+pub struct Showcase {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub path: &'static str,
+    pub source: &'static str,
+    pub app: fn(crate::components::Theme) -> crate::UiApp,
+}
+pub static SHOWCASES: &[Showcase] = &[
+    Showcase {
+        id: "button",
+        title: "Button",
+        path: "crates/deka_ui/examples/showcase/button.rs",
+        source: include_str!("../examples/showcase/button.rs"),
+        app: |theme| {
+            crate::UiApp::new(
+                || crate::view! { <showcase_button::App theme={crate::signal(theme)}/> },
+            )
+        },
+    },
+    Showcase {
+        id: "input",
+        title: "Input",
+        path: "crates/deka_ui/examples/showcase/input.rs",
+        source: include_str!("../examples/showcase/input.rs"),
+        app: |theme| {
+            crate::UiApp::new(
+                || crate::view! { <showcase_input::App theme={crate::signal(theme)}/> },
+            )
+        },
+    },
+    Showcase {
+        id: "list",
+        title: "List",
+        path: "crates/deka_ui/examples/showcase/list.rs",
+        source: include_str!("../examples/showcase/list.rs"),
+        app: |theme| {
+            crate::UiApp::new(
+                || crate::view! { <showcase_list::App theme={crate::signal(theme)}/> },
+            )
+        },
+    },
+    Showcase {
+        id: "tabs",
+        title: "Tabs",
+        path: "crates/deka_ui/examples/showcase/tabs.rs",
+        source: include_str!("../examples/showcase/tabs.rs"),
+        app: |theme| {
+            crate::UiApp::new(
+                || crate::view! { <showcase_tabs::App theme={crate::signal(theme)}/> },
+            )
+        },
+    },
+];
+/// Resolve a lesson or a component showcase in either explicit theme.
+pub fn app(id: &str) -> Option<crate::UiApp> {
+    if let Some(lesson) = LESSONS.iter().find(|lesson| lesson.id == id) {
+        return Some((lesson.app)());
+    }
+    for showcase in SHOWCASES {
+        for (name, theme) in [
+            ("light", crate::components::Theme::Light),
+            ("dark", crate::components::Theme::Dark),
+        ] {
+            if id == format!("component-{}-{name}", showcase.id) {
+                return Some((showcase.app)(theme));
+            }
+        }
+    }
+    None
+}
