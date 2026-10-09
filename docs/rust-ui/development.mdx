@@ -1,0 +1,69 @@
+---
+title: Rust UI development and hot reload
+---
+
+Install the Rust development command from this checkout once:
+
+```sh
+cargo install --locked --path crates/deka_ui_dev
+```
+
+In an application that depends on `deka-ui`, run:
+
+```sh
+cargo deka dev
+```
+
+Cargo's package, binary, example, and feature options select the application.
+For the desktop counter in this repository:
+
+```sh
+cargo deka dev --locked -p deka-ui --example tour-counter
+```
+
+The command enables `deka-ui/hot-reload`, builds the native debug application,
+and watches workspace and local path-dependency Rust sources and manifests. Saving `view!` markup patches
+its retained nodes on the existing application's next development turn. Static
+elements, scalar attributes, `class` utilities, and quoted text can change.
+The application and supervisor classify the whole local source snapshot before
+patching, after a short save-stability check. Existing interpolations, handlers,
+and unchanged component invocations keep
+their compiled bindings and state. An unchanged component invocation can move
+among static siblings without being constructed again. Static element `id`
+attributes help retain identities across sibling rearrangements.
+
+A successful patch prints:
+
+```text
+deka dev: patched 1 template(s); state preserved
+```
+
+A handler, function, import, type, or other compiled-code edit triggers a Cargo
+build, then replaces the application process. The terminal announces the
+restart and that signal state resets. A failed build keeps the old process and
+prints Cargo's diagnostics; the next corrected save retries the build.
+Malformed markup also keeps the complete last good tree and reports its error.
+
+This first implementation conservatively rebuilds for changed component props
+(including literals), newly added or removed Rust expressions, changed component
+invocations, reparenting of compiled components, sibling/topology changes around Rust child closures, a changed template root
+count/kind, builder decorations chained after `view!`, or changes to a static class base combined with compiled class toggles.
+Nested markup inside an opaque Rust child expression or component invocation
+also rebuilds. Independent `view!` bodies inside the component itself can patch.
+These cases always announce the fallback.
+
+For a plain Cargo process without automatic rebuild/restart, explicitly enable
+the development feature:
+
+```sh
+cargo run --features deka-ui/hot-reload
+```
+
+It patches supported markup and reports when a rebuild is required. Use
+`cargo deka dev` for the automatic process replacement.
+
+Hot reload currently targets native desktop. Browser applications keep their
+compiled Rust authoring and rendering; a browser reload transport has not been
+added. Release applications compile out source payloads, file polling, template
+metadata, and patch machinery, even with the feature enabled. Custom application
+profiles that enable debug assertions should be treated as development builds.

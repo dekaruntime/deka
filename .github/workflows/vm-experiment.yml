@@ -14,6 +14,9 @@ on:
       - 'scripts/compare-rust-tour.py'
       - 'scripts/rust-tour-browser/**'
       - 'crates/deka_ui_macros/**'
+      - 'crates/deka_ui_hot_reload/**'
+      - 'crates/deka_ui_dev/**'
+      - 'scripts/rust-ui-hot-reload/**'
       - 'crates/deka_vm/**'
       - 'crates/deka_cli/**'
       - 'crates/deka_executable/**'
@@ -66,6 +69,15 @@ jobs:
             echo 'Missing-feature test incorrectly succeeded'
             exit 1
           fi
+      - name: Native Rust UI hot reload (headless, debug integration)
+        run: |
+          cargo fmt -p deka-ui-hot-reload -p deka-ui-dev --check
+          cargo clippy --locked -p deka-ui-hot-reload -p deka-ui-dev --all-targets --no-deps -- -D warnings
+          cargo test --locked -p deka-ui-hot-reload -p deka_native_ir --features deka_native_ir/hot-reload
+          cargo test --locked -p deka-ui --no-default-features --features hot-reload,tour,web --lib
+          cargo build --locked -p deka-ui-dev
+          python3 scripts/rust-ui-hot-reload/check.py
+          python3 scripts/rust-ui-hot-reload/release.py
       - name: Compile source and execute without a compiler
         run: |
           cargo build --locked --release -p deka_vm --features compiler,host,ui

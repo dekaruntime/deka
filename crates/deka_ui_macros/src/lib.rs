@@ -13,7 +13,36 @@ pub fn view(input: TokenStream) -> TokenStream {
         .into()
 }
 fn markup(input: Tokens) -> syn::Result<Tokens> {
-    nodes(&rstml::parse2(input)?)
+    let plain = nodes(&rstml::parse2(input.clone())?)?;
+    #[cfg(feature = "hot-reload")]
+    {
+        deka_ui_hot_reload::parse(input.clone())
+            .map_err(|error| syn::Error::new(Span::call_site(), error))?;
+        let source = input.to_string();
+        let origin = Ident::new("__DEKA_TEMPLATE", Span::mixed_site());
+        let path = Span::call_site()
+            .local_file()
+            .ok_or_else(|| syn::Error::new(Span::call_site(), "hot reload needs a source file"))?;
+        let path = std::fs::canonicalize(&path)
+            .map_err(|e| syn::Error::new(Span::call_site(), e))?
+            .to_string_lossy()
+            .into_owned();
+        let mut next = 0;
+        let hot = hot_nodes(&rstml::parse2(input)?, &mut next)?;
+        Ok(quote!({
+            #[cfg(all(debug_assertions, not(target_arch="wasm32")))]
+            {
+                const #origin: ::deka_ui::hot_reload::Origin = ::deka_ui::hot_reload::Origin {
+                    file: #path, line: line!(), column: column!(), source: #source, compiled_file: include_str!(#path),
+                };
+                ::deka_ui::View::__hot_template(&#origin, #hot)
+            }
+            #[cfg(any(not(debug_assertions), target_arch="wasm32"))]
+            {#plain}
+        }))
+    }
+    #[cfg(not(feature = "hot-reload"))]
+    Ok(plain)
 }
 fn nodes(input: &[Node]) -> syn::Result<Tokens> {
     let values = input
@@ -174,6 +203,74 @@ fn node(input: &Node) -> syn::Result<Tokens> {
             "text must be quoted; Rust children go inside braces",
         )),
     }
+}
+#[cfg(feature = "hot-reload")]
+fn hot_nodes(input: &[Node], next: &mut usize) -> syn::Result<Tokens> {
+    let origin = Ident::new("__DEKA_TEMPLATE", Span::mixed_site());
+    let mut output = vec![];
+    for input in input {
+        if matches!(input, Node::Comment(_)) {
+            continue;
+        }
+        if let Node::Fragment(fragment) = input {
+            output.push(hot_nodes(&fragment.children, next)?);
+            continue;
+        }
+        if let Node::Text(text) = input {
+            let parts = deka_ui_hot_reload::text_parts(&text.value.value())
+                .map_err(|e| syn::Error::new_spanned(&text.value, e))?;
+            let mut values = vec![];
+            for part in parts {
+                let id = *next;
+                *next += 1;
+                let value = match part {
+                    deka_ui_hot_reload::Kind::Text(value) => quote!(::deka_ui::View::text(#value)),
+                    deka_ui_hot_reload::Kind::Hole(name) => {
+                        let mut ident: Ident =
+                            syn::parse_str(name.strip_prefix("interpolation:").unwrap())?;
+                        ident.set_span(text.value.span());
+                        quote!(::deka_ui::View::interpolate(&#ident))
+                    }
+                    _ => unreachable!(),
+                };
+                values.push(quote!(::deka_ui::View::__hot_node(&#origin,#id,#value)));
+            }
+            output.push(if values.len() == 1 {
+                values.pop().unwrap()
+            } else {
+                quote!(::deka_ui::View::fragment(vec![#(#values),*]))
+            });
+            continue;
+        }
+        let id = *next;
+        *next += 1;
+        let value = if let Node::Element(element) = input {
+            let component = element
+                .name()
+                .to_string()
+                .rsplit("::")
+                .next()
+                .is_some_and(|s| s.trim().starts_with(char::is_uppercase));
+            if component {
+                node(input)?
+            } else {
+                let mut bare = element.clone();
+                bare.children.clear();
+                let base = node(&Node::Element(bare))?;
+                let children = hot_nodes(&element.children, next)?;
+                // Preserve each authored child position, including text fragments.
+                quote!((#base).child(#children))
+            }
+        } else {
+            node(input)?
+        };
+        output.push(quote!(::deka_ui::View::__hot_node(&#origin,#id,#value)));
+    }
+    Ok(if output.len() == 1 {
+        output.pop().unwrap()
+    } else {
+        quote!(::deka_ui::View::fragment(vec![#(#output),*]))
+    })
 }
 fn unwrap_value(mut value: &Expr) -> &Expr {
     while let Expr::Block(block) = value {
@@ -607,7 +704,7 @@ mod tests {
             unwrap_value(event.value().unwrap()),
             Expr::Closure(_)
         ));
-        assert!(markup(tokens.clone()).is_ok());
+        assert!(nodes(&rstml::parse2(tokens.clone()).unwrap()).is_ok());
         let arena = bumpalo::Bump::new();
         let stringified = tokens.to_string();
         assert!(!stringified.contains('\n'));

@@ -1,0 +1,15 @@
+[package]
+name = "deka-ui-dev"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "cargo-deka"
+path = "src/main.rs"
+
+[dependencies]
+deka-ui-hot-reload = { path = "../deka_ui_hot_reload" }
+serde_json = "1"
+ctrlc = "3"

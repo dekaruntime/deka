@@ -19,6 +19,8 @@ pub use deka_native_ui::window::{DialogResult, FileDialogOptions};
 pub use desktop::{AppClosed, DesktopApp, WindowHandle, WindowManager};
 #[cfg(all(feature = "desktop", any(target_os = "macos", target_os = "windows")))]
 pub use native_services::{Menu, MenuItem};
+#[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+pub mod hot_reload;
 mod retained;
 mod view;
 #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]

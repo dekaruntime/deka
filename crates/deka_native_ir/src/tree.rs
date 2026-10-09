@@ -660,3 +660,8 @@ mod replacement_tests {
         assert_eq!(parent.text_content(), "BeforeABAfter");
     }
 }
+
+#[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+mod template;
+#[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+pub use template::TemplateEdit;

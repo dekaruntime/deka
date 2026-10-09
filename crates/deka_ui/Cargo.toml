@@ -11,8 +11,10 @@ desktop = ["deka_native_ui/gpu"]
 web = ["dep:wasm-bindgen", "dep:serde_json", "dep:serde"]
 tour = []
 web-test = ["web"]
+hot-reload = ["dep:deka-ui-hot-reload", "deka-ui-macros/hot-reload", "deka_native_ir/hot-reload"]
 
 [dependencies]
+deka-ui-hot-reload = { path = "../deka_ui_hot_reload", optional = true }
 serde_json = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 deka-ui-macros = { path = "../deka_ui_macros" }
