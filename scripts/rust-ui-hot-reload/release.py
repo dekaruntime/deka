@@ -33,3 +33,23 @@ assert abs(hot[0]-plain[0]) <= 128, (plain, hot)
 print(f"release: disabled={plain[0]} bytes; enabled={hot[0]} bytes; diff={hot[0]-plain[0]} bytes")
 print(f"release hashes: disabled={plain[1]} enabled={hot[1]}")
 print("release: no hot-reload symbols, watcher diagnostics, or compiled source payload; both consumers execute Value: 1")
+
+def wasm_build(feature):
+    command = ["cargo", "build", "--locked", "--profile", "native", "--target", "wasm32-unknown-unknown", "-p", "deka-ui-tour", "--example", "hot_reload_web"]
+    if feature:
+        command += ["--features", "deka-ui/hot-reload"]
+    subprocess.run(command, cwd=ROOT, check=True)
+    out = ROOT / ".tmp" / ("hot-reload-wasm-enabled" if feature else "hot-reload-wasm-disabled")
+    subprocess.run(["wasm-bindgen", str(TARGET / "wasm32-unknown-unknown/native/examples/hot_reload_web.wasm"), "--target", "web", "--out-name", "app", "--out-dir", str(out)], cwd=ROOT, check=True)
+    data = (out / "app_bg.wasm").read_bytes()
+    for sentinel in [b"DEKA_HOT_RELOAD_RELEASE_PAYLOAD_SENTINEL_1440", b"keeping last good UI", b"browserapp_hot_reload", b"crates/deka_ui/src/hot_reload.rs", b"__deka/events", b"__deka/rebuild"]:
+        assert sentinel not in data, f"release WASM contains development payload: {sentinel!r}"
+    assert not list(out.rglob("hot-host.js")), "release imports the development transport"
+    javascript = (out / "app.js").read_text()
+    assert "hot_reload" not in javascript and "hot-host" not in javascript
+    return len(data), hashlib.sha256(data).hexdigest()
+
+wasm_plain = wasm_build(False)
+wasm_hot = wasm_build(True)
+assert abs(wasm_hot[0]-wasm_plain[0]) <= 128, (wasm_plain, wasm_hot)
+print(f"release WASM: disabled={wasm_plain[0]} bytes; enabled={wasm_hot[0]} bytes; diff={wasm_hot[0]-wasm_plain[0]} bytes; no development exports, source payload or transport")

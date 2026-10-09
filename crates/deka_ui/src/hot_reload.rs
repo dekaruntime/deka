@@ -1,7 +1,7 @@
-//! Native development templates; compiled out of release and browser applications.
+//! Development templates shared by native polling and browser source transport.
 use crate::view::{Anchor, Context};
 use deka_native_ir::tree::{NodeHandle, TemplateEdit};
-use deka_ui_hot_reload::{Kind, Source, Template, TemplateNode};
+use deka_ui_hot_reload::{Kind, Literal, Source, Template, TemplateNode};
 use std::{
     cell::RefCell,
     collections::BTreeMap,
@@ -17,13 +17,156 @@ pub struct Origin {
     pub source: &'static str,
     pub compiled_file: &'static str,
 }
+type PropUpdate = Box<dyn FnOnce()>;
+pub(crate) type Props = BTreeMap<String, Rc<dyn Fn(&Literal) -> Result<PropUpdate, String>>>;
+thread_local! {
+    static COMPONENT_PROPS: RefCell<Vec<Props>> = const { RefCell::new(vec![]) };
+}
+/// Typed decoding is validated for every instance before any tree or signal
+/// mutation. Arbitrary expressions are always compiled, never evaluated here.
+#[doc(hidden)]
+pub trait LiteralProp: Clone + 'static {
+    fn decode(value: &Literal) -> Result<Self, String>;
+}
+impl LiteralProp for String {
+    fn decode(value: &Literal) -> Result<Self, String> {
+        if value.kind == "string" {
+            Ok(value.value.clone())
+        } else {
+            Err("expected a string prop".into())
+        }
+    }
+}
+impl LiteralProp for bool {
+    fn decode(value: &Literal) -> Result<Self, String> {
+        if value.kind == "bool" {
+            value.value.parse().map_err(|e| format!("{e}"))
+        } else {
+            Err("expected a bool prop".into())
+        }
+    }
+}
+impl LiteralProp for char {
+    fn decode(value: &Literal) -> Result<Self, String> {
+        if value.kind == "char" {
+            value.value.parse().map_err(|e| format!("{e}"))
+        } else {
+            Err("expected a char prop".into())
+        }
+    }
+}
+macro_rules! numeric_props {
+    ($kind:literal; $($ty:ty),*) => {$(
+        impl LiteralProp for $ty {
+            fn decode(value: &Literal) -> Result<Self, String> {
+                let suffix = value.kind.strip_prefix($kind).ok_or("literal prop type changed")?;
+                if !suffix.is_empty() && suffix != stringify!($ty) { return Err("literal prop suffix changed".into()); }
+                value.value.parse().map_err(|e| format!("prop out of range for {}: {e}", stringify!($ty)))
+            }
+        }
+    )*};
+}
+numeric_props!("int:"; u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
+macro_rules! float_props {
+    ($($ty:ty),*) => {$(
+        impl LiteralProp for $ty {
+            fn decode(value: &Literal) -> Result<Self, String> {
+                let suffix = value.kind.strip_prefix("float:").ok_or("literal prop type changed")?;
+                if !suffix.is_empty() && suffix != stringify!($ty) { return Err("literal prop suffix changed".into()); }
+                let parsed: $ty = value.value.parse().map_err(|e| format!("prop out of range for {}: {e}", stringify!($ty)))?;
+                if !parsed.is_finite() { return Err(format!("prop out of range for {}", stringify!($ty))); }
+                Ok(parsed)
+            }
+        }
+    )*};
+}
+float_props!(f32, f64);
+#[doc(hidden)]
+pub fn prop<T: LiteralProp>(name: &str, value: T) -> crate::Signal<T> {
+    let signal = crate::signal(value);
+    COMPONENT_PROPS.with(|frames| {
+        if let Some(frame) = frames.borrow_mut().last_mut() {
+            frame.insert(
+                name.into(),
+                Rc::new(move |literal| {
+                    let value = T::decode(literal)?;
+                    signal.try_get().map_err(|e| e.to_string())?;
+                    Ok(Box::new(move || signal.set(value)))
+                }),
+            );
+        }
+    });
+    signal
+}
+#[doc(hidden)]
+pub fn component(build: impl FnOnce() -> crate::View) -> crate::View {
+    struct Frame;
+    impl Drop for Frame {
+        fn drop(&mut self) {
+            COMPONENT_PROPS.with(|frames| {
+                frames.borrow_mut().pop();
+            });
+        }
+    }
+    COMPONENT_PROPS.with(|frames| frames.borrow_mut().push(BTreeMap::new()));
+    let frame = Frame;
+    let view = build();
+    let props =
+        COMPONENT_PROPS.with(|frames| std::mem::take(frames.borrow_mut().last_mut().unwrap()));
+    drop(frame);
+    crate::View::__hot_props(props, view)
+}
 #[derive(Clone)]
 pub(crate) struct Location {
     pub id: usize,
     pub origin: &'static Origin,
     pub prefix: Vec<usize>,
-    pub parent: Anchor,
     pub roots: Vec<Anchor>,
+    pub placement: Rc<Placement>,
+    pub props: Props,
+    pub movable: bool,
+}
+/// Mutable destination of a compiled structural reaction. Paths identify the
+/// allocation; sibling order follows live destinations, including empty slots.
+pub(crate) struct Placement {
+    pub prefix: Vec<usize>,
+    pub parent: RefCell<Anchor>,
+    following: RefCell<Vec<Weak<Self>>>,
+    pub configured: std::cell::Cell<bool>,
+}
+impl Placement {
+    pub(crate) fn new(prefix: Vec<usize>, parent: Anchor) -> Rc<Self> {
+        Rc::new(Self {
+            prefix,
+            parent: RefCell::new(parent),
+            following: RefCell::new(vec![]),
+            configured: std::cell::Cell::new(false),
+        })
+    }
+    pub(crate) fn nodes(&self) -> Vec<NodeHandle> {
+        self.parent
+            .borrow()
+            .borrow()
+            .as_ref()
+            .map(|parent| {
+                parent
+                    .0
+                    .borrow()
+                    .children
+                    .iter()
+                    .filter(|node| node.slot().starts_with(&self.prefix))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    pub(crate) fn before(&self) -> Option<NodeHandle> {
+        self.following
+            .borrow()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .find_map(|slot| slot.nodes().into_iter().next())
+    }
 }
 impl Location {
     fn compiled_nodes(&self, code: &str) -> Vec<NodeHandle> {
@@ -38,7 +181,7 @@ impl Location {
     }
 
     fn nodes(&self) -> Vec<NodeHandle> {
-        if let Some(parent) = self.parent.borrow().as_ref() {
+        if let Some(parent) = self.placement.parent.borrow().borrow().as_ref() {
             parent
                 .0
                 .borrow()
@@ -66,6 +209,13 @@ pub(crate) struct Mount {
     decorated: bool,
 }
 impl Mount {
+    fn parent(&self) -> Option<NodeHandle> {
+        self.roots
+            .borrow()
+            .iter()
+            .find_map(|anchor| anchor.borrow().clone())
+            .map_or_else(|| self.parent.borrow().clone(), |node| node.parent())
+    }
     pub(crate) fn new(
         origin: &'static Origin,
         prefix: Vec<usize>,
@@ -88,7 +238,7 @@ impl Mount {
         }))
     }
     fn nodes(&self) -> Vec<NodeHandle> {
-        if let Some(parent) = self.parent.borrow().as_ref() {
+        if let Some(parent) = self.parent().as_ref() {
             parent
                 .0
                 .borrow()
@@ -120,8 +270,16 @@ impl Mount {
         }
         for descriptor in old.flattened() {
             if let Some(location) = locations.get(&descriptor.id) {
-                if let Kind::Hole(code) = &descriptor.kind {
-                    for node in location.compiled_nodes(code) {
+                if matches!(&descriptor.kind, Kind::Hole(_) | Kind::Component { .. }) {
+                    let roots = match &descriptor.kind {
+                        Kind::Hole(code) => location.compiled_nodes(code),
+                        _ => location
+                            .roots
+                            .iter()
+                            .filter_map(|root| root.borrow().clone())
+                            .collect(),
+                    };
+                    for node in roots {
                         visit(&node, &mut known);
                     }
                 } else {
@@ -144,8 +302,44 @@ impl Mount {
         drop(locations);
         let map = next.map_from(&old)?;
         let locations = self.locations.borrow();
+        fn topology(
+            nodes: &[TemplateNode],
+            parent: Option<usize>,
+            out: &mut BTreeMap<usize, (Option<usize>, Vec<usize>)>,
+        ) {
+            let siblings = nodes.iter().map(|node| node.id).collect::<Vec<_>>();
+            for node in nodes {
+                out.insert(node.id, (parent, siblings.clone()));
+                topology(&node.children, Some(node.id), out);
+            }
+        }
+        let mut before = BTreeMap::new();
+        topology(&old.nodes, None, &mut before);
+        let mut after = BTreeMap::new();
+        topology(&next.nodes, None, &mut after);
+        for (id, (parent, siblings)) in &after {
+            if let Some(previous) = map.get(id)
+                && let Some(location) = locations.get(previous)
+                && !location.movable
+            {
+                let (old_parent, old_siblings) = &before[previous];
+                if parent.and_then(|id| map.get(&id).copied()) != *old_parent
+                    || siblings
+                        .iter()
+                        .map(|id| map.get(id).copied())
+                        .collect::<Vec<_>>()
+                        != old_siblings.iter().copied().map(Some).collect::<Vec<_>>()
+                {
+                    return Err(
+                        "moving an opaque fragment with structural children requires rebuilding"
+                            .into(),
+                    );
+                }
+            }
+        }
         let mut output = BTreeMap::new();
         let mut serial = self.next_slot.get();
+        let mut props = vec![];
         fn edit(
             node: &TemplateNode,
             mount: &Mount,
@@ -153,6 +347,7 @@ impl Mount {
             locations: &BTreeMap<usize, Location>,
             output: &mut BTreeMap<usize, Location>,
             serial: &mut usize,
+            props: &mut Vec<PropUpdate>,
         ) -> Result<TemplateEdit, String> {
             let previous = map.get(&node.id).and_then(|id| locations.get(id));
             let mut location = if let Some(previous) = previous {
@@ -164,18 +359,47 @@ impl Mount {
                 Location {
                     id: node.id,
                     origin: mount.origin,
-                    prefix,
-                    parent: Anchor::default(),
+                    prefix: prefix.clone(),
                     roots: vec![Anchor::default()],
+                    placement: Placement::new(prefix.clone(), Anchor::default()),
+                    props: BTreeMap::new(),
+                    movable: true,
                 }
             };
             location.id = node.id;
-            if let Kind::Hole(_) = &node.kind {
+            if matches!(&node.kind, Kind::Hole(_) | Kind::Component { .. }) {
                 let compiled_location = previous.ok_or("missing compiled slot")?;
-                let Kind::Hole(code) = &node.kind else {
-                    unreachable!()
+                let roots = match &node.kind {
+                    Kind::Hole(code) => compiled_location.compiled_nodes(code),
+                    Kind::Component { props: values, .. } => {
+                        let previous = &mount.template.borrow();
+                        let old_id = map[&node.id];
+                        let old = previous
+                            .flattened()
+                            .into_iter()
+                            .find(|node| node.id == old_id)
+                            .unwrap();
+                        let Kind::Component {
+                            props: old_values, ..
+                        } = &old.kind
+                        else {
+                            unreachable!()
+                        };
+                        for (name, value) in values {
+                            if old_values.get(name) != Some(value) {
+                                let update = compiled_location.props.get(name)
+                                    .ok_or_else(|| format!("component prop `{name}` is used by compiled logic; requires rebuilding"))?;
+                                props.push(update(value)?);
+                            }
+                        }
+                        compiled_location
+                            .roots
+                            .iter()
+                            .filter_map(|root| root.borrow().clone())
+                            .collect()
+                    }
+                    _ => unreachable!(),
                 };
-                let roots = compiled_location.compiled_nodes(code);
                 output.insert(node.id, location);
                 return Ok(TemplateEdit::Keep(roots));
             }
@@ -222,13 +446,13 @@ impl Mount {
                         }
                     }
                 }
-                Kind::Hole(_) => unreachable!(),
+                Kind::Hole(_) | Kind::Component { .. } => unreachable!(),
             }
             wire.style()?;
             let children = node
                 .children
                 .iter()
-                .map(|node| edit(node, mount, map, locations, output, serial))
+                .map(|node| edit(node, mount, map, locations, output, serial, props))
                 .collect::<Result<_, _>>()?;
             output.insert(node.id, location.clone());
             Ok(TemplateEdit::Node {
@@ -241,9 +465,19 @@ impl Mount {
         let edits = next
             .nodes
             .iter()
-            .map(|node| edit(node, self, &map, &locations, &mut output, &mut serial))
+            .map(|node| {
+                edit(
+                    node,
+                    self,
+                    &map,
+                    &locations,
+                    &mut output,
+                    &mut serial,
+                    &mut props,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        if self.parent.borrow().is_none() && next.nodes.len() != 1 {
+        if self.parent().is_none() && next.nodes.len() != 1 {
             return Err("changing the number of application roots requires rebuilding".into());
         }
         Ok(Plan {
@@ -251,10 +485,11 @@ impl Mount {
             edits,
             locations: output,
             serial,
+            props,
         })
     }
     fn commit(&self, plan: Plan, context: &Rc<Context>) -> Result<(), String> {
-        let parent = self.parent.borrow().clone();
+        let parent = self.parent();
         let roots =
             context
                 .tree
@@ -278,6 +513,27 @@ impl Mount {
                 anchor.replace(Some(node.clone()));
             }
         }
+        fn place(nodes: &[TemplateNode], parent: Anchor, locations: &BTreeMap<usize, Location>) {
+            for (index, node) in nodes.iter().enumerate() {
+                let location = &locations[&node.id];
+                location.placement.parent.replace(parent.clone());
+                location.placement.following.replace(
+                    nodes[index + 1..]
+                        .iter()
+                        .map(|node| Rc::downgrade(&locations[&node.id].placement))
+                        .collect(),
+                );
+                location.placement.configured.set(true);
+                if !node.children.is_empty() {
+                    place(&node.children, location.roots[0].clone(), locations);
+                }
+            }
+        }
+        place(
+            &plan.next.nodes,
+            Rc::new(RefCell::new(parent)),
+            &plan.locations,
+        );
         self.roots.replace(
             roots
                 .into_iter()
@@ -288,6 +544,9 @@ impl Mount {
         self.template.replace(plan.next);
         self.next_slot.set(plan.serial);
         context.changed(true);
+        for update in plan.props {
+            update();
+        }
         Ok(())
     }
 }
@@ -296,11 +555,14 @@ struct Plan {
     edits: Vec<TemplateEdit>,
     locations: BTreeMap<usize, Location>,
     serial: usize,
+    props: Vec<PropUpdate>,
 }
 struct File {
     baseline: Source,
+    #[cfg(not(target_arch = "wasm32"))]
     seen: String,
     applied: String,
+    #[cfg(not(target_arch = "wasm32"))]
     observed_at: std::time::Instant,
     reported_error: Option<String>,
 }
@@ -309,10 +571,17 @@ pub(crate) struct Registry {
     mounts: Vec<Weak<Mount>>,
     files: BTreeMap<PathBuf, File>,
     stale: bool,
+    #[cfg(target_arch = "wasm32")]
+    remote: deka_ui_hot_reload::files::Files,
+    #[cfg(not(target_arch = "wasm32"))]
     watch_roots: std::collections::BTreeSet<PathBuf>,
+    #[cfg(not(target_arch = "wasm32"))]
     watch_baseline: deka_ui_hot_reload::files::Files,
+    #[cfg(not(target_arch = "wasm32"))]
     watch_seen: deka_ui_hot_reload::files::Files,
+    #[cfg(not(target_arch = "wasm32"))]
     watch_observed: Option<std::time::Instant>,
+    #[cfg(not(target_arch = "wasm32"))]
     watch_error: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -327,6 +596,7 @@ impl Registry {
         let path = PathBuf::from(mount.origin.file);
         // Capture conventional and custom Rust source paths, including logic
         // outside files containing view!. Workspace roots dominate package roots.
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(root) = path
             .ancestors()
             .filter(|path| path.join("Cargo.toml").is_file())
@@ -349,8 +619,10 @@ impl Registry {
         if let std::collections::btree_map::Entry::Vacant(entry) = self.files.entry(path) {
             entry.insert(File {
                 baseline: Source::parse(mount.origin.compiled_file)?,
+                #[cfg(not(target_arch = "wasm32"))]
                 seen: mount.origin.compiled_file.into(),
                 applied: mount.origin.compiled_file.into(),
+                #[cfg(not(target_arch = "wasm32"))]
                 observed_at: std::time::Instant::now(),
                 reported_error: None,
             });
@@ -364,6 +636,39 @@ impl Registry {
         self.mounts.push(Rc::downgrade(mount));
         Ok(())
     }
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn receive(
+        &mut self,
+        context: &Rc<Context>,
+        baseline: deka_ui_hot_reload::files::Files,
+        current: deka_ui_hot_reload::files::Files,
+    ) -> ReloadStatus {
+        for mount in self.mounts.iter().filter_map(Weak::upgrade) {
+            if let Some(original) = baseline.get(Path::new(mount.origin.file))
+                && original != mount.origin.compiled_file
+            {
+                self.stale = true;
+                return ReloadStatus::RestartRequired { reason: "browser source baseline differs from its compiled module; rebuilding and restarting (signal state resets)".into() };
+            }
+        }
+        match deka_ui_hot_reload::files::classify(&baseline, &current) {
+            deka_ui_hot_reload::files::Change::Markup => (),
+            deka_ui_hot_reload::files::Change::Invalid(message) => {
+                return ReloadStatus::Error { message };
+            }
+            deka_ui_hot_reload::files::Change::Restart(reason) => {
+                self.stale = true;
+                return ReloadStatus::RestartRequired { reason };
+            }
+        }
+        self.remote = current;
+        self.replay(context)
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn replay(&mut self, context: &Rc<Context>) -> ReloadStatus {
+        self.apply_files(context, &self.remote.clone())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn poll(&mut self, context: &Rc<Context>) -> ReloadStatus {
         if self.stale {
             return ReloadStatus::Unchanged;
@@ -407,17 +712,36 @@ impl Registry {
                 };
             }
         }
+        self.apply_files(context, &watched)
+    }
+    fn apply_files(
+        &mut self,
+        context: &Rc<Context>,
+        watched: &deka_ui_hot_reload::files::Files,
+    ) -> ReloadStatus {
+        if self.stale {
+            return ReloadStatus::Unchanged;
+        }
         self.mounts.retain(|mount| mount.strong_count() > 0);
         let mut plans = vec![];
         let mut changed = vec![];
+        #[cfg(not(target_arch = "wasm32"))]
         let mut unstable = false;
         for (path, file) in &mut self.files {
             let source = match watched
                 .get(path)
                 .cloned()
-                .map(Ok)
-                .unwrap_or_else(|| std::fs::read_to_string(path))
-            {
+                .map(Ok::<_, std::io::Error>)
+                .unwrap_or_else(|| {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        std::fs::read_to_string(path)
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        Ok(file.applied.clone())
+                    }
+                }) {
                 Ok(source) => source,
                 Err(error) => {
                     return ReloadStatus::Error {
@@ -428,11 +752,14 @@ impl Registry {
             if source == file.applied {
                 continue;
             }
+            #[cfg(not(target_arch = "wasm32"))]
             let seen = source == file.seen;
+            #[cfg(not(target_arch = "wasm32"))]
             if !seen {
                 file.seen = source.clone();
                 file.observed_at = std::time::Instant::now();
             }
+            #[cfg(not(target_arch = "wasm32"))]
             if !watched.contains_key(path)
                 && file.observed_at.elapsed() < std::time::Duration::from_millis(20)
             {
@@ -463,6 +790,7 @@ impl Registry {
             }
             changed.push((path.clone(), next, source));
         }
+        #[cfg(not(target_arch = "wasm32"))]
         if unstable {
             return ReloadStatus::Unchanged;
         }

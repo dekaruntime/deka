@@ -67,13 +67,12 @@ finally:
     runtime.write_text(original)
 run('restored-builder-overrides',command,True)
 
-files=[ROOT/path for path in ['crates/deka_ui/src/lib.rs','crates/deka_ui/src/view.rs','crates/deka_native_ir/src/tree.rs','crates/deka_ui_macros/src/lib.rs']]
+files=[ROOT/path for path in ['crates/deka_ui/src/lib.rs','crates/deka_ui/src/view.rs','crates/deka_ui/src/web.rs','crates/deka_native_ir/src/tree.rs','crates/deka_ui_macros/src/lib.rs']]
 originals={path:path.read_text() for path in files}
 try:
     # Revert the new debug-only application boundary in both macro and runtime.
     for path,source in originals.items():
-        source=source.replace('debug_assertions,','').replace('debug_assertions, ','')
-        source=source.replace('any(not(debug_assertions), target_arch="wasm32")','target_arch="wasm32"')
+        source=source.replace('debug_assertions','all()')
         path.write_text(source)
     run('revert-release',['python3','scripts/rust-ui-hot-reload/release.py'],False)
 finally:

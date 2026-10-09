@@ -27,10 +27,13 @@ its retained nodes on the existing application's next development turn. Static
 elements, scalar attributes, `class` utilities, and quoted text can change.
 The application and supervisor classify the whole local source snapshot before
 patching, after a short save-stability check. Existing interpolations, handlers,
-and unchanged component invocations keep
-their compiled bindings and state. An unchanged component invocation can move
-among static siblings without being constructed again. Static element `id`
-attributes help retain identities across sibling rearrangements.
+and component invocations keep their compiled bindings and state. Components
+and reactive child slots can reorder or move between static parents without
+being constructed again. Empty conditional slots remember their new insertion
+position when a later signal update makes them visible. Static element `id`
+attributes help retain identities across sibling rearrangements. Give repeated
+component invocations distinct literal `id` props when reordering or moving them;
+otherwise identical compiled slots use the restart path.
 
 A successful patch prints:
 
@@ -44,13 +47,38 @@ restart and that signal state resets. A failed build keeps the old process and
 prints Cargo's diagnostics; the next corrected save retries the build.
 Malformed markup also keeps the complete last good tree and reports its error.
 
-This first implementation conservatively rebuilds for changed component props
-(including literals), newly added or removed Rust expressions, changed component
-invocations, reparenting of compiled components, sibling/topology changes around Rust child closures, a changed template root
-count/kind, builder decorations chained after `view!`, or changes to a static class base combined with compiled class toggles.
-Nested markup inside an opaque Rust child expression or component invocation
-also rebuilds. Independent `view!` bodies inside the component itself can patch.
-These cases always announce the fallback.
+Literal props on `#[component]` call sites can change in place. Supported scalar
+parameter types are `String`, `&'static str`, `bool`, `char`, Rust integers and
+floats. Direct markup attributes/interpolations and reads inside `move` event,
+attribute and child closures update through typed slots. The component's local
+signals and existing handlers survive. For example, changing `step=1` to
+`step=2` changes the existing handler's increment without resetting its counter:
+
+```rust
+#[component]
+fn Counter(title: String, step: i32) -> View {
+    let mut count = signal(0);
+    view! { <button onClick={move |_| count += step}>"{title}: {count}"</button> }
+}
+// Inside another view!:
+// <Counter title="Count" step=1/>
+```
+
+A prop used to initialize state or calculate ordinary Rust values outside a
+reactive closure requires rebuilding. Forwarding an owned prop into another
+component, shadowed or mutated prop variables, receiver methods on props, opaque Rust macros using props,
+custom prop types, changed literal kinds/suffixes and out-of-range values also
+use the explicit fallback. All prop values and every mounted template are
+checked before the batch changes any nodes or signals.
+
+Newly added or removed Rust expressions, changed compiled expressions, opaque
+fragments whose structural registrations cannot be relocated, a changed template
+root count/kind, builder decorations chained after `view!`, and changes to a
+static class base combined with compiled class toggles also rebuild. Nested
+markup inside an opaque Rust child expression or component invocation rebuilds;
+independent `view!` bodies inside a component can patch. A fallback keeps the
+complete previous tree until a successful rebuild; it never applies just the
+supported parts of that save.
 
 For a plain Cargo process without automatic rebuild/restart, explicitly enable
 the development feature:
@@ -62,8 +90,27 @@ cargo run --features deka-ui/hot-reload
 It patches supported markup and reports when a rebuild is required. Use
 `cargo deka dev` for the automatic process replacement.
 
-Hot reload currently targets native desktop. Browser applications keep their
-compiled Rust authoring and rendering; a browser reload transport has not been
-added. Release applications compile out source payloads, file polling, template
-metadata, and patch machinery, even with the feature enabled. Custom application
-profiles that enable debug assertions should be treated as development builds.
+For browser development, install the matching binding tool and the WASM target:
+
+```sh
+cargo install --locked wasm-bindgen-cli --version 0.2.128
+rustup target add wasm32-unknown-unknown
+cargo deka dev --web --locked -p deka-ui-tour --example hot_reload_web --port 3000
+```
+
+Open the printed loopback URL. Select a `cdylib` library or example exporting
+`start(canvas)` through `wasm-bindgen`, using `deka_ui::launch` to mount into the
+provided canvas. For the tour's `start(lesson, canvas)` export, add
+`--lesson counter`. `--port 0` chooses an available port.
+
+The development server watches the same workspace/local dependencies and sends
+source-template patches to the existing browser application. Its normal frame
+scheduler repaints the canvas and accessibility controls. Markup patches preserve
+signals, handlers and component identities; compiled-code changes rebuild WASM
+and reload the page, resetting state. Failed builds or malformed edits retain
+the last good module and UI. New connections replay the current templates.
+
+Release native and browser applications compile out source payloads, template
+metadata, polling, patch machinery and the browser connection, even with the
+feature enabled. Custom application profiles that enable debug assertions are
+development builds.

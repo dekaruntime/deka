@@ -196,6 +196,8 @@ export function mount(app, canvas, inspect = false) {
   const syncSemantics = () => {
     const descriptors = JSON.parse(app.semantic_nodes())
     const active = new Set()
+    const order = new Map()
+    const focused = document.activeElement
     for (const node of descriptors) {
       if (node.hidden) continue
       active.add(node.id)
@@ -219,8 +221,8 @@ export function mount(app, canvas, inspect = false) {
       else if (!inputs.has(node.id)) element.removeAttribute('tabindex')
       if (node.role === 'text') element.textContent = node.name
       const container = semantics.get(node.parent) ?? parent
-      // Preserve DOM source order without moving focused controls each frame.
-      if (element.parentElement !== container) container.append(element)
+      if (!order.has(container)) order.set(container, [])
+      order.get(container).push(element)
       if (node.role === 'button') {
         const box = scene.nodes.find(n=>n.id===node.id)?.rect
         if (box) {
@@ -231,10 +233,21 @@ export function mount(app, canvas, inspect = false) {
     }
     for (const [id, element] of semantics) if (!active.has(id)) { element.remove(); semantics.delete(id) }
     for (const [id, input] of inputs) if (!active.has(id)) input.hidden = true; else input.hidden = false
+    for (const [container, elements] of order) {
+      let next = null
+      for (const element of elements.toReversed()) {
+        if (element.parentElement !== container || element.nextSibling !== next) container.insertBefore(element, next)
+        next = element
+      }
+    }
+    if (focused !== document.activeElement && document.contains(focused)) focused.focus({ preventScroll: true })
   }
+  let drawing = false, drawAgain = false
   const draw = () => {
+    if (drawing) { drawAgain = true; return }
     cancelAnimationFrame(request); request = 0
     if (disposed || rendererLost) return
+    drawing = true
     try {
       const bounds = canvas.getBoundingClientRect()
       const scale = Math.max(1, devicePixelRatio || 1)
@@ -249,6 +262,10 @@ export function mount(app, canvas, inspect = false) {
       }
       if (scene.animating && fixedClock === undefined) request = requestAnimationFrame(draw)
     } catch (error) { fail(error) }
+    finally {
+      drawing = false
+      if (drawAgain) { drawAgain = false; queueMicrotask(draw) }
+    }
   }
   let rendererLost = false
   const lost = event => { event.preventDefault(); rendererLost = true; cancelAnimationFrame(request) }
