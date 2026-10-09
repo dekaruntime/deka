@@ -22,7 +22,7 @@ reqwest = { version = "0.13", features = ["blocking", "json"] }
 flate2 = "1"
 tar = "0.4"
 semver = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 
 [dev-dependencies]
 corpus_gate = { path = "../corpus_gate" }
