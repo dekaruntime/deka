@@ -757,7 +757,7 @@ dependencies = [
  "sha1 0.10.7",
  "sync_wrapper",
  "tokio",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.24.0",
  "tower",
  "tower-layer",
  "tower-service",
@@ -2380,7 +2380,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.30.0",
  "url",
  "webpki-roots 1.0.9",
 ]
@@ -11504,11 +11504,23 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
+ "tokio",
+ "tungstenite 0.24.0",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
+dependencies = [
+ "futures-util",
+ "log",
  "rustls",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
- "tungstenite 0.24.0",
+ "tungstenite 0.30.0",
  "webpki-roots 0.26.11",
 ]
 
@@ -11814,8 +11826,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.5",
- "rustls",
- "rustls-pki-types",
  "sha1 0.10.7",
  "thiserror 1.0.69",
  "utf-8",
@@ -11833,6 +11843,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.10.2",
+ "rustls",
+ "rustls-pki-types",
  "sha1 0.11.0",
  "thiserror 2.0.20",
 ]
