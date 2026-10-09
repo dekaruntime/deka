@@ -2086,7 +2086,7 @@ checksum = "5c297a1c74b71ae29df00c3e22dd9534821d60eb9af5a0192823fa2acea70c2a"
 name = "dcore"
 version = "0.61.0"
 dependencies = [
- "deka-cli-core 0.5.0",
+ "deka-cli-core",
 ]
 
 [[package]]
@@ -2104,7 +2104,7 @@ name = "deka-build"
 version = "0.61.0"
 dependencies = [
  "compiler",
- "deka-cli-core 0.5.0",
+ "deka-cli-core",
  "deka-modules",
  "pool",
  "runtime",
@@ -2120,7 +2120,7 @@ name = "deka-cache"
 version = "0.61.0"
 dependencies = [
  "compiler",
- "deka-cli-core 0.5.0",
+ "deka-cli-core",
  "run",
  "serde",
  "serde_json",
@@ -2132,12 +2132,6 @@ dependencies = [
 
 [[package]]
 name = "deka-cli-core"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "959a3a6061fd69200fa3e0653f51dd985a12948e4a55c83c36ba9756b61cb208"
-
-[[package]]
-name = "deka-cli-core"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dcba4cb8985749b6d549d25ee1d82351683297e8b1e15b34921920658fe477db"
@@ -2146,7 +2140,7 @@ checksum = "dcba4cb8985749b6d549d25ee1d82351683297e8b1e15b34921920658fe477db"
 name = "deka-db"
 version = "0.61.0"
 dependencies = [
- "deka-cli-core 0.5.0",
+ "deka-cli-core",
  "postgres",
  "rusqlite",
  "serde",
@@ -2158,7 +2152,7 @@ dependencies = [
 name = "deka-deploy"
 version = "0.61.0"
 dependencies = [
- "deka-cli-core 0.5.0",
+ "deka-cli-core",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2190,7 +2184,7 @@ name = "deka-registry"
 version = "0.61.0"
 dependencies = [
  "anyhow",
- "deka-cli-core 0.5.0",
+ "deka-cli-core",
  "deka-modules",
  "reqwest",
  "serde",
@@ -2204,7 +2198,7 @@ dependencies = [
 name = "deka-task"
 version = "0.61.0"
 dependencies = [
- "deka-cli-core 0.5.0",
+ "deka-cli-core",
  "deno_task_shell",
  "glob",
  "serde_json",
@@ -2217,7 +2211,7 @@ dependencies = [
 name = "deka-test"
 version = "0.61.0"
 dependencies = [
- "deka-cli-core 0.5.0",
+ "deka-cli-core",
  "deka-modules",
  "deka_host",
  "serde_json",
@@ -2321,7 +2315,7 @@ name = "deka_cli"
 version = "0.61.0"
 dependencies = [
  "corpus_gate",
- "deka-cli-core 0.6.0",
+ "deka-cli-core",
  "deka-fmt",
  "deka_executable",
  "deka_native_ui",
@@ -8003,7 +7997,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.21.7",
- "deka-cli-core 0.5.0",
+ "deka-cli-core",
  "deka-modules",
  "deka-registry",
  "deka_host",
@@ -9530,7 +9524,7 @@ dependencies = [
  "axum",
  "compiler",
  "ctrlc",
- "deka-cli-core 0.5.0",
+ "deka-cli-core",
  "flate2",
  "libc",
  "pm",
