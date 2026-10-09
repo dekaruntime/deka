@@ -268,9 +268,14 @@ export function mount(app, canvas, inspect = false) {
     for (const [id, element] of semantics) if (!active.has(id)) { element.remove(); semantics.delete(id) }
     for (const [id, input] of inputs) if (!active.has(id)) input.hidden = true; else input.hidden = false
   }
+  let drawing = false, redraw = false
   const draw = () => {
     cancelAnimationFrame(request); request = 0
     if (disposed || rendererLost) return
+    // DOM focus can synchronously call draw again. Finish consuming this
+    // frame's image updates before serialising the next retained frame.
+    if (drawing) { redraw = true; return }
+    drawing = true
     try {
       const bounds = canvas.getBoundingClientRect()
       const scale = Math.max(1, devicePixelRatio || 1)
@@ -288,6 +293,10 @@ export function mount(app, canvas, inspect = false) {
       }
       if (scene.animating && fixedClock === undefined) request = requestAnimationFrame(draw)
     } catch (error) { fail(error) }
+    finally {
+      drawing = false
+      if (redraw) { redraw = false; draw() }
+    }
   }
   let rendererLost = false
   const lost = event => { event.preventDefault(); rendererLost = true; cancelAnimationFrame(request) }

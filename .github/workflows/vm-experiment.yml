@@ -206,6 +206,7 @@ jobs:
           npm ci --prefix scripts/rust-tour-browser
           scripts/rust-tour-browser/node_modules/.bin/playwright install --with-deps chromium --only-shell
           node scripts/rust-tour-browser/check.mjs .tmp/rust-tour
+          python3 scripts/rust-ui-components/browser-revert.py .tmp/rust-tour
       - uses: actions/upload-artifact@v7
         with:
           name: rust-tour

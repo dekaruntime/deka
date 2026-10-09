@@ -49,6 +49,9 @@ Validation tools:
 - `python3 scripts/build-rust-tour.py --out .tmp/components-tour` and
   `node scripts/rust-tour-browser/check.mjs .tmp/components-tour` — real headless
   Chromium, shared renderer histories, DOM editing/traversal and tab focus.
+- `python3 scripts/rust-ui-components/browser-revert.py .tmp/components-tour`
+  — remove the packaged draw guard, require the original image-loss assertion
+  to fail, restore the package in finally, then pass the complete browser gate.
 
 Acceptance results and size measurements belong in the PR body. Build logs and
 raw screenshot evidence remain under this checkout's `.tmp`. Run one Cargo
