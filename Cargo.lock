@@ -2228,6 +2228,7 @@ dependencies = [
 name = "deka-ui"
 version = "0.1.0"
 dependencies = [
+ "deka-ui-hot-reload",
  "deka-ui-macros",
  "deka_native_ir",
  "deka_native_ui",
@@ -2243,10 +2244,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka-ui-dev"
+version = "0.1.0"
+dependencies = [
+ "ctrlc",
+ "deka-ui-hot-reload",
+ "serde_json",
+]
+
+[[package]]
+name = "deka-ui-hot-reload"
+version = "0.1.0"
+dependencies = [
+ "deka_native_ir",
+ "proc-macro2",
+ "quote",
+ "rstml",
+ "serde_json",
+ "syn 3.0.5",
+]
+
+[[package]]
 name = "deka-ui-macros"
 version = "0.1.0"
 dependencies = [
  "bumpalo",
+ "deka-ui-hot-reload",
  "deka_native_ir",
  "deka_syntax",
  "proc-macro2",

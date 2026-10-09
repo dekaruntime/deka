@@ -8,7 +8,11 @@ publish = false
 [lib]
 proc-macro = true
 
+[features]
+hot-reload = ["dep:deka-ui-hot-reload"]
+
 [dependencies]
+deka-ui-hot-reload = { path = "../deka_ui_hot_reload", optional = true }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "3", features = ["full"] }
