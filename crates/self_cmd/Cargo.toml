@@ -11,7 +11,7 @@ default = []
 self-update = ["dep:pm", "pm/self-update"]
 
 [dependencies]
-deka-cli-core = { version = "0.5.0", default-features = false, features = ["registry"] }
+deka-cli-core = { version = "0.6.0", default-features = false, features = ["registry"] }
 compiler = { path = "../compiler" }
 pm = { path = "../pm", optional = true }
 stdio = "0.4.0"
