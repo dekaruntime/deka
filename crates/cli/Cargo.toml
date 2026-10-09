@@ -54,7 +54,7 @@ self_cmd = { path = "../self_cmd", optional = true }
 permissions = { path = "../permissions" }
 tempfile = "3.23.0"
 flate2 = "1.0"
-base64 = "0.22"
+base64 = "0.23"
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
 axum = "0.7"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
