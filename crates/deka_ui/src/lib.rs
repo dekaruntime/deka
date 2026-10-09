@@ -19,7 +19,7 @@ pub use deka_native_ui::window::{DialogResult, FileDialogOptions};
 pub use desktop::{AppClosed, DesktopApp, WindowHandle, WindowManager};
 #[cfg(all(feature = "desktop", any(target_os = "macos", target_os = "windows")))]
 pub use native_services::{Menu, MenuItem};
-#[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+#[cfg(all(feature = "hot-reload", debug_assertions))]
 pub mod hot_reload;
 mod retained;
 mod view;
@@ -45,6 +45,10 @@ where
     P: ComponentProps,
 {
     P::builder()
+}
+#[doc(hidden)]
+pub fn literal_string<T: From<&'static str>>(value: &'static str) -> T {
+    value.into()
 }
 #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 #[doc(hidden)]

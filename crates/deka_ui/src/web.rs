@@ -26,8 +26,35 @@ impl BrowserApp {
         }
     }
 }
+#[cfg(all(feature = "hot-reload", debug_assertions, target_arch = "wasm32"))]
+fn hot_status(status: crate::hot_reload::ReloadStatus) -> serde_json::Value {
+    match status {
+        crate::hot_reload::ReloadStatus::RestartRequired { reason } => {
+            serde_json::json!({"restart":reason})
+        }
+        crate::hot_reload::ReloadStatus::Error { message } => {
+            serde_json::json!({"error":message})
+        }
+        crate::hot_reload::ReloadStatus::Patched { templates } => {
+            serde_json::json!({"patched":templates})
+        }
+        crate::hot_reload::ReloadStatus::Unchanged => serde_json::json!({"unchanged":true}),
+    }
+}
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl BrowserApp {
+    #[cfg(all(feature = "hot-reload", debug_assertions, target_arch = "wasm32"))]
+    pub fn hot_reload(&mut self, message: &str) -> Result<String, String> {
+        let message: serde_json::Value =
+            serde_json::from_str(message).map_err(|e| e.to_string())?;
+        let baseline =
+            serde_json::from_value(message["baseline"].clone()).map_err(|e| e.to_string())?;
+        let current =
+            serde_json::from_value(message["current"].clone()).map_err(|e| e.to_string())?;
+        let status = self.app.scope_hot_reload(baseline, current);
+        Ok(hot_status(status).to_string())
+    }
+
     #[cfg(target_arch = "wasm32")]
     pub fn wake_on(&mut self, id: u32) {
         use deka_native_ui::Application;
@@ -42,6 +69,8 @@ impl BrowserApp {
         milliseconds: f64,
         reduced: bool,
     ) -> Result<String, String> {
+        #[cfg(all(feature = "hot-reload", debug_assertions, target_arch = "wasm32"))]
+        let hot_reload = hot_status(self.app.replay_hot_reload());
         let tree = self.app.tree();
         self.scene = self
             .renderer
@@ -75,9 +104,13 @@ impl BrowserApp {
             #[serde(flatten)]
             scene: &'a Scene,
             image_ids: Vec<&'a str>,
+            #[cfg(all(feature = "hot-reload", debug_assertions, target_arch = "wasm32"))]
+            hot_reload: serde_json::Value,
         }
         let frame = Frame {
             scene: &self.scene,
+            #[cfg(all(feature = "hot-reload", debug_assertions, target_arch = "wasm32"))]
+            hot_reload,
             image_ids: images.iter().map(|image| image.id.as_str()).collect(),
         };
         let result = serde_json::to_string(&frame).map_err(|e| e.to_string());
@@ -203,6 +236,12 @@ extern "C" {
     #[wasm_bindgen(js_name = unmount)]
     fn unmount(handle: &JsValue);
 }
+#[cfg(all(feature = "hot-reload", debug_assertions, target_arch = "wasm32"))]
+#[wasm_bindgen(module = "/web/hot-host.js")]
+extern "C" {
+    #[wasm_bindgen(catch, js_name = mountHot)]
+    fn mount_hot(app: BrowserApp, canvas: &JsValue) -> Result<JsValue, JsValue>;
+}
 /// Owns browser listeners, animation, the renderer and the app's reactive scope.
 #[cfg(target_arch = "wasm32")]
 pub struct WebHandle(JsValue);
@@ -220,7 +259,14 @@ pub fn mount_app(app: UiApp, canvas: &JsValue) -> Result<WebHandle, JsValue> {
     PANIC_HOOK.call_once(|| {
         std::panic::set_hook(Box::new(|info| report_panic(&info.to_string())));
     });
-    mount(BrowserApp::new(app), canvas).map(WebHandle)
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
+    {
+        mount_hot(BrowserApp::new(app), canvas).map(WebHandle)
+    }
+    #[cfg(not(all(feature = "hot-reload", debug_assertions)))]
+    {
+        mount(BrowserApp::new(app), canvas).map(WebHandle)
+    }
 }
 /// Launch precompiled Rust into an existing HTML canvas. Drop the handle to stop.
 #[cfg(target_arch = "wasm32")]

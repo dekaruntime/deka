@@ -108,10 +108,14 @@ where
 /// An authoring value consumed when mounted. It is not a second retained tree.
 pub struct View(Builder);
 enum Builder {
-    #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
     HotTemplate(&'static crate::hot_reload::Origin, Box<View>, bool),
-    #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
     HotNode(&'static crate::hot_reload::Origin, usize, Box<View>),
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
+    HotPlacement(Rc<crate::hot_reload::Placement>, Box<View>),
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
+    HotProps(crate::hot_reload::Props, Box<View>),
     Element(Element),
     Text(Attribute),
     Fragment(Vec<View>),
@@ -129,15 +133,27 @@ struct Element {
     children: Vec<View>,
 }
 impl View {
-    #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
+    fn movable(&self) -> bool {
+        match &self.0 {
+            Builder::Dynamic(_) => true,
+            Builder::Ref(view, _) | Builder::State(view, _) => view.movable(),
+            _ => self.single_root(),
+        }
+    }
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
     #[doc(hidden)]
     pub fn __hot_template(origin: &'static crate::hot_reload::Origin, view: Self) -> Self {
         Self(Builder::HotTemplate(origin, Box::new(view), false))
     }
-    #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
     #[doc(hidden)]
     pub fn __hot_node(origin: &'static crate::hot_reload::Origin, id: usize, view: Self) -> Self {
         Self(Builder::HotNode(origin, id, Box::new(view)))
+    }
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
+    pub(crate) fn __hot_props(props: crate::hot_reload::Props, view: Self) -> Self {
+        Self(Builder::HotProps(props, Box::new(view)))
     }
     /// Capture a Display value for a live quoted-text interpolation.
     /// Cloning also supports owned values reused in more than one text binding.
@@ -154,8 +170,11 @@ impl View {
     fn single_root(&self) -> bool {
         match &self.0 {
             Builder::Element(_) | Builder::Text(_) => true,
-            #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
-            Builder::HotTemplate(_, view, _) | Builder::HotNode(_, _, view) => view.single_root(),
+            #[cfg(all(feature = "hot-reload", debug_assertions))]
+            Builder::HotTemplate(_, view, _)
+            | Builder::HotNode(_, _, view)
+            | Builder::HotProps(_, view)
+            | Builder::HotPlacement(_, view) => view.single_root(),
             Builder::Ref(view, _) | Builder::State(view, _) => view.single_root(),
             _ => false,
         }
@@ -256,17 +275,22 @@ impl View {
         self
     }
     fn element_mut(&mut self) -> Option<&mut Element> {
-        #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+        #[cfg(all(feature = "hot-reload", debug_assertions))]
         if matches!(
             self.0,
-            Builder::HotTemplate(_, _, _) | Builder::HotNode(_, _, _)
+            Builder::HotTemplate(_, _, _)
+                | Builder::HotNode(_, _, _)
+                | Builder::HotProps(_, _)
+                | Builder::HotPlacement(_, _)
         ) {
             return match &mut self.0 {
                 Builder::HotTemplate(_, view, decorated) => {
                     *decorated = true;
                     view.element_mut()
                 }
-                Builder::HotNode(_, _, view) => view.element_mut(),
+                Builder::HotNode(_, _, view)
+                | Builder::HotProps(_, view)
+                | Builder::HotPlacement(_, view) => view.element_mut(),
                 _ => None,
             };
         }
@@ -426,7 +450,7 @@ struct Listener {
 #[derive(Default)]
 pub(crate) struct Context {
     pub(crate) tree: RefCell<Tree>,
-    #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
     pub(crate) hot_reload: RefCell<crate::hot_reload::Registry>,
     pub(crate) scope_id: u64,
     pub(crate) session_id: u64,
@@ -565,7 +589,7 @@ impl Context {
 /// Registration ownership only: no node topology or renderer snapshots.
 #[derive(Default)]
 struct Registrations {
-    #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
     hot_mounts: Vec<Rc<crate::hot_reload::Mount>>,
     effects: Vec<Effect>,
     states: Vec<usize>,
@@ -576,7 +600,7 @@ struct Registrations {
 }
 impl Registrations {
     fn extend(&mut self, mut other: Self) {
-        #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+        #[cfg(all(feature = "hot-reload", debug_assertions))]
         self.hot_mounts.append(&mut other.hot_mounts);
         self.effects.append(&mut other.effects);
         self.states.append(&mut other.states);
@@ -604,8 +628,10 @@ impl Drop for Registrations {
     }
 }
 struct Prepared {
-    #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
     hot_nodes: Vec<crate::hot_reload::Location>,
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
+    hot_props: crate::hot_reload::Props,
     wires: Vec<WireNode>,
     slots: Vec<Vec<usize>>,
     anchors: Vec<(Vec<usize>, Anchor)>,
@@ -616,15 +642,17 @@ struct Prepared {
 impl Prepared {
     fn new(context: &Rc<Context>) -> Self {
         Self {
-            #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+            #[cfg(all(feature = "hot-reload", debug_assertions))]
             hot_nodes: vec![],
+            #[cfg(all(feature = "hot-reload", debug_assertions))]
+            hot_props: BTreeMap::new(),
             root_anchors: vec![],
             references: vec![],
             wires: vec![],
             slots: vec![],
             anchors: vec![],
             registrations: Registrations {
-                #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+                #[cfg(all(feature = "hot-reload", debug_assertions))]
                 hot_mounts: vec![],
                 context: Rc::downgrade(context),
                 effects: vec![],
@@ -636,7 +664,7 @@ impl Prepared {
         }
     }
     fn extend(&mut self, mut child: Self) {
-        #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+        #[cfg(all(feature = "hot-reload", debug_assertions))]
         self.hot_nodes.append(&mut child.hot_nodes);
         self.root_anchors.append(&mut child.root_anchors);
         self.references.append(&mut child.references);
@@ -708,6 +736,97 @@ fn bind(
         }
     }
 }
+fn prepare_dynamic(
+    mut getter: Box<dyn FnMut() -> View>,
+    path: Vec<usize>,
+    parent: Anchor,
+    context: &Rc<Context>,
+    #[cfg(all(feature = "hot-reload", debug_assertions))] placement: Option<
+        Rc<crate::hot_reload::Placement>,
+    >,
+) -> Result<Prepared, String> {
+    let mut prepared = Prepared::new(context);
+    let initial = Rc::new(RefCell::new(None));
+    let output = initial.clone();
+    let group = Rc::new(RefCell::new(Registrations::default()));
+    let owner = group.clone();
+    let prefix = path;
+    let weak = Rc::downgrade(context);
+    prepared.registrations.effects.push(effect(move || {
+        let Some(context) = weak.upgrade() else {
+            return;
+        };
+        #[cfg(all(feature = "hot-reload", debug_assertions))]
+        let parent = placement
+            .as_ref()
+            .map(|slot| slot.parent.borrow().clone())
+            .unwrap_or_else(|| parent.clone());
+        let mut slot = prefix.clone();
+        slot.push(0);
+        let (next, reactive) = crate::reactive::owned(|| {
+            context.at(&prefix, "children", || {
+                prepare(getter(), slot, parent.clone(), &context)
+            })
+        });
+        let mut next = match next {
+            Ok(next) => next,
+            Err(error) => {
+                context.report(&prefix, "children", error);
+                return;
+            }
+        };
+        next.registrations.reactive.push(reactive);
+        let target = parent.borrow().clone();
+        if let Some(parent) = target {
+            let wires = std::mem::take(&mut next.wires);
+            #[cfg(all(feature = "hot-reload", debug_assertions))]
+            let replacement = if let Some(placement) = &placement
+                && placement.configured.get()
+            {
+                context.tree.borrow_mut().replace_slot_before(
+                    &parent,
+                    &prefix,
+                    wires,
+                    &next.slots,
+                    placement.before().as_ref(),
+                )
+            } else {
+                context
+                    .tree
+                    .borrow_mut()
+                    .replace_slot(&parent, &prefix, wires, &next.slots)
+            };
+            #[cfg(not(all(feature = "hot-reload", debug_assertions)))]
+            let replacement =
+                context
+                    .tree
+                    .borrow_mut()
+                    .replace_slot(&parent, &prefix, wires, &next.slots);
+            let roots = match replacement {
+                Ok(roots) => roots,
+                Err(error) => {
+                    context.report(&prefix, "children", error);
+                    return;
+                }
+            };
+            next.attach(&roots, &context);
+            *owner.borrow_mut() = next.registrations;
+            context.changed(true);
+        } else {
+            *output.borrow_mut() = Some(next);
+        }
+    }));
+    let Some(mut next) = initial.borrow_mut().take() else {
+        // The first evaluation failed; preserve an empty structural slot.
+        prepared.registrations.groups.push(group);
+        return Ok(prepared);
+    };
+    *group.borrow_mut() = next.registrations;
+    next.registrations = Registrations::default();
+    prepared.registrations.groups.push(group);
+    prepared.extend(next);
+    Ok(prepared)
+}
 fn prepare(
     view: View,
     path: Vec<usize>,
@@ -716,19 +835,63 @@ fn prepare(
 ) -> Result<Prepared, String> {
     let mut prepared = Prepared::new(context);
     match view.0 {
-        #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+        #[cfg(all(feature = "hot-reload", debug_assertions))]
         Builder::HotNode(origin, id, view) => {
-            let mut next = prepare(*view, path.clone(), parent.clone(), context)?;
+            let movable = view.movable();
+            let placement = crate::hot_reload::Placement::new(path.clone(), parent.clone());
+            let mut next = prepare(
+                View(Builder::HotPlacement(placement.clone(), view)),
+                path.clone(),
+                parent.clone(),
+                context,
+            )?;
             next.hot_nodes.push(crate::hot_reload::Location {
                 id,
                 origin,
                 prefix: path,
-                parent,
                 roots: next.root_anchors.clone(),
+                placement,
+                props: std::mem::take(&mut next.hot_props),
+                movable,
             });
             return Ok(next);
         }
-        #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+        #[cfg(all(feature = "hot-reload", debug_assertions))]
+        Builder::HotPlacement(placement, view) => match view.0 {
+            Builder::Dynamic(getter) => {
+                return prepare_dynamic(getter, path, parent, context, Some(placement));
+            }
+            Builder::State(view, state) => {
+                return prepare(
+                    View(Builder::State(
+                        Box::new(View(Builder::HotPlacement(placement, view))),
+                        state,
+                    )),
+                    path,
+                    parent,
+                    context,
+                );
+            }
+            Builder::Ref(view, reference) => {
+                return prepare(
+                    View(Builder::Ref(
+                        Box::new(View(Builder::HotPlacement(placement, view))),
+                        reference,
+                    )),
+                    path,
+                    parent,
+                    context,
+                );
+            }
+            _ => return prepare(*view, path, parent, context),
+        },
+        #[cfg(all(feature = "hot-reload", debug_assertions))]
+        Builder::HotProps(props, view) => {
+            let mut next = prepare(*view, path, parent, context)?;
+            next.hot_props = props;
+            return Ok(next);
+        }
+        #[cfg(all(feature = "hot-reload", debug_assertions))]
         Builder::HotTemplate(origin, view, decorated) => {
             let mut next = prepare(*view, path.clone(), parent.clone(), context)?;
             let (own, other) = next.hot_nodes.drain(..).partition(|loc| {
@@ -776,64 +939,15 @@ fn prepare(
                 prepared.extend(prepare(child, slot, parent.clone(), context)?);
             }
         }
-        Builder::Dynamic(mut getter) => {
-            let initial = Rc::new(RefCell::new(None));
-            let output = initial.clone();
-            let group = Rc::new(RefCell::new(Registrations::default()));
-            let owner = group.clone();
-            let prefix = path;
-            let weak = Rc::downgrade(context);
-            prepared.registrations.effects.push(effect(move || {
-                let Some(context) = weak.upgrade() else {
-                    return;
-                };
-                let mut slot = prefix.clone();
-                slot.push(0);
-                let (next, reactive) = crate::reactive::owned(|| {
-                    context.at(&prefix, "children", || {
-                        prepare(getter(), slot, parent.clone(), &context)
-                    })
-                });
-                let mut next = match next {
-                    Ok(next) => next,
-                    Err(error) => {
-                        context.report(&prefix, "children", error);
-                        return;
-                    }
-                };
-                next.registrations.reactive.push(reactive);
-                let target = parent.borrow().clone();
-                if let Some(parent) = target {
-                    let wires = std::mem::take(&mut next.wires);
-                    let replacement = context.tree.borrow_mut().replace_slot(
-                        &parent,
-                        &prefix,
-                        wires,
-                        &next.slots,
-                    );
-                    let roots = match replacement {
-                        Ok(roots) => roots,
-                        Err(error) => {
-                            context.report(&prefix, "children", error);
-                            return;
-                        }
-                    };
-                    next.attach(&roots, &context);
-                    *owner.borrow_mut() = next.registrations;
-                    context.changed(true);
-                } else {
-                    *output.borrow_mut() = Some(next);
-                }
-            }));
-            let Some(mut next) = initial.borrow_mut().take() else {
-                // The first evaluation failed; preserve an empty structural slot.
-                prepared.registrations.groups.push(group);
-                return Ok(prepared);
-            };
-            *group.borrow_mut() = next.registrations;
-            next.registrations = Registrations::default();
-            prepared.registrations.groups.push(group);
-            prepared.extend(next);
+        Builder::Dynamic(getter) => {
+            return prepare_dynamic(
+                getter,
+                path,
+                parent,
+                context,
+                #[cfg(all(feature = "hot-reload", debug_assertions))]
+                None,
+            );
         }
         Builder::Text(value) => {
             let anchor = Anchor::default();
@@ -975,6 +1089,24 @@ pub struct UiApp {
     patch_passes: Cell<usize>,
 }
 impl UiApp {
+    #[cfg(all(feature = "hot-reload", debug_assertions, target_arch = "wasm32"))]
+    pub(crate) fn scope_hot_reload(
+        &mut self,
+        baseline: deka_ui_hot_reload::files::Files,
+        current: deka_ui_hot_reload::files::Files,
+    ) -> crate::hot_reload::ReloadStatus {
+        self.scope.batch(|| {
+            self.context
+                .hot_reload
+                .borrow_mut()
+                .receive(&self.context, baseline, current)
+        })
+    }
+    #[cfg(all(feature = "hot-reload", debug_assertions, target_arch = "wasm32"))]
+    pub(crate) fn replay_hot_reload(&mut self) -> crate::hot_reload::ReloadStatus {
+        self.scope
+            .batch(|| self.context.hot_reload.borrow_mut().replay(&self.context))
+    }
     pub fn new<A, M>(app: A) -> Self
     where
         A: BuildApp<M>,
@@ -1073,7 +1205,9 @@ impl UiApp {
     }
     #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
     pub fn poll_hot_reload(&mut self) -> crate::hot_reload::ReloadStatus {
-        let status = self.context.hot_reload.borrow_mut().poll(&self.context);
+        let status = self
+            .scope
+            .batch(|| self.context.hot_reload.borrow_mut().poll(&self.context));
         if let crate::hot_reload::ReloadStatus::RestartRequired { reason } = &status {
             eprintln!("{}{reason}", deka_ui_hot_reload::RESTART_PREFIX);
         }

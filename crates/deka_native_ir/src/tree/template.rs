@@ -35,6 +35,36 @@ impl NodeHandle {
     }
 }
 impl Tree {
+    /// A development slot's allocation path remains stable after a move. Its
+    /// insertion boundary, rather than path sorting, now owns sibling order.
+    pub fn replace_slot_before(
+        &mut self,
+        parent: &NodeHandle,
+        prefix: &[usize],
+        wires: Vec<WireNode>,
+        slots: &[Vec<usize>],
+        before: Option<&NodeHandle>,
+    ) -> Result<Vec<NodeHandle>> {
+        let mut untouched: Vec<_> = parent
+            .0
+            .borrow()
+            .children
+            .iter()
+            .filter(|node| !node.slot().starts_with(prefix))
+            .cloned()
+            .collect();
+        let index = match before {
+            Some(node) => untouched
+                .iter()
+                .position(|child| child == node)
+                .ok_or("development slot boundary is detached")?,
+            None => untouched.len(),
+        };
+        let roots = self.replace_slot(parent, prefix, wires, slots)?;
+        untouched.splice(index..index, roots.clone());
+        parent.0.borrow_mut().children = untouched;
+        Ok(roots)
+    }
     pub fn patch_template(
         &mut self,
         parent: Option<&NodeHandle>,
