@@ -157,12 +157,12 @@ export function mount(app, canvas, inspect = false) {
   const mountId = nextMount++
   const semanticId = id => `deka-semantic-${mountId}-${id}`
   const semanticKey = event => {
-    if(event.isComposing || event.defaultPrevented) return
+    if(event.isComposing || event.defaultPrevented || event.target !== event.currentTarget) return
     try {
       const id = event.currentTarget.dataset.dekaNode
       if (event.key === 'Tab') {
         if(app.modal() && app.key(event.key,event.shiftKey)) { event.preventDefault(); event.stopPropagation() }
-      } else if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','Escape','Enter',' '].includes(event.key)) {
+      } else {
         if(app.key_to(id,event.key)) { if(!inputs.has(id) || (event.key==='Escape' && app.modal())) event.preventDefault(); event.stopPropagation() }
       }
       draw()
@@ -249,7 +249,9 @@ export function mount(app, canvas, inspect = false) {
       if (node.tabIndex !== null && !node.disabled) element.tabIndex = node.tabIndex
       else if (!inputs.has(node.id)) element.removeAttribute('tabindex')
       if (node.role === 'text') element.textContent = node.name
-      const container = semantics.get(node.parent) ?? parent
+      // A modal can make its former ancestors inert in this same frame. Never
+      // attach visible controls to an ancestor that sync is about to remove.
+      const container = active.has(node.parent) ? (semantics.get(node.parent) ?? parent) : parent
       if (!ordered.has(container)) ordered.set(container, [])
       ordered.get(container).push(element)
       if (element.parentElement !== container) container.append(element)

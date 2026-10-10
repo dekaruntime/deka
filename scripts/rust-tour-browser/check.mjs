@@ -46,8 +46,9 @@ await new Promise(done=>server.listen(0,'127.0.0.1',done))
 const url=`http://127.0.0.1:${server.address().port}`
 const browser=await chromium.launch({executablePath:process.env.RUST_TOUR_CHROME})
 const metrics=[]
+const componentsOnly=process.argv.includes('--components-only')
 try {
-  for(const [scale,reduced] of [[1,false],[2,false],[1,true]]) {
+  for(const [scale,reduced] of (componentsOnly ? [] : [[1,false],[2,false],[1,true]])) {
     const context=await browser.newContext({deviceScaleFactor:scale,reducedMotion:reduced?'reduce':'no-preference',viewport:{width:1200,height:900}})
     const page=await context.newPage();page.setDefaultTimeout(30000);const errors=[]
     page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
@@ -145,7 +146,7 @@ try {
   const profile=page.getByRole('textbox',{name:'Profile name',exact:true})
   const closeDialog=page.getByRole('button',{name:'Close dialog',exact:true})
   assert.equal(await dialog.getAttribute('aria-modal'),'true')
-  assert.equal(await profile.evaluate(e=>e===document.activeElement),true)
+  assert.equal(await profile.evaluate(e=>e===document.activeElement),true,'modal focus reaches the actual profile input')
   assert.equal(await page.getByRole('button',{name:'Open dialog',exact:true}).count(),0)
   await page.keyboard.press('Shift+Tab')
   assert.equal(await closeDialog.evaluate(e=>e===document.activeElement),true)
@@ -161,7 +162,7 @@ try {
   assert.equal(await dialog.count(),0)
   assert.equal(await page.getByRole('button',{name:'Open dialog',exact:true}).evaluate(e=>e===document.activeElement),true)
   await page.keyboard.press('Enter'); await page.keyboard.press('Shift+Tab'); await page.keyboard.press('Space')
-  assert.equal(await dialog.count(),0)
+  assert.equal(await dialog.count(),0,'Space closes the focused modal close button')
   assert.equal(await page.getByRole('button',{name:'Open dialog',exact:true}).evaluate(e=>e===document.activeElement),true)
   await startComponent('component-menu-light')
   const actions=page.getByRole('button',{name:'Actions',exact:true})
@@ -183,6 +184,7 @@ try {
   assert.equal(await page.getByRole('menu').count(),0)
   assert.deepEqual(await page.evaluate(()=>window.errors),[])
   console.log('PASS: Badge/Toast/Dialog/Menu signal effects, modal Tab/Escape/restore/containment and menu DOM navigation')
+  if (!componentsOnly) {
   await page.goto(url+'/?fixture=input-fixture');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start())
   const input=page.getByRole('textbox',{name:'Name',exact:true});
   assert.equal(await page.getByRole('textbox',{name:'Notes',exact:true}).count(),1);
@@ -245,6 +247,7 @@ try {
   const worst=metrics.reduce((a,b)=>mean(a.ms)>mean(b.ms)?a:b)
   console.log(JSON.stringify({largestSource:largest.id,meanMs:mean(samples),p95Ms:samples[Math.floor(samples.length*.95)],worstMeanLesson:worst.lesson,worstMeanMs:mean(worst.ms),samples:samples.length}))
   assert(mean(samples)<5,'largest lesson must stay below 5ms/frame')
+  }
 } finally {await browser.close();await new Promise(done=>server.close(done))}
 function mean(numbers){return numbers.reduce((a,b)=>a+b,0)/numbers.length}
 async function snapshot(page) {return page.evaluate(()=>({...window.scene,images:window.scene.images.map(({rgba,...image})=>({...image,hash:rgba.reduce((hash,byte)=>(Math.imul(hash,33)^byte)>>>0,5381)})).sort((a,b)=>a.id.localeCompare(b.id))}))}

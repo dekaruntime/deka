@@ -52,6 +52,10 @@ Validation tools:
 - `python3 scripts/rust-ui-components/browser-revert.py .tmp/components-tour`
   — remove the packaged draw guard, require the original image-loss assertion
   to fail, restore the package in finally, then pass the complete browser gate.
+- `python3 scripts/rust-ui-components/modal-browser-revert.py .tmp/components-tour`
+  — revert live ancestor selection and exact key-target routing, require actual
+  modal DOM focus and Space activation assertions to fail, restore the hosts,
+  then pass all component DOM interactions.
 
 Badge exposes live passive status. Toast has explicit open/message signals and
 an accessible dismissal action. Dialog mounts content per opening, makes the
