@@ -43,6 +43,8 @@ impl Application for App {
             clickable,
             selected: None,
             controls: None,
+            expanded: None,
+            has_popup: false,
         };
         vec![
             node(

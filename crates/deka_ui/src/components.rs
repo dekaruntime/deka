@@ -412,3 +412,299 @@ pub fn Tabs(
         // Hidden zero-height panels must not add inter-panel layout gaps.
         .child(View::element("div").child(panels))
 }
+
+/// A passive, live status label. It never adds a stop to keyboard focus order.
+#[component]
+pub fn Badge(
+    label: Signal<String>,
+    #[prop(default)] id: String,
+    #[prop(default = signal(Theme::Light))] theme: Signal<Theme>,
+) -> View {
+    identified(
+        View::element("span")
+            .attr("role", "status")
+            .attr("aria-label", move || label.get().unwrap_or_default())
+            .attr("class", move || {
+                format!(
+                    "self-start px-3 py-1 rounded-lg {}",
+                    theme.get().unwrap_or_default().action_class(true)
+                )
+            })
+            .child(View::live_text(move || label.get().unwrap_or_default())),
+        id,
+    )
+}
+
+/// A controlled notification. Dismissal is immediate; the renderer owns exit
+/// motion. Applications own notification lifetime and scheduling explicitly.
+#[component]
+pub fn Toast(
+    message: Signal<String>,
+    open: Signal<bool>,
+    #[prop(default)] id: String,
+    #[prop(default = signal(Theme::Light))] theme: Signal<Theme>,
+) -> View {
+    View::dynamic(move || {
+        open.get().unwrap_or(false).then(|| {
+        identified(View::element("div")
+            .attr("role", "status")
+            .attr("aria-label", move || message.get().unwrap_or_default())
+            .attr("class", move || format!("p-4 gap-3 rounded-lg {} {} {}", theme.get().unwrap_or_default().surface_class(), MotionPreset::Enter.classes(), MotionPreset::Exit.classes()))
+            .child(View::live_text(move || message.get().unwrap_or_default()))
+            .child(crate::view! {<Button label="Dismiss notification" theme={theme} on_press={Rc::new(move || open.set(false))}/>}), id.clone())
+    })
+    })
+}
+
+/// A controlled modal. The host enters, traps and restores focus; Escape closes
+/// from any descendant. Content is mounted once per opening and disposed on
+/// close. Keep persistent content state in parent signals.
+#[component]
+pub fn Dialog(
+    id: String,
+    label: String,
+    open: Signal<bool>,
+    content: Rc<dyn Fn() -> View>,
+    #[prop(default = signal(Theme::Light))] theme: Signal<Theme>,
+) -> View {
+    if id.is_empty() || label.is_empty() {
+        return View::error("Dialog requires a nonempty id and label");
+    }
+    View::dynamic(move || {
+        open.get().unwrap_or(false).then(|| {
+        View::element("div")
+            .attr("id", id.clone())
+            .attr("role", "dialog")
+            .attr("aria-modal", "true")
+            .attr("aria-label", label.clone())
+            .attr("tabIndex", -1)
+            .attr("class", move || format!("p-6 gap-4 rounded-lg {} {} {}", theme.get().unwrap_or_default().surface_class(), MotionPreset::Enter.classes(), MotionPreset::Exit.classes()))
+            .on(EventKind::KeyDown, move |event| {
+                if matches!(event, Event::KeyDown(key) if key == "Escape") {
+                    open.set(false);
+                }
+            })
+            .child(View::element("p").attr("class", "text-xl").child(label.clone()))
+            .child(content())
+            .child(crate::view! {<Button label="Close dialog" theme={theme} on_press={Rc::new(move || open.set(false))}/>})
+    })
+    })
+}
+
+/// One fixed action in a menu. Keys must be unique and nonempty.
+#[derive(Clone)]
+pub struct MenuAction {
+    pub key: String,
+    pub label: String,
+    pub disabled: bool,
+    pub on_select: Rc<dyn Fn()>,
+}
+impl MenuAction {
+    pub fn new(
+        key: impl Into<String>,
+        label: impl Into<String>,
+        on_select: impl Fn() + 'static,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            disabled: false,
+            on_select: Rc::new(on_select),
+        }
+    }
+}
+/// A menu button with roving item focus, Up/Down wrap, Home/End, disabled
+/// skipping, Enter/Space selection and Escape dismissal. Tab leaves the menu.
+#[component]
+pub fn Menu(
+    id: String,
+    label: String,
+    items: Vec<MenuAction>,
+    #[prop(default = signal(Theme::Light))] theme: Signal<Theme>,
+) -> View {
+    let mut unique = std::collections::BTreeSet::new();
+    if id.is_empty()
+        || items
+            .iter()
+            .any(|item| item.key.is_empty() || !unique.insert(item.key.clone()))
+    {
+        return View::error("Menu requires a nonempty id and unique nonempty keys");
+    }
+    let open = signal(false);
+    let active = signal(0usize);
+    let trigger = node_ref();
+    let menu_id = format!("{id}-items");
+    let refs = Rc::new(items.iter().map(|_| node_ref()).collect::<Vec<_>>());
+    let items = Rc::new(items);
+    let enabled = Rc::new(
+        items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| (!item.disabled).then_some(i))
+            .collect::<Vec<_>>(),
+    );
+    let focus_item: Rc<dyn Fn(usize)> = {
+        let refs = refs.clone();
+        Rc::new(move |index| {
+            active.set(index);
+            if let Err(error) = refs[index].focus() {
+                eprintln!("deka menu focus: {error}");
+            }
+        })
+    };
+    let focus_trigger: Rc<dyn Fn()> = {
+        let trigger = trigger.clone();
+        Rc::new(move || {
+            open.set(false);
+            if let Some(node) = trigger.get().and_then(|n| n.as_element()) {
+                if let Err(error) = node.focus() {
+                    eprintln!("deka menu focus: {error}");
+                }
+            }
+        })
+    };
+    let menu_label = label.clone();
+    let menu = View::dynamic({
+        let menu_id = menu_id.clone();
+        let enabled = enabled.clone();
+        let focus_item = focus_item.clone();
+        let focus_trigger = focus_trigger.clone();
+        move || {
+            open.get().unwrap_or(false).then(|| {
+                let rows = items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| {
+                        let action = item.on_select.clone();
+                        let key_action = action.clone();
+                        let key_close = focus_trigger.clone();
+                        let close = focus_trigger.clone();
+                        let focus = focus_item.clone();
+                        let dismiss = focus_trigger.clone();
+                        let enabled = enabled.clone();
+                        View::element("button")
+                            .attr("role", "menuitem")
+                            .attr("aria-label", item.label.clone())
+                            .attr("disabled", item.disabled)
+                            .attr("tabIndex", move || {
+                                if active.get().unwrap_or_default() == index {
+                                    0
+                                } else {
+                                    -1
+                                }
+                            })
+                            .attr("class", move || {
+                                format!(
+                                    "px-4 py-2 rounded-lg {}",
+                                    theme
+                                        .get()
+                                        .unwrap_or_default()
+                                        .action_class(active.get().unwrap_or_default() == index)
+                                )
+                            })
+                            .node_ref(refs[index].clone())
+                            .on_click(move |_| {
+                                action();
+                                close();
+                            })
+                            .on(EventKind::KeyDown, move |event| {
+                                let Event::KeyDown(key) = event else { return };
+                                if key == "Escape" {
+                                    dismiss();
+                                    return;
+                                }
+                                let Some(position) = enabled.iter().position(|i| *i == index)
+                                else {
+                                    return;
+                                };
+                                let next = match key.as_str() {
+                                    "ArrowDown" => enabled[(position + 1) % enabled.len()],
+                                    "ArrowUp" => {
+                                        enabled[(position + enabled.len() - 1) % enabled.len()]
+                                    }
+                                    "Home" => enabled[0],
+                                    "End" => *enabled.last().unwrap(),
+                                    "Enter" | " " => {
+                                        key_action();
+                                        key_close();
+                                        return;
+                                    }
+                                    _ => return,
+                                };
+                                focus(next);
+                            })
+                            .child(item.label.clone())
+                    })
+                    .collect::<Vec<_>>();
+                View::element("div")
+                    .attr("id", menu_id.clone())
+                    .attr("role", "menu")
+                    .attr("aria-label", menu_label.clone())
+                    .attr("class", move || {
+                        format!(
+                            "p-2 gap-2 rounded-lg {} {} {}",
+                            theme.get().unwrap_or_default().surface_class(),
+                            MotionPreset::Enter.classes(),
+                            MotionPreset::Exit.classes()
+                        )
+                    })
+                    .child(rows)
+            })
+        }
+    });
+    // Ref bindings become available synchronously when open mounts the items.
+    let show: Rc<dyn Fn(bool)> = {
+        let enabled = enabled.clone();
+        let focus_item = focus_item.clone();
+        Rc::new(move |last| {
+            open.set(true);
+            if let Some(index) = if last {
+                enabled.last()
+            } else {
+                enabled.first()
+            } {
+                focus_item(*index);
+            }
+        })
+    };
+    let click_show = show.clone();
+    let key_show = show;
+    let close = focus_trigger;
+    let key_close = close.clone();
+    View::element("div")
+        .attr("id", id)
+        .attr("class", "gap-2")
+        .child(
+            View::element("button")
+                .attr("aria-label", label.clone())
+                .attr("aria-haspopup", "menu")
+                .attr("aria-controls", menu_id)
+                .attr("aria-expanded", move || open.get().unwrap_or(false))
+                .attr("class", move || {
+                    format!(
+                        "px-4 py-2 rounded-lg {}",
+                        theme.get().unwrap_or_default().action_class(true)
+                    )
+                })
+                .node_ref(trigger)
+                .on_click(move |_| {
+                    if open.get().unwrap_or(false) {
+                        close();
+                    } else {
+                        click_show(false);
+                    }
+                })
+                .on(EventKind::KeyDown, move |event| {
+                    if let Event::KeyDown(key) = event {
+                        match key.as_str() {
+                            "ArrowDown" | "Enter" | " " => key_show(false),
+                            "ArrowUp" => key_show(true),
+                            "Escape" => key_close(),
+                            _ => {}
+                        }
+                    }
+                })
+                .child(label),
+        )
+        .child(menu)
+}

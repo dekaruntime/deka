@@ -215,3 +215,23 @@ required-features = ["desktop"]
 name = "showcase-tabs"
 path = "examples/showcase/tabs.rs"
 required-features = ["desktop"]
+
+[[example]]
+name = "showcase-badge"
+path = "examples/showcase/badge.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "showcase-toast"
+path = "examples/showcase/toast.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "showcase-dialog"
+path = "examples/showcase/dialog.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "showcase-menu"
+path = "examples/showcase/menu.rs"
+required-features = ["desktop"]

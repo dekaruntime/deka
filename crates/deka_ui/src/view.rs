@@ -443,10 +443,14 @@ struct Listener {
     kind: EventKind,
     callback: Callback,
 }
+pub(crate) enum FocusRequest {
+    Node(NodeHandle),
+    Reference(crate::NodeRef),
+}
 #[derive(Default)]
 pub(crate) struct Context {
     pub(crate) tree: RefCell<Tree>,
-    pub(crate) focus_request: RefCell<Option<NodeHandle>>,
+    pub(crate) focus_request: RefCell<Option<FocusRequest>>,
     #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
     pub(crate) hot_reload: RefCell<crate::hot_reload::Registry>,
     pub(crate) scope_id: u64,
@@ -1260,6 +1264,10 @@ impl UiApp {
     }
     /// Typed dispatch used by platform event adapters.
     pub fn dispatch_to(&self, node_id: &str, event: Event) -> bool {
+        let modal = matches!(&event, Event::KeyDown(key) if key == "Escape")
+            .then(|| deka_native_ui::modal_root(&self.semantics()).map(str::to_owned))
+            .flatten();
+        let node_id = modal.as_deref().unwrap_or(node_id);
         let token = self
             .context
             .listeners
@@ -1355,6 +1363,10 @@ impl Application for UiApp {
                 Some("tablist") => SemanticRole::TabList,
                 Some("tab") => SemanticRole::Tab,
                 Some("tabpanel") => SemanticRole::TabPanel,
+                Some("status") => SemanticRole::Status,
+                Some("dialog") => SemanticRole::Dialog,
+                Some("menu") => SemanticRole::Menu,
+                Some("menuitem") => SemanticRole::MenuItem,
                 _ => match tag.as_deref() {
                     Some("button") => SemanticRole::Button,
                     Some("input") => SemanticRole::TextInput,
@@ -1404,6 +1416,8 @@ impl Application for UiApp {
                 clickable,
                 selected: node.attribute("aria-selected").map(|v| v == "true"),
                 controls: node.attribute("aria-controls"),
+                expanded: node.attribute("aria-expanded").map(|v| v == "true"),
+                has_popup: node.attribute("aria-haspopup").as_deref() == Some("menu"),
             });
             // A button's descendant text supplies its accessible name.
             if !matches!(role, SemanticRole::Button | SemanticRole::Tab) {
@@ -1415,6 +1429,18 @@ impl Application for UiApp {
         let mut output = vec![];
         if let Some(root) = self.context.tree.borrow().root.as_ref() {
             visit(root, None, false, false, &mut output);
+        }
+        // A modal's background remains painted but is inert for all host ingress.
+        if let Some(modal) = deka_native_ui::modal_root(&output).map(str::to_owned) {
+            let mut inside = std::collections::HashSet::from([modal]);
+            for node in &output {
+                if node.parent.as_ref().is_some_and(|id| inside.contains(id)) {
+                    inside.insert(node.id.clone());
+                }
+            }
+            for node in &mut output {
+                node.hidden |= !inside.contains(&node.id);
+            }
         }
         for node in &mut output {
             node.controls = node.controls.take().and_then(|id| {
@@ -1471,6 +1497,10 @@ impl Application for UiApp {
             .focus_request
             .borrow_mut()
             .take()
+            .and_then(|request| match request {
+                FocusRequest::Node(node) => Some(node),
+                FocusRequest::Reference(reference) => reference.get().map(|node| node.node),
+            })
             .filter(|node| self.context.is_attached(node))
             .map(|node| node.renderer_id())
     }
@@ -1532,6 +1562,13 @@ impl Application for UiApp {
     }
 
     fn text_input(&self, id: &str, value: String) -> bool {
+        if !self
+            .semantics()
+            .iter()
+            .any(|node| node.id == id && !node.hidden && !node.disabled)
+        {
+            return false;
+        }
         fn find(node: &NodeHandle, id: &str) -> Option<NodeHandle> {
             if node.renderer_id() == id {
                 return Some(node.clone());

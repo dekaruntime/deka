@@ -258,5 +258,8 @@ pub fn is_supported_attribute(name: &str) -> bool {
             | "role"
             | "aria-selected"
             | "aria-controls"
+            | "aria-modal"
+            | "aria-expanded"
+            | "aria-haspopup"
     )
 }

@@ -157,10 +157,14 @@ export function mount(app, canvas, inspect = false) {
   const mountId = nextMount++
   const semanticId = id => `deka-semantic-${mountId}-${id}`
   const semanticKey = event => {
-    if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return
+    if(event.isComposing || event.defaultPrevented) return
     try {
       const id = event.currentTarget.dataset.dekaNode
-      if (app.key_to(id, event.key)) event.preventDefault()
+      if (event.key === 'Tab') {
+        if(app.modal() && app.key(event.key,event.shiftKey)) { event.preventDefault(); event.stopPropagation() }
+      } else if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','Escape','Enter',' '].includes(event.key)) {
+        if(app.key_to(id,event.key)) { if(!inputs.has(id) || (event.key==='Escape' && app.modal())) event.preventDefault(); event.stopPropagation() }
+      }
       draw()
     } catch(error) { fail(error) }
   }
@@ -173,7 +177,9 @@ export function mount(app, canvas, inspect = false) {
   const inspectedImages = new Map()
   const syncInputs = () => {
     const active = new Set()
+    const visible = new Set(JSON.parse(app.semantic_nodes()).filter(node=>!node.hidden).map(node=>node.id))
     for (const control of JSON.parse(app.inputs())) {
+      if(!visible.has(control.id)) continue
       const node = scene.nodes.find(node => node.id === control.id)
       if (!node || node.rect.width <= 0 || node.rect.height <= 0) continue
       active.add(control.id)
@@ -185,9 +191,9 @@ export function mount(app, canvas, inspect = false) {
         input.addEventListener('compositionstart', () => { input.dekaComposing = true })
         input.addEventListener('compositionend', () => { input.dekaComposing = false; try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } })
         input.addEventListener('input', () => { if (!input.dekaComposing) { try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } } })
-        input.addEventListener('keydown', event => { if(event.isComposing) return; try { app.key_to(control.id,event.key); draw() } catch(error) { fail(error) } })
+        input.addEventListener('keydown', semanticKey)
         input.addEventListener('focus', () => { try { app.focus_node(control.id, input.matches(":focus-visible")); draw() } catch(error) { fail(error) } })
-        input.addEventListener('blur', () => { app.blur(); draw() })
+        input.addEventListener('blur', () => { if(!drawing) { app.blur(); draw() } })
         inputs.set(control.id,input); parent.append(input)
       }
       const value = control.value ?? ""
@@ -212,22 +218,26 @@ export function mount(app, canvas, inspect = false) {
       active.add(node.id)
       let element = inputs.get(node.id) ?? semantics.get(node.id)
       if (!element) {
-        element = document.createElement((node.role === 'button' || node.role === 'tab') ? 'button' : node.role === 'text' ? 'span' : 'div')
-        if (['group','list','listitem','tablist','tabpanel'].includes(node.role)) { element.setAttribute('role', node.role); element.style.display='contents' }
-        else if (node.role === 'button' || node.role === 'tab') {
+        element = document.createElement((['button','tab','menuitem'].includes(node.role)) ? 'button' : node.role === 'text' ? 'span' : 'div')
+        element.addEventListener('keydown', semanticKey)
+        if (['group','list','listitem','tablist','tabpanel','status','dialog','menu'].includes(node.role)) { element.setAttribute('role', node.role); element.style.display='contents' }
+        else if (['button','tab','menuitem'].includes(node.role)) {
           element.style.cssText='position:absolute;opacity:0;pointer-events:none;'
           element.addEventListener('click', () => { try { app.activate(node.id); draw() } catch(error) { fail(error) } })
         } else element.style.cssText='position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);'
         element.addEventListener('focus', () => { try { app.focus_node(node.id, element.matches(":focus-visible")); draw() } catch(error) { fail(error) } })
-        element.addEventListener('blur', () => { app.blur(); draw() })
+        element.addEventListener('blur', () => { if(!drawing) { app.blur(); draw() } })
         semantics.set(node.id, element)
       }
       element.id = semanticId(node.id)
       element.dataset.dekaNode = node.id
-      if (node.role === 'tab') {
-        element.setAttribute('role', 'tab')
-        element.addEventListener('keydown', semanticKey)
-      }
+      if (node.role === 'tab' || node.role === 'menuitem') element.setAttribute('role', node.role)
+      if (node.role === 'dialog') element.setAttribute('aria-modal','true')
+      if (node.role === 'status') element.setAttribute('aria-live','polite')
+      if (node.expanded !== null) element.setAttribute('aria-expanded', String(node.expanded))
+      else element.removeAttribute('aria-expanded')
+      if (node.hasPopup) element.setAttribute('aria-haspopup', 'menu')
+      else element.removeAttribute('aria-haspopup')
       if (node.selected !== null) element.setAttribute('aria-selected', String(node.selected))
       else element.removeAttribute('aria-selected')
       if (node.controls) element.setAttribute('aria-controls', semanticId(node.controls))
@@ -243,7 +253,7 @@ export function mount(app, canvas, inspect = false) {
       if (!ordered.has(container)) ordered.set(container, [])
       ordered.get(container).push(element)
       if (element.parentElement !== container) container.append(element)
-      if (node.role === 'button' || node.role === 'tab') {
+      if (['button','tab','menuitem'].includes(node.role)) {
         const box = scene.nodes.find(n=>n.id===node.id)?.rect
         if (box) {
           const bounds=canvas.getBoundingClientRect(), origin=parent.getBoundingClientRect()
@@ -311,7 +321,14 @@ export function mount(app, canvas, inspect = false) {
     try { if(app.context_menu(event.clientX-bounds.left,event.clientY-bounds.top)) { event.preventDefault(); draw() } } catch(error) { fail(error) }
   }
   const key = event => { try { if(app.key(event.key,event.shiftKey)) event.preventDefault(); draw() } catch(error) { fail(error) } }
-  const blur = () => { app.blur(); draw() }
+  const blur = () => { if(!drawing) { app.blur(); draw() } }
+  const containFocus = event => {
+    if(disposed || drawing || !app.modal()) return
+    if([...inputs.values(),...semantics.values()].includes(event.target)) return
+    const target = inputs.get(app.focus()) ?? semantics.get(app.focus())
+    target?.focus({preventScroll:true})
+  }
+  document.addEventListener('focusin',containFocus)
   // Explicit deterministic presentation clock for the same scripts as the native gate.
   const command = event => {
     if (!inspect) return
@@ -329,6 +346,7 @@ export function mount(app, canvas, inspect = false) {
   draw()
   return {dispose() {
     if(disposed) return; disposed=true; mounts.delete(mountId); pending.delete(mountId); cancelAnimationFrame(request);observer.disconnect()
+    document.removeEventListener('focusin',containFocus)
     window.removeEventListener('resize',draw);motion.removeEventListener('change',draw);dpr.removeEventListener('change',changedDpr)
     canvas.removeEventListener('contextmenu',contextMenu);canvas.removeEventListener('pointerup',pointer);canvas.removeEventListener('keydown',key);canvas.removeEventListener('blur',blur)
     canvas.removeEventListener('webglcontextlost',lost);canvas.removeEventListener('webglcontextrestored',restored);canvas.removeEventListener('deka:clock',command)

@@ -339,7 +339,7 @@ fn tabs_pointer_roving_keyboard_wrap_disabled_skipping_panels_and_signals() {
 }
 
 #[test]
-fn live_theme_signal_changes_all_four_components_without_replacing_controls() {
+fn live_theme_signal_changes_all_components_without_replacing_controls() {
     let mut theme = None;
     let app = UiApp::new(|| {
         let current = signal(Theme::Light);
@@ -349,6 +349,10 @@ fn live_theme_signal_changes_all_four_components_without_replacing_controls() {
             <Input label="Name" theme={current} value={signal(String::new())}/>
             <List label="Projects" theme={current} selected={signal(None)} items={signal(vec![ListItem::new("a","Alpha")])}/>
             <Tabs id="tabs" label="Workspace" theme={current} selected={signal("a".into())} items={vec![TabItem::new("a","Overview",||View::text("Panel"))]}/>
+            <Badge label={signal("Ready".into())} theme={current}/>
+            <Toast message={signal("Saved".into())} open={signal(true)} theme={current}/>
+            <Dialog id="dialog" label="Profile" open={signal(true)} theme={current} content={Rc::new(|| View::text("Content"))}/>
+            <Menu id="menu" label="Actions" items={vec![MenuAction::new("edit", "Edit", ||{})]} theme={current}/>
         </view>}
     });
     let buttons = app.tree().query_all("button").unwrap();
@@ -416,4 +420,324 @@ fn enter_exit_and_repeat_press_present_motion_and_reduced_motion_snaps() {
     assert!(exit.children[1].on_click.is_none());
     assert_eq!(normal.sample(&removed, 600., false).0.children.len(), 1);
     assert_eq!(reduced.sample(&removed, 400., true).0.children.len(), 1);
+}
+
+#[test]
+fn badge_live_status_click_keyboard_signal_and_focus_skipping() {
+    let mut state = None;
+    let app = UiApp::new(|| {
+        let status = signal("Ready".to_owned());
+        state = Some(status);
+        view! {<view class="p-4 gap-3">
+            <Badge label={status}/>
+            <Button label="Update status" on_press={Rc::new(move || status.set("Published".into()))}/>
+            <Input label="Next field" value={signal(String::new())}/>
+        </view>}
+    });
+    let mut browser = BrowserApp::new(app);
+    assert!(contains(&frame(&mut browser), "Ready"));
+    assert!(browser.key("Tab", false));
+    assert_eq!(browser.focus(), Some(id(&browser, "Update status")));
+    assert!(browser.key("Enter", false));
+    assert_eq!(state.unwrap().get().unwrap(), "Published");
+    assert!(contains(&frame(&mut browser), "Published"));
+    let status = semantics(&browser)
+        .into_iter()
+        .find(|n| n["role"] == "status")
+        .unwrap();
+    assert_eq!(status["name"], "Published");
+    assert!(status["tabIndex"].is_null());
+    assert!(browser.key("Tab", false));
+    assert_eq!(browser.focus(), Some(id(&browser, "Next field")));
+    state.unwrap().set("Ready".into());
+    click(&mut browser, "Update status");
+    assert_eq!(state.unwrap().get().unwrap(), "Published");
+}
+
+#[test]
+fn toast_dismissal_pointer_keyboard_signal_focus_and_remount() {
+    let mut state = None;
+    let app = UiApp::new(|| {
+        let open = signal(true);
+        let message = signal("Saved".to_owned());
+        state = Some((open, message));
+        view! {<view class="p-4 gap-3">
+            <Button label="Show notification" on_press={Rc::new(move || open.set(true))}/>
+            <Toast message={message} open={open}/>
+            <Input label="Next field" value={signal(String::new())}/>
+        </view>}
+    });
+    let mut browser = BrowserApp::new(app);
+    assert!(contains(&frame(&mut browser), "Saved"));
+    state.unwrap().1.set("Published".into());
+    assert!(contains(&frame(&mut browser), "Published"));
+    assert!(browser.key("Tab", false));
+    assert!(browser.key("Tab", false));
+    assert_eq!(browser.focus(), Some(id(&browser, "Dismiss notification")));
+    assert!(browser.key(" ", false));
+    assert!(!state.unwrap().0.get().unwrap());
+    assert!(!contains(&frame(&mut browser), "Published"));
+    assert_eq!(browser.focus(), None);
+    click(&mut browser, "Show notification");
+    frame(&mut browser);
+    click(&mut browser, "Dismiss notification");
+    assert!(!state.unwrap().0.get().unwrap());
+    frame(&mut browser);
+    browser.blur();
+    browser.key("Tab", false);
+    browser.key("Tab", false);
+    assert_eq!(browser.focus(), Some(id(&browser, "Next field")));
+}
+
+fn dialog_fixture() -> (BrowserApp, Signal<bool>, Signal<String>, Signal<i32>) {
+    let mut state = None;
+    let app = UiApp::new(|| {
+        let open = signal(false);
+        let text = signal("Sami".to_owned());
+        let outside = signal(0);
+        state = Some((open, text, outside));
+        view! {<view class="p-4 gap-3">
+            <Button label="Open dialog" on_press={Rc::new(move || open.set(true))}/>
+            <Input label="Outside field" value={signal(String::new())}/>
+            <Button label="Outside action" on_press={Rc::new(move || {outside.update(|n| *n += 1).unwrap();})}/>
+            <Dialog id="dialog" label="Edit profile" open={open} content={Rc::new(move || view! {<view>
+                <Input label="Profile name" value={text}/>
+                <Button label="Disabled action" disabled={signal(true)} on_press={Rc::new(||{})}/>
+            </view>})}/>
+        </view>}
+    });
+    let (open, text, outside) = state.unwrap();
+    (BrowserApp::new(app), open, text, outside)
+}
+
+#[test]
+fn dialog_modal_entry_tab_wrap_inert_background_escape_restore_and_signals() {
+    let (mut browser, open, text, outside) = dialog_fixture();
+    frame(&mut browser);
+    let opener = id(&browser, "Open dialog");
+    let outside_id = id(&browser, "Outside action");
+    let outside_field = id(&browser, "Outside field");
+    click(&mut browser, "Open dialog");
+    assert!(open.get().unwrap());
+    frame(&mut browser);
+    let first = id(&browser, "Profile name");
+    let close = id(&browser, "Close dialog");
+    assert_eq!(
+        browser.focus(),
+        Some(first.clone()),
+        "enter modal at first enabled control"
+    );
+    assert!(!browser.focus_node(&outside_field, true));
+    assert!(!browser.input(&outside_field, "Blocked"));
+    assert!(!browser.activate(&outside_id));
+    assert_eq!(outside.get().unwrap(), 0);
+    assert!(browser.key("Tab", true));
+    assert_eq!(
+        browser.focus(),
+        Some(close.clone()),
+        "Shift-Tab wraps to last modal control"
+    );
+    assert!(browser.key("Tab", false));
+    assert_eq!(browser.focus(), Some(first.clone()));
+    assert!(browser.key("Tab", false));
+    assert_eq!(browser.focus(), Some(close));
+    assert!(browser.key("Tab", false));
+    assert_eq!(browser.focus(), Some(first.clone()));
+    assert!(browser.input(&first, "Ava"));
+    assert_eq!(text.get().unwrap(), "Ava");
+    assert!(browser.key("Escape", false));
+    assert!(!open.get().unwrap());
+    frame(&mut browser);
+    assert_eq!(
+        browser.focus(),
+        Some(opener.clone()),
+        "restore opener after Escape"
+    );
+    assert!(!semantics(&browser).iter().any(|n| n["role"] == "dialog"));
+    click(&mut browser, "Open dialog");
+    frame(&mut browser);
+    click(&mut browser, "Close dialog");
+    frame(&mut browser);
+    assert_eq!(browser.focus(), Some(opener));
+    assert_eq!(text.get().unwrap(), "Ava", "parent state survives remount");
+}
+
+#[test]
+fn dialog_programmatic_open_close_fallback_and_removed_opener() {
+    let (mut browser, open, _, _) = dialog_fixture();
+    frame(&mut browser);
+    open.set(true);
+    frame(&mut browser);
+    assert_eq!(browser.focus(), Some(id(&browser, "Profile name")));
+    open.set(false);
+    frame(&mut browser);
+    assert_eq!(
+        browser.focus(),
+        None,
+        "no opener to restore on programmatic opening"
+    );
+    let mut state = None;
+    let app = UiApp::new(|| {
+        let open = signal(false);
+        let show_opener = signal(true);
+        state = Some((open, show_opener));
+        view! {<view>
+            {move || show_opener.get().unwrap().then(|| view! {<Button label="Open" on_press={Rc::new(move || open.set(true))}/>})}
+            <Dialog id="empty" label="Empty dialog" open={open} content={Rc::new(|| View::text("Information"))}/>
+        </view>}
+    });
+    let mut browser = BrowserApp::new(app);
+    frame(&mut browser);
+    click(&mut browser, "Open");
+    frame(&mut browser);
+    state.unwrap().1.set(false);
+    frame(&mut browser);
+    browser.key("Escape", false);
+    frame(&mut browser);
+    assert_eq!(
+        browser.focus(),
+        None,
+        "removed opener must never receive focus"
+    );
+}
+
+#[test]
+fn menu_pointer_keyboard_roving_wrap_disabled_escape_restore_and_signal() {
+    let mut choice = None;
+    let app = UiApp::new(|| {
+        let selected = signal("None".to_owned());
+        choice = Some(selected);
+        let mut disabled = MenuAction::new("disabled", "Unavailable", || panic!("disabled action"));
+        disabled.disabled = true;
+        let items = vec![
+            MenuAction::new("edit", "Edit", move || selected.set("Edit".into())),
+            disabled,
+            MenuAction::new("duplicate", "Duplicate", move || {
+                selected.set("Duplicate".into())
+            }),
+        ];
+        view! {<view class="p-4 gap-3"><Menu id="actions" label="Actions" items={items}/><Input label="Next field" value={signal(String::new())}/></view>}
+    });
+    let mut browser = BrowserApp::new(app);
+    frame(&mut browser);
+    let trigger = id(&browser, "Actions");
+    assert!(browser.key("Tab", false));
+    assert_eq!(browser.focus(), Some(trigger.clone()));
+    assert!(browser.key("ArrowUp", false));
+    frame(&mut browser);
+    let edit = id(&browser, "Edit");
+    let duplicate = id(&browser, "Duplicate");
+    assert_eq!(browser.focus(), Some(duplicate.clone()));
+    assert!(browser.key("ArrowDown", false));
+    assert_eq!(browser.focus(), Some(edit.clone()));
+    assert!(browser.key("ArrowUp", false));
+    assert_eq!(browser.focus(), Some(duplicate.clone()));
+    assert!(browser.key("Home", false));
+    assert_eq!(browser.focus(), Some(edit.clone()));
+    assert!(browser.key("End", false));
+    assert_eq!(browser.focus(), Some(duplicate));
+    assert!(browser.key("Enter", false));
+    assert_eq!(choice.unwrap().get().unwrap(), "Duplicate");
+    frame(&mut browser);
+    assert_eq!(browser.focus(), Some(trigger.clone()));
+    assert!(!semantics(&browser).iter().any(|n| n["role"] == "menuitem"));
+    click(&mut browser, "Actions");
+    frame(&mut browser);
+    click(&mut browser, "Edit");
+    assert_eq!(choice.unwrap().get().unwrap(), "Edit");
+    frame(&mut browser);
+    click(&mut browser, "Actions");
+    frame(&mut browser);
+    assert!(browser.key("Escape", false));
+    frame(&mut browser);
+    assert_eq!(browser.focus(), Some(trigger));
+    assert_eq!(
+        choice.unwrap().get().unwrap(),
+        "Edit",
+        "Escape never selects"
+    );
+    browser.key(" ", false);
+    frame(&mut browser);
+    browser.key("Tab", false);
+    assert_eq!(browser.focus(), Some(id(&browser, "Next field")));
+}
+
+#[test]
+fn nested_dialog_close_restores_parent_then_original_opener() {
+    let mut state = None;
+    let app = UiApp::new(|| {
+        let parent = signal(false);
+        let child = signal(false);
+        state = Some((parent, child));
+        view! {<view class="p-4 gap-3">
+            <Button label="Open parent" on_press={Rc::new(move || parent.set(true))}/>
+            <Dialog id="parent" label="Parent" open={parent} content={Rc::new(move || view! {<view>
+                <Button label="Open child" on_press={Rc::new(move || child.set(true))}/>
+                <Dialog id="child" label="Child" open={child} content={Rc::new(|| view! {<Input label="Child input" value={signal(String::new())}/>})}/>
+            </view>})}/>
+        </view>}
+    });
+    let mut browser = BrowserApp::new(app);
+    frame(&mut browser);
+    let original = id(&browser, "Open parent");
+    click(&mut browser, "Open parent");
+    frame(&mut browser);
+    let parent_opener = id(&browser, "Open child");
+    assert_eq!(browser.focus(), Some(parent_opener.clone()));
+    click(&mut browser, "Open child");
+    frame(&mut browser);
+    assert_eq!(browser.focus(), Some(id(&browser, "Child input")));
+    browser.key("Tab", true);
+    browser.key("Tab", false);
+    assert_eq!(browser.focus(), Some(id(&browser, "Child input")));
+    browser.key("Escape", false);
+    frame(&mut browser);
+    assert_eq!(browser.focus(), Some(parent_opener));
+    assert!(state.unwrap().0.get().unwrap());
+    assert!(!state.unwrap().1.get().unwrap());
+    browser.key("Escape", false);
+    frame(&mut browser);
+    assert_eq!(browser.focus(), Some(original));
+    assert!(!state.unwrap().0.get().unwrap());
+}
+
+#[test]
+fn empty_or_disabled_menu_escape_dismisses_without_selecting() {
+    for disabled_only in [false, true] {
+        let app = UiApp::new(|| {
+            let mut item = MenuAction::new("disabled", "Unavailable", || panic!("disabled action"));
+            item.disabled = true;
+            view! {<Menu id="empty-menu" label="Actions" items={if disabled_only {vec![item]} else {vec![]}}/>}
+        });
+        let mut browser = BrowserApp::new(app);
+        frame(&mut browser);
+        click(&mut browser, "Actions");
+        frame(&mut browser);
+        assert!(semantics(&browser).iter().any(|n| n["role"] == "menu"));
+        assert!(browser.key("Escape", false));
+        frame(&mut browser);
+        assert!(!semantics(&browser).iter().any(|n| n["role"] == "menu"));
+        assert_eq!(browser.focus(), Some(id(&browser, "Actions")));
+    }
+}
+
+#[test]
+fn modal_ignores_explicit_background_focus_request_and_enters_content() {
+    let mut state = None;
+    let outside = node_ref();
+    let app = UiApp::new(|| {
+        let open = signal(false);
+        state = Some(open);
+        view! {<view>
+            <input aria-label="Outside" node_ref={outside.clone()}/>
+            <button onClick={move |_| { outside.focus().unwrap(); open.set(true); }}>"Open"</button>
+            <Dialog id="modal" label="Profile" open={open} content={Rc::new(|| view! {<Input label="Inside" value={signal(String::new())}/>})}/>
+        </view>}
+    });
+    let mut browser = BrowserApp::new(app);
+    frame(&mut browser);
+    click(&mut browser, "Open");
+    frame(&mut browser);
+    assert!(state.unwrap().get().unwrap());
+    assert_eq!(browser.focus(), Some(id(&browser, "Inside")));
 }

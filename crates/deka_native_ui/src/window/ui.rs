@@ -25,6 +25,7 @@ pub(crate) struct UiContent<A: Application> {
     clock: Instant,
     reduced_motion: bool,
     focused: Option<String>,
+    modal_focus: crate::ModalFocus,
     active: bool,
     editors: BTreeMap<String, Editor>,
     dragging: bool,
@@ -46,6 +47,7 @@ impl<A: Application> UiContent<A> {
             clock: Instant::now(),
             reduced_motion,
             focused: None,
+            modal_focus: Default::default(),
             active: true,
             editors: BTreeMap::new(),
             dragging: false,
@@ -98,7 +100,17 @@ impl<A: Application> UiContent<A> {
     }
 
     fn apply_focus_request(&mut self) {
-        if let Some(id) = self.host.app.take_focus_request() {
+        self.semantics = self.host.app.semantics();
+        let modal_request = self
+            .modal_focus
+            .synchronize(&self.semantics, self.focused.as_deref());
+        if let Some(id) = self
+            .host
+            .app
+            .take_focus_request()
+            .filter(|id| crate::focus_available(&self.semantics, id))
+            .or(modal_request)
+        {
             self.semantics = self.host.app.semantics();
             if self.semantics.iter().any(|node| {
                 node.id == id && node.tab_index.is_some() && !node.hidden && !node.disabled
@@ -115,6 +127,7 @@ impl<A: Application> UiContent<A> {
         }
     }
     fn handle_input(&mut self, input: Input) -> bool {
+        self.apply_focus_request();
         // A handler can disable/remove a field before the next presented frame.
         self.semantics = self.host.app.semantics();
         if self.focused.as_ref().is_some_and(|id| !self.available(id)) {
@@ -330,15 +343,6 @@ impl<A: Application> UiContent<A> {
         } else {
             crate::tab_order(&self.semantics)
         };
-        let current = targets
-            .iter()
-            .position(|id| Some(id) == self.focused.as_ref());
-        let next = match (current, backwards) {
-            (None, false) => Some(0),
-            (None, true) => targets.len().checked_sub(1),
-            (Some(i), false) => Some(i + 1),
-            (Some(i), true) => i.checked_sub(1),
-        };
         if let Some(editor) = self
             .focused
             .as_ref()
@@ -346,7 +350,13 @@ impl<A: Application> UiContent<A> {
         {
             editor.cancel();
         }
-        self.focused = next.and_then(|i| targets.get(i)).cloned();
+        self.focused = crate::next_tab(
+            &targets,
+            self.focused.as_deref(),
+            backwards,
+            crate::modal_root(&self.semantics).is_some(),
+        )
+        .or_else(|| crate::modal_root(&self.semantics).map(str::to_owned));
     }
 }
 

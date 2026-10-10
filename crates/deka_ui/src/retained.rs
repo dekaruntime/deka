@@ -286,7 +286,9 @@ impl ViewElement {
                 "cannot focus a detached node".into(),
             ));
         }
-        context.focus_request.replace(Some(self.0.node.clone()));
+        context
+            .focus_request
+            .replace(Some(crate::view::FocusRequest::Node(self.0.node.clone())));
         context.changed(true);
         Ok(())
     }
@@ -363,6 +365,16 @@ impl NodeRef {
         let node = self.0.node.borrow().clone()?;
         let context = node.context.upgrade()?;
         context.is_attached(&node.node).then_some(node)
+    }
+    /// Request focus from an app callback, after its pending tree edits mount.
+    /// Unlike `get().focus()`, this also works when the same event opens a view.
+    pub fn focus(&self) -> Result<(), ViewError> {
+        let context = tree()?.context.upgrade().ok_or(ViewError::SessionDropped)?;
+        self.check(context.session_id).map_err(ViewError::from)?;
+        context
+            .focus_request
+            .replace(Some(crate::view::FocusRequest::Reference(self.clone())));
+        Ok(())
     }
     pub(crate) fn check(&self, session: u64) -> Result<(), String> {
         if self.0.owner.get().is_some_and(|owner| owner != session) {

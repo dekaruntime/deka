@@ -216,7 +216,40 @@ fn offscreen_light_dark_screenshots_for_every_component() {
             let app = (showcase.app)(theme);
             assert!(app.take_errors().is_empty());
             let mut session = DesktopSession::new(app);
+            session.frame(560., 480., 1.);
+            if showcase.id == "dialog" {
+                click(&mut session, "Open dialog");
+            }
+            if showcase.id == "menu" {
+                click(&mut session, "Actions");
+            }
             let scene = session.frame(560., 480., 1.).clone();
+            let surface = match showcase.id {
+                "badge" => Some((deka_native_ui::SemanticRole::Status, 40.)),
+                "toast" => Some((deka_native_ui::SemanticRole::Status, 140.)),
+                "dialog" => Some((deka_native_ui::SemanticRole::Dialog, 300.)),
+                "menu" => Some((deka_native_ui::SemanticRole::Menu, 180.)),
+                _ => None,
+            };
+            if let Some((role, max_height)) = surface {
+                let id = session
+                    .app()
+                    .semantics()
+                    .into_iter()
+                    .find(|n| n.role == role)
+                    .unwrap()
+                    .id;
+                let rect = scene.nodes.iter().find(|n| n.id == id).unwrap().rect;
+                assert!(
+                    rect.height > 0. && rect.height <= max_height,
+                    "{} surface must keep intrinsic height: {}",
+                    showcase.id,
+                    rect.height
+                );
+                if showcase.id == "badge" {
+                    assert!(rect.width < 280., "badge keeps content width");
+                }
+            }
             if showcase.id == "input" {
                 let foreground =
                     u32::from_str_radix(theme.tokens().foreground.trim_start_matches('#'), 16)
@@ -291,5 +324,175 @@ fn showcase_tabs_keep_intrinsic_height_and_room_for_content() {
     assert!(
         following_text.y - (panel_text.y + panel_text.height) <= 40.,
         "inactive panels must not push following content down"
+    );
+}
+
+#[test]
+fn native_badge_and_toast_pointer_keyboard_signal_focus_and_status_roles() {
+    let mut badge = DesktopSession::new(deka_ui::tour::app("component-badge-dark").unwrap());
+    badge.frame(560., 480., 1.);
+    badge.keyboard(key("tab"));
+    assert_eq!(
+        badge.focus(),
+        Some(named_id(&badge, "Update status").as_str())
+    );
+    badge.keyboard(key("enter"));
+    assert!(
+        badge
+            .frame(560., 480., 1.)
+            .nodes
+            .iter()
+            .any(|n| n.text.as_deref() == Some("Published"))
+    );
+    assert!(
+        badge
+            .accessibility(1.)
+            .nodes
+            .iter()
+            .any(|(_, n)| n.role() == Role::Status)
+    );
+
+    let mut toast = DesktopSession::new(deka_ui::tour::app("component-toast-light").unwrap());
+    toast.frame(560., 480., 1.);
+    toast.keyboard(key("tab"));
+    toast.keyboard(key("tab"));
+    assert_eq!(
+        toast.focus(),
+        Some(named_id(&toast, "Dismiss notification").as_str())
+    );
+    toast.keyboard(key("space"));
+    assert!(
+        !toast
+            .frame(560., 480., 1.)
+            .nodes
+            .iter()
+            .any(|n| n.text.as_deref() == Some("Your changes are saved."))
+    );
+    click(&mut toast, "Show notification");
+    toast.frame(560., 480., 1.);
+    click(&mut toast, "Dismiss notification");
+    assert!(
+        !toast
+            .frame(560., 480., 1.)
+            .nodes
+            .iter()
+            .any(|n| n.text.as_deref() == Some("Your changes are saved."))
+    );
+}
+
+#[test]
+fn native_dialog_traps_focus_blocks_background_and_escape_from_editor_restores_opener() {
+    let mut session = DesktopSession::new(deka_ui::tour::app("component-dialog-dark").unwrap());
+    session.frame(560., 480., 1.);
+    let opener = named_id(&session, "Open dialog");
+    let accessible_opener = session
+        .accessibility(1.)
+        .nodes
+        .into_iter()
+        .find(|(_, n)| n.label() == Some("Open dialog"))
+        .unwrap()
+        .0;
+    click(&mut session, "Open dialog");
+    session.frame(560., 480., 1.);
+    let first = named_id(&session, "Profile name");
+    let close = named_id(&session, "Close dialog");
+    assert_eq!(session.focus(), Some(first.as_str()));
+    use deka_native_ui::window::accesskit_events::{
+        Action, ActionRequest, TreeId, WindowEvent as AccessEvent,
+    };
+    for action in [Action::Focus, Action::Click] {
+        assert!(
+            !session.accessibility_event(&AccessEvent::ActionRequested(ActionRequest {
+                action,
+                target_tree: TreeId::ROOT,
+                target_node: accessible_opener,
+                data: None
+            }))
+        );
+    }
+
+    assert!(
+        session
+            .accessibility(1.)
+            .nodes
+            .iter()
+            .any(|(_, n)| n.role() == Role::Dialog && n.is_modal())
+    );
+    session.keyboard(KeyInput {
+        shift: true,
+        ..key("tab")
+    });
+    assert_eq!(session.focus(), Some(close.as_str()));
+    session.keyboard(key("tab"));
+    assert_eq!(session.focus(), Some(first.as_str()));
+    session.keyboard(command("a"));
+    session.event(&WindowEvent::Ime(Ime::Commit("Ava".into())), 1.);
+    assert!(
+        session
+            .frame(560., 480., 1.)
+            .nodes
+            .iter()
+            .any(|n| n.text.as_deref() == Some("Hello Ava"))
+    );
+    assert!(
+        session
+            .app()
+            .semantics()
+            .iter()
+            .find(|n| n.id == opener)
+            .unwrap()
+            .hidden
+    );
+    session.keyboard(key("escape"));
+    session.frame(560., 480., 1.);
+    assert_eq!(session.focus(), Some(opener.as_str()));
+    click(&mut session, "Open dialog");
+    session.frame(560., 480., 1.);
+    click(&mut session, "Close dialog");
+    session.frame(560., 480., 1.);
+    assert_eq!(session.focus(), Some(opener.as_str()));
+}
+
+#[test]
+fn native_menu_arrow_wrap_disabled_selection_and_escape_restore() {
+    let mut session = DesktopSession::new(deka_ui::tour::app("component-menu-light").unwrap());
+    session.frame(560., 480., 1.);
+    session.keyboard(key("tab"));
+    let trigger = named_id(&session, "Actions");
+    session.keyboard(key("down"));
+    session.frame(560., 480., 1.);
+    assert_eq!(session.focus(), Some(named_id(&session, "Edit").as_str()));
+    session.keyboard(key("up"));
+    assert_eq!(
+        session.focus(),
+        Some(named_id(&session, "Duplicate").as_str())
+    );
+    assert!(
+        session
+            .accessibility(1.)
+            .nodes
+            .iter()
+            .any(|(_, n)| n.role() == Role::MenuItem)
+    );
+    session.keyboard(key("enter"));
+    assert_eq!(session.focus(), Some(trigger.as_str()));
+    assert!(
+        session
+            .frame(560., 480., 1.)
+            .nodes
+            .iter()
+            .any(|n| n.text.as_deref() == Some("Selected: Duplicate"))
+    );
+    click(&mut session, "Actions");
+    session.frame(560., 480., 1.);
+    session.keyboard(key("escape"));
+    session.frame(560., 480., 1.);
+    assert_eq!(session.focus(), Some(trigger.as_str()));
+    assert!(
+        !session
+            .app()
+            .semantics()
+            .iter()
+            .any(|n| n.role == deka_native_ui::SemanticRole::Menu)
     );
 }

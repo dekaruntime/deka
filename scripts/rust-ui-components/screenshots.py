@@ -14,7 +14,7 @@ def main():
     source = ROOT / '.tmp/components-shots'
     output = ROOT / 'docs/rust-ui/assets'
     output.mkdir(parents=True, exist_ok=True)
-    for component in ['button', 'input', 'list', 'tabs']:
+    for component in ['button', 'input', 'list', 'tabs', 'badge', 'toast', 'dialog', 'menu']:
         for theme in ['light', 'dark']:
             data = (source/f'{component}-{theme}.rgba').read_bytes()
             if len(data) != WIDTH*HEIGHT*4:

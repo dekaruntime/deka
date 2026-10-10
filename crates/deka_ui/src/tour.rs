@@ -419,6 +419,15 @@ mod showcase_list;
 #[path = "../examples/showcase/tabs.rs"]
 mod showcase_tabs;
 
+#[path = "../examples/showcase/badge.rs"]
+mod showcase_badge;
+#[path = "../examples/showcase/dialog.rs"]
+mod showcase_dialog;
+#[path = "../examples/showcase/menu.rs"]
+mod showcase_menu;
+#[path = "../examples/showcase/toast.rs"]
+mod showcase_toast;
+
 /// Component source and themed constructors use the same compiled pipeline as
 /// /tour. They are separate from the 27 unchanged DekaScript parity lessons.
 pub struct Showcase {
@@ -471,6 +480,44 @@ pub static SHOWCASES: &[Showcase] = &[
             crate::UiApp::new(
                 || crate::view! { <showcase_tabs::App theme={crate::signal(theme)}/> },
             )
+        },
+    },
+    Showcase {
+        id: "badge",
+        title: "Badge",
+        path: "crates/deka_ui/examples/showcase/badge.rs",
+        source: include_str!("../examples/showcase/badge.rs"),
+        app: |theme| {
+            crate::UiApp::new(|| crate::view! {<showcase_badge::App theme={crate::signal(theme)}/>})
+        },
+    },
+    Showcase {
+        id: "toast",
+        title: "Toast",
+        path: "crates/deka_ui/examples/showcase/toast.rs",
+        source: include_str!("../examples/showcase/toast.rs"),
+        app: |theme| {
+            crate::UiApp::new(|| crate::view! {<showcase_toast::App theme={crate::signal(theme)}/>})
+        },
+    },
+    Showcase {
+        id: "dialog",
+        title: "Dialog",
+        path: "crates/deka_ui/examples/showcase/dialog.rs",
+        source: include_str!("../examples/showcase/dialog.rs"),
+        app: |theme| {
+            crate::UiApp::new(
+                || crate::view! {<showcase_dialog::App theme={crate::signal(theme)}/>},
+            )
+        },
+    },
+    Showcase {
+        id: "menu",
+        title: "Menu",
+        path: "crates/deka_ui/examples/showcase/menu.rs",
+        source: include_str!("../examples/showcase/menu.rs"),
+        app: |theme| {
+            crate::UiApp::new(|| crate::view! {<showcase_menu::App theme={crate::signal(theme)}/>})
         },
     },
 ];
