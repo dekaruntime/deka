@@ -556,10 +556,10 @@ pub fn Menu(
         let trigger = trigger.clone();
         Rc::new(move || {
             open.set(false);
-            if let Some(node) = trigger.get().and_then(|n| n.as_element()) {
-                if let Err(error) = node.focus() {
-                    eprintln!("deka menu focus: {error}");
-                }
+            if let Some(node) = trigger.get().and_then(|n| n.as_element())
+                && let Err(error) = node.focus()
+            {
+                eprintln!("deka menu focus: {error}");
             }
         })
     };
