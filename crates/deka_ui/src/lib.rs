@@ -2,6 +2,7 @@
 //!
 //! Reactive Rust authoring on deka's shared retained tree and renderer.
 extern crate self as deka_ui;
+pub mod components;
 pub mod reactive;
 #[cfg(feature = "tour")]
 pub mod tour;

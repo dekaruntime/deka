@@ -11,11 +11,8 @@ mod browser {
     /// Replace the current lesson without loading a second wasm instance.
     #[wasm_bindgen]
     pub fn start(lesson_id: &str, canvas: &JsValue) -> Result<(), JsValue> {
-        let app = (tour::LESSONS
-            .iter()
-            .find(|l| l.id == lesson_id)
-            .ok_or_else(|| JsValue::from_str("Unknown lesson"))?
-            .app)();
+        let app =
+            tour::app(lesson_id).ok_or_else(|| JsValue::from_str("Unknown lesson or component"))?;
         stop();
         let handle = mount_app(app, canvas)?;
         RUNNING.with(|running| running.replace(Some(handle)));

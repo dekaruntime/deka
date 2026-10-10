@@ -1,7 +1,8 @@
 //! Rust-owned node identities live here; renderer Nodes are disposable snapshots.
 //!
 //! Structural slots retain static siblings when an earlier conditional is absent.
-//! Dynamic list positions are not author keys; reordered lists are still positional.
+//! Ordinary dynamic children are positional. Keyed lists graft their owned roots
+//! in author order, keeping the same allocations and registration ownership.
 use crate::{CLASS_ATTRIBUTE, Node, Style, WireNode};
 type Result<T> = std::result::Result<T, String>;
 use std::{
@@ -308,6 +309,13 @@ impl NodeHandle {
         }
     }
 }
+/// A transient keyed-list edit. Kept roots retain their complete subtree.
+#[doc(hidden)]
+pub enum KeyedChild {
+    Kept(NodeHandle),
+    New(WireNode, Vec<Vec<usize>>),
+}
+
 #[derive(Default)]
 pub struct Tree {
     #[doc(hidden)]
@@ -420,6 +428,61 @@ impl Tree {
         self.records.retain(|_, record| record.strong_count() > 0);
         Ok(replacements)
     }
+    /// Replace a dedicated keyed container's children in author order.
+    /// Validate the complete edit before changing topology; never retain by position.
+    #[doc(hidden)]
+    pub fn replace_keyed_children(
+        &mut self,
+        parent: &NodeHandle,
+        children: Vec<KeyedChild>,
+    ) -> Result<Vec<NodeHandle>> {
+        if !self.owns(parent) {
+            return Err("keyed container belongs to another tree".into());
+        }
+        enum Child {
+            Kept(NodeHandle),
+            New(Box<Prepared>),
+        }
+        let mut seen = HashSet::new();
+        let next = children
+            .into_iter()
+            .map(|child| match child {
+                KeyedChild::Kept(node) => {
+                    if !self.owns(&node)
+                        || node.parent().as_ref() != Some(parent)
+                        || !seen.insert(node.0.as_ptr())
+                    {
+                        return Err("invalid or duplicate keyed child".into());
+                    }
+                    Ok(Child::Kept(node))
+                }
+                KeyedChild::New(wire, slots) => Prepared::with_slots(wire, &mut slots.into_iter())
+                    .map(|prepared| Child::New(Box::new(prepared))),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut roots = Vec::with_capacity(next.len());
+        for child in next {
+            let node = match child {
+                Child::Kept(node) => node,
+                Child::New(next) => self.retain(None, *next)?,
+            };
+            node.0.borrow_mut().parent = Some(Rc::downgrade(&parent.0));
+            roots.push(node);
+        }
+        let kept: HashSet<_> = roots.iter().map(|node| node.0.as_ptr()).collect();
+        for old in &parent.0.borrow().children {
+            if !kept.contains(&old.0.as_ptr()) {
+                old.0.borrow_mut().parent = None;
+            }
+        }
+        if parent.0.borrow().children != roots {
+            parent.0.borrow_mut().children = roots.clone();
+            parent.reclaim_text_overrides();
+        }
+        self.records.retain(|_, record| record.strong_count() > 0);
+        Ok(roots)
+    }
+
     pub fn query(&self, selector: &super::selectors::Selector, all: bool) -> Vec<NodeHandle> {
         let Some(root) = &self.root else {
             return vec![];

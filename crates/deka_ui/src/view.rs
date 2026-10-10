@@ -116,6 +116,10 @@ enum Builder {
     Text(Attribute),
     Fragment(Vec<View>),
     Dynamic(Box<dyn FnMut() -> View>),
+    Keyed {
+        keys: Box<dyn FnMut() -> Vec<String>>,
+        row: Box<dyn FnMut(String) -> View>,
+    },
     Error(String),
     Ref(Box<View>, NodeRef),
     State(Box<View>, Rc<dyn Any>),
@@ -166,6 +170,10 @@ impl View {
     {
         value.into_view()
     }
+    /// Report an invalid component configuration through the ordinary app sink.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self(Builder::Error(message.into()))
+    }
     pub fn element(tag: impl Into<String>) -> Self {
         Self(Builder::Element(Element {
             tag: tag.into(),
@@ -195,6 +203,18 @@ impl View {
         V: IntoView<M>,
     {
         Self(Builder::Dynamic(Box::new(move || value().into_view())))
+    }
+    /// Render a keyed collection. Existing keys keep their view, local state,
+    /// handlers, effective writes and node identity. Use signal bindings inside
+    /// each row to update its contents. Removed keys dispose their registrations.
+    pub fn keyed(
+        keys: impl FnMut() -> Vec<String> + 'static,
+        row: impl FnMut(String) -> View + 'static,
+    ) -> Self {
+        Self::element("div").child(Self(Builder::Keyed {
+            keys: Box::new(keys),
+            row: Box::new(row),
+        }))
     }
     /// A string signal binds both directions; strings and closures bind one direction.
     pub fn value<V: IntoValue<M>, M>(self, value: V) -> Self {
@@ -423,9 +443,14 @@ struct Listener {
     kind: EventKind,
     callback: Callback,
 }
+pub(crate) enum FocusRequest {
+    Node(NodeHandle),
+    Reference(crate::NodeRef),
+}
 #[derive(Default)]
 pub(crate) struct Context {
     pub(crate) tree: RefCell<Tree>,
+    pub(crate) focus_request: RefCell<Option<FocusRequest>>,
     #[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
     pub(crate) hot_reload: RefCell<crate::hot_reload::Registry>,
     pub(crate) scope_id: u64,
@@ -835,6 +860,125 @@ fn prepare(
             prepared.registrations.groups.push(group);
             prepared.extend(next);
         }
+        Builder::Keyed { mut keys, mut row } => {
+            use deka_native_ir::tree::KeyedChild;
+            struct Row {
+                anchor: Anchor,
+                _registrations: Rc<RefCell<Registrations>>,
+            }
+            let rows = Rc::new(RefCell::new(BTreeMap::<String, Row>::new()));
+            let owned_rows = rows.clone();
+            let initial = Rc::new(RefCell::new(None));
+            let output = initial.clone();
+            let prefix = path;
+            let weak = Rc::downgrade(context);
+            let mut serial = 0usize;
+            prepared.registrations.effects.push(effect(move || {
+                let Some(context) = weak.upgrade() else {
+                    return;
+                };
+                context.at(&prefix, "keyed children", || {
+                    let values = keys();
+                    let mut present = std::collections::BTreeSet::new();
+                    if values.iter().any(|key| !present.insert(key.clone())) {
+                        context.report(&prefix, "keyed children", "duplicate list key".into());
+                        return;
+                    }
+                    let mut additions = BTreeMap::new();
+                    let order = values.clone();
+                    for key in values {
+                        if owned_rows.borrow().contains_key(&key) {
+                            continue;
+                        }
+                        let mut slot = prefix.clone();
+                        slot.push(serial);
+                        serial = serial.checked_add(1).expect("keyed row identity exhausted");
+                        let (next, reactive) = crate::reactive::owned(|| {
+                            prepare(
+                                View::element("div").child(row(key.clone())),
+                                slot,
+                                parent.clone(),
+                                &context,
+                            )
+                        });
+                        match next {
+                            Ok(mut next) => {
+                                next.registrations.reactive.push(reactive);
+                                additions.insert(key, next);
+                            }
+                            Err(error) => {
+                                context.report(&prefix, "keyed children", error);
+                                return;
+                            }
+                        }
+                    }
+                    if let Some(container) = parent.borrow().clone() {
+                        let children = order
+                            .iter()
+                            .map(|key| {
+                                if let Some(row) = owned_rows.borrow().get(key) {
+                                    KeyedChild::Kept(
+                                        row.anchor.borrow().clone().expect("mounted row"),
+                                    )
+                                } else {
+                                    let next = additions.get_mut(key).expect("new row");
+                                    KeyedChild::New(
+                                        next.wires.pop().expect("one row root"),
+                                        next.slots.clone(),
+                                    )
+                                }
+                            })
+                            .collect();
+                        let roots = match context
+                            .tree
+                            .borrow_mut()
+                            .replace_keyed_children(&container, children)
+                        {
+                            Ok(roots) => roots,
+                            Err(error) => {
+                                context.report(&prefix, "keyed children", error);
+                                return;
+                            }
+                        };
+                        for (key, root) in order.iter().zip(roots) {
+                            if let Some(next) = additions.remove(key) {
+                                next.attach(&[root], &context);
+                                let row = Row {
+                                    anchor: next.root_anchors[0].clone(),
+                                    _registrations: Rc::new(RefCell::new(next.registrations)),
+                                };
+                                owned_rows.borrow_mut().insert(key.clone(), row);
+                            }
+                        }
+                        owned_rows
+                            .borrow_mut()
+                            .retain(|key, _| present.contains(key));
+                        context.changed(true);
+                    } else {
+                        let mut all = Prepared::new(&context);
+                        for key in order {
+                            let mut next = additions.remove(&key).expect("initial row");
+                            let registrations = Rc::new(RefCell::new(next.registrations));
+                            next.registrations = Registrations::default();
+                            owned_rows.borrow_mut().insert(
+                                key,
+                                Row {
+                                    anchor: next.root_anchors[0].clone(),
+                                    _registrations: registrations,
+                                },
+                            );
+                            all.extend(next);
+                        }
+                        output.replace(Some(all));
+                    }
+                });
+            }));
+            // A registration group owns rows without owning a second tree.
+            // The effect owns the map; its disposal drops all remaining rows.
+            if let Some(next) = initial.borrow_mut().take() {
+                prepared.extend(next);
+            }
+        }
         Builder::Text(value) => {
             let anchor = Anchor::default();
             prepared.root_anchors.push(anchor.clone());
@@ -1120,6 +1264,10 @@ impl UiApp {
     }
     /// Typed dispatch used by platform event adapters.
     pub fn dispatch_to(&self, node_id: &str, event: Event) -> bool {
+        let modal = matches!(&event, Event::KeyDown(key) if key == "Escape")
+            .then(|| deka_native_ui::modal_root(&self.semantics()).map(str::to_owned))
+            .flatten();
+        let node_id = modal.as_deref().unwrap_or(node_id);
         let token = self
             .context
             .listeners
@@ -1209,16 +1357,27 @@ impl Application for UiApp {
         ) {
             let tag = node.tag_name();
             let clickable = node.has_click_handler();
-            let role = match tag.as_deref() {
-                Some("button") => SemanticRole::Button,
-                Some("input") => SemanticRole::TextInput,
-                Some("textarea") => SemanticRole::MultilineTextInput,
-                None => SemanticRole::Label,
-                _ if clickable => SemanticRole::Button,
-                _ if node.all_children().is_empty() && !node.text_content().is_empty() => {
-                    SemanticRole::Label
-                }
-                _ => SemanticRole::Group,
+            let role = match node.attribute("role").as_deref() {
+                Some("list") => SemanticRole::List,
+                Some("listitem") => SemanticRole::ListItem,
+                Some("tablist") => SemanticRole::TabList,
+                Some("tab") => SemanticRole::Tab,
+                Some("tabpanel") => SemanticRole::TabPanel,
+                Some("status") => SemanticRole::Status,
+                Some("dialog") => SemanticRole::Dialog,
+                Some("menu") => SemanticRole::Menu,
+                Some("menuitem") => SemanticRole::MenuItem,
+                _ => match tag.as_deref() {
+                    Some("button") => SemanticRole::Button,
+                    Some("input") => SemanticRole::TextInput,
+                    Some("textarea") => SemanticRole::MultilineTextInput,
+                    None => SemanticRole::Label,
+                    _ if clickable => SemanticRole::Button,
+                    _ if node.all_children().is_empty() && !node.text_content().is_empty() => {
+                        SemanticRole::Label
+                    }
+                    _ => SemanticRole::Group,
+                },
             };
             let hidden = hidden || node.attribute("aria-hidden").as_deref() == Some("true");
             let disabled = disabled
@@ -1255,9 +1414,13 @@ impl Application for UiApp {
                     .and_then(|v| v.parse().ok())
                     .or(natural.then_some(0)),
                 clickable,
+                selected: node.attribute("aria-selected").map(|v| v == "true"),
+                controls: node.attribute("aria-controls"),
+                expanded: node.attribute("aria-expanded").map(|v| v == "true"),
+                has_popup: node.attribute("aria-haspopup").as_deref() == Some("menu"),
             });
             // A button's descendant text supplies its accessible name.
-            if role != SemanticRole::Button {
+            if !matches!(role, SemanticRole::Button | SemanticRole::Tab) {
                 for child in node.all_children() {
                     visit(&child, Some(id.clone()), hidden, disabled, output);
                 }
@@ -1266,6 +1429,27 @@ impl Application for UiApp {
         let mut output = vec![];
         if let Some(root) = self.context.tree.borrow().root.as_ref() {
             visit(root, None, false, false, &mut output);
+        }
+        // A modal's background remains painted but is inert for all host ingress.
+        if let Some(modal) = deka_native_ui::modal_root(&output).map(str::to_owned) {
+            let mut inside = std::collections::HashSet::from([modal]);
+            for node in &output {
+                if node.parent.as_ref().is_some_and(|id| inside.contains(id)) {
+                    inside.insert(node.id.clone());
+                }
+            }
+            for node in &mut output {
+                node.hidden |= !inside.contains(&node.id);
+            }
+        }
+        for node in &mut output {
+            node.controls = node.controls.take().and_then(|id| {
+                self.context
+                    .tree
+                    .borrow()
+                    .element_by_id(&id)
+                    .map(|target| target.renderer_id())
+            });
         }
         output
     }
@@ -1308,6 +1492,18 @@ impl Application for UiApp {
         }
         false
     }
+    fn take_focus_request(&self) -> Option<String> {
+        self.context
+            .focus_request
+            .borrow_mut()
+            .take()
+            .and_then(|request| match request {
+                FocusRequest::Node(node) => Some(node),
+                FocusRequest::Reference(reference) => reference.get().map(|node| node.node),
+            })
+            .filter(|node| self.context.is_attached(node))
+            .map(|node| node.renderer_id())
+    }
     fn text_controls(&self) -> Vec<deka_native_ui::TextControl> {
         let revision = self.context.patches.get();
         let mut index = self.context.text_index.borrow_mut();
@@ -1348,12 +1544,31 @@ impl Application for UiApp {
                 value: node.attribute("value").unwrap_or_default(),
                 placeholder: node.attribute("placeholder").unwrap_or_default(),
                 controlled: *controlled,
+                color: {
+                    let mut current = Some(node.clone());
+                    let mut color = 0x1a1611;
+                    while let Some(node) = current {
+                        if let Some(foreground) = node.0.borrow().style.color {
+                            color = foreground;
+                            break;
+                        }
+                        current = node.parent();
+                    }
+                    color
+                },
                 multiline: node.tag_name().as_deref() == Some("textarea"),
             })
             .collect()
     }
 
     fn text_input(&self, id: &str, value: String) -> bool {
+        if !self
+            .semantics()
+            .iter()
+            .any(|node| node.id == id && !node.hidden && !node.disabled)
+        {
+            return false;
+        }
         fn find(node: &NodeHandle, id: &str) -> Option<NodeHandle> {
             if node.renderer_id() == id {
                 return Some(node.clone());

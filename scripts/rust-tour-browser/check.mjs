@@ -46,8 +46,9 @@ await new Promise(done=>server.listen(0,'127.0.0.1',done))
 const url=`http://127.0.0.1:${server.address().port}`
 const browser=await chromium.launch({executablePath:process.env.RUST_TOUR_CHROME})
 const metrics=[]
+const componentsOnly=process.argv.includes('--components-only')
 try {
-  for(const [scale,reduced] of [[1,false],[2,false],[1,true]]) {
+  for(const [scale,reduced] of (componentsOnly ? [] : [[1,false],[2,false],[1,true]])) {
     const context=await browser.newContext({deviceScaleFactor:scale,reducedMotion:reduced?'reduce':'no-preference',viewport:{width:1200,height:900}})
     const page=await context.newPage();page.setDefaultTimeout(30000);const errors=[]
     page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
@@ -80,10 +81,110 @@ try {
       assert.deepEqual(await page.evaluate(()=>window.errors),[])
     }
     assert.deepEqual(errors,[])
-    console.log(`PASS: all 27 lessons, shared histories, input, pixels and stop; DPR ${scale}, reduced motion ${reduced}`)
+    console.log(`PASS: all 27 lessons and 16 themed component entries, shared histories, input, pixels and stop; DPR ${scale}, reduced motion ${reduced}`)
     await context.close()
   }
   const page=await browser.newPage();page.setDefaultTimeout(30000)
+  // The same production tour bundle/source manifest includes the first
+  // component set. Exercise platform DOM keys and canvas pointer ingress.
+  const startComponent = async name => {
+    await page.goto(url); await page.waitForFunction(()=>window.ready)
+    await page.evaluate(name=>window.start(name),name)
+    await page.waitForFunction(()=>window.scene || window.errors.length)
+    assert.deepEqual(await page.evaluate(()=>window.errors),[])
+  }
+  await startComponent('component-button-light')
+  const action=page.getByRole('button',{name:'Add one',exact:true})
+  const actionBounds=await action.boundingBox(); await page.mouse.click(actionBounds.x+8,actionBounds.y+8)
+  await action.focus(); await action.press('Enter'); await action.press('Space')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Count: 3'))
+  assert.equal(await page.getByRole('button',{name:'Unavailable',exact:true}).isDisabled(),true)
+  await startComponent('component-input-dark')
+  const componentInput=page.getByRole('textbox',{name:'Name',exact:true})
+  assert.equal(await componentInput.evaluate(e=>getComputedStyle(e).color),'rgb(245, 239, 226)')
+  await componentInput.fill('Ava')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello Ava'))
+  await componentInput.focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Enter')
+  assert.equal(await componentInput.inputValue(),'')
+  await startComponent('component-list-light')
+  const zega=page.getByRole('button',{name:'Zega',exact:true}), zegaId=await zega.getAttribute('id')
+  await zega.focus(); await zega.press('Enter')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Selected: zega'))
+  const reverse=page.getByRole('button',{name:'Reverse order',exact:true})
+  await reverse.focus(); await reverse.press('Enter')
+  assert.equal(await zega.getAttribute('id'),zegaId)
+  assert.deepEqual(await page.getByRole('button').evaluateAll(elements=>elements.map(e=>e.getAttribute('aria-label'))),['cqx','Zega','Deka','Reverse order'])
+  await zega.focus(); await page.keyboard.press('Tab')
+  assert.equal(await page.getByRole('button',{name:'Deka',exact:true}).evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('Enter')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Selected: deka'))
+  await startComponent('component-tabs-dark')
+  const overview=page.getByRole('tab',{name:'Overview',exact:true}), activity=page.getByRole('tab',{name:'Activity',exact:true}), settings=page.getByRole('tab',{name:'Settings',exact:true})
+  await overview.focus(); await page.keyboard.press('ArrowRight')
+  assert.equal(await activity.evaluate(e=>e===document.activeElement),true)
+  assert.equal(await activity.getAttribute('aria-selected'),'true')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Your latest project activity.'))
+  await page.keyboard.press('End'); assert.equal(await settings.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('ArrowRight'); assert.equal(await overview.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('ArrowLeft'); assert.equal(await settings.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('Home'); assert.equal(await overview.evaluate(e=>e===document.activeElement),true)
+  assert.equal(await overview.evaluate(e=>document.getElementById(e.getAttribute('aria-controls'))?.getAttribute('role')),'tabpanel')
+  assert.deepEqual(await page.evaluate(()=>window.errors),[])
+  console.log('PASS: Button/Input/List/Tabs pointer, DOM keyboard, keyed order and accessible tab focus')
+  await startComponent('component-badge-light')
+  await page.getByRole('button',{name:'Update status',exact:true}).press('Enter')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Published'))
+  assert.equal(await page.getByRole('status',{name:'Published',exact:true}).count(),1)
+  await startComponent('component-toast-dark')
+  await page.getByRole('button',{name:'Dismiss notification',exact:true}).press('Space')
+  assert.equal(await page.getByRole('status').count(),0)
+  await page.getByRole('button',{name:'Show notification',exact:true}).press('Enter')
+  assert.equal(await page.getByRole('status',{name:'Your changes are saved.',exact:true}).count(),1)
+  await startComponent('component-dialog-dark')
+  await page.getByRole('button',{name:'Open dialog',exact:true}).press('Enter')
+  const dialog=page.getByRole('dialog',{name:'Edit profile',exact:true})
+  const profile=page.getByRole('textbox',{name:'Profile name',exact:true})
+  const closeDialog=page.getByRole('button',{name:'Close dialog',exact:true})
+  assert.equal(await dialog.getAttribute('aria-modal'),'true')
+  assert.equal(await profile.evaluate(e=>e===document.activeElement),true,'modal focus reaches the actual profile input')
+  assert.equal(await page.getByRole('button',{name:'Open dialog',exact:true}).count(),0)
+  await page.keyboard.press('Shift+Tab')
+  assert.equal(await closeDialog.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('Tab')
+  assert.equal(await profile.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('Tab'); await page.keyboard.press('Tab')
+  assert.equal(await profile.evaluate(e=>e===document.activeElement),true)
+  await profile.fill('Ava')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Hello Ava'))
+  await page.evaluate(()=>{const outside=document.createElement('button');outside.id='outside-modal';document.body.append(outside);outside.focus()})
+  assert.equal(await profile.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('Escape')
+  assert.equal(await dialog.count(),0)
+  assert.equal(await page.getByRole('button',{name:'Open dialog',exact:true}).evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('Enter'); await page.keyboard.press('Shift+Tab'); await page.keyboard.press('Space')
+  assert.equal(await dialog.count(),0,'Space closes the focused modal close button')
+  assert.equal(await page.getByRole('button',{name:'Open dialog',exact:true}).evaluate(e=>e===document.activeElement),true)
+  await startComponent('component-menu-light')
+  const actions=page.getByRole('button',{name:'Actions',exact:true})
+  assert.equal(await actions.getAttribute('aria-expanded'),'false')
+  await actions.focus(); await page.keyboard.press('ArrowUp')
+  assert.equal(await actions.getAttribute('aria-expanded'),'true')
+  const edit=page.getByRole('menuitem',{name:'Edit',exact:true})
+  const duplicate=page.getByRole('menuitem',{name:'Duplicate',exact:true})
+  assert.equal(await duplicate.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('ArrowDown'); assert.equal(await edit.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('ArrowUp'); assert.equal(await duplicate.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('Home'); assert.equal(await edit.evaluate(e=>e===document.activeElement),true)
+  await page.keyboard.press('End'); await page.keyboard.press('Enter')
+  assert((await page.evaluate(()=>window.scene.nodes)).some(n=>n.text==='Selected: Duplicate'))
+  assert.equal(await actions.evaluate(e=>e===document.activeElement),true)
+  assert.equal(await page.getByRole('menu').count(),0)
+  await page.keyboard.press('Space'); await page.keyboard.press('Escape')
+  assert.equal(await actions.evaluate(e=>e===document.activeElement),true)
+  assert.equal(await page.getByRole('menu').count(),0)
+  assert.deepEqual(await page.evaluate(()=>window.errors),[])
+  console.log('PASS: Badge/Toast/Dialog/Menu signal effects, modal Tab/Escape/restore/containment and menu DOM navigation')
+  if (!componentsOnly) {
   await page.goto(url+'/?fixture=input-fixture');await page.waitForFunction(()=>window.ready);await page.evaluate(()=>window.start())
   const input=page.getByRole('textbox',{name:'Name',exact:true});
   assert.equal(await page.getByRole('textbox',{name:'Notes',exact:true}).count(),1);
@@ -113,6 +214,9 @@ try {
   await page.keyboard.press('Tab');
   assert.equal(await page.getByRole('button',{name:'Clear',exact:true}).evaluate(element=>element===document.activeElement),true);
   await page.keyboard.press('Enter');assert.equal(await input.inputValue(),'');
+  await page.getByRole('button',{name:'Focus name',exact:true}).focus()
+  await page.keyboard.press('Enter')
+  assert.equal(await input.evaluate(element=>element===document.activeElement),true,'retained focus reaches the actual platform text field')
   await input.click({button:'right'});assert((await page.evaluate(()=>window.scene.nodes)).some(node=>node.text==='Key: Context'),'DOM right click reaches the Rust context handler');
   const accessibilitySnapshot=await page.locator('body').ariaSnapshot();
   assert(accessibilitySnapshot.includes('textbox "Name"'));
@@ -143,6 +247,7 @@ try {
   const worst=metrics.reduce((a,b)=>mean(a.ms)>mean(b.ms)?a:b)
   console.log(JSON.stringify({largestSource:largest.id,meanMs:mean(samples),p95Ms:samples[Math.floor(samples.length*.95)],worstMeanLesson:worst.lesson,worstMeanMs:mean(worst.ms),samples:samples.length}))
   assert(mean(samples)<5,'largest lesson must stay below 5ms/frame')
+  }
 } finally {await browser.close();await new Promise(done=>server.close(done))}
 function mean(numbers){return numbers.reduce((a,b)=>a+b,0)/numbers.length}
 async function snapshot(page) {return page.evaluate(()=>({...window.scene,images:window.scene.images.map(({rgba,...image})=>({...image,hash:rgba.reduce((hash,byte)=>(Math.imul(hash,33)^byte)>>>0,5381)})).sort((a,b)=>a.id.localeCompare(b.id))}))}

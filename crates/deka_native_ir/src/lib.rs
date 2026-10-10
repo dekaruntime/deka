@@ -255,5 +255,11 @@ pub fn is_supported_attribute(name: &str) -> bool {
             | "aria-hidden"
             | "tabIndex"
             | "disabled"
+            | "role"
+            | "aria-selected"
+            | "aria-controls"
+            | "aria-modal"
+            | "aria-expanded"
+            | "aria-haspopup"
     )
 }

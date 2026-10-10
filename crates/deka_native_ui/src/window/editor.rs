@@ -293,7 +293,7 @@ impl Editor {
     pub(super) fn delete_selected(&mut self) {
         self.insert("");
     }
-    pub(super) fn decoration(&self, scene: &mut Scene, focused: bool) {
+    pub(super) fn decoration(&self, scene: &mut Scene, focused: bool, foreground: u32) {
         let draw = |scene: &mut Scene, b: parley::BoundingBox, color, underline| {
             let mut rect = Rect {
                 x: self.origin.0 + b.x0 as f32,
@@ -316,12 +316,19 @@ impl Editor {
         };
         if focused {
             for (b, _) in self.text.selection_geometry() {
-                draw(scene, b, 0xc5d9f5, false);
+                let brightness =
+                    ((foreground >> 16) & 255) + ((foreground >> 8) & 255) + (foreground & 255);
+                draw(
+                    scene,
+                    b,
+                    if brightness > 384 { 0x31537a } else { 0xc5d9f5 },
+                    false,
+                );
             }
             if self.text.raw_selection().is_collapsed()
                 && let Some(b) = self.text.cursor_geometry(1.5)
             {
-                draw(scene, b, 0x1a1611, false);
+                draw(scene, b, foreground, false);
             }
         }
         if let Some(range) = self.text.raw_compose()
@@ -338,7 +345,7 @@ impl Editor {
                 parley::layout::Affinity::Upstream,
             );
             for (rect, _) in parley::editing::Selection::new(a, b).geometry(layout) {
-                draw(scene, rect, 0x1a1611, true);
+                draw(scene, rect, foreground, true);
             }
         }
     }
