@@ -9,7 +9,7 @@
 [package]
 edition = "2024"
 rust-version = "1.89"
-name = "vello_gpu_shaders"
+name = "deka-vello-gpu-shaders"
 version = "0.3.0"
 build = "build.rs"
 autolib = false
@@ -17,7 +17,7 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Provide WESL shaders linked to WGSL and GLSL for the `vello_gpu` backends."
+description = "deka's fork of vello_gpu_shaders 0.3.0 (linebender/vello) with upscaled image edges. Imported as vello_gpu_shaders."
 readme = "README.md"
 keywords = [
     "2d",
@@ -28,7 +28,7 @@ categories = [
     "graphics",
 ]
 license = "Apache-2.0 OR MIT"
-repository = "https://github.com/linebender/vello"
+repository = "https://github.com/dekaruntime/deka"
 resolver = "2"
 
 [package.metadata.docs.rs]

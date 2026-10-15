@@ -11,7 +11,7 @@
 
 [package]
 edition = "2021"
-name = "rfd"
+name = "deka-rfd"
 version = "0.17.2"
 authors = ["Poly <marynczak.bartlomiej@gmail.com>"]
 build = "build.rs"
@@ -20,7 +20,7 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Rusty File Dialog"
+description = "deka's fork of rfd 0.17.2 (PolyMeilex/rfd) adding fallible try_pick_file/try_save_file. Imported as rfd."
 documentation = "https://docs.rs/rfd"
 readme = "README.md"
 keywords = [
@@ -29,7 +29,7 @@ keywords = [
     "dialog",
 ]
 license = "MIT"
-repository = "https://github.com/PolyMeilex/rfd"
+repository = "https://github.com/dekaruntime/deka"
 
 [package.metadata.docs.rs]
 features = ["file-handle-inner"]

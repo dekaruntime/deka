@@ -3,7 +3,10 @@ name = "deka-ui-macros"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-publish = false
+description = "Internal part of deka-ui: the view! and #[component] macros. Use the deka-ui crate."
+repository = "https://github.com/dekaruntime/deka"
+homepage = "https://deka.gg"
+readme = false
 
 [lib]
 proc-macro = true
@@ -16,7 +19,7 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "3", features = ["full", "visit-mut"] }
 rstml = "=0.13.1"
-deka_native_ir = { path = "../deka_native_ir" }
+deka_native_ir = { package = "deka-ui-core", version = "0.1.0", path = "../deka_native_ir" }
 
 [dev-dependencies]
 bumpalo = "3"

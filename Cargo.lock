@@ -1470,6 +1470,8 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
+ "serde",
+ "termcolor",
  "unicode-width",
 ]
 
@@ -1480,6 +1482,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ec7c5eb7a16992b1904d76c517d170ab353b0e0b3d5a0c81a8a0cd1037893cf"
 dependencies = [
  "bytemuck",
+ "libm",
 ]
 
 [[package]]
@@ -2201,6 +2204,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka-rfd"
+version = "0.17.2"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "futures",
+ "glib-sys",
+ "gobject-sys",
+ "gtk-sys",
+ "js-sys",
+ "libc",
+ "log",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "percent-encoding",
+ "pollster",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "web-sys",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "deka-task"
 version = "0.61.0"
 dependencies = [
@@ -2228,9 +2260,9 @@ dependencies = [
 name = "deka-ui"
 version = "0.1.0"
 dependencies = [
+ "deka-ui-core",
  "deka-ui-macros",
- "deka_native_ir",
- "deka_native_ui",
+ "deka-ui-native",
  "deka_vm",
  "dispatch2",
  "objc2 0.6.4",
@@ -2243,11 +2275,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka-ui-core"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "rstml",
+ "serde",
+ "serde_json",
+ "syn 3.0.5",
+]
+
+[[package]]
 name = "deka-ui-dev"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
- "deka_native_ir",
+ "deka-ui-core",
  "serde_json",
 ]
 
@@ -2256,7 +2300,7 @@ name = "deka-ui-macros"
 version = "0.1.0"
 dependencies = [
  "bumpalo",
- "deka_native_ir",
+ "deka-ui-core",
  "deka_syntax",
  "proc-macro2",
  "quote",
@@ -2266,11 +2310,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka-ui-native"
+version = "0.1.0"
+dependencies = [
+ "accesskit",
+ "accesskit_winit",
+ "arboard",
+ "deka-rfd",
+ "deka-ui-core",
+ "deka-vello-gpu",
+ "fontique",
+ "libc",
+ "muda",
+ "num_cpus",
+ "objc2 0.6.4",
+ "objc2-metal 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "parley",
+ "pollster",
+ "rodio",
+ "serde",
+ "swash",
+ "taffy",
+ "unicode-segmentation",
+ "wgpu",
+ "windows-sys 0.61.2",
+ "winit",
+]
+
+[[package]]
 name = "deka-ui-tour"
 version = "0.1.0"
 dependencies = [
  "deka-ui",
- "deka_native_ui",
+ "deka-ui-native",
  "serde_json",
  "wasm-bindgen",
 ]
@@ -2282,6 +2355,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60f5ba90afc9de293ed21a733f42c6315f542b64242f2a1a6edf5329a3e72d53"
 dependencies = [
  "wasm-bindgen",
+]
+
+[[package]]
+name = "deka-vello-gpu"
+version = "0.3.0"
+dependencies = [
+ "bytemuck",
+ "deka-vello-gpu-shaders",
+ "glifo",
+ "hashbrown 0.17.1",
+ "js-sys",
+ "log",
+ "rayon",
+ "thiserror 2.0.20",
+ "vello_common",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
+name = "deka-vello-gpu-shaders"
+version = "0.3.0"
+dependencies = [
+ "naga",
+ "wesl",
+ "wesl-macros",
+ "wgsl-parse",
+ "wgsl-types",
 ]
 
 [[package]]
@@ -2309,8 +2410,8 @@ dependencies = [
  "corpus_gate",
  "deka-cli-core 0.6.0",
  "deka-fmt",
+ "deka-ui-native",
  "deka_executable",
- "deka_native_ui",
  "deka_vm",
  "flate2",
  "reqwest",
@@ -2397,52 +2498,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "deka_native_ir"
-version = "0.61.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "rstml",
- "serde",
- "serde_json",
- "syn 3.0.5",
-]
-
-[[package]]
-name = "deka_native_ui"
-version = "0.61.0"
-dependencies = [
- "accesskit",
- "accesskit_winit",
- "arboard",
- "deka_native_ir",
- "fontique",
- "libc",
- "muda",
- "num_cpus",
- "objc2 0.6.4",
- "objc2-metal 0.3.2",
- "objc2-quartz-core 0.3.2",
- "parley",
- "pollster",
- "rfd",
- "rodio",
- "serde",
- "swash",
- "taffy",
- "unicode-segmentation",
- "vello_gpu",
- "wgpu",
- "windows-sys 0.61.2",
- "winit",
-]
-
-[[package]]
 name = "deka_native_web"
 version = "0.61.0"
 dependencies = [
  "deka-fmt",
- "deka_native_ui",
+ "deka-ui-native",
  "deka_vm",
  "serde_json",
  "wasm-bindgen",
@@ -2465,8 +2525,8 @@ dependencies = [
  "bcrypt",
  "blake3",
  "bumpalo",
- "deka_native_ir",
- "deka_native_ui",
+ "deka-ui-core",
+ "deka-ui-native",
  "deka_syntax",
  "deno_core",
  "encoding_rs",
@@ -4073,6 +4133,9 @@ name = "fearless_simd"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f4beca3cb2444e3304ac30843cc091f44ed58932353cd492ce740067bfce6b12"
+dependencies = [
+ "libm",
+]
 
 [[package]]
 name = "ff"
@@ -4609,6 +4672,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gl_generator"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a95dfc23a2b4a9a2f5ab41d194f8bfda3cabec42af4e39f08c339eb2a0c124d"
+dependencies = [
+ "khronos_api",
+ "log",
+ "xml-rs",
+]
+
+[[package]]
 name = "glib"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4662,6 +4736,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1218dedd5348c1b166ec3b8b3cbca49d2f527bd43b3fa072ea5123c523ed3f"
 dependencies = [
  "bytemuck",
+ "core_maths",
  "foldhash 0.2.0",
  "hashbrown 0.17.1",
  "log",
@@ -4688,6 +4763,27 @@ dependencies = [
  "log",
  "regex-automata",
  "regex-syntax",
+]
+
+[[package]]
+name = "glow"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29038e1c483364cc6bb3cf78feee1816002e127c331a1eec55a4d202b9e1adb5"
+dependencies = [
+ "js-sys",
+ "slotmap",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "glutin_wgl_sys"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c4ee00b289aba7a9e5306d57c2d05499b2e5dc427f84ac708bd2c090212cf3e"
+dependencies = [
+ "gl_generator",
 ]
 
 [[package]]
@@ -5828,6 +5924,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "khronos-egl"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
+dependencies = [
+ "libc",
+ "libloading 0.8.9",
+ "pkg-config",
+]
+
+[[package]]
+name = "khronos_api"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
+
+[[package]]
 name = "kqueue"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5868,6 +5981,7 @@ checksum = "4b60dfc32f652b926df6192e55525b16d186c69d47876c3ead4da5cc9f8450e2"
 dependencies = [
  "arrayvec",
  "euclid",
+ "libm",
  "polycool",
  "smallvec",
 ]
@@ -8062,6 +8176,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50596ddc09eb5ad5f75cacd40209568e66df71baf86e1499a0e99c4cff12a5a6"
 dependencies = [
  "arrayvec",
+ "libm",
 ]
 
 [[package]]
@@ -8808,6 +8923,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "046a7d674daf459825b32f5062056d6882db0d2f5a479fbd76ccfc870ac18709"
 dependencies = [
  "bytemuck",
+ "core_maths",
  "font-types",
  "once_cell",
 ]
@@ -8966,31 +9082,6 @@ checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
 dependencies = [
  "hmac 0.12.1",
  "subtle",
-]
-
-[[package]]
-name = "rfd"
-version = "0.17.2"
-dependencies = [
- "block2 0.6.2",
- "dispatch2",
- "js-sys",
- "libc",
- "log",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
- "objc2-foundation 0.3.2",
- "percent-encoding",
- "pollster",
- "raw-window-handle",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "web-sys",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9884,6 +9975,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "819ab7d62b1d3e72d9d9dea5650bac30424f9111364bb94928dbf5ecad1baa68"
 dependencies = [
  "bytemuck",
+ "core_maths",
  "read-fonts",
 ]
 
@@ -12020,36 +12112,11 @@ dependencies = [
  "bytemuck",
  "fearless_simd",
  "guillotiere",
+ "libm",
  "log",
  "peniko",
  "smallvec",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "vello_gpu"
-version = "0.3.0"
-dependencies = [
- "bytemuck",
- "glifo",
- "hashbrown 0.17.1",
- "log",
- "rayon",
- "thiserror 2.0.20",
- "vello_common",
- "vello_gpu_shaders",
- "wgpu",
-]
-
-[[package]]
-name = "vello_gpu_shaders"
-version = "0.3.0"
-dependencies = [
- "naga",
- "wesl",
- "wesl-macros",
- "wgsl-parse",
- "wgsl-types",
 ]
 
 [[package]]
@@ -12533,6 +12600,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "js-sys",
  "log",
+ "naga",
  "parking_lot",
  "portable-atomic",
  "profiling",
@@ -12574,6 +12642,7 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.20",
  "wgpu-core-deps-apple",
+ "wgpu-core-deps-emscripten",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
  "wgpu-naga-bridge",
@@ -12585,6 +12654,15 @@ name = "wgpu-core-deps-apple"
 version = "30.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "061f3d319a40d39d00b1ecc2c33b89fe21d4e6fe01859df3500a3a8ecccd6b68"
+dependencies = [
+ "wgpu-hal",
+]
+
+[[package]]
+name = "wgpu-core-deps-emscripten"
+version = "30.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d98b86cf4abf524a902dd35f18ca6a3f08fc2ae9847c8f10b48e30491b1f0b86"
 dependencies = [
  "wgpu-hal",
 ]
@@ -12613,13 +12691,18 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "cfg_aliases",
+ "glow",
+ "glutin_wgl_sys",
  "gpu-allocator",
  "hashbrown 0.17.1",
+ "js-sys",
+ "khronos-egl",
  "libc",
  "libloading 0.8.9",
  "log",
  "naga",
  "naga-types",
+ "ndk-sys",
  "objc2 0.6.4",
  "objc2-core-foundation",
  "objc2-core-graphics",
@@ -12639,10 +12722,14 @@ dependencies = [
  "smallvec",
  "static_assertions",
  "thiserror 2.0.20",
+ "wasm-bindgen",
+ "wayland-sys",
+ "web-sys",
  "wgpu-naga-bridge",
  "wgpu-types",
  "windows 0.62.2",
  "windows-core 0.62.2",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -13624,6 +13711,12 @@ name = "xkeysym"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
+
+[[package]]
+name = "xml-rs"
+version = "0.8.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "yaml_parser"
