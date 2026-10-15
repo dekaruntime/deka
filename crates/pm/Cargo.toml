@@ -16,7 +16,7 @@ stdio = "0.4.0"
 deka-modules = "0.3.0"
 permissions = { path = "../permissions" }
 anyhow = "1.0"
-base64 = "0.21"
+base64 = "0.23"
 dirs = "5"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
 sha2 = "0.10"

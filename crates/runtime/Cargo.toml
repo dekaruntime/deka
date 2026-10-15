@@ -25,7 +25,7 @@ deka_host = { path = "../deka_host", default-features = false, features = ["runt
 compile = { path = "../compile" }
 deka-cache = { path = "../deka_cache" }
 axum = { workspace = true }
-base64 = "0.21"
+base64 = "0.23"
 deno_core = { workspace = true }
 num_cpus = { workspace = true }
 serde_json = { workspace = true }

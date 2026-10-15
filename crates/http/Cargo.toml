@@ -9,7 +9,7 @@ dev-server = []
 
 [dependencies]
 axum = { workspace = true, features = ["ws"] }
-base64 = "0.22"
+base64 = "0.23"
 bytes = { workspace = true }
 dashmap = "5.5.3"
 futures-util = { workspace = true }

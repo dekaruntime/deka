@@ -1374,7 +1374,7 @@ name = "cli"
 version = "0.61.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "compile",
  "compiler",
  "dcore",
@@ -2346,7 +2346,7 @@ name = "deka_host"
 version = "0.61.0"
 dependencies = [
  "aes-gcm",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bcrypt",
  "blake3",
  "bumpalo",
@@ -2390,7 +2390,7 @@ name = "deka_http"
 version = "0.61.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "chrono",
  "dashmap",
@@ -8002,7 +8002,7 @@ version = "0.61.0"
 dependencies = [
  "anyhow",
  "axum",
- "base64 0.21.7",
+ "base64 0.23.1",
  "deka-cli-core 0.5.0",
  "deka-modules",
  "deka-registry",
@@ -9108,7 +9108,7 @@ name = "runtime"
 version = "0.61.0"
 dependencies = [
  "axum",
- "base64 0.21.7",
+ "base64 0.23.1",
  "bytes",
  "compile",
  "compiler",
