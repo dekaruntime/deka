@@ -41,6 +41,10 @@ impl Application for App {
             disabled,
             tab_index,
             clickable,
+            selected: None,
+            controls: None,
+            expanded: None,
+            has_popup: false,
         };
         vec![
             node(

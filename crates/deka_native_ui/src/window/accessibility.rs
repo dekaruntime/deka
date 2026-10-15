@@ -104,6 +104,15 @@ impl Projection {
                 SemanticRole::Button => Role::Button,
                 SemanticRole::TextInput => Role::TextInput,
                 SemanticRole::MultilineTextInput => Role::MultilineTextInput,
+                SemanticRole::List => Role::List,
+                SemanticRole::ListItem => Role::ListItem,
+                SemanticRole::TabList => Role::TabList,
+                SemanticRole::Tab => Role::Tab,
+                SemanticRole::TabPanel => Role::TabPanel,
+                SemanticRole::Status => Role::Status,
+                SemanticRole::Dialog => Role::Dialog,
+                SemanticRole::Menu => Role::Menu,
+                SemanticRole::MenuItem => Role::MenuItem,
             });
             if !item.name.is_empty() {
                 node.set_label(item.name.clone());
@@ -113,6 +122,24 @@ impl Projection {
                 SemanticRole::TextInput | SemanticRole::MultilineTextInput
             ) {
                 node.set_value(item.value.clone());
+            }
+            if item.role == SemanticRole::Dialog {
+                node.set_modal();
+            }
+            if item.role == SemanticRole::Status {
+                node.set_live(accesskit::Live::Polite);
+            }
+            if let Some(expanded) = item.expanded {
+                node.set_expanded(expanded);
+            }
+            if item.has_popup {
+                node.set_has_popup(accesskit::HasPopup::Menu);
+            }
+            if let Some(selected) = item.selected {
+                node.set_selected(selected);
+            }
+            if let Some(target) = item.controls.as_deref().filter(|id| visible.contains(id)) {
+                node.set_controls(vec![self.id(target)]);
             }
             if item.disabled {
                 node.set_disabled();
@@ -172,6 +199,10 @@ mod tests {
             hidden: false,
             tab_index: Some(0),
             clickable: true,
+            selected: None,
+            controls: None,
+            expanded: None,
+            has_popup: false,
         };
         let first = projection.tree(&[item], &Scene::default(), Some("removed"), 1.);
         let removed = first.focus;

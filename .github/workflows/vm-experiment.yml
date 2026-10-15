@@ -17,6 +17,7 @@ on:
       - 'crates/deka_ui_hot_reload/**'
       - 'crates/deka_ui_dev/**'
       - 'scripts/rust-ui-hot-reload/**'
+      - 'scripts/rust-ui-components/**'
       - 'crates/deka_vm/**'
       - 'crates/deka_cli/**'
       - 'crates/deka_executable/**'
@@ -64,6 +65,7 @@ jobs:
           cargo check --locked --release -p deka-ui -p deka-ui-macros -p deka-ui-tour --all-targets
           cargo clippy --locked --release -p deka-ui -p deka-ui-macros -p deka-ui-tour --all-targets --all-features --no-deps -- -D warnings
           ./scripts/test-rust-ui.sh
+          python3 scripts/rust-ui-components/revert.py
           # A feature-less invocation must refuse to silently skip these gates.
           if cargo test --locked --release -p deka-ui --no-default-features --test required_features; then
             echo 'Missing-feature test incorrectly succeeded'
@@ -150,6 +152,7 @@ jobs:
           # macOS always ships Japanese and colour-emoji faces (the system font fallback test), and
           # every runner has a Metal device, so the window's pixel tests draw on a real GPU here.
           cargo test --locked --release -p deka_native_ui --features world-audio
+          cargo test --locked --release -p deka-ui --features tour,web --test components_native
           cargo clippy --locked -p deka_native_ui --all-targets --all-features --no-deps -- -D warnings
           # GPUI is gone: no desktop crate may link it again.
           for package in deka_native_ui deka_vm deka_cli; do
@@ -203,6 +206,8 @@ jobs:
           npm ci --prefix scripts/rust-tour-browser
           scripts/rust-tour-browser/node_modules/.bin/playwright install --with-deps chromium --only-shell
           node scripts/rust-tour-browser/check.mjs .tmp/rust-tour
+          python3 scripts/rust-ui-components/browser-revert.py .tmp/rust-tour
+          python3 scripts/rust-ui-components/modal-browser-revert.py .tmp/rust-tour
       - uses: actions/upload-artifact@v7
         with:
           name: rust-tour

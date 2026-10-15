@@ -154,6 +154,20 @@ export function mount(app, canvas, inspect = false) {
   let disposed = false, request = 0, scene, fixedClock = inspect ? 0 : undefined
   const motion = matchMedia('(prefers-reduced-motion: reduce)')
   const inputs = new Map()
+  const mountId = nextMount++
+  const semanticId = id => `deka-semantic-${mountId}-${id}`
+  const semanticKey = event => {
+    if(event.isComposing || event.defaultPrevented || event.target !== event.currentTarget) return
+    try {
+      const id = event.currentTarget.dataset.dekaNode
+      if (event.key === 'Tab') {
+        if(app.modal() && app.key(event.key,event.shiftKey)) { event.preventDefault(); event.stopPropagation() }
+      } else {
+        if(app.key_to(id,event.key)) { if(!inputs.has(id) || (event.key==='Escape' && app.modal())) event.preventDefault(); event.stopPropagation() }
+      }
+      draw()
+    } catch(error) { fail(error) }
+  }
   const semantics = new Map()
   const previousTabIndex = canvas.getAttribute("tabindex")
   const previousAriaHidden = canvas.getAttribute("aria-hidden")
@@ -163,7 +177,9 @@ export function mount(app, canvas, inspect = false) {
   const inspectedImages = new Map()
   const syncInputs = () => {
     const active = new Set()
+    const visible = new Set(JSON.parse(app.semantic_nodes()).filter(node=>!node.hidden).map(node=>node.id))
     for (const control of JSON.parse(app.inputs())) {
+      if(!visible.has(control.id)) continue
       const node = scene.nodes.find(node => node.id === control.id)
       if (!node || node.rect.width <= 0 || node.rect.height <= 0) continue
       active.add(control.id)
@@ -175,13 +191,14 @@ export function mount(app, canvas, inspect = false) {
         input.addEventListener('compositionstart', () => { input.dekaComposing = true })
         input.addEventListener('compositionend', () => { input.dekaComposing = false; try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } })
         input.addEventListener('input', () => { if (!input.dekaComposing) { try { app.input(control.id, input.value); draw() } catch(error) { fail(error) } } })
-        input.addEventListener('keydown', event => { if(event.isComposing) return; try { app.key_to(control.id,event.key); draw() } catch(error) { fail(error) } })
+        input.addEventListener('keydown', semanticKey)
         input.addEventListener('focus', () => { try { app.focus_node(control.id, input.matches(":focus-visible")); draw() } catch(error) { fail(error) } })
-        input.addEventListener('blur', () => { app.blur(); draw() })
+        input.addEventListener('blur', () => { if(!drawing) { app.blur(); draw() } })
         inputs.set(control.id,input); parent.append(input)
       }
       const value = control.value ?? ""
       input.placeholder = control.placeholder ?? ""
+      input.style.color = `#${control.color.toString(16).padStart(6,"0")}`
       if (!input.dekaComposing && (control.controlled || input.dekaObservedValue !== value) && input.value !== value) {
         const selection = [input.selectionStart, input.selectionEnd]
         input.value = value
@@ -195,22 +212,36 @@ export function mount(app, canvas, inspect = false) {
   }
   const syncSemantics = () => {
     const descriptors = JSON.parse(app.semantic_nodes())
-    const active = new Set()
+    const active = new Set(), ordered = new Map()
     for (const node of descriptors) {
       if (node.hidden) continue
       active.add(node.id)
       let element = inputs.get(node.id) ?? semantics.get(node.id)
       if (!element) {
-        element = document.createElement(node.role === 'button' ? 'button' : node.role === 'text' ? 'span' : 'div')
-        if (node.role === 'group') { element.setAttribute('role', 'group'); element.style.display='contents' }
-        else if (node.role === 'button') {
+        element = document.createElement((['button','tab','menuitem'].includes(node.role)) ? 'button' : node.role === 'text' ? 'span' : 'div')
+        element.addEventListener('keydown', semanticKey)
+        if (['group','list','listitem','tablist','tabpanel','status','dialog','menu'].includes(node.role)) { element.setAttribute('role', node.role); element.style.display='contents' }
+        else if (['button','tab','menuitem'].includes(node.role)) {
           element.style.cssText='position:absolute;opacity:0;pointer-events:none;'
           element.addEventListener('click', () => { try { app.activate(node.id); draw() } catch(error) { fail(error) } })
         } else element.style.cssText='position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);'
         element.addEventListener('focus', () => { try { app.focus_node(node.id, element.matches(":focus-visible")); draw() } catch(error) { fail(error) } })
-        element.addEventListener('blur', () => { app.blur(); draw() })
+        element.addEventListener('blur', () => { if(!drawing) { app.blur(); draw() } })
         semantics.set(node.id, element)
       }
+      element.id = semanticId(node.id)
+      element.dataset.dekaNode = node.id
+      if (node.role === 'tab' || node.role === 'menuitem') element.setAttribute('role', node.role)
+      if (node.role === 'dialog') element.setAttribute('aria-modal','true')
+      if (node.role === 'status') element.setAttribute('aria-live','polite')
+      if (node.expanded !== null) element.setAttribute('aria-expanded', String(node.expanded))
+      else element.removeAttribute('aria-expanded')
+      if (node.hasPopup) element.setAttribute('aria-haspopup', 'menu')
+      else element.removeAttribute('aria-haspopup')
+      if (node.selected !== null) element.setAttribute('aria-selected', String(node.selected))
+      else element.removeAttribute('aria-selected')
+      if (node.controls) element.setAttribute('aria-controls', semanticId(node.controls))
+      else element.removeAttribute('aria-controls')
       if (node.name) element.setAttribute('aria-label', node.name)
       else if (!inputs.has(node.id)) element.removeAttribute('aria-label')
       element.setAttribute('aria-disabled', String(node.disabled))
@@ -218,10 +249,13 @@ export function mount(app, canvas, inspect = false) {
       if (node.tabIndex !== null && !node.disabled) element.tabIndex = node.tabIndex
       else if (!inputs.has(node.id)) element.removeAttribute('tabindex')
       if (node.role === 'text') element.textContent = node.name
-      const container = semantics.get(node.parent) ?? parent
-      // Preserve DOM source order without moving focused controls each frame.
+      // A modal can make its former ancestors inert in this same frame. Never
+      // attach visible controls to an ancestor that sync is about to remove.
+      const container = active.has(node.parent) ? (semantics.get(node.parent) ?? parent) : parent
+      if (!ordered.has(container)) ordered.set(container, [])
+      ordered.get(container).push(element)
       if (element.parentElement !== container) container.append(element)
-      if (node.role === 'button') {
+      if (['button','tab','menuitem'].includes(node.role)) {
         const box = scene.nodes.find(n=>n.id===node.id)?.rect
         if (box) {
           const bounds=canvas.getBoundingClientRect(), origin=parent.getBoundingClientRect()
@@ -229,17 +263,39 @@ export function mount(app, canvas, inspect = false) {
         }
       }
     }
+    // Reordered keys also reorder native DOM tab traversal. Move only nodes
+    // that changed position; moveBefore preserves focus where supported.
+    const focused = document.activeElement
+    for (const [container, children] of ordered) {
+      let before = null
+      for (const element of children.toReversed()) {
+        if (element.nextElementSibling !== before) {
+          if (container.moveBefore) container.moveBefore(element, before)
+          else container.insertBefore(element, before)
+        }
+        before = element
+      }
+    }
+    if (focused?.isConnected && document.activeElement !== focused) focused.focus({preventScroll:true})
     for (const [id, element] of semantics) if (!active.has(id)) { element.remove(); semantics.delete(id) }
     for (const [id, input] of inputs) if (!active.has(id)) input.hidden = true; else input.hidden = false
   }
+  let drawing = false, redraw = false
   const draw = () => {
     cancelAnimationFrame(request); request = 0
     if (disposed || rendererLost) return
+    // DOM focus can synchronously call draw again. Finish consuming this
+    // frame's image updates before serialising the next retained frame.
+    if (drawing) { redraw = true; return }
+    drawing = true
     try {
       const bounds = canvas.getBoundingClientRect()
       const scale = Math.max(1, devicePixelRatio || 1)
       scene = JSON.parse(app.frame_at(bounds.width,bounds.height,scale,fixedClock ?? performance.now(),motion.matches))
       renderer.draw(scene,scale); syncInputs(); syncSemantics()
+      const requested = app.take_requested_focus()
+      const target = semantics.get(requested) ?? inputs.get(requested)
+      if (target && document.activeElement !== target) target.focus({preventScroll:true})
       if (inspect) {
         const {image_ids, ...rendered} = scene
         const active = new Set(image_ids)
@@ -249,6 +305,10 @@ export function mount(app, canvas, inspect = false) {
       }
       if (scene.animating && fixedClock === undefined) request = requestAnimationFrame(draw)
     } catch (error) { fail(error) }
+    finally {
+      drawing = false
+      if (redraw) { redraw = false; draw() }
+    }
   }
   let rendererLost = false
   const lost = event => { event.preventDefault(); rendererLost = true; cancelAnimationFrame(request) }
@@ -263,7 +323,14 @@ export function mount(app, canvas, inspect = false) {
     try { if(app.context_menu(event.clientX-bounds.left,event.clientY-bounds.top)) { event.preventDefault(); draw() } } catch(error) { fail(error) }
   }
   const key = event => { try { if(app.key(event.key,event.shiftKey)) event.preventDefault(); draw() } catch(error) { fail(error) } }
-  const blur = () => { app.blur(); draw() }
+  const blur = () => { if(!drawing) { app.blur(); draw() } }
+  const containFocus = event => {
+    if(disposed || drawing || !app.modal()) return
+    if([...inputs.values(),...semantics.values()].includes(event.target)) return
+    const target = inputs.get(app.focus()) ?? semantics.get(app.focus())
+    target?.focus({preventScroll:true})
+  }
+  document.addEventListener('focusin',containFocus)
   // Explicit deterministic presentation clock for the same scripts as the native gate.
   const command = event => {
     if (!inspect) return
@@ -277,10 +344,11 @@ export function mount(app, canvas, inspect = false) {
   let dpr
   const watchDpr = () => { dpr?.removeEventListener('change',changedDpr); dpr=matchMedia(`(resolution: ${devicePixelRatio}dppx)`);dpr.addEventListener('change',changedDpr) }
   const changedDpr = () => { watchDpr(); draw() }; watchDpr()
-  const mountId = nextMount++; mounts.set(mountId, draw); app.wake_on(mountId)
+  mounts.set(mountId, draw); app.wake_on(mountId)
   draw()
   return {dispose() {
     if(disposed) return; disposed=true; mounts.delete(mountId); pending.delete(mountId); cancelAnimationFrame(request);observer.disconnect()
+    document.removeEventListener('focusin',containFocus)
     window.removeEventListener('resize',draw);motion.removeEventListener('change',draw);dpr.removeEventListener('change',changedDpr)
     canvas.removeEventListener('contextmenu',contextMenu);canvas.removeEventListener('pointerup',pointer);canvas.removeEventListener('keydown',key);canvas.removeEventListener('blur',blur)
     canvas.removeEventListener('webglcontextlost',lost);canvas.removeEventListener('webglcontextrestored',restored);canvas.removeEventListener('deka:clock',command)

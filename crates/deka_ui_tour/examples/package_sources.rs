@@ -25,7 +25,12 @@ fn contract(scene: &Scene) -> Value {
 fn main() {
     let out = PathBuf::from(std::env::args().nth(1).expect("output directory"));
     std::fs::create_dir_all(&out).unwrap();
-    let sources:Vec<_>=tour::LESSONS.iter().map(|lesson|json!({"id":lesson.id,"title":lesson.title,"section":lesson.section,"content":lesson.description,"path":format!("crates/deka_ui/examples/tour/{}.rs",lesson.id),"source":lesson.source,"handlers":lesson.handlers})).collect();
+    let mut sources:Vec<_>=tour::LESSONS.iter().map(|lesson|json!({"id":lesson.id,"title":lesson.title,"section":lesson.section,"content":lesson.description,"path":format!("crates/deka_ui/examples/tour/{}.rs",lesson.id),"source":lesson.source,"handlers":lesson.handlers})).collect();
+    for showcase in tour::SHOWCASES {
+        for theme in ["light", "dark"] {
+            sources.push(json!({"id":format!("component-{}-{theme}",showcase.id),"title":format!("{} ({theme})",showcase.title),"section":"Components","content":"Reusable native controls with shared theme tokens, signals and accessibility.","path":showcase.path,"source":showcase.source,"handlers":0}));
+        }
+    }
     std::fs::write(
         out.join("sources.json"),
         serde_json::to_vec(&sources).unwrap(),
@@ -87,6 +92,23 @@ fn main() {
                     }
                 }
                 cases.push(json!({"lesson":lesson.id,"width":width,"height":height,"scale":scale,"reduced":reduced,"discovery":discovery,"steps":steps}));
+            }
+        }
+    }
+    for showcase in tour::SHOWCASES {
+        for (theme_name, theme) in [
+            ("light", deka_ui::components::Theme::Light),
+            ("dark", deka_ui::components::Theme::Dark),
+        ] {
+            for (width, height, scale, reduced) in [
+                (560., 480., 1., false),
+                (360., 640., 2., false),
+                (560., 480., 1., true),
+            ] {
+                let app = (showcase.app)(theme);
+                let renderer = Renderer::new();
+                let steps: Vec<_> = [0.,200.,20000.].into_iter().map(|time| json!({"time":time,"scene":contract(&renderer.render_at(&app.tree(),width,height,scale,time,reduced))})).collect();
+                cases.push(json!({"lesson":format!("component-{}-{theme_name}",showcase.id),"width":width,"height":height,"scale":scale,"reduced":reduced,"discovery":false,"steps":steps}));
             }
         }
     }
