@@ -18,6 +18,38 @@ pub enum Kind {
     },
     Text(String),
     Hole(String),
+    Component {
+        code: String,
+        props: BTreeMap<String, Literal>,
+    },
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Literal {
+    pub kind: String,
+    pub value: String,
+}
+pub fn literal(expr: &Expr) -> Option<Literal> {
+    let expr = value(expr);
+    let (expr, negative) = match expr {
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_)) => (value(&unary.expr), true),
+        _ => (expr, false),
+    };
+    let Expr::Lit(expr) = expr else { return None };
+    let (kind, value) = match &expr.lit {
+        Lit::Str(s) if !negative => ("string".into(), s.value()),
+        Lit::Char(c) if !negative => ("char".into(), c.value().to_string()),
+        Lit::Bool(b) if !negative => ("bool".into(), b.value.to_string()),
+        Lit::Int(i) => (
+            format!("int:{}", i.suffix()),
+            format!("{}{}", if negative { "-" } else { "" }, i.base10_digits()),
+        ),
+        Lit::Float(f) => (
+            format!("float:{}", f.suffix()),
+            format!("{}{}", if negative { "-" } else { "" }, f.base10_digits()),
+        ),
+        _ => return None,
+    };
+    Some(Literal { kind, value })
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TemplateNode {
@@ -90,9 +122,33 @@ fn convert(nodes: &[Node], next: &mut usize) -> Result<Vec<TemplateNode>, String
                     .next()
                     .is_some_and(|s| s.trim().starts_with(char::is_uppercase))
                 {
+                    let mut normalized = element.clone();
+                    let mut props = BTreeMap::new();
+                    for attribute in normalized.attributes_mut() {
+                        let NodeAttribute::Attribute(attribute) = attribute else {
+                            return Err("use a named component prop".into());
+                        };
+                        let key = attribute.key.to_string();
+                        if let Some(value) = attribute.value().and_then(literal) {
+                            if props.insert(key, value.clone()).is_some() {
+                                return Err("duplicate component prop".into());
+                            }
+                            let marker = format!("__deka_literal_{}", value.kind.replace(':', "_"));
+                            if let rstml::node::KeyedAttributeValue::Value(expr) =
+                                &mut attribute.possible_value
+                            {
+                                expr.value = rstml::node::KVAttributeValue::Expr(
+                                    syn::parse_str(&marker).map_err(|e| e.to_string())?,
+                                );
+                            }
+                        }
+                    }
                     output.push(TemplateNode {
                         id,
-                        kind: Kind::Hole(element.to_token_stream().to_string()),
+                        kind: Kind::Component {
+                            code: normalized.to_token_stream().to_string(),
+                            props,
+                        },
                         children: vec![],
                     });
                     continue;
@@ -226,6 +282,7 @@ impl Template {
         let new_nodes = self.flattened();
         let compiled = |node: &TemplateNode| match &node.kind {
             Kind::Hole(code) => Some(format!("hole:{code}")),
+            Kind::Component { code, .. } => Some(format!("component:{code}")),
             Kind::Element { tag, bindings, .. } if !bindings.is_empty() => {
                 Some(format!("bindings:{tag}:{bindings:?}"))
             }
@@ -240,13 +297,69 @@ impl Template {
         if old_sorted != new_sorted {
             return Err("compiled expressions or component props changed".into());
         }
+        // A permutation of literal values on otherwise identical calls cannot
+        // distinguish moving instances from editing their props without ids.
+        for key in old_compiled
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            let props = |nodes: &[&TemplateNode]| {
+                nodes
+                    .iter()
+                    .filter_map(|node| match &node.kind {
+                        Kind::Component { props, .. } if compiled(node).as_ref() == Some(key) => {
+                            Some(props.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let before = props(&old_nodes);
+            let after = props(&new_nodes);
+            if before.len() < 2 || before == after {
+                continue;
+            }
+            let keyed = |values: &[BTreeMap<String, Literal>]| {
+                values.iter().enumerate().all(|(index, props)| {
+                    props.get("id").is_some_and(|id| {
+                        values[..index]
+                            .iter()
+                            .all(|other| other.get("id") != Some(id))
+                    })
+                })
+            };
+            if keyed(&before) && keyed(&after) {
+                continue;
+            }
+            let mut unmatched = before;
+            for value in after {
+                if let Some(index) = unmatched.iter().position(|old| *old == value) {
+                    unmatched.remove(index);
+                } else {
+                    break;
+                }
+            }
+            if unmatched.is_empty() {
+                return Err(
+                    "reordering identical component calls needs distinct component ids; rebuilding"
+                        .into(),
+                );
+            }
+        }
         let mut result = BTreeMap::new();
         let mut used = std::collections::BTreeSet::new();
         for new in &new_nodes {
             if let Some(key) = compiled(new) {
-                let previous = old_nodes
+                let candidates: Vec<_> = old_nodes
                     .iter()
-                    .find(|n| !used.contains(&n.id) && compiled(n).as_ref() == Some(&key))
+                    .filter(|n| !used.contains(&n.id) && compiled(n).as_ref() == Some(&key))
+                    .collect();
+                let id = match &new.kind {
+                    Kind::Component { props, .. } => props.get("id"),
+                    _ => None,
+                };
+                let previous = candidates.iter().copied().find(|n| matches!(&n.kind, Kind::Component { props, .. } if id.is_some() && props.get("id") == id))
+                    .or_else(|| candidates.first().copied())
                     .ok_or("compiled slot missing")?;
                 result.insert(new.id, previous.id);
                 used.insert(previous.id);
@@ -351,68 +464,40 @@ impl Template {
                 used.insert(previous.id);
             }
         }
-        fn parents(
-            nodes: &[TemplateNode],
-            parent: Option<usize>,
-            out: &mut BTreeMap<usize, Option<usize>>,
-        ) {
-            for node in nodes {
-                out.insert(node.id, parent);
-                parents(&node.children, Some(node.id), out);
+        // Occurrence matching cannot identify identical, unkeyed compiled
+        // slots moved between parents. Refuse that save before planning edits.
+        let mut new_parent = BTreeMap::new();
+        parent_map(&self.nodes, &mut new_parent);
+        for node in self.flattened() {
+            let Some(key) = compiled(node) else { continue };
+            if old_compiled.iter().filter(|old| **old == key).count() < 2 {
+                continue;
+            }
+            if let Kind::Component { props, .. } = &node.kind
+                && let Some(id) = props.get("id")
+            {
+                let same_id = |other: &TemplateNode| {
+                    compiled(other).as_ref() == Some(&key)
+                        && matches!(&other.kind, Kind::Component { props, .. } if props.get("id") == Some(id))
+                };
+                if old_nodes.iter().filter(|node| same_id(node)).count() == 1
+                    && self.flattened().iter().filter(|node| same_id(node)).count() == 1
+                {
+                    continue;
+                }
+            }
+            let previous = result[&node.id];
+            let parent = new_parent
+                .get(&node.id)
+                .and_then(|parent| result.get(parent));
+            if parent != old_parent.get(&previous) {
+                return Err(
+                    "moving identical compiled slots needs distinct component ids; rebuilding"
+                        .into(),
+                );
             }
         }
-        let mut old_parents = BTreeMap::new();
-        parents(&old.nodes, None, &mut old_parents);
-        let mut new_parents = BTreeMap::new();
-        parents(&self.nodes, None, &mut new_parents);
         for node in self.flattened() {
-            if matches!(&node.kind,Kind::Hole(code) if !code.starts_with("interpolation:")) {
-                let previous = result[&node.id];
-                if new_parents[&node.id].and_then(|p| result.get(&p).copied())
-                    != old_parents[&previous]
-                {
-                    return Err(
-                        "moving a compiled child to another parent requires rebuilding".into(),
-                    );
-                }
-            }
-            if matches!(&node.kind,Kind::Hole(code) if code.starts_with('{')) {
-                let previous = result[&node.id];
-                if new_parents[&node.id].and_then(|p| result.get(&p).copied())
-                    != old_parents[&previous]
-                {
-                    return Err(
-                        "moving a Rust child slot to another parent requires rebuilding".into(),
-                    );
-                }
-                // Reactive Rust children keep their original structural slot
-                // paths. Until those paths can move, changing their sibling
-                // topology would make the next signal turn reorder the tree.
-                fn siblings(template: &Template, parent: Option<usize>) -> &[TemplateNode] {
-                    parent.map_or(template.nodes.as_slice(), |id| {
-                        template
-                            .flattened()
-                            .into_iter()
-                            .find(|n| n.id == id)
-                            .unwrap()
-                            .children
-                            .as_slice()
-                    })
-                }
-                let before: Vec<_> = siblings(old, old_parents[&previous])
-                    .iter()
-                    .map(|n| Some(n.id))
-                    .collect();
-                let after: Vec<_> = siblings(self, new_parents[&node.id])
-                    .iter()
-                    .map(|n| result.get(&n.id).copied())
-                    .collect();
-                if before != after {
-                    return Err(
-                        "changing siblings around a Rust child slot requires rebuilding".into(),
-                    );
-                }
-            }
             if let Kind::Element {
                 attributes,
                 bindings,
@@ -557,26 +642,43 @@ mod tests {
         }
     }
     #[test]
-    fn component_literal_props_and_structural_slot_moves_rebuild() {
+    fn literal_props_and_structural_moves_are_template_edits() {
         assert!(
             source("<view><Card title=\"old\"/></view>")
                 .compatible(&source("<view><Card title=\"new\"/></view>"))
-                .is_err()
+                .is_ok()
         );
         assert!(
             source("<view><div><Card/></div></view>")
                 .compatible(&source("<view><Card/><div/></view>"))
-                .is_err()
+                .is_ok()
         );
         assert!(
             source("<view><div>{move || Some(view!{<p/>})}</div></view>")
                 .compatible(&source("<view>{move || Some(view!{<p/>})}<div/></view>"))
+                .is_ok()
+        );
+        assert!(
+            source("<view><Card title=\"one\"/><Card title=\"two\"/></view>")
+                .compatible(&source(
+                    "<view><Card title=\"two\"/><Card title=\"one\"/></view>"
+                ))
                 .is_err()
+        );
+        assert!(
+            source("<view><div id=\"left\"><Card title=\"one\"/></div><div id=\"right\"><Card title=\"two\"/></div></view>")
+                .compatible(&source("<view><div id=\"left\"/><div id=\"right\"><Card title=\"one\"/><Card title=\"two\"/></div></view>"))
+                .is_err()
+        );
+        assert!(
+            source("<view><div id=\"left\"><Card id=\"one\"/></div><div id=\"right\"><Card id=\"two\"/></div></view>")
+                .compatible(&source("<view><div id=\"left\"/><div id=\"right\"><Card id=\"one\"/><Card id=\"two\"/></div></view>"))
+                .is_ok()
         );
         assert!(
             source("<view>{move || Some(view!{<p/>})}</view>")
                 .compatible(&source("<view><p/> {move || Some(view!{<p/>})}</view>"))
-                .is_err()
+                .is_ok()
         );
     }
 }

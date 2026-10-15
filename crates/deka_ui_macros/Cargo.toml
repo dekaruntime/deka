@@ -15,7 +15,7 @@ hot-reload = ["dep:deka-ui-hot-reload"]
 deka-ui-hot-reload = { path = "../deka_ui_hot_reload", optional = true }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
-syn = { version = "3", features = ["full"] }
+syn = { version = "3", features = ["full", "visit-mut"] }
 rstml = "=0.13.1"
 deka_native_ir = { path = "../deka_native_ir" }
 

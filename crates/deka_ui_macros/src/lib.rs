@@ -4,6 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span, TokenStream as Tokens};
 use quote::{ToTokens, format_ident, quote, quote_spanned};
 use rstml::node::{Node, NodeAttribute, NodeName};
+#[cfg(feature = "hot-reload")]
+mod hot_props;
 use syn::{Expr, FnArg, ItemFn, Lit, LitStr, Pat, Type, spanned::Spanned};
 
 #[proc_macro]
@@ -13,6 +15,13 @@ pub fn view(input: TokenStream) -> TokenStream {
         .into()
 }
 fn markup(input: Tokens) -> syn::Result<Tokens> {
+    markup_with_props(input, None, &Default::default())
+}
+fn markup_with_props(
+    input: Tokens,
+    location: Option<Span>,
+    props: &std::collections::BTreeMap<String, Ident>,
+) -> syn::Result<Tokens> {
     let plain = nodes(&rstml::parse2(input.clone())?)?;
     #[cfg(feature = "hot-reload")]
     {
@@ -20,7 +29,8 @@ fn markup(input: Tokens) -> syn::Result<Tokens> {
             .map_err(|error| syn::Error::new(Span::call_site(), error))?;
         let source = input.to_string();
         let origin = Ident::new("__DEKA_TEMPLATE", Span::mixed_site());
-        let path = Span::call_site()
+        let span = location.unwrap_or_else(Span::call_site);
+        let path = span
             .local_file()
             .ok_or_else(|| syn::Error::new(Span::call_site(), "hot reload needs a source file"))?;
         let path = std::fs::canonicalize(&path)
@@ -28,21 +38,31 @@ fn markup(input: Tokens) -> syn::Result<Tokens> {
             .to_string_lossy()
             .into_owned();
         let mut next = 0;
-        let hot = hot_nodes(&rstml::parse2(input)?, &mut next)?;
+        let hot = hot_nodes(&rstml::parse2(input)?, &mut next, props)?;
+        let (line, column) = if location.is_some() {
+            let start = span.start();
+            let (line, column) = (start.line as u32, start.column as u32 + 1);
+            (quote!(#line), quote!(#column))
+        } else {
+            (quote!(line!()), quote!(column!()))
+        };
         Ok(quote!({
-            #[cfg(all(debug_assertions, not(target_arch="wasm32")))]
+            #[cfg(debug_assertions)]
             {
                 const #origin: ::deka_ui::hot_reload::Origin = ::deka_ui::hot_reload::Origin {
-                    file: #path, line: line!(), column: column!(), source: #source, compiled_file: include_str!(#path),
+                    file: #path, line: #line, column: #column, source: #source, compiled_file: include_str!(#path),
                 };
                 ::deka_ui::View::__hot_template(&#origin, #hot)
             }
-            #[cfg(any(not(debug_assertions), target_arch="wasm32"))]
+            #[cfg(not(debug_assertions))]
             {#plain}
         }))
     }
     #[cfg(not(feature = "hot-reload"))]
-    Ok(plain)
+    {
+        let _ = (location, props);
+        Ok(plain)
+    }
 }
 fn nodes(input: &[Node]) -> syn::Result<Tokens> {
     let values = input
@@ -124,7 +144,7 @@ fn node(input: &Node) -> syn::Result<Tokens> {
                     method.set_span(span);
                     let value = match value {
                         Expr::Lit(lit) if matches!(lit.lit, Lit::Str(_)) => {
-                            quote_spanned!(value.span()=> (#value).into())
+                            quote_spanned!(value.span()=> ::deka_ui::literal_string(#value))
                         }
                         _ => value.to_token_stream(),
                     };
@@ -205,7 +225,11 @@ fn node(input: &Node) -> syn::Result<Tokens> {
     }
 }
 #[cfg(feature = "hot-reload")]
-fn hot_nodes(input: &[Node], next: &mut usize) -> syn::Result<Tokens> {
+fn hot_nodes(
+    input: &[Node],
+    next: &mut usize,
+    props: &std::collections::BTreeMap<String, Ident>,
+) -> syn::Result<Tokens> {
     let origin = Ident::new("__DEKA_TEMPLATE", Span::mixed_site());
     let mut output = vec![];
     for input in input {
@@ -213,7 +237,7 @@ fn hot_nodes(input: &[Node], next: &mut usize) -> syn::Result<Tokens> {
             continue;
         }
         if let Node::Fragment(fragment) = input {
-            output.push(hot_nodes(&fragment.children, next)?);
+            output.push(hot_nodes(&fragment.children, next, props)?);
             continue;
         }
         if let Node::Text(text) = input {
@@ -229,6 +253,7 @@ fn hot_nodes(input: &[Node], next: &mut usize) -> syn::Result<Tokens> {
                         let mut ident: Ident =
                             syn::parse_str(name.strip_prefix("interpolation:").unwrap())?;
                         ident.set_span(text.value.span());
+                        let ident = props.get(&ident.to_string()).unwrap_or(&ident);
                         quote!(::deka_ui::View::interpolate(&#ident))
                     }
                     _ => unreachable!(),
@@ -252,15 +277,45 @@ fn hot_nodes(input: &[Node], next: &mut usize) -> syn::Result<Tokens> {
                 .next()
                 .is_some_and(|s| s.trim().starts_with(char::is_uppercase));
             if component {
-                node(input)?
+                let value = node(input)?;
+                quote!(::deka_ui::hot_reload::component(|| #value))
             } else {
                 let mut bare = element.clone();
                 bare.children.clear();
+                for attribute in bare.attributes_mut() {
+                    if let NodeAttribute::Attribute(attribute) = attribute
+                        && let Some(value) = attribute.value().map(unwrap_value)
+                    {
+                        let replacement = if let Expr::Path(path) = value
+                            && let Some(signal) = props.get(&path.to_token_stream().to_string())
+                        {
+                            Some(syn::parse2(quote!({move || #signal.get().unwrap()}))?)
+                        } else if matches!(value, Expr::Closure(closure) if closure.capture.is_some())
+                        {
+                            Some(hot_props::live_expression(value, props))
+                        } else {
+                            None
+                        };
+                        if let Some(replacement) = replacement
+                            && let rstml::node::KeyedAttributeValue::Value(expr) =
+                                &mut attribute.possible_value
+                        {
+                            expr.value = rstml::node::KVAttributeValue::Expr(replacement);
+                        }
+                    }
+                }
                 let base = node(&Node::Element(bare))?;
-                let children = hot_nodes(&element.children, next)?;
+                let children = hot_nodes(&element.children, next, props)?;
                 // Preserve each authored child position, including text fragments.
                 quote!((#base).child(#children))
             }
+        } else if let Node::Block(block) = input
+            && let Some(block) = block.try_block()
+            && let [syn::Stmt::Expr(expr, None)] = block.stmts.as_slice()
+            && matches!(expr, Expr::Closure(closure) if closure.capture.is_some())
+        {
+            let expr = hot_props::live_expression(expr, props);
+            quote!(::deka_ui::View::from_child(#expr))
         } else {
             node(input)?
         };
@@ -616,6 +671,21 @@ fn expand_component(mut function: ItemFn) -> syn::Result<Tokens> {
         Tokens::new()
     };
     let body = &function.block;
+    #[cfg(feature = "hot-reload")]
+    let hot_body = hot_props::component_body(body, &props)?;
+    #[cfg(feature = "hot-reload")]
+    let body = {
+        let statements = &body.stmts;
+        quote!(
+            #[cfg(debug_assertions)] { #hot_body }
+            #[cfg(not(debug_assertions))] { #(#statements)* }
+        )
+    };
+    #[cfg(not(feature = "hot-reload"))]
+    let body = {
+        let statements = &body.stmts;
+        quote!(#(#statements)*)
+    };
     let props_binding = Ident::new("__deka_props", Span::mixed_site());
     let replacement: syn::Block =
         syn::parse2(quote!({let #props_name{#(#patterns),*}=#props_binding; #body}))?;

@@ -14,6 +14,7 @@ use std::{
     process::{Child, Command, Stdio},
     time::Duration,
 };
+mod web;
 fn main() {
     if let Err(error) = run() {
         eprintln!("deka dev: {error}");
@@ -29,6 +30,14 @@ fn run() -> Result<(), String> {
         return Err("usage: cargo deka dev [cargo build options] [-- app arguments]".into());
     }
     arguments.remove(0);
+    if let Some(index) = arguments
+        .iter()
+        .take_while(|arg| *arg != "--")
+        .position(|arg| arg == "--web")
+    {
+        arguments.remove(index);
+        return web::run(arguments);
+    }
     let split = arguments
         .iter()
         .position(|arg| arg == "--")
@@ -183,6 +192,15 @@ impl Drop for Running {
     }
 }
 fn build(arguments: &[String]) -> Result<PathBuf, String> {
+    let example = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--example")
+        .map(|pair| pair[1].as_str())
+        .or_else(|| {
+            arguments
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--example="))
+        });
     let output = Command::new("cargo")
         .args(["build", "--message-format=json-render-diagnostics"])
         .args(arguments)
@@ -199,6 +217,19 @@ fn build(arguments: &[String]) -> Result<PathBuf, String> {
             }
             if let Some(executable) = message["executable"].as_str() {
                 executables.push(PathBuf::from(executable));
+            } else if message["target"]["crate_types"]
+                .as_array()
+                .is_some_and(|types| types.iter().any(|ty| ty == "cdylib"))
+                && example.is_none_or(|name| message["target"]["name"].as_str() == Some(name))
+                && let Some(files) = message["filenames"].as_array()
+            {
+                executables.extend(
+                    files
+                        .iter()
+                        .filter_map(|file| file.as_str())
+                        .filter(|file| file.ends_with(".wasm"))
+                        .map(PathBuf::from),
+                );
             }
         }
     }

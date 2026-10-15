@@ -724,7 +724,7 @@ mod replacement_tests {
     }
 }
 
-#[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+#[cfg(all(feature = "hot-reload", debug_assertions))]
 mod template;
-#[cfg(all(feature = "hot-reload", debug_assertions, not(target_arch = "wasm32")))]
+#[cfg(all(feature = "hot-reload", debug_assertions))]
 pub use template::TemplateEdit;

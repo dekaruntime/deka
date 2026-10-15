@@ -36,3 +36,7 @@ crate-type = ["cdylib"]
 [[example]]
 name = "web_shared"
 crate-type = ["cdylib"]
+
+[[example]]
+name = "hot_reload_web"
+crate-type = ["cdylib"]

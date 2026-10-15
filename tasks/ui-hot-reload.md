@@ -1,4 +1,4 @@
-# APS 74 phase 4 markup-patch core — deka#1440
+# APS 74 phase 4 hot reload — core and phase 2, deka#1440
 
 ## Approach and prior art
 
@@ -15,16 +15,51 @@ The development macro emits a source callsite (absolute file + original line/col
 
 The native host's existing 100 ms live turn checks a shared workspace/local-path-dependency snapshot on the UI thread. Both the application and supervisor wait for a save to remain stable for at least 20 ms before classifying it. All edited Rust files participate, so logic changes in a different file block markup patches. Components mounted after a save replay the current template. The supervisor uses a 50 ms source snapshot loop, incremental Cargo builds and explicit child PIDs; it owns the restart path. The user command is `cargo deka dev`, from the small `deka-ui-dev` crate. It avoids routing Rust applications through the retired DekaScript `deka dev` implementation. No product configuration environment variables or arbitrary Rust evaluation.
 
-## Deliberate core boundary
+## Phase 2
 
-Literal component props, additions/removals of Rust slots, markup inside opaque expressions/component children, reparenting compiled components, movable structural Rust child slots, root-count/kind changes, builder decorations chained after `view!`, and class-base changes combined with compiled class toggles take the visible rebuild path. The remaining task is typed mutable prop slots and movable structural-slot ownership, with state-preservation tests. These are not implemented or claimed here.
+Scalar component props now retain typed signal slots. `#[component]` analyzes
+ordinary Rust parameters and emits development-only reactive reads for supported
+markup and `move` closures; the production body and typed builder remain intact.
+The original source template, spans and expression identities remain the
+classifier's authority. Props consumed by initializers, shadowed/mutated locals,
+forwarded component values or opaque macros have no mutable slot and rebuild.
+Typed decoders prepare all writes before any tree/signal mutation, and writes
+flush as one scope batch after the registry borrow ends.
 
-Browser transport is deferred: the browser cannot poll the author's local source files, and needs a separate dev server/connection and scheduling bridge. The compiled tour/browser behavior must continue to pass unchanged. Release application code excludes all development payload/metadata/polling/patch code under feature + debug + native cfg; the Rust supervisor is a separate executable.
+Compiled child paths remain allocation identities. A development placement owns
+the mutable parent anchor and following-slot boundaries; the existing retained
+store replaces a dynamic slot at that boundary rather than sorting its old path.
+This keeps empty slots, reordered lists and subsequent signal turns in their new
+positions. Opaque fragments without a relocatable root use the complete-batch
+restart path. Component template mounts find their current parent from retained
+roots after a move.
+
+`cargo deka dev --web` builds a debug `wasm32-unknown-unknown` cdylib, runs
+wasm-bindgen and serves an atomic package snapshot on loopback. The shared
+whole-workspace classifier produces cumulative source patches over SSE; clients
+validate their compiled source and use the exact native planner/store. Browser
+fallback requests trigger a WASM rebuild/reload. The old package survives failed
+builds, new connections replay current edits, source rollback patches back to
+baseline, and successful rebuilds reset the replay baseline. The dev-only host
+adapter closes its connection on disposal. The production host now guards
+reentrant drawing during DOM moves and preserves accessibility order/focus.
+
+Remaining conservative fallbacks: added/removed compiled slots, opaque fragment
+moves, root-count/kind changes, class-base changes combined with compiled toggles,
+markup inside opaque expressions, and builder decorations outside `view!`.
+Native and browser application machinery is feature + debug gated; the supervisor
+remains a separate executable.
 
 ## Validation
 
-Reproducible probes: `python3 scripts/rust-ui-hot-reload/check.py` and `python3 scripts/rust-ui-hot-reload/release.py`. Both use the existing checkout target directory and never open a visible window. The disk-edit driver restores every edited fixture in `finally` and kills only its own explicit child PIDs.
+Reproducible probes: `python3 scripts/rust-ui-hot-reload/check.py`,
+`python3 scripts/rust-ui-hot-reload/phase2.py --case props` (also `slots` and
+`fallback`, `fragments` and `ambiguous`), `node scripts/rust-ui-hot-reload/browser.mjs`,
+`python3 scripts/rust-ui-hot-reload/revert-phase2.py`, and
+`python3 scripts/rust-ui-hot-reload/release.py`. The probes use the existing checkout target directory and never open a visible window. The disk-edit driver restores every edited fixture in `finally` and kills only its own explicit child PIDs.
 
-Local logs live in ignored `tasks/evidence/ui-hot-reload/`; acceptance numbers and literal-revert outcomes belong in the PR body. The phase-4 task remains partial until the typed-prop and structural-slot work is done.
+Release checks compare native consumer sizes/symbols and bound WASM sizes/exports
+with the feature disabled/enabled. Acceptance numbers and literal-revert outcomes
+belong in the PR; logs remain under ignored `tasks/evidence/ui-hot-reload/`.
 
 -codex

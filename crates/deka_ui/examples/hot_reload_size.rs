@@ -1,9 +1,13 @@
 use deka_ui::prelude::*;
 // DEKA_HOT_RELOAD_RELEASE_PAYLOAD_SENTINEL_1440
 #[component]
-fn App() -> View {
+fn Counter(label: String) -> View {
     let mut count = signal(0);
-    view! {<view class="p-4"><button onClick={move |_| count+=1}>"Increment"</button><span>"Value: {count}"</span></view>}
+    view! {<view class="p-4"><button onClick={move |_| count+=1}>"Increment"</button><span>"{label}: {count}"</span></view>}
+}
+#[component]
+fn App() -> View {
+    view! {<Counter label="Value"/>}
 }
 fn main() {
     let app = UiApp::new(App);
