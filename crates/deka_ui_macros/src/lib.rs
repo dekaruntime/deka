@@ -25,7 +25,7 @@ fn markup_with_props(
     let plain = nodes(&rstml::parse2(input.clone())?)?;
     #[cfg(feature = "hot-reload")]
     {
-        deka_ui_hot_reload::parse(input.clone())
+        deka_native_ir::hot_reload::parse(input.clone())
             .map_err(|error| syn::Error::new(Span::call_site(), error))?;
         let source = input.to_string();
         let origin = Ident::new("__DEKA_TEMPLATE", Span::mixed_site());
@@ -241,15 +241,17 @@ fn hot_nodes(
             continue;
         }
         if let Node::Text(text) = input {
-            let parts = deka_ui_hot_reload::text_parts(&text.value.value())
+            let parts = deka_native_ir::hot_reload::text_parts(&text.value.value())
                 .map_err(|e| syn::Error::new_spanned(&text.value, e))?;
             let mut values = vec![];
             for part in parts {
                 let id = *next;
                 *next += 1;
                 let value = match part {
-                    deka_ui_hot_reload::Kind::Text(value) => quote!(::deka_ui::View::text(#value)),
-                    deka_ui_hot_reload::Kind::Hole(name) => {
+                    deka_native_ir::hot_reload::Kind::Text(value) => {
+                        quote!(::deka_ui::View::text(#value))
+                    }
+                    deka_native_ir::hot_reload::Kind::Hole(name) => {
                         let mut ident: Ident =
                             syn::parse_str(name.strip_prefix("interpolation:").unwrap())?;
                         ident.set_span(text.value.span());

@@ -14,7 +14,7 @@
 [package]
 edition = "2024"
 rust-version = "1.89"
-name = "vello_gpu"
+name = "deka-vello-gpu"
 version = "0.3.0"
 build = false
 autolib = false
@@ -22,7 +22,7 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "A GPU renderer for Vello with CPU-side preprocessing."
+description = "deka's fork of vello_gpu 0.3.0 (linebender/vello): multicore strips, staging-belt uploads, a shape API, errors instead of panics. Imported as vello_gpu."
 readme = "README.md"
 keywords = [
     "2d",
@@ -33,7 +33,9 @@ categories = [
     "graphics",
 ]
 license = "Apache-2.0 OR MIT"
-repository = "https://github.com/linebender/vello"
+repository = "https://github.com/dekaruntime/deka"
+# Artifacts of the upstream .crate this fork was vendored from; never re-published.
+exclude = ["Cargo.toml.orig", ".cargo_vcs_info.json", "Cargo.lock"]
 resolver = "2"
 
 [package.metadata.docs.rs]
@@ -128,6 +130,8 @@ features = ["std"]
 default-features = false
 
 [dependencies.vello_gpu_shaders]
+package = "deka-vello-gpu-shaders"
+path = "../vello_gpu_shaders"
 version = "0.3.0"
 optional = true
 

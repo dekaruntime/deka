@@ -1,6 +1,6 @@
 //! Cargo's native Rust UI development loop. Apps own markup patches; this
 //! supervisor owns Cargo and the child process for compiled-code changes.
-use deka_ui_hot_reload::{
+use deka_native_ir::hot_reload::{
     RESTART_PREFIX,
     files::{Change, Files, classify, snapshot, source_roots},
 };

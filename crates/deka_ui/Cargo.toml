@@ -3,7 +3,12 @@ name = "deka-ui"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-publish = false
+description = "A UI framework for Rust: components as functions, signals, and a view! macro. Native desktop apps and the browser from one codebase."
+repository = "https://github.com/dekaruntime/deka"
+homepage = "https://deka.gg"
+readme = false
+keywords = ["ui", "gui", "desktop", "wasm", "reactive"]
+categories = ["gui", "wasm"]
 
 [features]
 default = ["desktop"]
@@ -11,15 +16,14 @@ desktop = ["deka_native_ui/gpu"]
 web = ["dep:wasm-bindgen", "dep:serde_json", "dep:serde"]
 tour = []
 web-test = ["web"]
-hot-reload = ["dep:deka-ui-hot-reload", "deka-ui-macros/hot-reload", "deka_native_ir/hot-reload"]
+hot-reload = ["deka-ui-macros/hot-reload", "deka_native_ir/hot-reload"]
 
 [dependencies]
-deka-ui-hot-reload = { path = "../deka_ui_hot_reload", optional = true }
 serde_json = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
-deka-ui-macros = { path = "../deka_ui_macros" }
-deka_native_ir = { path = "../deka_native_ir" }
-deka_native_ui = { path = "../deka_native_ui" }
+deka-ui-macros = { version = "0.1.0", path = "../deka_ui_macros" }
+deka_native_ir = { package = "deka-ui-core", version = "0.1.0", path = "../deka_native_ir" }
+deka_native_ui = { package = "deka-ui-native", version = "0.1.0", path = "../deka_native_ui" }
 
 [[example]]
 name = "counter"

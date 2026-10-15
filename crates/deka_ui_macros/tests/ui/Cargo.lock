@@ -44,10 +44,14 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 name = "deka-ui"
 version = "0.1.0"
 dependencies = [
+ "deka-ui-core",
  "deka-ui-macros",
- "deka_native_ir",
- "deka_native_ui",
+ "deka-ui-native",
 ]
+
+[[package]]
+name = "deka-ui-core"
+version = "0.1.0"
 
 [[package]]
 name = "deka-ui-diagnostics"
@@ -60,7 +64,7 @@ dependencies = [
 name = "deka-ui-macros"
 version = "0.1.0"
 dependencies = [
- "deka_native_ir",
+ "deka-ui-core",
  "proc-macro2",
  "quote",
  "rstml",
@@ -68,14 +72,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "deka_native_ir"
-version = "0.61.0"
-
-[[package]]
-name = "deka_native_ui"
-version = "0.61.0"
+name = "deka-ui-native"
+version = "0.1.0"
 dependencies = [
- "deka_native_ir",
+ "deka-ui-core",
  "fontique",
  "parley",
  "serde",

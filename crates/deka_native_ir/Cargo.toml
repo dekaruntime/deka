@@ -1,14 +1,26 @@
 [package]
-name = "deka_native_ir"
-version.workspace = true
+name = "deka-ui-core"
+version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-publish = false
+description = "Internal part of deka-ui: the retained node tree, styles, motion and hot-reload templates. Use the deka-ui crate."
+repository = "https://github.com/dekaruntime/deka"
+homepage = "https://deka.gg"
+readme = false
+
+[lib]
+name = "deka_native_ir"
 
 [features]
-hot-reload = []
+hot-reload = ["dep:proc-macro2", "dep:quote", "dep:syn", "dep:rstml", "dep:serde_json"]
 wire = ["dep:serde"]
 program = ["dep:serde"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
+# Hot reload parses view! markup at development time only; normal builds never compile these.
+proc-macro2 = { version = "1", features = ["span-locations"], optional = true }
+quote = { version = "1", optional = true }
+syn = { version = "3", features = ["full", "visit-mut"], optional = true }
+rstml = { version = "=0.13.1", optional = true }
+serde_json = { version = "1", optional = true }

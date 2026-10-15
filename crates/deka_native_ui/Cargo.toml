@@ -1,9 +1,15 @@
 [package]
-name = "deka_native_ui"
-version.workspace = true
+name = "deka-ui-native"
+version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-publish = false
+description = "Internal part of deka-ui: the native desktop window and GPU renderer. Use the deka-ui crate."
+repository = "https://github.com/dekaruntime/deka"
+homepage = "https://deka.gg"
+readme = false
+
+[lib]
+name = "deka_native_ui"
 
 [features]
 default = []
@@ -36,7 +42,7 @@ program = ["deka_native_ir/program"]
 runtime-shaders = ["gpu"]
 
 [dependencies]
-deka_native_ir = { path = "../deka_native_ir" }
+deka_native_ir = { package = "deka-ui-core", version = "0.1.0", path = "../deka_native_ir" }
 
 # Text: parley shapes, breaks lines and falls back to system fonts (fontique); swash rasterises.
 parley = "=0.11.1"
@@ -47,7 +53,7 @@ serde = { version = "1", features = ["derive"] }
 taffy = { version = "=0.9.0", default-features = false, features = ["std", "taffy_tree", "flexbox"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-rfd = { path = "../../vendor/rfd", version = "=0.17.2", optional = true }
+rfd = { package = "deka-rfd", path = "../../vendor/rfd", version = "=0.17.2", optional = true }
 rodio = { version = "=0.21.1", default-features = false, features = ["playback"], optional = true }
 unicode-segmentation = { version = "1.13", optional = true }
 accesskit = { version = "=0.24.1", optional = true }
@@ -56,8 +62,8 @@ arboard = { version = "3.6", default-features = false, features = ["wayland-data
 winit = { version = "=0.30.13", optional = true }
 # Metal on macOS, Vulkan on Linux, DX12 on Windows (the others compile out by cfg).
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "vulkan", "dx12"], optional = true }
-# Patched to vendor/vello_gpu in the workspace manifest.
-vello_gpu = { version = "=0.3.0", default-features = false, features = ["wgpu", "multithreading"], optional = true }
+# deka's published fork of vello_gpu (vendor/vello_gpu, crates.io deka-vello-gpu).
+vello_gpu = { package = "deka-vello-gpu", path = "../../vendor/vello_gpu", version = "=0.3.0", default-features = false, features = ["wgpu", "multithreading"], optional = true }
 pollster = { version = "0.4", optional = true }
 num_cpus = { version = "1.16", optional = true }
 

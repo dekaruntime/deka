@@ -164,7 +164,7 @@ fn convert(nodes: &[Node], next: &mut usize) -> Result<Vec<TemplateNode>, String
                         return Err("duplicate attribute".into());
                     }
                     let expr = value(attribute.value().ok_or("attribute requires a Rust value")?);
-                    if deka_native_ir::is_supported_attribute(&key)
+                    if crate::is_supported_attribute(&key)
                         && let Expr::Lit(lit) = expr
                     {
                         let literal = match &lit.lit {
@@ -178,7 +178,7 @@ fn convert(nodes: &[Node], next: &mut usize) -> Result<Vec<TemplateNode>, String
                             }
                         };
                         attributes.insert(key, literal);
-                    } else if deka_native_ir::is_supported_attribute(&key)
+                    } else if crate::is_supported_attribute(&key)
                         || matches!(
                             key.as_str(),
                             "value"
@@ -191,14 +191,14 @@ fn convert(nodes: &[Node], next: &mut usize) -> Result<Vec<TemplateNode>, String
                         || key.starts_with("class:")
                     {
                         if let Some(class) = key.strip_prefix("class:") {
-                            deka_native_ir::apply_classes(&mut Default::default(), class)?;
+                            crate::apply_classes(&mut Default::default(), class)?;
                         }
                         bindings.insert(key, expr.to_token_stream().to_string());
                     } else {
                         return Err(format!("unsupported native attribute {key}"));
                     }
                 }
-                deka_native_ir::WireNode {
+                crate::WireNode {
                     tag: tag.clone(),
                     classes: attributes.get("class").cloned().unwrap_or_default(),
                     attributes: attributes.clone(),

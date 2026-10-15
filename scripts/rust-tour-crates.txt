@@ -7,8 +7,8 @@ cfg-if
 deka-ui
 deka-ui-macros
 deka-ui-tour
-deka_native_ir
-deka_native_ui
+deka-ui-core
+deka-ui-native
 derive-where
 displaydoc
 foldhash

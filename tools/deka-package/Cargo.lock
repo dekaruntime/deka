@@ -1220,17 +1220,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "deka_native_ir"
-version = "0.61.0"
+name = "deka-ui-core"
+version = "0.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
-name = "deka_native_ui"
-version = "0.61.0"
+name = "deka-ui-native"
+version = "0.1.0"
 dependencies = [
- "deka_native_ir",
+ "deka-ui-core",
  "fontique",
  "parley",
  "serde",
@@ -1251,8 +1251,8 @@ name = "deka_vm"
 version = "0.61.0"
 dependencies = [
  "bumpalo",
- "deka_native_ir",
- "deka_native_ui",
+ "deka-ui-core",
+ "deka-ui-native",
  "deka_syntax",
  "encoding_rs",
  "serde",
