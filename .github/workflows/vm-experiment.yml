@@ -49,13 +49,13 @@ jobs:
       - run: sccache --show-stats
       - name: Check and test the local frontend and runtime
         run: |
-          cargo fmt -p deka-fmt -p deka_native_web -p deka_vm -p deka_native_ir -p deka_native_ui -p deka_cli -p deka_executable --check
+          cargo fmt -p deka-fmt -p deka_native_web -p deka_vm -p deka-ui-core -p deka-ui-native -p deka_cli -p deka_executable --check
           cargo check --locked -p deka_vm --all-targets --features compiler,host,ui
           cargo clippy --locked -p deka_vm --all-targets --features compiler,host,ui --no-deps -- -D warnings
           # The desktop window (winit + wgpu + vello_gpu) builds on Linux with no system
           # packages: X11, Wayland and Vulkan are loaded at run time. Its GPU tests run on macOS.
-          cargo clippy --locked -p deka_native_ui --all-targets --features gpu --no-deps -- -D warnings
-          cargo test --locked -p deka_native_ui --features gpu
+          cargo clippy --locked -p deka-ui-native --all-targets --features gpu --no-deps -- -D warnings
+          cargo test --locked -p deka-ui-native --features gpu
           ./run.sh
           cargo test --locked --release -p deka_cli --no-default-features
       - name: Check Rust UI and compare every tour lesson with the VM
@@ -72,9 +72,9 @@ jobs:
           fi
       - name: Native Rust UI hot reload (headless, debug integration)
         run: |
-          cargo fmt -p deka_native_ir -p deka-ui-dev --check
-          cargo clippy --locked -p deka_native_ir -p deka-ui-dev --all-targets --features deka_native_ir/hot-reload --no-deps -- -D warnings
-          cargo test --locked -p deka_native_ir --features deka_native_ir/hot-reload
+          cargo fmt -p deka-ui-core -p deka-ui-dev --check
+          cargo clippy --locked -p deka-ui-core -p deka-ui-dev --all-targets --features deka-ui-core/hot-reload --no-deps -- -D warnings
+          cargo test --locked -p deka-ui-core --features deka-ui-core/hot-reload
           cargo test --locked -p deka-ui --no-default-features --features hot-reload,tour,web --lib
           cargo build --locked -p deka-ui-dev
           python3 scripts/rust-ui-hot-reload/check.py
@@ -152,11 +152,11 @@ jobs:
           cargo test --locked --release -p deka_cli --lib
           # macOS always ships Japanese and colour-emoji faces (the system font fallback test), and
           # every runner has a Metal device, so the window's pixel tests draw on a real GPU here.
-          cargo test --locked --release -p deka_native_ui --features world-audio
+          cargo test --locked --release -p deka-ui-native --features world-audio
           cargo test --locked --release -p deka-ui --features tour,web --test components_native
-          cargo clippy --locked -p deka_native_ui --all-targets --all-features --no-deps -- -D warnings
+          cargo clippy --locked -p deka-ui-native --all-targets --all-features --no-deps -- -D warnings
           # GPUI is gone: no desktop crate may link it again.
-          for package in deka_native_ui deka_vm deka_cli; do
+          for package in deka-ui-native deka_vm deka_cli; do
             cargo tree --locked -p "$package" --all-features -e normal --prefix none > "tree-$package.txt"
             if grep -q '^gpui ' "tree-$package.txt"; then
               echo "$package depends on gpui"
