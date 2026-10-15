@@ -29,6 +29,8 @@ categories = [
 ]
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/dekaruntime/deka"
+# Artifacts of the upstream .crate this fork was vendored from; never re-published.
+exclude = ["Cargo.toml.orig", ".cargo_vcs_info.json", "Cargo.lock"]
 resolver = "2"
 
 [package.metadata.docs.rs]
