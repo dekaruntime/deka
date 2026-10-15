@@ -54,9 +54,13 @@ def loaded_bytes(sections):
 
 plain = build(False)
 hot = build(True)
-# Enabling the feature may not add code or data to a release build. Smaller is fine: codegen
-# varies by a few hundred bytes between builds, and the payload checks above are the real guard.
-assert hot[0]-plain[0] <= 128, (plain, hot)
+# Enabling the feature may not add code or data to a release build. The symbol and payload checks
+# above are the real guard; this one catches the parser or watcher being linked, which would add
+# hundreds of KB. SLACK covers inlining shifts: hot_reload calls into deka_native_ir, so LLVM
+# inlines some of that crate's functions differently before the dead callers are dropped
+# (+172 bytes of WASM on macOS, +907 on Linux, 15 Oct). Smaller is always fine.
+SLACK = 2048
+assert hot[0]-plain[0] <= SLACK, (plain, hot)
 print(f"release code+data: disabled={plain[0]} bytes; enabled={hot[0]} bytes; diff={hot[0]-plain[0]} bytes")
 print(f"release files: disabled={plain[1]} bytes; enabled={hot[1]} bytes")
 print(f"release hashes: disabled={plain[2]} enabled={hot[2]}")
@@ -79,8 +83,5 @@ def wasm_build(feature):
 
 wasm_plain = wasm_build(False)
 wasm_hot = wasm_build(True)
-# One-sided, as above, with 256 bytes of slack: the feature compiles hot_reload into deka_native_ir,
-# which moves that crate's codegen-unit split and inlining by a hundred-odd bytes (172 on 15 Oct).
-# The sentinel checks in wasm_build are the guard against development code in the binary.
-assert wasm_hot[0]-wasm_plain[0] <= 256, (wasm_plain, wasm_hot)
+assert wasm_hot[0]-wasm_plain[0] <= SLACK, (wasm_plain, wasm_hot)  # one-sided, as above
 print(f"release WASM: disabled={wasm_plain[0]} bytes; enabled={wasm_hot[0]} bytes; diff={wasm_hot[0]-wasm_plain[0]} bytes; no development exports, source payload or transport")
