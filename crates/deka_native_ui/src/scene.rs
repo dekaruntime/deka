@@ -65,6 +65,13 @@ pub struct Target {
     pub rect: Rect,
     pub clip: Rect,
 }
+/// Platform editor text uses the same raster scale and effective foreground
+/// as the authored control, including dark-theme and inherited colours.
+#[derive(Clone, Copy)]
+pub struct EditorTextStyle {
+    pub scale: f32,
+    pub color: u32,
+}
 #[derive(Default, Clone, Serialize)]
 pub struct Scene {
     pub width: f32,
@@ -182,15 +189,23 @@ impl Renderer {
         width: Option<f32>,
         origin: (f32, f32),
         clip: Rect,
-        scale: f32,
+        style: EditorTextStyle,
     ) {
         let mut images = HashMap::new();
         let mut text = self.text.borrow_mut();
-        for (rect, id) in text.glyphs(content, 16., width, origin, scale, 0x1a1611, &mut images) {
+        for (rect, id) in text.glyphs(
+            content,
+            16.,
+            width,
+            origin,
+            style.scale,
+            style.color,
+            &mut images,
+        ) {
             scene.paint.push(Paint {
                 rect,
                 clip,
-                color: 0x1a1611,
+                color: style.color,
                 radius: 0.,
                 image: Some(id),
                 opacity: 1.,

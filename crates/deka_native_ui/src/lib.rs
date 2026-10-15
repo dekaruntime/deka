@@ -39,6 +39,8 @@ pub struct TextControl {
     pub id: String,
     pub value: String,
     pub placeholder: String,
+    /// Effective text foreground, including inherited colour.
+    pub color: u32,
     pub multiline: bool,
 }
 /// Backend-independent semantics from the effective retained tree.
@@ -53,6 +55,10 @@ pub struct SemanticNode {
     pub hidden: bool,
     pub tab_index: Option<i32>,
     pub clickable: bool,
+    pub selected: Option<bool>,
+    pub controls: Option<String>,
+    pub expanded: Option<bool>,
+    pub has_popup: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SemanticRole {
@@ -61,6 +67,15 @@ pub enum SemanticRole {
     Button,
     TextInput,
     MultilineTextInput,
+    List,
+    ListItem,
+    TabList,
+    Tab,
+    TabPanel,
+    Status,
+    Dialog,
+    Menu,
+    MenuItem,
 }
 /// Positive tab indices precede natural source order; negative indices allow
 /// explicit focus only. Disabled/hidden nodes never receive focus/actions.
@@ -74,6 +89,84 @@ pub fn tab_order(nodes: &[SemanticNode]) -> Vec<String> {
         _ => (1, 0),
     });
     focusable.into_iter().map(|n| n.id.clone()).collect()
+}
+/// Host-owned modal focus history, shared by native and browser sessions.
+#[derive(Default)]
+pub struct ModalFocus {
+    stack: Vec<(String, Option<String>)>,
+}
+impl ModalFocus {
+    pub fn synchronize(&mut self, nodes: &[SemanticNode], focused: Option<&str>) -> Option<String> {
+        let modal = modal_root(nodes);
+        let previous = self.stack.last().map(|(id, _)| id.as_str());
+        let mut restore = None;
+        if previous != modal {
+            if let Some(index) = self
+                .stack
+                .iter()
+                .position(|(id, _)| Some(id.as_str()) == modal)
+            {
+                while self.stack.len() > index + 1 {
+                    restore = self.stack.pop().and_then(|(_, saved)| saved);
+                }
+            } else if let Some(id) = modal {
+                self.stack.push((id.into(), focused.map(str::to_owned)));
+            } else {
+                while let Some((_, saved)) = self.stack.pop() {
+                    restore = saved;
+                }
+            }
+            if let Some(id) = restore.filter(|id| focus_available(nodes, id)) {
+                return Some(id);
+            }
+        }
+        if modal.is_some() && focused.is_none_or(|id| !focus_available(nodes, id)) {
+            return tab_order(nodes)
+                .into_iter()
+                .next()
+                .or_else(|| modal.map(str::to_owned));
+        }
+        None
+    }
+}
+pub fn modal_root(nodes: &[SemanticNode]) -> Option<&str> {
+    nodes
+        .iter()
+        .rev()
+        .find(|n| n.role == SemanticRole::Dialog && !n.hidden)
+        .map(|n| n.id.as_str())
+}
+pub fn focus_available(nodes: &[SemanticNode], id: &str) -> bool {
+    nodes
+        .iter()
+        .any(|n| n.id == id && n.tab_index.is_some() && !n.hidden && !n.disabled)
+}
+/// Modal boundaries wrap; ordinary boundaries let focus leave the application.
+pub fn next_tab(
+    targets: &[String],
+    current: Option<&str>,
+    backwards: bool,
+    wrap: bool,
+) -> Option<String> {
+    let position = targets.iter().position(|id| Some(id.as_str()) == current);
+    let next = match (position, backwards) {
+        (None, false) => Some(0),
+        (None, true) => targets.len().checked_sub(1),
+        (Some(i), false) => Some(i + 1),
+        (Some(i), true) => i.checked_sub(1),
+    };
+    next.and_then(|i| targets.get(i))
+        .or_else(|| {
+            wrap.then(|| {
+                if backwards {
+                    targets.last()
+                } else {
+                    targets.first()
+                }
+            })
+            .flatten()
+        })
+        .cloned()
 }
 pub trait Application: 'static {
     fn initial_state(&self) -> Vec<f64>;
@@ -97,6 +190,11 @@ pub trait Application: 'static {
     }
     fn key_input(&self, _id: &str, _key: String) -> bool {
         false
+    }
+    /// Consume an explicit focus request on the UI thread. Backends validate
+    /// current semantics before focusing, including hidden/disabled ancestry.
+    fn take_focus_request(&self) -> Option<String> {
+        None
     }
     /// Backend-independent application scheduling. Backends supply a wake and
     /// drive finite turns; applications keep their task ownership internally.

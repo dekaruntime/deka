@@ -195,3 +195,43 @@ required-features = ["desktop"]
 dispatch2 = "0.3.1"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry"] }
+
+[[example]]
+name = "showcase-button"
+path = "examples/showcase/button.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "showcase-input"
+path = "examples/showcase/input.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "showcase-list"
+path = "examples/showcase/list.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "showcase-tabs"
+path = "examples/showcase/tabs.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "showcase-badge"
+path = "examples/showcase/badge.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "showcase-toast"
+path = "examples/showcase/toast.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "showcase-dialog"
+path = "examples/showcase/dialog.rs"
+required-features = ["desktop"]
+
+[[example]]
+name = "showcase-menu"
+path = "examples/showcase/menu.rs"
+required-features = ["desktop"]

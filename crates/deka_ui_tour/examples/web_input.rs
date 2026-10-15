@@ -10,11 +10,13 @@ mod web {
         let text = signal(String::new());
         let key = signal(String::new());
         let mut edits = signal(0);
+        let name = node_ref();
         view! {<view class="p-4 gap-4" onContextMenu={move |_| key.set("Context".to_owned())}>
-            <input id="name" aria-label="Name" class="w-60 h-10" value={text} onInput={move |_| edits += 1}
+            <input id="name" node_ref={name.clone()} aria-label="Name" class="w-60 h-10" value={text} onInput={move |_| edits += 1}
                 onKeyDown={move |event| if let Event::KeyDown(value)=event { key.set(value.clone()); if value=="Enter" { text.set("Confirmed".to_owned()); } }}/>
             <textarea id="notes" aria-label="Notes" class="w-60 h-24" value={text}/>
             <button id="clear" onClick={move |_| text.set(String::new())}>"Clear"</button>
+            <button onClick={move |_| name.get().unwrap().as_element().unwrap().focus().unwrap()}>"Focus name"</button>
             <p>"Hello {text}"</p><p>"Key: {key}"</p><p>"Edits: {edits}"</p>
         </view>}
     }
