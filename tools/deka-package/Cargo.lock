@@ -1221,11 +1221,11 @@ dependencies = [
 
 [[package]]
 name = "deka_native_ir"
-version = "0.60.2"
+version = "0.61.0"
 
 [[package]]
 name = "deka_native_ui"
-version = "0.60.2"
+version = "0.61.0"
 dependencies = [
  "deka_native_ir",
  "fontique",

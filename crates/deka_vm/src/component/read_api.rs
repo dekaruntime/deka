@@ -3,13 +3,18 @@ use super::tree::{NodeHandle, Record, Tree};
 use crate::{HostHandle, HostOp, HostReply, HostType, HostValue, Result};
 use std::{cell::RefCell, rc::Rc};
 
-fn handle(node: NodeHandle, brand: &str) -> HostValue {
-    HostValue::Handle(HostHandle::from_shared(brand, node.0))
+pub(super) fn handle(node: NodeHandle, brand: &str) -> HostValue {
+    let scope = node.scope();
+    let trace_node = node.clone();
+    HostValue::Handle(
+        HostHandle::from_shared(brand, node.0)
+            .with_trace(scope, move |scope| trace_node.roots(scope)),
+    )
 }
 fn optional(node: Option<NodeHandle>, brand: &str) -> HostValue {
     HostValue::Option(node.map(|node| Box::new(handle(node, brand))))
 }
-fn node(value: &HostValue, tree: &RefCell<Tree>) -> Result<NodeHandle> {
+pub(super) fn node(value: &HostValue, tree: &RefCell<Tree>) -> Result<NodeHandle> {
     let HostValue::Handle(handle) = value else {
         return Err("expected retained view node".into());
     };
@@ -55,11 +60,12 @@ pub(crate) fn operations(tree: Rc<RefCell<Tree>>) -> Vec<HostOp> {
                 false,
                 move |args| {
                     HostReply::Ready(
-                        node(&args[0], &session).map(|node| optional(node.parent(), "ViewNode")),
+                        node(&args[0], &session).map(|node| optional(node.parent(), "ViewElement")),
                     )
                 },
             )
-            .with_receiver_property(brand, "parentNode"),
+            .with_receiver_property(brand, "parentNode")
+            .with_handle_base("ViewElement", "ViewNode"),
         );
         let session = tree.clone();
         ops.push(
@@ -132,6 +138,7 @@ pub(crate) fn operations(tree: Rc<RefCell<Tree>>) -> Vec<HostOp> {
         )
         .with_receiver_property("ViewElement", "classList"),
     );
+    ops.extend(super::write_api::operations(tree));
     ops
 }
 
@@ -139,6 +146,24 @@ pub(crate) fn operations(tree: Rc<RefCell<Tree>>) -> Vec<HostOp> {
 mod tests {
     use super::*;
     use crate::{Hosts, compiler, component::Component};
+    #[test]
+    fn a_detached_handler_capturing_its_own_node_is_collected() {
+        let source = r#"fn child(){let held: Option<ViewElement> = None;
+            return (<button id="node" onClick={fn(){held=view.getElementById("node");}}>Keep</button>);}
+            export fn App(){let visible=true;return {view:fn(){return (<view>{visible ? child() : None}</view>);},hide:fn(){visible=false;}};}"#;
+        let mut app = Component::new(
+            compiler::compile_entry(source, &Hosts::default(), "App").unwrap(),
+            Hosts::default(),
+        )
+        .unwrap();
+        let first = app.render().unwrap().root;
+        let weak = Rc::downgrade(&app.tree.borrow().element_by_id("node").unwrap().0);
+        app.event(first.children[0].on_click.unwrap(), vec![])
+            .unwrap();
+        app.call("hide", vec![]).unwrap();
+        app.render().unwrap();
+        assert!(weak.upgrade().is_none());
+    }
     #[test]
     fn source_class_list_retains_a_detached_node_only_until_vm_collection() {
         let source = r#"export fn App(){let visible=true;let held: Option<ViewClassList> = None;

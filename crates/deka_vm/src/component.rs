@@ -7,6 +7,7 @@ use crate::{
 use deka_native_ui::Node;
 mod read_api;
 pub(crate) mod tree;
+mod write_api;
 pub(crate) use read_api::operations as view_operations;
 
 pub struct InputSpec {
@@ -39,6 +40,9 @@ impl Component {
         let tree = std::rc::Rc::new(std::cell::RefCell::new(tree::Tree::default()));
         hosts.bind_view_tree(tree.clone())?;
         let mut vm = Vm::new(program, hosts)?;
+        tree.borrow_mut().set_scope(&vm.heap.scope);
+        let root_tree = tree.clone();
+        vm.set_view_roots(move || root_tree.borrow().roots());
         let instance = vm.finish_sync()?;
         vm.pin(instance);
         if !matches!(vm.heap.get(instance)?, Value::Record(_)) {
@@ -73,7 +77,17 @@ impl Component {
         self.vm.to_host(result)
     }
     pub fn event(&mut self, id: usize, args: Vec<HostValue>) -> Result<()> {
-        let handler = *self.handlers.get(id).ok_or("unknown component event")?;
+        let handler = self
+            .tree
+            .borrow()
+            .event(id)
+            .or_else(|| self.handlers.get(id).copied());
+        let Some(handler) = handler else {
+            if self.tree.borrow().is_input_event(id) {
+                return Ok(());
+            }
+            return Err("unknown component event".into());
+        };
         let args = args
             .into_iter()
             .map(|value| self.vm.alloc_host_value(value))
@@ -129,7 +143,11 @@ impl Component {
         self.handlers.clear();
         let mut inputs = vec![];
         let wire = self.node(view, &mut inputs, vec![])?;
+        self.tree
+            .borrow_mut()
+            .set_callbacks(&self.handlers, &inputs);
         let root = self.tree.borrow_mut().update_slots(wire, &self.slots)?;
+        let inputs = self.tree.borrow().input_specs();
         self.bindings.retain(|_, binding| binding.seen);
         let mut pins = vec![self.instance, view];
         pins.extend(self.handlers.iter().copied());

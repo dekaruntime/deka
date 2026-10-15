@@ -73,6 +73,8 @@ pub struct Vm {
     context: HostContext,
     pub(crate) heap: Heap,
     pins: Vec<Handle>,
+    #[cfg(feature = "ui")]
+    view_roots: Option<Rc<dyn Fn() -> Vec<Handle>>>,
     tasks: BTreeMap<u64, Task>,
     next_task: u64,
     root: Option<Handle>,
@@ -98,6 +100,8 @@ impl Vm {
             context: HostContext::default(),
             heap: Heap::default(),
             pins: vec![],
+            #[cfg(feature = "ui")]
+            view_roots: None,
             tasks: BTreeMap::new(),
             next_task: 0,
             root: None,
@@ -148,6 +152,10 @@ impl Vm {
             .collect();
         roots.extend(self.descriptors.values().copied());
         roots.extend(self.context.roots());
+        #[cfg(feature = "ui")]
+        if let Some(provider) = &self.view_roots {
+            roots.extend(provider());
+        }
         for task in self.tasks.values() {
             roots.push(task.promise);
             if let Work::CallbackWait(promise) = &task.work {
@@ -333,7 +341,9 @@ impl Vm {
             Value::Bool(b) => HostValue::Bool(*b),
             Value::String(s) => HostValue::String(s.clone()),
             Value::Bytes(bytes) => HostValue::Bytes(bytes.clone()),
-            Value::Host(handle) => HostValue::Handle(handle.clone()),
+            Value::Host(handle) => {
+                HostValue::Handle(handle.exported(&self.heap.scope, &self.context, h))
+            }
             Value::List(items) => HostValue::List(
                 items
                     .iter()
@@ -421,6 +431,8 @@ impl Vm {
             }
             Err(error) => return Err(error),
         };
+        let mut value = value;
+        self.hosts.annotate(&mut value);
         if !expected.accepts(&value) {
             return Err("host returned the wrong result type".into());
         }
@@ -508,7 +520,14 @@ impl Vm {
                 });
             }
             HostValue::Bytes(bytes) => Value::Bytes(bytes),
-            HostValue::Handle(handle) => Value::Host(handle),
+            HostValue::Handle(handle) => {
+                let mut value = HostValue::Handle(handle);
+                self.hosts.annotate(&mut value);
+                let HostValue::Handle(handle) = value else {
+                    unreachable!()
+                };
+                Value::Host(handle.into_heap(&self.heap.scope))
+            }
             HostValue::List(items) => Value::List(
                 items
                     .into_iter()
@@ -932,6 +951,10 @@ impl Vm {
                 return Err("UI bindings must complete synchronously".into());
             }
         }
+    }
+    #[cfg(feature = "ui")]
+    pub(crate) fn set_view_roots(&mut self, provider: impl Fn() -> Vec<Handle> + 'static) {
+        self.view_roots = Some(Rc::new(provider));
     }
     #[cfg(feature = "ui")]
     pub(crate) fn pin(&mut self, handle: Handle) {

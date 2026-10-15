@@ -5,14 +5,21 @@ use std::{
     fmt,
     future::Future,
     pin::Pin,
-    rc::Rc,
+    rc::{Rc, Weak},
 };
+type ExternalRoot = (Weak<()>, HostCallback);
+type HandleTrace = dyn Fn(&Rc<()>) -> Vec<crate::heap::Handle>;
+
 /// An opaque resource remains owned by Rust. Language aliases retain the same
 /// resource; tracing GC drops their references when no longer reachable.
 #[derive(Clone)]
 pub struct HostHandle {
     name: String,
     resource: Rc<dyn Any>,
+    bases: Vec<String>,
+    trace: Option<Rc<HandleTrace>>,
+    trace_owner: Weak<()>,
+    external_root: Option<ExternalRoot>,
 }
 impl HostHandle {
     pub fn new<T: Any>(name: &str, resource: T) -> Self {
@@ -24,7 +31,54 @@ impl HostHandle {
         Self {
             name: name.into(),
             resource,
+            bases: vec![],
+            trace: None,
+            trace_owner: Weak::new(),
+            external_root: None,
         }
+    }
+    #[cfg(feature = "ui")]
+    pub(crate) fn with_trace(
+        mut self,
+        owner: Weak<()>,
+        trace: impl Fn(&Rc<()>) -> Vec<crate::heap::Handle> + 'static,
+    ) -> Self {
+        self.trace_owner = owner;
+        self.trace = Some(Rc::new(trace));
+        self
+    }
+    pub(crate) fn exported(
+        &self,
+        scope: &Rc<()>,
+        context: &HostContext,
+        value: crate::heap::Handle,
+    ) -> Self {
+        let mut handle = self.clone();
+        // Only a Rust export is an external root. Re-exporting a foreign handle
+        // preserves its origin root rather than rooting another VM's proxy.
+        if handle.external_root.is_none()
+            && Weak::ptr_eq(&handle.trace_owner, &Rc::downgrade(scope))
+        {
+            handle.external_root = Some((Rc::downgrade(scope), context.callback(value)));
+        }
+        handle
+    }
+    pub(crate) fn into_heap(mut self, scope: &Rc<()>) -> Self {
+        // Internal handles are tracing edges, so a closure capturing its own
+        // node cannot become an unconditional root through this bridge.
+        if self
+            .external_root
+            .as_ref()
+            .is_some_and(|(owner, _)| Weak::ptr_eq(owner, &Rc::downgrade(scope)))
+        {
+            self.external_root = None;
+        }
+        self
+    }
+    pub(crate) fn roots(&self, scope: &Rc<()>) -> Vec<crate::heap::Handle> {
+        self.trace
+            .as_ref()
+            .map_or_else(Vec::new, |trace| trace(scope))
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -45,7 +99,8 @@ impl fmt::Debug for HostHandle {
 }
 impl PartialEq for HostHandle {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && Rc::ptr_eq(&self.resource, &other.resource)
+        self.bases.last().unwrap_or(&self.name) == other.bases.last().unwrap_or(&other.name)
+            && Rc::ptr_eq(&self.resource, &other.resource)
     }
 }
 /// A named enum schema shared by checking, marshalling and error channels.
@@ -162,7 +217,9 @@ impl HostType {
                     && Self::Record(schema.fields.clone())
                         .accepts(&HostValue::Record(fields.clone()))
             }
-            (Self::Handle(name), HostValue::Handle(handle)) => name == handle.name(),
+            (Self::Handle(name), HostValue::Handle(handle)) => {
+                name == handle.name() || handle.bases.contains(name)
+            }
             _ => false,
         }
     }
@@ -432,6 +489,7 @@ pub struct HostOp {
     pub receiver_setter: Option<(String, String)>,
     /// Specialize this async string-body reader with the checked JSON schema.
     pub json_body: bool,
+    handle_base: Option<(String, String)>,
     defaults: Vec<HostValue>,
     handler: Rc<HostHandler>,
 }
@@ -471,6 +529,11 @@ impl HostOp {
     }
     pub fn with_receiver_setter(mut self, owner: &str, property: &str) -> Self {
         self.receiver_setter = Some((owner.into(), property.into()));
+        self
+    }
+    /// Declare an opaque derived handle usable wherever its base is expected.
+    pub fn with_handle_base(mut self, derived: &str, base: &str) -> Self {
+        self.handle_base = Some((derived.into(), base.into()));
         self
     }
     pub fn with_json_body(mut self) -> Self {
@@ -567,6 +630,7 @@ impl HostOp {
             receiver_property: false,
             receiver_setter: None,
             json_body: false,
+            handle_base: None,
             defaults: Vec::new(),
             handler: Rc::new(handler),
         }
@@ -576,12 +640,14 @@ impl HostOp {
 pub struct Hosts {
     operations: BTreeMap<String, HostOp>,
     nominal: BTreeMap<String, HostType>,
+    handle_bases: BTreeMap<String, String>,
 }
 impl Default for Hosts {
     fn default() -> Self {
         let hosts = Self {
             operations: BTreeMap::new(),
             nominal: BTreeMap::new(),
+            handle_bases: BTreeMap::new(),
         };
         #[cfg(feature = "ui")]
         let mut hosts = hosts;
@@ -775,7 +841,28 @@ impl Hosts {
             HostType::Enum(Box::new(error.schema.clone())).validate(&mut BTreeSet::new(), 0)?;
         }
         let nominal = Self::nominal_schemas(self.operations.values().chain(Some(&op)))?;
+        let mut bases = self.handle_bases.clone();
+        if let Some((derived, base)) = &op.handle_base {
+            if !matches!(nominal.get(derived), Some(HostType::Handle(_)))
+                || !matches!(nominal.get(base), Some(HostType::Handle(_)))
+            {
+                return Err("handle base must name registered opaque handles".into());
+            }
+            if bases.get(derived).is_some_and(|old| old != base) {
+                return Err("conflicting handle base".into());
+            }
+            bases.insert(derived.clone(), base.clone());
+            let mut seen = BTreeSet::new();
+            let mut cursor = derived;
+            while let Some(base) = bases.get(cursor) {
+                if !seen.insert(cursor) {
+                    return Err("cyclic handle base".into());
+                }
+                cursor = base;
+            }
+        }
         self.operations.insert(op.name.clone(), op);
+        self.handle_bases = bases;
         self.nominal = nominal;
         Ok(())
     }
@@ -837,6 +924,38 @@ impl Hosts {
     }
     pub fn namespaces(&self) -> impl Iterator<Item = &HostOp> {
         self.operations.values().filter(|op| op.namespace.is_some())
+    }
+    #[cfg(feature = "compiler")]
+    pub(crate) fn handle_bases(&self) -> &BTreeMap<String, String> {
+        &self.handle_bases
+    }
+    pub(crate) fn annotate(&self, value: &mut HostValue) {
+        match value {
+            HostValue::Handle(handle) => {
+                handle.bases.clear();
+                let mut cursor = &handle.name;
+                while let Some(base) = self.handle_bases.get(cursor) {
+                    handle.bases.push(base.clone());
+                    cursor = base;
+                }
+            }
+            HostValue::List(items) => {
+                for item in items {
+                    self.annotate(item);
+                }
+            }
+            HostValue::Option(Some(item))
+            | HostValue::Enum {
+                payload: Some(item),
+                ..
+            } => self.annotate(item),
+            HostValue::Record(fields) | HostValue::Struct { fields, .. } => {
+                for item in fields.values_mut() {
+                    self.annotate(item);
+                }
+            }
+            _ => {}
+        }
     }
     pub fn methods(&self) -> impl Iterator<Item = &HostOp> {
         self.operations

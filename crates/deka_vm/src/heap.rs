@@ -91,6 +91,7 @@ struct Slot {
 }
 #[derive(Default)]
 pub(crate) struct Heap {
+    pub(crate) scope: std::rc::Rc<()>,
     slots: Vec<Slot>,
     free: Vec<usize>,
     pub collections: usize,
@@ -191,6 +192,7 @@ impl Heap {
         }
     }
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Handle>) -> Result<()> {
+        let scope = self.scope.clone();
         let mut todo: Vec<_> = roots.into_iter().collect();
         if let Some(reads) = self.reads.borrow().as_ref() {
             todo.extend(reads.dependencies.iter().flat_map(Dependency::roots));
@@ -214,6 +216,7 @@ impl Heap {
                     todo.extend(captures);
                     todo.extend(slot_children);
                 }
+                Value::Host(handle) => todo.extend(handle.roots(&scope)),
                 Value::Record(fields) => todo.extend(fields.values()),
                 Value::Props(fields) => todo.extend(fields.values()),
                 _ => {}

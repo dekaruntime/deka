@@ -1056,6 +1056,20 @@ fn compile_modules(
     diagnostics(&host_parse.errors)?;
     let host_ast = host_parse.program.ok_or("missing host declarations")?;
     let mut host_exports = deka_syntax::collect_module_exports(&host_ast, &arena);
+    for (derived, base) in hosts.handle_bases() {
+        let Some(deka_syntax::typeck::Type::Opaque {
+            identity: derived, ..
+        }) = host_exports.opaques.get(derived.as_str())
+        else {
+            return Err("missing derived opaque".into());
+        };
+        let Some(deka_syntax::typeck::Type::Opaque { identity: base, .. }) =
+            host_exports.opaques.get(base.as_str())
+        else {
+            return Err("missing base opaque".into());
+        };
+        host_exports.native_handle_bases.insert(*derived, *base);
+    }
     for op in hosts.properties() {
         let (_, property) = op.receiver_method.as_ref().expect("host property");
         let (operation, ty) = host_exports

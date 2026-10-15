@@ -282,6 +282,8 @@ pub struct ModuleExports<'a> {
     pub native_properties: NativeProperties<'a>,
     /// Host setter operation and assigned value type, from the same declaration.
     pub native_property_setters: NativeProperties<'a>,
+    /// Compiler-declared opaque derived identity to base identity.
+    pub native_handle_bases: HashMap<usize, usize>,
     /// Opaque receiver identity and method -> async raw string-body host op.
     pub native_json_bodies: HashMap<(usize, &'a str), &'a str>,
     pub receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
@@ -333,6 +335,7 @@ impl<'a> Default for ModuleExports<'a> {
             receiver_methods: HashMap::new(),
             native_properties: HashMap::new(),
             native_property_setters: HashMap::new(),
+            native_handle_bases: HashMap::new(),
             native_json_bodies: HashMap::new(),
             values: HashMap::new(),
             default_export_declared_name: None,
@@ -2198,6 +2201,7 @@ struct Checker<'a> {
     native_receiver_methods: HashMap<(usize, &'a str), MethodInfo<'a>>,
     native_properties: NativeProperties<'a>,
     native_property_setters: NativeProperties<'a>,
+    native_handle_bases: HashMap<usize, usize>,
     native_json_bodies: HashMap<(usize, &'a str), &'a str>,
     native_property_calls: HashMap<*const ast::Expr<'a>, &'a str>,
     native_property_setter_calls: HashMap<*const ast::Expr<'a>, &'a str>,
@@ -2341,6 +2345,7 @@ impl<'a> Checker<'a> {
             super_trees: HashMap::new(),
             native_properties: HashMap::new(),
             native_property_setters: HashMap::new(),
+            native_handle_bases: HashMap::new(),
             native_json_bodies: HashMap::new(),
             native_receiver_methods: HashMap::new(),
             native_property_calls: HashMap::new(),
@@ -2680,6 +2685,7 @@ impl<'a> Checker<'a> {
     ) {
         if let Some(declarations) = declarations {
             self.opaques.extend(declarations.opaques.clone());
+            self.native_handle_bases.extend(declarations.native_handle_bases.clone());
             self.structs.extend(declarations.structs.clone());
             self.enums.extend(declarations.enums.clone());
             self.native_properties
@@ -2877,6 +2883,34 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn contains_native_handle(&self, ty: &Type<'a>) -> bool {
+        match ty {
+            Type::Opaque { identity, .. } => {
+                self.native_handle_bases.contains_key(identity)
+                    || self
+                        .native_handle_bases
+                        .values()
+                        .any(|base| base == identity)
+            }
+            Type::Array { elem } | Type::Option { inner: elem } => {
+                self.contains_native_handle(elem)
+            }
+            Type::Generic { args, .. } => args.iter().any(|ty| self.contains_native_handle(ty)),
+            Type::Tuple { elements } | Type::Union { members: elements } => {
+                elements.iter().any(|ty| self.contains_native_handle(ty))
+            }
+            Type::Object { fields } => fields.iter().any(|(_, ty)| self.contains_native_handle(ty)),
+            Type::Function { params, ret, .. } => {
+                params.iter().any(|ty| self.contains_native_handle(ty))
+                    || self.contains_native_handle(ret)
+            }
+            _ => false,
+        }
+    }
+    fn is_mutably_assignable(&mut self, expected: &Type<'a>, actual: &Type<'a>) -> bool {
+        self.is_assignable(expected, actual)
+            && (!self.contains_native_handle(expected) || self.is_assignable(actual, expected))
+    }
     /// Assignment / subtyping check. `actual` must be assignable to `expected`.
     fn is_assignable(&mut self, expected: &Type<'a>, actual: &Type<'a>) -> bool {
         if expected.is_error() || actual.is_error() {
@@ -2950,6 +2984,13 @@ impl<'a> Checker<'a> {
                 return true;
             }
         }
+        if let (Type::Opaque { identity: expected, .. }, Type::Opaque { identity: actual, .. }) = (expected, actual) {
+            let mut cursor = actual;
+            while let Some(base) = self.native_handle_bases.get(cursor) {
+                if base == expected { return true; }
+                cursor = base;
+            }
+        }
         if expected == actual {
             return true;
         }
@@ -2959,7 +3000,7 @@ impl<'a> Checker<'a> {
         if let (Some(expected_value), Some(actual_value)) =
             (expected.context_value_type(), actual.context_value_type())
         {
-            return self.is_assignable(expected_value, actual_value);
+            return self.is_mutably_assignable(expected_value, actual_value);
         }
         // `never` is the bottom type: assignable to anything.
         if matches!(actual, Type::Never) {
@@ -3039,13 +3080,16 @@ impl<'a> Checker<'a> {
                 return expected_args
                     .iter()
                     .zip(actual_args.iter())
-                    .all(|(e, a)| self.is_assignable(e, a));
+                    .all(|(e, a)| if matches!(*expected_base, "Result" | "Promise" | "Exception" | "Hook") {
+                        self.is_assignable(e, a)
+                    } else { self.is_mutably_assignable(e, a) });
             }
         }
         if let (Type::Tuple { elements: e }, Type::Tuple { elements: a }) = (expected, actual) {
-            return e.len() == a.len() && e.iter().zip(a).all(|(e, a)| self.is_assignable(e, a));
+            return e.len() == a.len() && e.iter().zip(a).all(|(e, a)| self.is_mutably_assignable(e, a));
         }
-        // Arrays are covariant in their element type.
+        // Mutable containers cannot widen a native handle and then accept a
+        // base value through an alias of a derived-handle container.
         if let (
             Type::Array {
                 elem: expected_elem,
@@ -3053,7 +3097,7 @@ impl<'a> Checker<'a> {
             Type::Array { elem: actual_elem },
         ) = (expected, actual)
         {
-            return self.is_assignable(expected_elem, actual_elem);
+            return self.is_mutably_assignable(expected_elem, actual_elem);
         }
         // Object structural subtyping: actual must supply at least the expected fields.
         if let (
@@ -3069,7 +3113,7 @@ impl<'a> Checker<'a> {
                 actual_fields
                     .iter()
                     .find(|(n, _)| n == name)
-                    .map(|(_, actual_ty)| self.is_assignable(expected_ty, actual_ty))
+                    .map(|(_, actual_ty)| self.is_mutably_assignable(expected_ty, actual_ty))
                     .unwrap_or(matches!(expected_ty, Type::Option { .. }))
             });
         }
@@ -3158,7 +3202,7 @@ impl<'a> Checker<'a> {
                         _ => return false,
                     };
                     match actual_ty {
-                        Some(actual_ty) => self.is_assignable(expected_ty, &actual_ty),
+                        Some(actual_ty) => self.is_mutably_assignable(expected_ty, &actual_ty),
                         None => matches!(expected_ty, Type::Option { .. }),
                     }
                 });
@@ -3212,7 +3256,7 @@ impl<'a> Checker<'a> {
                                     }
                                     return false;
                                 };
-                                if !self.is_assignable(&expected_ty, actual_ty) {
+                                if !self.is_mutably_assignable(&expected_ty, actual_ty) {
                                     return false;
                                 }
                             }
@@ -3283,7 +3327,7 @@ impl<'a> Checker<'a> {
                                     return false;
                                 };
                                 let actual_ty = self.resolve_ast_type(actual_ast_ty);
-                                if !self.is_assignable(&expected_ty, &actual_ty) {
+                                if !self.is_mutably_assignable(&expected_ty, &actual_ty) {
                                     return false;
                                 }
                             }

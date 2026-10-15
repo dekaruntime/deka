@@ -28,6 +28,7 @@ struct Prepared {
     text: Option<String>,
     handler: Option<usize>,
     children: Vec<Prepared>,
+    content: String,
 }
 impl Prepared {
     #[cfg(any(test, feature = "v8-control"))]
@@ -42,8 +43,15 @@ impl Prepared {
             Kind::Element(wire.tag.clone())
         };
         let style = wire.style()?;
+        let content = wire.text.clone().unwrap_or_default()
+            + &wire
+                .children
+                .iter()
+                .filter_map(|child| child.text.as_deref())
+                .collect::<String>();
         Ok(Self {
             kind,
+            content,
             slot,
             classes: wire.classes,
             attributes: wire.attributes,
@@ -58,6 +66,7 @@ impl Prepared {
         })
     }
 }
+#[derive(Clone)]
 pub(super) struct Record {
     id: Identity,
     owner: Rc<Owner>,
@@ -73,6 +82,12 @@ pub(super) struct Record {
     text: Option<String>,
     handler: Option<usize>,
     children: Vec<NodeHandle>,
+    authored_children: Vec<Weak<RefCell<Record>>>,
+    authored_content: String,
+    text_override: bool,
+    callback: Option<crate::heap::Handle>,
+    callback_scope: Weak<()>,
+    input: Option<(crate::heap::Handle, crate::heap::Handle)>,
 }
 
 /// Owner tokens distinguish separate sessions even when both number their root 0.
@@ -131,6 +146,27 @@ impl NodeHandle {
             .iter()
             .find_map(|node| node.element_by_id(id))
     }
+    pub(super) fn scope(&self) -> Weak<()> {
+        self.0.borrow().callback_scope.clone()
+    }
+    pub(super) fn roots(&self, scope: &Rc<()>) -> Vec<crate::heap::Handle> {
+        let record = self.0.borrow();
+        let mut roots = vec![];
+        if record
+            .callback_scope
+            .upgrade()
+            .is_some_and(|owner| Rc::ptr_eq(&owner, scope))
+        {
+            roots.extend(record.callback);
+            if let Some((change, key)) = record.input {
+                roots.extend([change, key]);
+            }
+        }
+        for child in &record.children {
+            roots.extend(child.roots(scope));
+        }
+        roots
+    }
     fn snapshot(&self) -> Node {
         Self::snapshot_record(&self.0.borrow())
     }
@@ -139,7 +175,13 @@ impl NodeHandle {
             id: format!("view/{}", record.id.0),
             style: record.style.clone(),
             text: record.text.clone(),
-            on_click: record.handler,
+            on_click: if record.callback.is_some()
+                || matches!(&record.kind, Kind::Element(tag) if tag == "input")
+            {
+                Some(event_id(record.id, 0))
+            } else {
+                record.handler
+            },
             children: record.children.iter().map(Self::snapshot).collect(),
         }
     }
@@ -150,6 +192,10 @@ pub(crate) struct Tree {
     records: BTreeMap<Identity, Weak<RefCell<Record>>>,
     next: u64,
     owner: Rc<Owner>,
+    authored_nodes: Vec<NodeHandle>,
+    callbacks: Vec<crate::heap::Handle>,
+    scope: Weak<()>,
+    inputs: Vec<(usize, crate::heap::Handle, crate::heap::Handle)>,
 }
 impl Tree {
     pub(super) fn owns(&self, node: &NodeHandle) -> bool {
@@ -157,6 +203,213 @@ impl Tree {
     }
     pub(super) fn element_by_id(&self, id: &str) -> Option<NodeHandle> {
         self.root.as_ref()?.element_by_id(id)
+    }
+    pub(crate) fn set_scope(&mut self, scope: &Rc<()>) {
+        self.scope = Rc::downgrade(scope);
+    }
+    pub(crate) fn set_callbacks(
+        &mut self,
+        callbacks: &[crate::heap::Handle],
+        inputs: &[super::InputSpec],
+    ) {
+        self.callbacks = callbacks.to_vec();
+        self.inputs = inputs
+            .iter()
+            .map(|input| (input.target, callbacks[input.change], callbacks[input.key]))
+            .collect();
+    }
+    pub(crate) fn roots(&self) -> Vec<crate::heap::Handle> {
+        let mut todo: Vec<_> = self
+            .root
+            .iter()
+            .chain(self.authored_nodes.iter())
+            .cloned()
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut roots = vec![];
+        while let Some(node) = todo.pop() {
+            let record = node.0.borrow();
+            if !seen.insert(record.id) {
+                continue;
+            }
+            roots.extend(record.callback);
+            if let Some((change, key)) = record.input {
+                roots.extend([change, key]);
+            }
+            todo.extend(record.children.iter().cloned());
+        }
+        roots
+    }
+    pub(crate) fn is_input_event(&self, event: usize) -> bool {
+        event & EVENT_BIT != 0
+            && self
+                .lookup(Identity(((event & !EVENT_BIT) >> 2) as u64))
+                .is_some_and(
+                    |node| matches!(&node.0.borrow().kind, Kind::Element(tag) if tag == "input"),
+                )
+    }
+    pub(crate) fn event(&self, event: usize) -> Option<crate::heap::Handle> {
+        if event & EVENT_BIT == 0 {
+            return None;
+        }
+        let part = event & 3;
+        let node = self.lookup(Identity(((event & !EVENT_BIT) >> 2) as u64))?;
+        let record = node.0.borrow();
+        match part {
+            0 => record.callback,
+            1 => record.input.map(|input| input.0),
+            2 => record.input.map(|input| input.1),
+            _ => None,
+        }
+    }
+    pub(crate) fn input_specs(&self) -> Vec<super::InputSpec> {
+        fn walk(node: &NodeHandle, inputs: &mut Vec<super::InputSpec>) {
+            let record = node.0.borrow();
+            if matches!(&record.kind, Kind::Element(tag) if tag == "input") {
+                inputs.push(super::InputSpec {
+                    target: event_id(record.id, 0),
+                    value: record.attributes.get("value").cloned().unwrap_or_default(),
+                    placeholder: record
+                        .attributes
+                        .get("placeholder")
+                        .cloned()
+                        .unwrap_or_default(),
+                    change: event_id(record.id, 1),
+                    key: event_id(record.id, 2),
+                });
+            }
+            for child in &record.children {
+                walk(child, inputs);
+            }
+        }
+        let mut inputs = vec![];
+        if let Some(root) = &self.root {
+            walk(root, &mut inputs);
+        }
+        inputs
+    }
+    pub(super) fn create(&mut self, tag: &str) -> Result<NodeHandle> {
+        let next = Prepared::with_slots(
+            WireNode {
+                tag: tag.into(),
+                ..Default::default()
+            },
+            &mut std::iter::repeat(vec![]),
+        )?;
+        self.retain(None, next, &mut vec![])
+    }
+    pub(super) fn set_text(&mut self, node: &NodeHandle, text: String) -> Result<()> {
+        if node.is_element() {
+            let child = if text.is_empty() {
+                None
+            } else {
+                let wire = WireNode {
+                    text: Some(text),
+                    ..Default::default()
+                };
+                Some(self.retain(
+                    None,
+                    Prepared::with_slots(wire, &mut std::iter::repeat(vec![]))?,
+                    &mut vec![],
+                )?)
+            };
+            let effective = node.0.borrow().children.clone();
+            for child in effective {
+                detach(&child);
+            }
+            if let Some(child) = child {
+                attach(node, &child, None)?;
+            }
+            node.0.borrow_mut().text_override = true;
+        } else {
+            node.0.borrow_mut().text = Some(text);
+        }
+        Ok(())
+    }
+    pub(super) fn set_attribute(
+        &mut self,
+        node: &NodeHandle,
+        name: &str,
+        value: String,
+    ) -> Result<()> {
+        if !crate::ui_contract::SCALAR_ATTRIBUTES.contains(&name) {
+            return Err(format!("unsupported view attribute: {name}"));
+        }
+        let mut record = node.0.borrow_mut();
+        if name == "className" {
+            let Kind::Element(tag) = &record.kind else {
+                return Err("expected view element".into());
+            };
+            let style = WireNode {
+                tag: tag.clone(),
+                classes: value.clone(),
+                ..Default::default()
+            }
+            .style()?;
+            record.classes = value.clone();
+            record.style = style;
+        }
+        record.attributes.insert(name.into(), value);
+        Ok(())
+    }
+    pub(super) fn edit_class(&mut self, node: &NodeHandle, token: &str, add: bool) -> Result<()> {
+        if token.is_empty() || token.chars().any(char::is_whitespace) {
+            return Err("class token must be nonempty without whitespace".into());
+        }
+        let mut tokens: Vec<_> = node
+            .0
+            .borrow()
+            .classes
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+        if !add && tokens.is_empty() && node.attribute("className").is_none() {
+            return Ok(());
+        }
+        if add {
+            if !tokens.iter().any(|old| old == token) {
+                tokens.push(token.into());
+            }
+        } else {
+            tokens.retain(|old| old != token);
+        }
+        self.set_attribute(node, "className", tokens.join(" "))
+    }
+    pub(super) fn insert(
+        &mut self,
+        parent: &NodeHandle,
+        child: &NodeHandle,
+        reference: Option<&NodeHandle>,
+    ) -> Result<NodeHandle> {
+        if !parent.is_element() {
+            return Err("parent must be a view element".into());
+        }
+        if let Some(reference) = reference
+            && reference.parent().as_ref() != Some(parent)
+        {
+            return Err("reference is not a child of this parent".into());
+        }
+        let mut cursor = Some(parent.clone());
+        while let Some(node) = cursor {
+            if node == *child {
+                return Err("view insertion would create a cycle".into());
+            }
+            cursor = node.parent();
+        }
+        if self.root.as_ref() == Some(child) {
+            return Err("cannot reparent the mounted view root".into());
+        }
+        if reference != Some(child) {
+            attach(parent, child, reference)?;
+        }
+        Ok(child.clone())
+    }
+    pub(super) fn remove(&mut self, parent: &NodeHandle, child: &NodeHandle) -> Result<NodeHandle> {
+        if child.parent().as_ref() != Some(parent) {
+            return Err("node is not a child of this parent".into());
+        }
+        detach(child);
+        Ok(child.clone())
     }
     /// Internal identity lookup, not an authored id or a public selector API.
     fn lookup(&self, id: Identity) -> Option<NodeHandle> {
@@ -176,7 +429,30 @@ impl Tree {
         self.commit(next)
     }
     fn commit(&mut self, next: Prepared) -> Result<Node> {
-        let root = self.retain(self.root.clone(), next)?;
+        let mut authored_nodes = vec![];
+        // Preparation validates scalar/style values before mutation. Retaining
+        // can still reject a structural cycle caused by an imperative move.
+        // Keep the complete effective store intact if a binding cannot commit.
+        let saved: Vec<_> = self
+            .records
+            .values()
+            .filter_map(Weak::upgrade)
+            .map(|node| {
+                let record = node.borrow().clone();
+                (node, record)
+            })
+            .collect();
+        let root = match self.retain(self.root.clone(), next, &mut authored_nodes) {
+            Ok(root) => root,
+            Err(error) => {
+                for (node, record) in saved {
+                    *node.borrow_mut() = record;
+                }
+                return Err(error);
+            }
+        };
+        drop(saved);
+        self.authored_nodes = authored_nodes;
         self.root = Some(root.clone());
         // Weak index entries neither retain detached nodes nor grow forever.
         self.records.retain(|_, record| record.strong_count() > 0);
@@ -185,11 +461,19 @@ impl Tree {
             .ok_or("missing retained root")?
             .snapshot())
     }
-    fn retain(&mut self, current: Option<NodeHandle>, next: Prepared) -> Result<NodeHandle> {
+    fn retain(
+        &mut self,
+        current: Option<NodeHandle>,
+        next: Prepared,
+        authored_nodes: &mut Vec<NodeHandle>,
+    ) -> Result<NodeHandle> {
         let current = current.filter(|node| node.0.borrow().kind == next.kind);
         let node = match current {
             Some(node) => node,
             None => {
+                if self.next >= (EVENT_BIT >> 2) as u64 {
+                    return Err("node identity exhausted".into());
+                }
                 let id = Identity(self.next);
                 self.next = self.next.checked_add(1).ok_or("node identity exhausted")?;
                 let record = Rc::new(RefCell::new(Record {
@@ -207,12 +491,25 @@ impl Tree {
                     style: next.style.clone(),
                     handler: next.handler,
                     children: vec![],
+                    authored_children: vec![],
+                    authored_content: next.content.clone(),
+                    text_override: false,
+                    callback: None,
+                    callback_scope: self.scope.clone(),
+                    input: None,
                 }));
                 self.records.insert(id, Rc::downgrade(&record));
                 NodeHandle(record)
             }
         };
-        let old_children = node.0.borrow().children.clone();
+        authored_nodes.push(node.clone());
+        let old_children: Vec<_> = node
+            .0
+            .borrow()
+            .authored_children
+            .iter()
+            .filter_map(|weak| weak.upgrade().map(NodeHandle))
+            .collect();
         let mut children = Vec::with_capacity(next.children.len());
         for (position, child) in next.children.into_iter().enumerate() {
             let old = if child.slot.is_empty() {
@@ -223,17 +520,42 @@ impl Tree {
                     .find(|node| node.0.borrow().slot == child.slot)
                     .cloned()
             };
-            let kept = self.retain(old, child)?;
-            kept.0.borrow_mut().parent = Some(Rc::downgrade(&node.0));
+            let kept = self.retain(old, child, authored_nodes)?;
             children.push(kept);
         }
-        for old in &old_children {
-            if !children.contains(old) {
-                old.0.borrow_mut().parent = None;
+        let restore_text = {
+            let record = node.0.borrow();
+            record.text_override
+                && (record.authored_content != next.content || old_children != children)
+        };
+        if restore_text {
+            let effective = node.0.borrow().children.clone();
+            for child in effective {
+                detach(&child);
+            }
+            for child in &children {
+                attach(&node, child, None)?;
+            }
+        } else if old_children != children && !node.0.borrow().text_override {
+            for old in &old_children {
+                if !children.contains(old) && old.parent().as_ref() == Some(&node) {
+                    detach(old);
+                }
+            }
+            for (index, child) in children.iter().enumerate() {
+                if !old_children.contains(child) {
+                    let reference = children[index + 1..]
+                        .iter()
+                        .find(|next| next.parent().as_ref() == Some(&node))
+                        .cloned();
+                    attach(&node, child, reference.as_ref())?;
+                }
             }
         }
         let mut record = node.0.borrow_mut();
-        if record.authored_classes != next.classes {
+        if record.authored_classes != next.classes
+            || record.authored_attributes.get("className") != next.attributes.get("className")
+        {
             record.authored_classes = next.classes.clone();
             record.classes = next.classes;
             record.style = next.style;
@@ -261,15 +583,55 @@ impl Tree {
             record.authored_text = next.text.clone();
             record.text = next.text;
         }
-        if record.handler != next.handler {
-            record.handler = next.handler;
-        }
-        if record.children != children {
-            record.children = children;
+        record.handler = next.handler;
+        record.callback = next
+            .handler
+            .and_then(|index| self.callbacks.get(index).copied());
+        record.input = next.handler.and_then(|target| {
+            self.inputs
+                .iter()
+                .find(|(id, _, _)| *id == target)
+                .map(|(_, change, key)| (*change, *key))
+        });
+        record.authored_children = children
+            .iter()
+            .map(|child| Rc::downgrade(&child.0))
+            .collect();
+        record.authored_content = next.content;
+        if restore_text {
+            record.text_override = false;
         }
         drop(record);
         Ok(node)
     }
+}
+
+const EVENT_BIT: usize = 1 << (usize::BITS - 2);
+fn event_id(id: Identity, part: usize) -> usize {
+    EVENT_BIT | ((id.0 as usize) << 2) | part
+}
+fn detach(child: &NodeHandle) {
+    if let Some(parent) = child.parent() {
+        parent.0.borrow_mut().children.retain(|node| node != child);
+    }
+    child.0.borrow_mut().parent = None;
+}
+fn attach(parent: &NodeHandle, child: &NodeHandle, reference: Option<&NodeHandle>) -> Result<()> {
+    let mut cursor = Some(parent.clone());
+    while let Some(node) = cursor {
+        if node == *child {
+            return Err("view insertion would create a cycle".into());
+        }
+        cursor = node.parent();
+    }
+    detach(child);
+    let mut record = parent.0.borrow_mut();
+    let position = reference
+        .and_then(|reference| record.children.iter().position(|node| node == reference))
+        .unwrap_or(record.children.len());
+    record.children.insert(position, child.clone());
+    child.0.borrow_mut().parent = Some(Rc::downgrade(&parent.0));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -281,6 +643,37 @@ mod tests {
             children,
             ..Default::default()
         }
+    }
+    #[test]
+    fn a_binding_cycle_after_a_hand_move_rolls_back_the_complete_frame() {
+        fn text(value: &str) -> WireNode {
+            WireNode {
+                text: Some(value.into()),
+                ..Default::default()
+            }
+        }
+        let wire = |value: &str| {
+            element(
+                "view",
+                vec![
+                    element("p", vec![text(value)]),
+                    element("div", vec![element("div", vec![text(value)]), text(value)]),
+                ],
+            )
+        };
+        let mut tree = Tree::default();
+        tree.update(wire("First")).unwrap();
+        let root = tree.root.clone().unwrap();
+        let a = root.0.borrow().children[1].clone();
+        let b = a.0.borrow().children[0].clone();
+        tree.insert(&root, &b, None).unwrap();
+        tree.insert(&b, &a, None).unwrap();
+        tree.set_text(&a, "Manual".into()).unwrap();
+        let before = root.snapshot();
+        assert!(tree.update(wire("Next")).unwrap_err().contains("cycle"));
+        assert_eq!(root.snapshot(), before);
+        assert!(a.parent().unwrap() == b);
+        assert!(b.parent().unwrap() == root);
     }
     #[test]
     fn removed_subtrees_are_released_and_a_failed_frame_leaves_the_store_unchanged() {
