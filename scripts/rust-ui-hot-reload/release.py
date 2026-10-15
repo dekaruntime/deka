@@ -23,7 +23,8 @@ def build(feature):
     print(("enabled" if feature else "disabled")+" sections:\n"+sections)
     assert b"DEKA_HOT_RELOAD_RELEASE_PAYLOAD_SENTINEL_1440" not in data, "release contains compiled source payload"
     symbols = subprocess.run(["nm", "-a", binary], check=True, capture_output=True, text=True).stdout
-    assert "deka_ui10hot_reload" not in symbols and "deka_ui_hot_reload" not in symbols
+    # Hot reload lives in deka_ui::hot_reload and deka_native_ir::hot_reload; neither may reach a release binary.
+    assert "deka_ui10hot_reload" not in symbols and "deka_native_ir10hot_reload" not in symbols and "deka_ui_hot_reload" not in symbols
     assert b"keeping last good UI" not in data and b"compiled template location missing" not in data
     return len(data), hashlib.sha256(data).hexdigest()
 

@@ -1,7 +1,7 @@
 //! Development templates shared by native polling and browser source transport.
 use crate::view::{Anchor, Context};
+use deka_native_ir::hot_reload::{Kind, Literal, Source, Template, TemplateNode};
 use deka_native_ir::tree::{NodeHandle, TemplateEdit};
-use deka_ui_hot_reload::{Kind, Literal, Source, Template, TemplateNode};
 use std::{
     cell::RefCell,
     collections::BTreeMap,
@@ -226,7 +226,7 @@ impl Mount {
     ) -> Result<Rc<Self>, String> {
         Ok(Rc::new(Self {
             origin,
-            template: RefCell::new(deka_ui_hot_reload::parse(
+            template: RefCell::new(deka_native_ir::hot_reload::parse(
                 origin.source.parse().map_err(|e| format!("{e}"))?,
             )?),
             locations: RefCell::new(locations.into_iter().map(|loc| (loc.id, loc)).collect()),
@@ -572,13 +572,13 @@ pub(crate) struct Registry {
     files: BTreeMap<PathBuf, File>,
     stale: bool,
     #[cfg(target_arch = "wasm32")]
-    remote: deka_ui_hot_reload::files::Files,
+    remote: deka_native_ir::hot_reload::files::Files,
     #[cfg(not(target_arch = "wasm32"))]
     watch_roots: std::collections::BTreeSet<PathBuf>,
     #[cfg(not(target_arch = "wasm32"))]
-    watch_baseline: deka_ui_hot_reload::files::Files,
+    watch_baseline: deka_native_ir::hot_reload::files::Files,
     #[cfg(not(target_arch = "wasm32"))]
-    watch_seen: deka_ui_hot_reload::files::Files,
+    watch_seen: deka_native_ir::hot_reload::files::Files,
     #[cfg(not(target_arch = "wasm32"))]
     watch_observed: Option<std::time::Instant>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -606,11 +606,11 @@ impl Registry {
                 .iter()
                 .any(|watched| root.starts_with(watched))
         {
-            let roots = deka_ui_hot_reload::files::source_roots(&[
+            let roots = deka_native_ir::hot_reload::files::source_roots(&[
                 "--manifest-path".into(),
                 root.join("Cargo.toml").to_string_lossy().into_owned(),
             ])?;
-            for (path, source) in deka_ui_hot_reload::files::snapshot(&roots)? {
+            for (path, source) in deka_native_ir::hot_reload::files::snapshot(&roots)? {
                 self.watch_baseline.entry(path).or_insert(source);
             }
             self.watch_roots.extend(roots);
@@ -640,8 +640,8 @@ impl Registry {
     pub(crate) fn receive(
         &mut self,
         context: &Rc<Context>,
-        baseline: deka_ui_hot_reload::files::Files,
-        current: deka_ui_hot_reload::files::Files,
+        baseline: deka_native_ir::hot_reload::files::Files,
+        current: deka_native_ir::hot_reload::files::Files,
     ) -> ReloadStatus {
         for mount in self.mounts.iter().filter_map(Weak::upgrade) {
             if let Some(original) = baseline.get(Path::new(mount.origin.file))
@@ -651,12 +651,12 @@ impl Registry {
                 return ReloadStatus::RestartRequired { reason: "browser source baseline differs from its compiled module; rebuilding and restarting (signal state resets)".into() };
             }
         }
-        match deka_ui_hot_reload::files::classify(&baseline, &current) {
-            deka_ui_hot_reload::files::Change::Markup => (),
-            deka_ui_hot_reload::files::Change::Invalid(message) => {
+        match deka_native_ir::hot_reload::files::classify(&baseline, &current) {
+            deka_native_ir::hot_reload::files::Change::Markup => (),
+            deka_native_ir::hot_reload::files::Change::Invalid(message) => {
                 return ReloadStatus::Error { message };
             }
-            deka_ui_hot_reload::files::Change::Restart(reason) => {
+            deka_native_ir::hot_reload::files::Change::Restart(reason) => {
                 self.stale = true;
                 return ReloadStatus::RestartRequired { reason };
             }
@@ -673,7 +673,7 @@ impl Registry {
         if self.stale {
             return ReloadStatus::Unchanged;
         }
-        use deka_ui_hot_reload::files::{Change, classify, snapshot};
+        use deka_native_ir::hot_reload::files::{Change, classify, snapshot};
         let roots: Vec<_> = self.watch_roots.iter().cloned().collect();
         let watched = match snapshot(&roots) {
             Ok(files) => files,
@@ -717,7 +717,7 @@ impl Registry {
     fn apply_files(
         &mut self,
         context: &Rc<Context>,
-        watched: &deka_ui_hot_reload::files::Files,
+        watched: &deka_native_ir::hot_reload::files::Files,
     ) -> ReloadStatus {
         if self.stale {
             return ReloadStatus::Unchanged;

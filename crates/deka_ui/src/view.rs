@@ -1236,8 +1236,8 @@ impl UiApp {
     #[cfg(all(feature = "hot-reload", debug_assertions, target_arch = "wasm32"))]
     pub(crate) fn scope_hot_reload(
         &mut self,
-        baseline: deka_ui_hot_reload::files::Files,
-        current: deka_ui_hot_reload::files::Files,
+        baseline: deka_native_ir::hot_reload::files::Files,
+        current: deka_native_ir::hot_reload::files::Files,
     ) -> crate::hot_reload::ReloadStatus {
         self.scope.batch(|| {
             self.context
@@ -1353,7 +1353,7 @@ impl UiApp {
             .scope
             .batch(|| self.context.hot_reload.borrow_mut().poll(&self.context));
         if let crate::hot_reload::ReloadStatus::RestartRequired { reason } = &status {
-            eprintln!("{}{reason}", deka_ui_hot_reload::RESTART_PREFIX);
+            eprintln!("{}{reason}", deka_native_ir::hot_reload::RESTART_PREFIX);
         }
         match &status {
             crate::hot_reload::ReloadStatus::Error { message }

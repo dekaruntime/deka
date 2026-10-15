@@ -1,5 +1,5 @@
 //! Shared native source snapshots and all-or-nothing edit classification.
-use crate::Source;
+use super::Source;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},

@@ -237,6 +237,9 @@ pub use style::{apply as apply_classes, for_element as element_style};
 
 mod motion;
 
+/// Development-only view templates for hot reload (moved from the deka-ui-hot-reload crate).
+#[cfg(feature = "hot-reload")]
+pub mod hot_reload;
 #[doc(hidden)]
 pub mod selectors;
 #[doc(hidden)]

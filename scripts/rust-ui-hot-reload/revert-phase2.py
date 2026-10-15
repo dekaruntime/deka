@@ -35,7 +35,7 @@ proof("props", "crates/deka_ui/src/hot_reload.rs",
 proof("slots", "crates/deka_native_ir/src/tree/template.rs",
       lambda source: source.replace("        parent.0.borrow_mut().children = untouched;", "        let _ = untouched;"),
       ["python3", "scripts/rust-ui-hot-reload/phase2.py", "--case", "slots"])
-proof("ambiguous", "crates/deka_ui_hot_reload/src/lib.rs",
+proof("ambiguous", "crates/deka_native_ir/src/hot_reload/mod.rs",
       lambda source: source[:source.index("        // A permutation of literal values")] + source[source.index("        let mut result = BTreeMap::new();"):],
       ["python3", "scripts/rust-ui-hot-reload/phase2.py", "--case", "ambiguous"])
 proof("browser", "crates/deka_ui/web/hot-host.js",
