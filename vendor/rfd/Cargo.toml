@@ -30,6 +30,8 @@ keywords = [
 ]
 license = "MIT"
 repository = "https://github.com/dekaruntime/deka"
+# Artifacts of the upstream .crate this fork was vendored from; never re-published.
+exclude = ["Cargo.toml.orig", "Cargo.lock"]
 
 [package.metadata.docs.rs]
 features = ["file-handle-inner"]
