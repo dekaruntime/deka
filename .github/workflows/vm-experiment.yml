@@ -77,6 +77,8 @@ jobs:
           cargo test --locked -p deka-ui --no-default-features --features hot-reload,tour,web --lib
           cargo build --locked -p deka-ui-dev
           python3 scripts/rust-ui-hot-reload/check.py
+          # release.py builds the browser example and runs wasm-bindgen on it.
+          cargo install --locked wasm-bindgen-cli --version 0.2.128
           python3 scripts/rust-ui-hot-reload/release.py
       - name: Compile source and execute without a compiler
         run: |
