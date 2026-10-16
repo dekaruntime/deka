@@ -1,0 +1,11 @@
+--- a/src/config.rs	2006-07-23 19:21:28
++++ b/src/config.rs	2026-10-02 19:37:18
+@@ -399,7 +399,7 @@
+         // well as paris-30k. These should instead get derived from the scene layout using
+         // reasonable heuristics.
+         let bin_data = BufferSize::new(1 << 18);
+-        let tiles = BufferSize::new(1 << 21);
++        let tiles = BufferSize::new(1 << 24);
+         let lines = BufferSize::new(1 << 21);
+         let seg_counts = BufferSize::new(1 << 21);
+         let segments = BufferSize::new(1 << 21);

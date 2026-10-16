@@ -1,0 +1,45 @@
+# machine,shapes,variant,threads,frame_ms (offscreen 3200x2000, mean of 2 round-robin runs)
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 5,1,17.84
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 5,2,11.55
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 5,4,7.30
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 5,8,5.00
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 5,10,4.73
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 5,20,4.57
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 5,1,58.61
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 5,2,35.95
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 5,4,23.62
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 5,8,16.05
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 5,10,15.17
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 5,20,13.78
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 4 (stock hand-off),1,25.09
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 4 (stock hand-off),2,21.61
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 4 (stock hand-off),4,20.54
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 4 (stock hand-off),8,16.39
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 4 (stock hand-off),10,16.83
+iMac i9-10910 + Radeon Pro 5700 XT,1000,phase 4 (stock hand-off),20,14.66
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 4 (stock hand-off),1,80.34
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 4 (stock hand-off),2,59.92
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 4 (stock hand-off),4,44.28
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 4 (stock hand-off),8,38.23
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 4 (stock hand-off),10,37.23
+iMac i9-10910 + Radeon Pro 5700 XT,10000,phase 4 (stock hand-off),20,36.27
+Mac mini M1 (bugsy),1000,phase 5,1,15.12
+Mac mini M1 (bugsy),1000,phase 5,2,10.76
+Mac mini M1 (bugsy),1000,phase 5,4,8.50
+Mac mini M1 (bugsy),1000,phase 5,8,8.19
+Mac mini M1 (bugsy),1000,phase 5,10,8.12
+Mac mini M1 (bugsy),1000,phase 5,20,8.51
+Mac mini M1 (bugsy),10000,phase 5,1,44.81
+Mac mini M1 (bugsy),10000,phase 5,2,28.35
+Mac mini M1 (bugsy),10000,phase 5,4,19.94
+Mac mini M1 (bugsy),10000,phase 5,8,16.27
+Mac mini M1 (bugsy),10000,phase 5,10,16.09
+Mac mini M1 (bugsy),10000,phase 5,20,17.57
+Mac mini M1 (bugsy),1000,phase 4 (stock hand-off),1,15.54
+Mac mini M1 (bugsy),1000,phase 4 (stock hand-off),2,12.76
+Mac mini M1 (bugsy),1000,phase 4 (stock hand-off),4,11.37
+Mac mini M1 (bugsy),1000,phase 4 (stock hand-off),8,8.96
+Mac mini M1 (bugsy),10000,phase 4 (stock hand-off),1,45.27
+Mac mini M1 (bugsy),10000,phase 4 (stock hand-off),2,30.98
+Mac mini M1 (bugsy),10000,phase 4 (stock hand-off),4,23.70
+Mac mini M1 (bugsy),10000,phase 4 (stock hand-off),8,21.03

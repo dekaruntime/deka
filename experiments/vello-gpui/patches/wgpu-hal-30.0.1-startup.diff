@@ -1,0 +1,128 @@
+diff -ruN a/src/metal/mod.rs b/src/metal/mod.rs
+--- a/src/metal/mod.rs	2006-07-23 19:21:28
++++ b/src/metal/mod.rs	2026-10-02 23:52:10
+@@ -639,11 +639,30 @@
+     limits: wgt::Limits,
+ }
+ 
++/// Fork (deka spike): host time (seconds, `CACurrentMediaTime` base) at which
++/// the first presented drawable reached the screen, as `f64` bits; 0 = none yet.
++pub static FIRST_PRESENTED_SECS: atomic::AtomicU64 = atomic::AtomicU64::new(0);
++/// Fork (deka spike): which present (1 = the first) that was; presents counted
++/// until one is displayed.
++pub static FIRST_PRESENTED_INDEX: atomic::AtomicU32 = atomic::AtomicU32::new(0);
++static PRESENTS: atomic::AtomicU32 = atomic::AtomicU32::new(0);
++
++/// Fork (deka spike): let a just-shown window draw its first frames before the
++/// window server reports it visible (default). `false` = stock behaviour.
++pub static PRE_VISIBLE_FRAMES: atomic::AtomicBool = atomic::AtomicBool::new(true);
++/// Fork (deka spike): at most this many drawables before the window is first
++/// reported visible.
++pub static PRE_VISIBLE_LIMIT: atomic::AtomicU32 = atomic::AtomicU32::new(2);
++
+ #[derive(Debug)]
+ pub struct Surface {
+     render_layer: Mutex<Retained<CAMetalLayer>>,
+     swapchain_format: RwLock<Option<wgt::TextureFormat>>,
+     extent: RwLock<wgt::Extent3d>,
++    /// Fork (deka spike): drawables acquired while a just-shown window had
++    /// not been reported visible yet, and whether it has ever been visible.
++    pre_visible_acquires: atomic::AtomicU32,
++    seen_visible: atomic::AtomicBool,
+ }
+ 
+ unsafe impl Send for Surface {}
+@@ -809,6 +828,32 @@
+             // because we immediately commit this buffer.
+             let command_buffer = self.shared.raw.commandBuffer().unwrap();
+             command_buffer.setLabel(Some(ns_string!("(wgpu internal) Present")));
++
++            // Fork (deka spike): record when the first drawable that reaches
++            // the screen was displayed (host time, seconds), for start-up
++            // measurements.
++            if FIRST_PRESENTED_SECS.load(atomic::Ordering::Relaxed) == 0 {
++                let index = PRESENTS.fetch_add(1, atomic::Ordering::Relaxed) + 1;
++                let handler = block2::RcBlock::new(
++                    move |drawable: NonNull<ProtocolObject<dyn MTLDrawable>>| {
++                        // SAFETY: Metal passes the live drawable to its handler.
++                        let t: f64 = unsafe { objc2::msg_send![drawable.as_ref(), presentedTime] };
++                        if t > 0.0
++                            && FIRST_PRESENTED_SECS
++                                .compare_exchange(
++                                    0,
++                                    t.to_bits(),
++                                    atomic::Ordering::Relaxed,
++                                    atomic::Ordering::Relaxed,
++                                )
++                                .is_ok()
++                        {
++                            FIRST_PRESENTED_INDEX.store(index, atomic::Ordering::Relaxed);
++                        }
++                    },
++                );
++                unsafe { texture.drawable.addPresentedHandler(block2::RcBlock::as_ptr(&handler)) };
++            }
+ 
+             // https://developer.apple.com/documentation/quartzcore/cametallayer/1478157-presentswithtransaction?language=objc
+             if !texture.present_with_transaction {
+diff -ruN a/src/metal/surface.rs b/src/metal/surface.rs
+--- a/src/metal/surface.rs	2006-07-23 19:21:28
++++ b/src/metal/surface.rs	2026-10-02 23:52:10
+@@ -40,6 +40,8 @@
+             render_layer: Mutex::new(layer),
+             swapchain_format: RwLock::new(None),
+             extent: RwLock::new(wgt::Extent3d::default()),
++            pre_visible_acquires: core::sync::atomic::AtomicU32::new(0),
++            seen_visible: core::sync::atomic::AtomicBool::new(false),
+         }
+     }
+ 
+@@ -365,7 +367,25 @@
+                 const NS_WINDOW_OCCLUSION_STATE_VISIBLE: usize = 1 << 1;
+                 let occlusion_state: usize = unsafe { objc2::msg_send![&*window, occlusionState] };
+                 if occlusion_state & NS_WINDOW_OCCLUSION_STATE_VISIBLE == 0 {
+-                    return Err(crate::SurfaceError::Occluded);
++                    // Fork (deka spike): a window that has just been ordered in
++                    // reports "occluded" until the window server first
++                    // composites it (~40 ms on an Intel iMac). Let its first
++                    // drawables through, so the window appears with its first
++                    // frame instead of empty (as AppKit/GPUI apps do). The
++                    // drawable pool is still full then, so `nextDrawable` cannot
++                    // hit the hang this check works around.
++                    use core::sync::atomic::Ordering;
++                    let ordered_in: bool = unsafe { objc2::msg_send![&*window, isVisible] };
++                    if !(ordered_in
++                        && super::PRE_VISIBLE_FRAMES.load(Ordering::Relaxed)
++                        && !self.seen_visible.load(Ordering::Relaxed)
++                        && self.pre_visible_acquires.fetch_add(1, Ordering::Relaxed)
++                            < super::PRE_VISIBLE_LIMIT.load(Ordering::Relaxed))
++                    {
++                        return Err(crate::SurfaceError::Occluded);
++                    }
++                } else {
++                    self.seen_visible.store(true, core::sync::atomic::Ordering::Relaxed);
+                 }
+             }
+         }
+--- a/Cargo.toml	2026-10-03 00:00:59
++++ b/Cargo.toml	2026-10-02 23:35:30
+@@ -162,19 +162,6 @@
+ name = "wgpu_hal"
+ path = "src/lib.rs"
+ 
+-[[example]]
+-name = "halmark"
+-path = "examples/halmark/main.rs"
+-
+-[[example]]
+-name = "raw-gles"
+-path = "examples/raw-gles.rs"
+-required-features = ["gles"]
+-
+-[[example]]
+-name = "ray-traced-triangle"
+-path = "examples/ray-traced-triangle/main.rs"
+-
+ [dependencies.arrayvec]
+ version = "0.7.1"
+ optional = true

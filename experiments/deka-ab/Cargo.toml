@@ -1,0 +1,118 @@
+[package]
+name = "deka-ab"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+description = "Spike phase 2: deka_native_ui on GPUI vs on winit + wgpu + vello + parley. Not product code."
+
+# Standalone workspace: not a deka workspace member; deka's code paths are untouched.
+[workspace]
+
+[features]
+# Exactly one backend per binary, so each binary's size excludes the other stack.
+gpui-backend = ["dep:gpui", "dep:image", "dep:core-text", "dep:core-graphics", "dep:core-foundation"]
+# Sparse strips: vello_gpu (formerly vello_hybrid) on wgpu, and vello_cpu via softbuffer.
+hybrid-backend = ["dep:winit", "dep:wgpu", "dep:wgpu-hal", "dep:vello_gpu", "dep:pollster", "dep:skrifa", "dep:glifo", "dep:parley"]
+cpu-backend = ["dep:winit", "dep:vello_cpu", "dep:softbuffer", "dep:skrifa"]
+# vello_cpu presented by texture upload + blit through wgpu instead of softbuffer.
+cpu-wgpu = ["cpu-backend", "dep:wgpu", "dep:pollster"]
+# vello's GPU bump counters (adds a readback per frame; diagnostics only).
+diag = ["vello-backend", "vello/debug_layers"]
+vello-backend = ["dep:winit", "dep:vello", "dep:wgpu", "dep:parley", "dep:arboard", "dep:pollster"]
+
+[dependencies]
+# deka main's UI crate, no features: Scene, layout (taffy), fontdue text, world.
+deka_native_ui = { path = "../../crates/deka_native_ui" }
+libc = "0.2"
+png = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# MTLDevice.currentAllocatedSize for both backends (same objc2-metal wgpu-hal uses).
+objc2-metal = { version = "0.3.2", features = ["MTLDevice"] }
+# Phase 6: NSWindow background colour before the first frame (start-up).
+objc2 = "0.6"
+
+# Backend A: what deka ships today.
+gpui = { version = "=0.2.2", features = ["runtime_shaders"], optional = true }
+image = { version = "0.25", default-features = false, optional = true }
+# Same versions GPUI already links (CoreText reference sheet only).
+core-text = { version = "21", optional = true }
+core-graphics = { version = "0.24", optional = true }
+core-foundation = { version = "=0.10.0", optional = true }
+
+# Backend B: small independent crates.
+winit = { version = "=0.30.13", optional = true }
+vello = { version = "=0.11.0", default-features = false, features = ["wgpu"], optional = true }
+wgpu = { version = "=30.0.1", default-features = false, features = ["metal", "wgsl"], optional = true }
+# Phase 6: the forked wgpu-hal's start-up switches and presented-time probe.
+wgpu-hal = { version = "=30.0.1", default-features = false, features = ["metal"], optional = true }
+parley = { version = "=0.11.1", optional = true }
+arboard = { version = "3.6", optional = true }
+pollster = { version = "0.4", optional = true }
+
+# Backends C and D: vello's sparse-strips renderers.
+vello_gpu = { version = "=0.3.0", default-features = false, features = ["wgpu", "text", "multithreading"], optional = true }
+vello_cpu = { version = "=0.3.0", features = ["multithreading"], optional = true }
+softbuffer = { version = "=0.4.8", optional = true }
+skrifa = { version = "0.44", optional = true }
+# Glyph type for vello_gpu's glyph runs (vello_gpu does not re-export it).
+glifo = { version = "=0.4.0", optional = true }
+
+[[bin]]
+name = "ab-gpui"
+path = "src/bin_gpui.rs"
+required-features = ["gpui-backend"]
+
+[[bin]]
+name = "ab-vello"
+path = "src/bin_vello.rs"
+required-features = ["vello-backend"]
+
+[[bin]]
+name = "ab-hybrid"
+path = "src/bin_hybrid.rs"
+required-features = ["hybrid-backend"]
+
+[[bin]]
+name = "ab-cpu"
+path = "src/bin_cpu.rs"
+required-features = ["cpu-backend"]
+
+# graph.rs is shared between the two spike crates and names a feature of each.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("vello"))'] }
+
+[[bin]]
+name = "ab-cpu-wgpu"
+path = "src/bin_cpu_wgpu.rs"
+required-features = ["cpu-wgpu"]
+
+[[example]]
+name = "scaling_chart"
+required-features = ["cpu-backend"]
+
+[[example]]
+name = "startup_chart"
+required-features = ["cpu-backend"]
+
+[profile.release]
+debug = false
+
+# deka's shipped `native` profile, for the size comparison.
+[profile.native]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
+# Phase 4: the forked vello_gpu (parallel strips + strip cache). Upstream
+# sources with the patch applied; see ../vello-gpui/patches/vello_gpu-0.3.0-parallel-strips.diff.
+[patch.crates-io]
+vello_gpu = { path = "../vendor/vello_gpu-0.3.0" }
+# Phase 6 (measurement): Metal presentedTime of the first displayed frame, and
+# an experiment that lets frames be drawn before the window is reported
+# visible (no gain: macOS drops them). See
+# experiments/vello-gpui/patches/wgpu-hal-30.0.1-startup.diff.
+wgpu-hal = { path = "../vendor/wgpu-hal-30.0.1" }
