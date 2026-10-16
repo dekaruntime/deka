@@ -59,11 +59,24 @@ jobs:
         id: auth
         if: ${{ !inputs.dry_run && env.HAS_TOKEN != 'true' }}
         uses: rust-lang/crates-io-auth-action@v1
+      # Resumable: versions already on crates.io are skipped, so a rerun after a partial publish
+      # (e.g. cargo timing out while the index catches up) finishes the rest.
       - name: Publish
         if: ${{ !inputs.dry_run }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
-        run: >-
-          cargo publish --locked
-          -p deka-vello-gpu-shaders -p deka-vello-gpu -p deka-rfd
-          -p deka-ui-core -p deka-ui-native -p deka-ui-macros -p deka-ui
+        run: |
+          pending=()
+          for package in deka-vello-gpu-shaders deka-vello-gpu deka-rfd deka-ui-core deka-ui-native deka-ui-macros deka-ui; do
+            version=$(cargo metadata --locked --format-version 1 --no-deps \
+              | jq -r --arg name "$package" '.packages[] | select(.name == $name) | .version')
+            if curl -sf "https://index.crates.io/${package:0:2}/${package:2:2}/$package" \
+              | jq -e --arg version "$version" 'select(.vers == $version)' > /dev/null; then
+              echo "$package $version is already on crates.io"
+            else
+              pending+=(-p "$package")
+            fi
+          done
+          if [ ${#pending[@]} -gt 0 ]; then
+            cargo publish --locked "${pending[@]}"
+          fi
