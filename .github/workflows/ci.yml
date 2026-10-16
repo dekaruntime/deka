@@ -4,6 +4,9 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  # Run by hand on main to get a Linux-built `rust-tour` artifact for an exact main commit:
+  # deka.gg pins the tour to a main commit and checks it against that build's hashes.
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
